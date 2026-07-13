@@ -1,8 +1,15 @@
 #!/bin/sh
-# Ask the operator to allow-list an egress domain the sandbox is blocked from.
+# Ask the operator to allow-list an egress domain, then BLOCK until they decide.
+# Returns APPROVED (exit 0) or DECLINED (exit 3); STILL PENDING (exit 2) if the
+# operator is slow — just re-run `await-request <id>` to keep waiting.
 set -eu
 BROKER="${SHIPSHAPE_BROKER:-http://control-plane:8099}"
 [ $# -ge 1 ] || { echo "usage: request-domain <domain> [reason]" >&2; exit 2; }
 payload=$(python3 -c 'import json,sys; print(json.dumps({"domain":sys.argv[1],"reason":sys.argv[2] if len(sys.argv)>2 else ""}))' "$@")
-curl -fsS -X POST "$BROKER/request-domain" -H 'Content-Type: application/json' -d "$payload"
-echo
+resp=$(curl -fsS -X POST "$BROKER/request-domain" -H 'Content-Type: application/json' -d "$payload")
+id=$(printf '%s' "$resp" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("id",""))
+except Exception: print("")')
+[ -n "$id" ] || { echo "$resp"; exit 1; }
+echo "requested $1 (id $id) — waiting for operator approval…"
+exec await-request "$id"

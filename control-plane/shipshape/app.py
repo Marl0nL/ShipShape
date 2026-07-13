@@ -16,7 +16,8 @@ import time
 from textual import work
 from textual.app import App, ComposeResult
 from textual.worker import get_current_worker
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     DataTable,
@@ -38,6 +39,41 @@ from .harvester import parse_line
 from .state import CommandStore, PendingStore
 
 
+class QuitConfirm(ModalScreen[bool]):
+    """Yes/No confirmation before quitting the control plane."""
+
+    CSS = """
+    QuitConfirm { align: center middle; }
+    #quit_box { width: 56; height: auto; padding: 1 2; border: thick $warning; background: $surface; }
+    #quit_box Horizontal { height: auto; align-horizontal: center; padding-top: 1; }
+    """
+    BINDINGS = [
+        ("y", "yes", "Quit"),
+        ("n", "no", "Cancel"),
+        ("escape", "no", "Cancel"),
+        ("q", "no", "Cancel"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="quit_box"):
+            yield Static(
+                "Quit the ShipShape control plane?\n\n"
+                "The sandbox keeps running — this only closes the TUI."
+            )
+            with Horizontal():
+                yield Button("Quit (y)", id="yes", variant="error")
+                yield Button("Cancel (n)", id="no", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "yes")
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
+
+
 class ShipShapeApp(App):
     CSS = """
     #status { dock: bottom; height: 1; color: $text-muted; padding: 0 1; }
@@ -45,7 +81,7 @@ class ShipShapeApp(App):
     SelectionList { height: 1fr; }
     """
     BINDINGS = [
-        ("q", "quit", "Quit"),
+        ("q", "request_quit", "Quit"),
         ("r", "refresh", "Refresh"),
         ("a", "approve", "Approve"),
         ("w", "approve_wildcard", "Approve *.dom"),
@@ -174,9 +210,17 @@ class ShipShapeApp(App):
     def action_dismiss(self) -> None:
         host = self._selected_host()
         if host:
+            entry = self.store.data.get(host)
+            if entry and entry.get("rid"):  # tell the waiting agent it was declined
+                spool.write_response(
+                    self.paths.spool, entry["rid"], "denied", f"domain {host} declined", time.time()
+                )
             self.store.remove(host)
             self._refresh_pending()
             self._status(f"dismissed {host}")
+
+    def action_request_quit(self) -> None:
+        self.push_screen(QuitConfirm(), lambda quit_it: self.exit() if quit_it else None)
 
     # --- allow-list tab ---
     def _reload_allowlist(self) -> None:

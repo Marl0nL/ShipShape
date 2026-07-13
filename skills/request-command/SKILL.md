@@ -20,12 +20,10 @@ request-command \
   "need to read the analytics dataset for this task"
 ```
 
-It returns JSON with an `id` and `"status":"pending"`. The operator will
-**accept, edit, or decline** it. Re-check the outcome:
+The command **blocks until the operator accepts, edits, or declines** it, then returns:
+- `APPROVED` (exit 0) — the JSON includes the command's exit code and output.
+- `DECLINED` (exit 3) — refused; adjust and propose again if it's still needed.
+- `STILL PENDING` (exit 2) — re-run `await-request <id>` to keep waiting.
 
-```bash
-curl -fsS "$SHIPSHAPE_BROKER/status/<id>"
-```
-
-On acceptance the response includes the command's exit status and output. Propose
-the narrowest command that does the job, and always give a clear reason.
+Run it with a generous Bash timeout. Propose the narrowest command that does the
+job, and always give a clear reason.

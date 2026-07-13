@@ -15,6 +15,9 @@
 .github.com
 .githubusercontent.com
 
+# --- firstmate toolchain (treehouse / no-mistakes installers + self-update) ---
+kunchenguid.github.io
+
 # --- Google Cloud / gcloud ---  (.googleapis.com covers oauth2/storage/etc.)
 .googleapis.com
 accounts.google.com

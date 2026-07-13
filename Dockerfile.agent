@@ -9,7 +9,9 @@
 # tolerant (|| true) so one flaky upstream installer can't break the whole image;
 # check the build log for any that warned. Reproducible pinning of those is future
 # work. This image MUST be built + smoke-tested live (many network installs).
-FROM python:3.11-slim-bullseye@sha256:9e25f400253a5fa3191813d6a67eb801ca1e6f012b3bd2588fa6920b59e3eba6
+# Debian 12 (bookworm) — glibc 2.36. Bullseye's glibc 2.31 is too old for modern
+# Go release binaries (treehouse needs GLIBC_2.34+), so bookworm is required.
+FROM python:3.11-slim-bookworm@sha256:f5cf0344c9886ff24d34797578d5d7dd6e8911ae0fe5962bb55d0f89603ec361
 
 ENV DEBIAN_FRONTEND=noninteractive
 # User-installed CLIs (claude, herdr, agy, treehouse, no-mistakes, npm globals) land here.
@@ -54,23 +56,14 @@ RUN printf '%s\n' '#!/bin/sh' \
       'exec "$@"' > /usr/local/bin/agent-entrypoint && \
     chmod +x /usr/local/bin/agent-entrypoint
 
-# 3d. Control-plane client commands + runtime component installers.
-COPY agent-bin/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
-             /usr/local/bin/refresh-daily-auth /usr/local/bin/install-flutter \
-             /usr/local/bin/install-adb
-
 # 4. Non-root user (UID configurable so the 0600 /auth creds are readable).
 ARG HOST_UID=1000
 RUN useradd -ms /bin/bash -u ${HOST_UID} agentdev
 USER agentdev
 WORKDIR /home/agentdev
 
-# 4b. ShipShape skills, discoverable by the in-container Claude agent.
-COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
-
-# 4c. npm global prefix in $HOME so `npm i -g` works as non-root.
-RUN npm config set prefix /home/agentdev/.local
+# 4b. npm global prefix in $HOME so `npm i -g` works as non-root; ensure ~/.claude.
+RUN npm config set prefix /home/agentdev/.local && mkdir -p /home/agentdev/.claude
 
 # 5. Coding-agent CLIs (user-space).
 #    Claude Code — honors HTTP(S)_PROXY; auth via copied creds or CLAUDE_CODE_OAUTH_TOKEN.
@@ -95,6 +88,15 @@ RUN npm install -g gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi || 
 # 7. Optional base Python deps.
 COPY --chown=agentdev:agentdev requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# 8. Client commands + skills LAST, so iterating on them is a cheap rebuild.
+USER root
+COPY agent-bin/ /usr/local/bin/
+RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
+             /usr/local/bin/refresh-daily-auth /usr/local/bin/await-request \
+             /usr/local/bin/install-flutter /usr/local/bin/install-adb
+USER agentdev
+COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
 
 # Activate injected creds on start, then keep the container alive for firstmate.
 ENTRYPOINT ["/usr/local/bin/agent-entrypoint"]

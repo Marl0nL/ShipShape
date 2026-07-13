@@ -1,0 +1,26 @@
+#!/bin/sh
+# Block until the operator approves/declines a queued request, then report the
+# outcome. Used by request-domain / request-command / refresh-daily-auth; safe to
+# re-run to keep waiting. Exit: 0=approved, 3=declined, 4=error, 2=still pending.
+set -eu
+BROKER="${SHIPSHAPE_BROKER:-http://control-plane:8099}"
+id="${1:?usage: await-request <request-id> [max-seconds]}"
+max="${2:-110}"   # stays under Claude Code's default 120s Bash timeout; re-run for more
+waited=0
+while :; do
+  r=$(curl -fsS "$BROKER/status/$id" 2>/dev/null || printf '{}')
+  status=$(printf '%s' "$r" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("status","unknown"))
+except Exception: print("unknown")')
+  case "$status" in
+    ok)     echo "APPROVED  $r"; exit 0 ;;
+    denied) echo "DECLINED  $r"; exit 3 ;;
+    error)  echo "ERROR     $r"; exit 4 ;;
+  esac
+  if [ "$waited" -ge "$max" ]; then
+    echo "STILL PENDING after ${max}s — the operator hasn't decided yet. Re-run: await-request $id"
+    exit 2
+  fi
+  sleep 3
+  waited=$((waited + 3))
+done

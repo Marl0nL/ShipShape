@@ -14,10 +14,10 @@ refresh:
 refresh-daily-auth <passphrase>
 ```
 
-The passphrase is validated on the host; if valid, a fresh key is minted and
-injected, and the response is `"status":"ok"`. Otherwise you get
-`"status":"denied"` with a reason (wrong / expired / already used) — ask the
-operator for a new passphrase; you cannot refresh without one.
+The passphrase is validated on the host and resolves immediately:
+- `APPROVED` (exit 0) — a fresh key was minted and injected; GCP calls work again.
+- `DECLINED` (exit 3) — the passphrase was wrong, expired, or already used; ask the
+  operator for a new one. You cannot refresh without a valid passphrase.
 
 The passphrase is single-use: it authorises exactly one refresh of a fixed,
 operator-defined credential. You cannot choose scope or renew on your own.

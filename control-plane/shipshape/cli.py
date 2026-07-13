@@ -78,7 +78,11 @@ def cmd_approve(paths: Paths, args) -> int:
 
 
 def cmd_dismiss(paths: Paths, args) -> int:
-    PendingStore(paths.pending).remove(args.host)
+    store = PendingStore(paths.pending)
+    entry = store.data.get(args.host)
+    if entry and entry.get("rid"):  # tell the waiting agent it was declined
+        spool.write_response(paths.spool, entry["rid"], "denied", f"domain {args.host} declined", time.time())
+    store.remove(args.host)
     print(f"dismissed {args.host}")
     return 0
 

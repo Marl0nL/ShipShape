@@ -244,6 +244,22 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
   moved to `~/work` so it doesn't shadow the clone. firstmate's own state is ephemeral per
   container — snapshot to persist a configured image.
 
+### Phase 7 — agent notify/auto-continue, quit-confirm, image fixes  ✅ built (needs agent-image rebuild)
+- **Requests block until decided → agents auto-continue.** The in-container
+  `request-domain` / `request-command` / `refresh-daily-auth` commands submit, then
+  poll the broker's `/status/<id>` until the operator approves/declines (up to ~2 min
+  per call; re-runnable via `await-request <id>`), returning `APPROVED` (exit 0) /
+  `DECLINED` (exit 3). The agent's tool call resolves the moment you decide and it
+  continues — no session injection needed.
+- **Dismiss/decline replies to the agent.** Dismissing a pending domain (CLI/TUI)
+  now writes a `denied` spool response, so the waiting agent unblocks instead of hanging.
+- **Quit confirmation.** `q` opens a Yes/No modal (the sandbox keeps running).
+- **Image fixes from live firstmate testing:** base → Debian 12 bookworm (glibc 2.36)
+  so treehouse's GLIBC_2.34+ binaries run; dropped the noexec `/tmp` tmpfs (it broke
+  extract-then-exec tools); allow-listed `kunchenguid.github.io`.
+- **Dockerfile reorder:** client commands + skills COPY last, so iterating on them is
+  a cheap rebuild.
+
 ## Known limitations / deferred (from the code review)
 
 Fixed: reprocess-loop + path-traversal via spool id, cross-thread store

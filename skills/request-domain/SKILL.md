@@ -16,10 +16,11 @@ request-domain <domain> [reason]
 request-domain files.pythonhosted.org "pip install needs the PyPI CDN"
 ```
 
-The command returns JSON:
-- `"status":"ok"` — already allowed; retry your request now.
-- `"status":"pending"` — queued for the operator to approve out-of-band. After
-  they approve it, retry your original request. You can re-check with the `id`:
-  `curl -fsS "$SHIPSHAPE_BROKER/status/<id>"`.
+The command **blocks until the operator approves or declines**, then returns:
+- `APPROVED` (exit 0) — the domain is now allow-listed; retry your original request.
+- `DECLINED` (exit 3) — refused; don't retry, choose another approach.
+- `STILL PENDING` (exit 2) — no decision within ~2 min; keep waiting by re-running
+  `await-request <id>` (the id is printed above) — it returns the instant they decide.
 
-Do not try to bypass the proxy; there is no other route out.
+Run it with a generous Bash timeout (e.g. 10 minutes) so it can wait for the decision.
+Don't try to bypass the proxy — there is no other route out.

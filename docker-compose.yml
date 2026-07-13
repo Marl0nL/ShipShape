@@ -61,8 +61,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    tmpfs:
-      - /tmp
+    # No tmpfs on /tmp: Docker mounts tmpfs noexec, which breaks tools that
+    # extract-then-exec a binary from /tmp (treehouse, version probes, etc.).
     mem_limit: 4g
     pids_limit: 512
     depends_on:
