@@ -120,6 +120,25 @@ def cmd_creds(paths: Paths, _args) -> int:
     return 0
 
 
+def cmd_up(paths: Paths, _args) -> int:
+    print("booting stack (first run builds images — can take a few minutes)…")
+    r = docker_ops.compose(paths.root, ["up", "-d"], timeout=1800)
+    print(r.output)
+    return 0 if r.ok else 1
+
+
+def cmd_down(paths: Paths, _args) -> int:
+    r = docker_ops.compose(paths.root, ["down"], timeout=180)
+    print(r.output or "stack down")
+    return 0 if r.ok else 1
+
+
+def cmd_status(paths: Paths, _args) -> int:
+    r = docker_ops.compose(paths.root, ["ps"], timeout=30)
+    print(r.output)
+    return 0 if r.ok else 1
+
+
 def cmd_reload(_paths: Paths, _args) -> int:
     if not docker_ops.container_running():
         print("egress-proxy is not running", file=sys.stderr)
@@ -279,6 +298,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("pending", help="show pending denials")
     sp.add_argument("--scan", type=int, default=0, metavar="N", help="scan last N log lines first")
     sp.set_defaults(fn=cmd_pending)
+    sub.add_parser("up", help="boot the stack (docker compose up -d)").set_defaults(fn=cmd_up)
+    sub.add_parser("down", help="tear down the stack (docker compose down)").set_defaults(fn=cmd_down)
+    sub.add_parser("status", help="show stack status (docker compose ps)").set_defaults(fn=cmd_status)
     sub.add_parser("reload", help="squid -k reconfigure").set_defaults(fn=cmd_reload)
     sub.add_parser("refresh-gcp", help="mint + inject a fresh GCP SA key").set_defaults(fn=cmd_refresh_gcp)
     sub.add_parser("creds", help="show injected credential status").set_defaults(fn=cmd_creds)

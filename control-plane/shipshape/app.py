@@ -55,6 +55,7 @@ class ShipShapeApp(App):
         ("y", "cmd_accept", "Accept cmd"),
         ("n", "cmd_decline", "Decline cmd"),
         ("p", "provision", "Provision"),
+        ("u", "stack_up", "Boot stack"),
     ]
 
     def __init__(self, paths: Paths):
@@ -64,7 +65,12 @@ class ShipShapeApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with TabbedContent(initial="pending"):
+        with TabbedContent(initial="stack"):
+            with TabPane("Stack", id="stack"):
+                yield Static("", id="stack_status")
+                with Horizontal():
+                    yield Button("Boot (u)", id="stack_up", variant="success")
+                    yield Button("Shut down", id="stack_down", variant="error")
             with TabPane("Pending", id="pending"):
                 yield DataTable(id="pending_table", cursor_type="row")
             with TabPane("Allow-list", id="allowlist"):
@@ -100,6 +106,7 @@ class ShipShapeApp(App):
         self._reload_allowlist()
         self._refresh_creds()
         self._reload_provision()
+        self._reload_stack()
         self._harvest()
         self._spool_watch()
 
@@ -180,13 +187,42 @@ class ShipShapeApp(App):
             self.action_gen_otp()
         elif event.button.id == "prov_apply":
             self.action_provision()
+        elif event.button.id == "stack_up":
+            self.action_stack_up()
+        elif event.button.id == "stack_down":
+            self._status("shutting down stack…")
+            self._do_stack("down")
 
     def action_refresh(self) -> None:
         self.store.load()
         self._refresh_pending()
+        self._refresh_commands()
         self._reload_allowlist()
         self._refresh_creds()
+        self._reload_provision()
+        self._reload_stack()
         self._status("refreshed")
+
+    # --- stack tab ---
+    def _reload_stack(self) -> None:
+        r = docker_ops.compose(self.paths.root, ["ps"], timeout=20)
+        self.query_one("#stack_status", Static).update(
+            r.output.strip() or "(stack not running — press 'u' to boot)"
+        )
+
+    def action_stack_up(self) -> None:
+        self._status("booting stack (first run builds images — can take minutes)…")
+        self._do_stack("up")
+
+    @work(thread=True, exclusive=True)
+    def _do_stack(self, action: str) -> None:
+        if action == "up":
+            r = docker_ops.compose(self.paths.root, ["up", "-d"], timeout=1800)
+        else:
+            r = docker_ops.compose(self.paths.root, ["down"], timeout=180)
+        msg = f"stack {action}: {'ok' if r.ok else 'FAILED ' + r.output[:120]}".replace("\n", " ")
+        self.call_from_thread(self._status, msg)
+        self.call_from_thread(self._reload_stack)
 
     # --- credentials tab ---
     def _refresh_creds(self) -> None:
