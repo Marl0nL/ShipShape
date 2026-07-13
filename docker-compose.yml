@@ -1,0 +1,82 @@
+# ShipShape — containerised agent sandbox with controlled egress.
+#
+# The agent-sandbox has NO route to the internet. Its ONLY path out is the
+# egress-proxy (Squid), which enforces a default-deny domain allow-list. This
+# is fail-closed: a tool that ignores the proxy env vars simply cannot reach
+# the network, rather than silently bypassing the controls.
+#
+# (The obsolete top-level `version:` key has been removed — Compose v2 ignores
+# it and warns.)
+
+services:
+  agent-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    user: "agentdev" # Enforce running as the non-root user
+    environment:
+      # Route proxy-aware tooling through Squid. Set BOTH cases plus NO_PROXY —
+      # coverage of upper/lower-case varies across git, pip, apt, gcloud, gh…
+      - HTTP_PROXY=http://egress-proxy:3128
+      - HTTPS_PROXY=http://egress-proxy:3128
+      - http_proxy=http://egress-proxy:3128
+      - https_proxy=http://egress-proxy:3128
+      - NO_PROXY=localhost,127.0.0.1,egress-proxy,control-plane,.local
+      - no_proxy=localhost,127.0.0.1,egress-proxy,control-plane,.local
+      # gcloud and the Google SDKs auto-detect this.
+      - GOOGLE_APPLICATION_CREDENTIALS=/auth/gcp-sa.json
+      # NOTE: environment-variable credentials CANNOT be rotated in a running
+      # container. The daily-key feature injects FILE-based creds into /auth
+      # instead (see the control plane). Treat GH_TOKEN here as a bootstrap only.
+      - GH_TOKEN=${GITHUB_FINE_GRAINED_TOKEN:-}
+    volumes:
+      # Mount your firstmate projects so they persist
+      - ./firstmate-data:/home/agentdev/firstmate
+      # Rotatable credential drop. Daily keys land here; read-only to the agent.
+      - ./auth:/auth:ro
+    networks:
+      - isolated_agent_net
+    # --- Container hardening ---
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    mem_limit: 4g
+    pids_limit: 512
+    depends_on:
+      - egress-proxy
+
+  egress-proxy:
+    # Lightweight Squid image
+    image: b4tman/squid
+    volumes:
+      # Our custom rules (read-only to the container)
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      # Allow-list managed live by the host control plane; Squid only reads it.
+      - ./allowed_domains.txt:/etc/squid/allowed_domains.txt:ro
+    networks:
+      # The proxy is the bridge: isolated net (inbound from agent) AND internet.
+      - isolated_agent_net
+      - internet_access
+    security_opt:
+      - no-new-privileges:true
+    # VPN — Option A (host VPN + host routing):
+    # Squid egresses via the bridge, which is NAT'd through the host's routing
+    # table. A split-tunnel host VPN therefore routes internal subnets for free
+    # whenever it's connected — toggle = connect/disconnect the VPN on the host.
+    # For VPN-only *hostnames*, point Squid at your internal resolver so those
+    # names resolve while the VPN is up:
+    # dns:
+    #   - 10.0.0.53
+    #   - 1.1.1.1
+
+networks:
+  isolated_agent_net:
+    # 'internal: true' blocks all direct outside access. The agent-sandbox
+    # lives ONLY here, so the proxy is its sole route out.
+    internal: true
+  internet_access:
+    # Default bridge (outbound). ONLY the egress-proxy is attached.
+    driver: bridge

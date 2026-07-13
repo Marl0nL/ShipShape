@@ -1,0 +1,4 @@
+# ShipShape agent Python dependencies.
+# Add the packages your agents need here; they are installed at image build
+# time (Dockerfile.agent step 6). Leaving this file comment-only is fine —
+# it just means "no extra Python packages".
