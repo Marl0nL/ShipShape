@@ -15,10 +15,9 @@
 .github.com
 .githubusercontent.com
 
-# --- Google Cloud / gcloud ---
+# --- Google Cloud / gcloud ---  (.googleapis.com covers oauth2/storage/etc.)
 .googleapis.com
 accounts.google.com
-oauth2.googleapis.com
 packages.cloud.google.com
 dl.google.com
 .pkg.dev
@@ -28,7 +27,6 @@ dl.google.com
 pypi.org
 files.pythonhosted.org
 
-# --- Dart / Flutter ---
+# --- Dart / Flutter ---  (storage.googleapis.com covered by .googleapis.com above)
 pub.dev
-storage.googleapis.com
 .gstatic.com

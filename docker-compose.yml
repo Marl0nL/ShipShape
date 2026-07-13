@@ -67,7 +67,10 @@ services:
     # container would be named `shipshape-egress-proxy-1` and the exec would fail.
     container_name: egress-proxy
     volumes:
-      # Our custom rules (static at runtime; single-file mount is fine here)
+      # Squid's own rules. Single-file mount: editing this file needs
+      #   docker compose up -d --force-recreate egress-proxy
+      # to take effect (the mount pins the inode, so `reconfigure` alone won't see
+      # a rewrite). The DYNAMIC allow-list below is dir-mounted so it reloads live.
       - ./squid.conf:/etc/squid/squid.conf:ro
       # Allow-list, managed live by the control plane. This is a DIRECTORY mount,
       # not a single-file mount, on purpose: the control plane replaces the file

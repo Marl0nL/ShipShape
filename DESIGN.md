@@ -238,6 +238,12 @@ Remaining deferred (documented, low priority):
   a health probe verified against the pinned image).
 - **Broad shared-host allows** (`.googleapis.com`) are an exfil surface inherent
   to domain-granular filtering — operator awareness, not a bug.
+- **Editing `squid.conf`** (not the allow-list) needs `docker compose up -d
+  --force-recreate egress-proxy` — the single-file mount pins the inode, so
+  `squid -k reconfigure` alone won't pick up a rewrite. The dynamic allow-list
+  (`./egress`, dir-mounted) reloads live, so this only affects rare `squid.conf`
+  edits. Squid also prints two benign warnings on reconfigure (an ACL
+  self-coverage quirk, and `via off`); both are intentional and non-fatal.
 
 ## Verification
 

@@ -34,7 +34,8 @@ REGISTRY: dict[str, Component] = {
     "flutter": Component(
         "flutter",
         "install-flutter",
-        ["dl.google.com", "storage.googleapis.com", "pub.dev", ".gstatic.com"],
+        # storage.googleapis.com is covered by the baseline .googleapis.com allow.
+        ["dl.google.com", "pub.dev", ".gstatic.com"],
         "flutter --version",
         "Flutter / Dart SDK",
     ),
