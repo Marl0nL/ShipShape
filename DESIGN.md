@@ -300,7 +300,8 @@ Still needs live passes (not runnable without the running stack / real SA):
 - **Broker/skills:** from the agent, `request-domain …`, `request-command "…"`,
   and `refresh-daily-auth <otp>` (after `shipshape otp`); confirm they surface in
   `shipshape`/`shipshape commands` and resolve via the spool.
-- **TUI:** `pipx install ./control-plane && shipshape` (installs Textual) — smoke
-  test the Pending / Allow-list / Commands / Credentials tabs.
+- **Install/TUI:** `./install.sh` (pipx; re-run to update, `--editable` for live dev),
+  then `shipshape` — smoke-test the Stack / Pending / Allow-list / Commands /
+  Credentials / Provision / Images tabs.
 - **adb (Phase 4):** `docker compose --profile adb up -d adb-relay`, host
   `adb -a nodaemon server start`, then in-container `install-adb` + `adb devices`.

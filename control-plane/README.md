@@ -6,10 +6,12 @@ anywhere). See `../DESIGN.md` for the full architecture and phase roadmap.
 
 ## Install
 
+From the repo root (installs the `shipshape` CLI/TUI via pipx):
+
 ```bash
-pipx install ./control-plane      # pulls Textual for the TUI
-# or, for development:
-pip install -e ./control-plane
+./install.sh              # install, or update to the current code (re-run anytime)
+./install.sh --editable   # live/editable install for development
+./install.sh --uninstall  # remove it
 ```
 
 ## Use
