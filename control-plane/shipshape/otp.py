@@ -27,7 +27,9 @@ def _file(state_dir: Path) -> Path:
 
 
 def _hash(salt: str, passphrase: str) -> str:
-    return hashlib.sha256((salt + passphrase).encode()).hexdigest()
+    # PBKDF2 so a weak operator-chosen phrase resists offline cracking if the
+    # (agent-unreachable) state dir ever leaks. Cheap enough for an on-demand OTP.
+    return hashlib.pbkdf2_hmac("sha256", passphrase.encode(), salt.encode(), 200_000).hex()
 
 
 def _write(state_dir: Path, data: dict) -> None:

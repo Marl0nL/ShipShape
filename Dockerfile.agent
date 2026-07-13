@@ -2,7 +2,7 @@
 # Project dev stacks (Flutter, Android/adb, Node, …) are NOT baked in — agents
 # install what they need at runtime via the install-* skills, so one image serves
 # a Python day and a Flutter day without over-provisioning.
-FROM python:3.11-slim-bullseye
+FROM python:3.11-slim-bullseye@sha256:9e25f400253a5fa3191813d6a67eb801ca1e6f012b3bd2588fa6920b59e3eba6
 
 # Avoid user interaction during apt installations
 ENV DEBIAN_FRONTEND=noninteractive
@@ -52,8 +52,11 @@ RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
              /usr/local/bin/refresh-daily-auth /usr/local/bin/install-flutter \
              /usr/local/bin/install-adb
 
-# 4. Non-root user for the agent
-RUN useradd -ms /bin/bash agentdev
+# 4. Non-root user for the agent. UID is a build arg so it can match the host
+#    operator's uid — the injected 0600 /auth files are only readable in-container
+#    if they align (build with:  HOST_UID=$(id -u) docker compose build).
+ARG HOST_UID=1000
+RUN useradd -ms /bin/bash -u ${HOST_UID} agentdev
 USER agentdev
 WORKDIR /home/agentdev
 

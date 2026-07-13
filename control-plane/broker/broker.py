@@ -26,6 +26,7 @@ SPOOL = Path(os.environ.get("SHIPSHAPE_SPOOL", "/spool"))
 PORT = int(os.environ.get("SHIPSHAPE_BROKER_PORT", "8099"))
 POLL_SECONDS = float(os.environ.get("SHIPSHAPE_BROKER_POLL", "8"))
 MAX_BODY = 64 * 1024  # cap per-request body so a hostile agent can't OOM/fill disk
+MAX_PENDING = 512  # cap unresolved requests so a looping agent can't fill host disk
 
 ROUTES = {"/request-domain": "domain", "/request-command": "command", "/refresh-auth": "refresh"}
 
@@ -68,6 +69,13 @@ class Handler(BaseHTTPRequestHandler):
         kind = ROUTES.get(self.path)
         if not kind:
             return self._send(404, {"error": "not found"})
+        reqdir = SPOOL / "req"
+        if reqdir.is_dir():
+            unresolved = sum(
+                1 for f in reqdir.glob("*.json") if not (SPOOL / "resp" / f.name).exists()
+            )
+            if unresolved >= MAX_PENDING:
+                return self._send(429, {"error": "too many pending requests; try later"})
         rid = uuid.uuid4().hex
         _atomic_write(
             SPOOL / "req" / f"{rid}.json",

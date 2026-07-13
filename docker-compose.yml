@@ -10,6 +10,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
+      args:
+        # Match the host operator's uid so the 0600 creds in /auth are readable.
+        HOST_UID: ${HOST_UID:-1000}
     user: "agentdev" # Enforce running as the non-root user
     # Pinned so the control plane can `docker exec agent-sandbox …` (re-activate
     # gcloud after a key rotation). Without it the name is shipshape-agent-sandbox-1.
@@ -56,8 +59,9 @@ services:
       - control-plane
 
   egress-proxy:
-    # Lightweight Squid image
-    image: b4tman/squid
+    # Lightweight Squid image — pinned by digest (the whole isolation guarantee
+    # rests on this image). Re-pin deliberately when you want to update it.
+    image: b4tman/squid@sha256:8addf05f41d03b38cadf48b5a1e70a39a94a57fceffbe6209f56f1572fc20343
     # Pinned name so `docker exec egress-proxy squid -k reconfigure` (used by the
     # control plane to hot-reload the allow-list) resolves — without this the
     # container would be named `shipshape-egress-proxy-1` and the exec would fail.
@@ -116,7 +120,7 @@ services:
   # ONLY thing dual-homed to the host; a container does not route between its
   # networks, so the agent gains exactly one host port — not LAN/internet access.
   adb-relay:
-    image: alpine/socat:latest
+    image: alpine/socat@sha256:d85531a29ef5ba99dfb4717485c239307e2902d522a1bc010992a2728c92cfad
     container_name: adb-relay
     profiles: ["adb"]
     command: TCP-LISTEN:5037,fork,reuseaddr TCP:host.docker.internal:5037

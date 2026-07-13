@@ -18,6 +18,11 @@ from pathlib import Path
 
 SENTINEL = "#SS-OFF#"
 APPROVED_HEADER = "# --- Approved via control plane ---"
+# A never-match token written only when every domain is disabled, so Squid's
+# external ACL file is never empty (an empty dstdomain file makes reconfigure
+# fail). It matches no real host, so egress stays fully denied. It lives only in
+# the written file, never in the in-memory model (parse drops it).
+PLACEHOLDER = "disabled.invalid"
 
 
 @dataclass
@@ -43,6 +48,8 @@ class Allowlist:
         lines: list[Line] = []
         for raw in text.splitlines():
             s = raw.strip()
+            if s == PLACEHOLDER or s == f"{SENTINEL} {PLACEHOLDER}":
+                continue  # save-time artifact (see render); never a real entry
             if s.startswith(SENTINEL):
                 rest = s[len(SENTINEL):].strip()
                 # Only a single bare token is a disabled entry; "#SS-OFF# note: …"
@@ -98,7 +105,13 @@ class Allowlist:
 
     # --- serialisation ---
     def render(self) -> str:
-        return "\n".join(ln.render() for ln in self.lines) + "\n"
+        body = [ln.render() for ln in self.lines]
+        if not self.enabled_domains():
+            # Nothing enabled: append a never-match token so Squid's external ACL
+            # file is non-empty (empty -> reconfigure fails) while egress stays
+            # denied. Emit ONLY the token so parse drops it and the file round-trips.
+            body.append(PLACEHOLDER)
+        return "\n".join(body) + "\n"
 
     def save(self, path: Path | None = None) -> Path:
         """Atomically write the file, keeping a .bak rollback copy."""

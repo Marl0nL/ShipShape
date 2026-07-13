@@ -219,32 +219,25 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
 
 ## Known limitations / deferred (from the code review)
 
-Fixed already: reprocess-loop + path-traversal via spool id, cross-thread store
+Fixed: reprocess-loop + path-traversal via spool id, cross-thread store
 clobbering, command double-run, GCP failed-delete accounting + activation check +
 concurrency lock, harvester crash on bad port, sentinel-comment promotion, broker
 body cap, command-display sanitization, SSRF `deny to_localhost`, `.env` in
-`.dockerignore`, `pip --user`, egress-proxy resource limits.
+`.dockerignore`, `pip --user`, egress-proxy resource limits, **all images pinned
+by digest**, **configurable `HOST_UID` build arg** (key readability), **empty-all
+placeholder** (full lock-down without Squid rejecting an empty ACL), **broker
+pending-count cap**, **OTP hashed with PBKDF2** (200k iters).
 
-Deferred (documented, lower priority):
-- **Pin images by digest** — `b4tman/squid`, `alpine/socat:latest`, and the
-  `python:*-slim` bases are unpinned; the isolation rests on the squid image, so
-  pin it by `@sha256:…`.
-- **UID alignment** — the injected key is `0600` and read in-container as
-  `agentdev` (uid 1000); on a host whose operator uid ≠ 1000 the key is unreadable
-  (activation/ADC silently skip). Deployment precondition; align uids if needed.
-- **Disabling *every* allow-list domain** may make Squid reject the empty external
-  ACL (reconfigure fails → rollback), so full lock-down via the list needs ≥1
-  entry. Broad shared-host allows (`.googleapis.com`, `storage.googleapis.com`)
-  remain an exfil surface inherent to domain-granular filtering.
-- **Spool request count** is unbounded (per-request size is capped) — a prune/cap
-  in the watcher is future work.
-- **Single-process assumption** — running the TUI and `shipshape watch` at once
-  can race the OTP/store read-modify-writes (stores now reload-before-mutate, but
-  there's no cross-process lock). OTP passphrase currently rides in argv (visible
-  in the container's `/proc`) and is hashed with single-round salted SHA-256 (fine
-  for the generated phrase; weak operator phrases are only bounded by TTL + single
-  use + rate-limit).
-- **Healthcheck ordering** — `depends_on` doesn't wait for Squid readiness.
+Remaining deferred (documented, low priority):
+- **Cross-process lock** — running the TUI and `shipshape watch` at once can race
+  the OTP/store read-modify-writes (stores reload-before-mutate, but there's no
+  cross-process lock). Run one or the other. `creds` refreshes are process-locked.
+- **OTP passphrase in argv** — `refresh-daily-auth <passphrase>` puts it in the
+  container's `/proc`; acceptable for a single-tenant sandbox.
+- **Healthcheck ordering** — `depends_on` doesn't wait for Squid readiness (needs
+  a health probe verified against the pinned image).
+- **Broad shared-host allows** (`.googleapis.com`) are an exfil surface inherent
+  to domain-granular filtering — operator awareness, not a bug.
 
 ## Verification
 
