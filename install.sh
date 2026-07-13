@@ -46,9 +46,12 @@ if ! command -v pipx >/dev/null 2>&1; then
     || die "could not install pipx automatically; install it (e.g. 'sudo apt install pipx') and re-run"
 fi
 
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/shipshape"
+
 if [ "$MODE" = "uninstall" ]; then
   log "removing $BIN"
   pipx uninstall "$APP" 2>/dev/null || warn "$BIN was not installed via pipx"
+  rm -f "$CONF_DIR/root"
   exit 0
 fi
 
@@ -57,6 +60,11 @@ log "installing/updating '$BIN' from $PKG_DIR${EDITABLE:+ (editable)}"
 # rebuilding from the current repo code on every run.
 pipx install --force ${EDITABLE:+$EDITABLE} "$PKG_DIR"
 pipx ensurepath >/dev/null 2>&1 || true
+
+# Record the repo root so `shipshape` works from ANY directory (find_root() falls
+# back to this when you're not inside the repo and SHIPSHAPE_ROOT isn't set).
+mkdir -p "$CONF_DIR" && printf '%s\n' "$SCRIPT_DIR" > "$CONF_DIR/root"
+log "recorded repo root ($SCRIPT_DIR) — '$BIN' will work from any directory"
 
 if command -v "$BIN" >/dev/null 2>&1; then
   log "$BIN installed at $(command -v "$BIN")"
@@ -71,10 +79,8 @@ Run it:
   $BIN                 # launch the TUI (Stack tab: boot, quick-start firstmate, shell…)
   $BIN up | status | images | quickstart | list | provision <component>
 
-Note: '$BIN' locates this repo by walking up from your current directory (it needs
-docker-compose.yml + egress/). Run it from:
-  $SCRIPT_DIR
-or set once in your shell rc:  export SHIPSHAPE_ROOT="$SCRIPT_DIR"
+Note: '$BIN' now works from any directory (the repo root was recorded above).
+Precedence: \$SHIPSHAPE_ROOT  >  a repo you're cd'd inside  >  the recorded root.
 
 To update after code changes: re-run ./install.sh  (or use --editable once for live edits).
 EOF

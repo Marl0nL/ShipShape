@@ -26,8 +26,16 @@ def find_root() -> Path:
     for d in (cur, *cur.parents):
         if (d / "docker-compose.yml").is_file() and (d / "egress").is_dir():
             return d
+
+    # Fall back to the root recorded by install.sh, so `shipshape` runs from anywhere.
+    conf = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "shipshape" / "root"
+    if conf.is_file():
+        root = Path(conf.read_text().strip()).expanduser()
+        if (root / "docker-compose.yml").is_file():
+            return root
+
     raise SystemExit(
-        "Could not locate the ShipShape root. Run from inside the repo, "
+        "Could not locate the ShipShape root. Re-run ./install.sh, cd into the repo, "
         "or set SHIPSHAPE_ROOT=/path/to/ShipShape."
     )
 
