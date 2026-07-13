@@ -42,10 +42,13 @@ def logs_tail(name: str = PROXY, n: int = 2000) -> Result:
     return run(["docker", "logs", f"--tail={n}", name], timeout=20)
 
 
-def compose(root, args: list[str], timeout: int = 1800) -> Result:
+def compose(root, args: list[str], timeout: int = 1800, image: str | None = None) -> Result:
     """Run `docker compose` for the ShipShape project. Passes HOST_UID so a build
-    matches the host operator's uid (keeps the 0600 /auth creds readable)."""
+    matches the host operator's uid (keeps the 0600 /auth creds readable), and
+    SHIPSHAPE_AGENT_IMAGE so `up` runs the selected snapshot tag."""
     env = {**os.environ, "HOST_UID": str(os.getuid())}
+    if image:
+        env["SHIPSHAPE_AGENT_IMAGE"] = image
     cmd = ["docker", "compose", "-f", f"{root}/docker-compose.yml", *args]
     try:
         p = subprocess.run(
@@ -58,6 +61,37 @@ def compose(root, args: list[str], timeout: int = 1800) -> Result:
         return Result(False, f"timed out after {timeout}s")
     except OSError as e:
         return Result(False, str(e))
+
+
+def open_terminal(container: str = "agent-sandbox", inner: str | None = None) -> Result:
+    """Open a container shell (or `bash -lc <inner>`) in a NEW terminal window so the
+    operator can keep the control plane visible. $SHIPSHAPE_TERMINAL overrides the
+    auto-detected emulator; falls back to a message with the manual command."""
+    import shutil as _sh
+
+    exec_cmd = ["docker", "exec", "-it", container, "/bin/bash"]
+    if inner:
+        exec_cmd += ["-lc", inner]
+    custom = os.environ.get("SHIPSHAPE_TERMINAL")
+    candidates = ([(custom, "--")] if custom else []) + [
+        ("gnome-terminal", "--"), ("konsole", "-e"), ("xfce4-terminal", "-x"),
+        ("xterm", "-e"), ("x-terminal-emulator", "-e"),
+    ]
+    for term, sep in candidates:
+        exe = term.split()[0] if term else ""
+        if not exe or not _sh.which(exe):
+            continue
+        argv = [*term.split(), "--", *exec_cmd] if sep == "--" else [*term.split(), sep, " ".join(exec_cmd)]
+        try:
+            subprocess.Popen(argv, start_new_session=True)
+            return Result(True, f"opened {container} in a new {exe} window")
+        except OSError as e:
+            return Result(False, str(e))
+    return Result(False, f"no terminal emulator found — run: {' '.join(exec_cmd)}")
+
+
+def open_shell(container: str = "agent-sandbox") -> Result:
+    return open_terminal(container)
 
 
 def logs_popen(name: str = PROXY, tail: str = "0") -> subprocess.Popen:

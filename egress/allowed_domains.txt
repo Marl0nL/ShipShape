@@ -23,6 +23,21 @@ dl.google.com
 .pkg.dev
 .gcr.io
 
+# --- Claude Code / Anthropic ---
+api.anthropic.com
+claude.ai
+platform.claude.com
+downloads.claude.ai
+
+# --- Antigravity CLI (agy) — best-effort; may not honor the proxy (see DESIGN.md) ---
+antigravity.google
+antigravity-unleash.goog
+antigravity-cli-auto-updater-974169037036.us-central1.run.app
+# (Google API + accounts.google.com are already covered above.)
+
+# --- npm registry (runtime `npm i -g` by agents) ---
+registry.npmjs.org
+
 # --- Python / PyPI ---
 pypi.org
 files.pythonhosted.org

@@ -20,3 +20,5 @@ __pycache__/
 *.pyc
 control-plane/.venv/
 control-plane/*.egg-info/
+control-plane/build/
+control-plane/dist/

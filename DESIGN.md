@@ -217,6 +217,33 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
 - Refactor: the allow-list apply/reload (with rollback) moved to `egress.apply`,
   shared by the CLI, TUI, and provisioner.
 
+### Phase 6 — firstmate-ready image, snapshots, quick-start  ✅ built (agent image needs a live build/smoke-test)
+- **Image bake (`Dockerfile.agent`)**: tmux, jq, node, gh, gcloud + the **Claude Code
+  CLI** (honors HTTP(S)_PROXY), **herdr** (firstmate's backend), the **Antigravity CLI**
+  (`agy`, best-effort), and a clone of the user's firstmate fork
+  (`github.com/Marl0nL/firstmate`) at `~/firstmate` (defaulted to `backend=herdr` /
+  `crew-harness=claude`), plus firstmate's bootstrap toolchain (treehouse,
+  no-mistakes, *-axi). Peripheral installers are tolerant (`|| WARN`) so one flaky
+  upstream can't fail the build. Project dev stacks (Flutter/adb) stay runtime-installed.
+- **Allow-list** adds `api.anthropic.com` / `claude.ai` / `platform.claude.com` /
+  `downloads.claude.ai`, the Antigravity domains, and `registry.npmjs.org`.
+- **Snapshot & relaunch (`images.py`)**: `shipshape snapshot <tag>` docker-commits the
+  running agent container to `shipshape-agent:<tag>`; `images` lists them; `use <tag>`
+  sets the active tag; `up` boots it (compose `image: ${SHIPSHAPE_AGENT_IMAGE:-shipshape-agent:base}`).
+  TUI **Images** tab mirrors this. This is how runtime-installed state is persisted.
+- **Quick-start firstmate (`firstmate.py`)**: boot the active image → copy the host's
+  `~/.claude/.credentials.json` in (chowned) with `CLAUDE_CODE_OAUTH_TOKEN` as fallback
+  → open a live `claude` session in `~/firstmate` in a new terminal window. CLI
+  `quickstart`; TUI button / `f`.
+- **In-container shell**: `shipshape shell [container]` and a TUI **Shell (t)** button
+  that opens `docker exec -it` in a new gnome-terminal window (`$SHIPSHAPE_TERMINAL`
+  overrides).
+- **Auto-refresh**: the TUI reloads queues/creds every 5s (+ a header heartbeat) and on
+  every action, so live changes are visible without pressing `r`.
+- **firstmate program vs data**: the fork is baked at `~/firstmate`; the persistent mount
+  moved to `~/work` so it doesn't shadow the clone. firstmate's own state is ephemeral per
+  container — snapshot to persist a configured image.
+
 ## Known limitations / deferred (from the code review)
 
 Fixed: reprocess-loop + path-traversal via spool id, cross-thread store
@@ -238,6 +265,16 @@ Remaining deferred (documented, low priority):
   a health probe verified against the pinned image).
 - **Broad shared-host allows** (`.googleapis.com`) are an exfil surface inherent
   to domain-granular filtering — operator awareness, not a bug.
+- **Agent image is unbuilt here** — `Dockerfile.agent` bakes many external installers
+  (claude.ai, herdr.dev, antigravity.google, treehouse/no-mistakes, npm *-axi) that can
+  only be validated by a live `docker compose build`. herdr's Linux install and the `agy`
+  binary especially need a smoke test; reproducible pinning of those is future work.
+- **Antigravity (`agy`) may not work behind Squid** — documented history of ignoring
+  HTTP(S)_PROXY on Linux (gRPC dialers bypass it), background self-update, and keyring
+  token storage the container lacks. Baked best-effort; verify end-to-end before relying on it.
+- **Claude credentials in the sandbox** — quick-start copies the operator's Claude OAuth
+  (and passes `CLAUDE_CODE_OAUTH_TOKEN`), so the autonomous agent runs as the operator's
+  Claude account. Accepted tradeoff for convenience.
 - **Editing `squid.conf`** (not the allow-list) needs `docker compose up -d
   --force-recreate egress-proxy` — the single-file mount pins the inode, so
   `squid -k reconfigure` alone won't pick up a rewrite. The dynamic allow-list

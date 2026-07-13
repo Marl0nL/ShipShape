@@ -7,6 +7,9 @@
 
 services:
   agent-sandbox:
+    # Relaunch a saved snapshot by setting SHIPSHAPE_AGENT_IMAGE=shipshape-agent:<tag>.
+    # `docker compose build` builds + tags shipshape-agent:base; `up` runs the selected tag.
+    image: ${SHIPSHAPE_AGENT_IMAGE:-shipshape-agent:base}
     build:
       context: .
       dockerfile: Dockerfile.agent
@@ -38,9 +41,17 @@ services:
       # GitHub auth is FILE-based (/auth/gh-token), NOT an env var: env vars can't
       # be rotated in a running container, and a set GH_TOKEN would SHADOW the
       # file. Drop a fine-grained PAT into ./auth/gh-token (see auth/README.md).
+      # Claude Code honors HTTP(S)_PROXY. Auth = copied ~/.claude/.credentials.json
+      # (quick-start) with this token as fallback; telemetry off so it needs no
+      # egress beyond api.anthropic.com / claude.ai / platform.claude.com.
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
+      - DISABLE_TELEMETRY=1
+      - DISABLE_ERROR_REPORTING=1
     volumes:
-      # Mount your firstmate projects so they persist
-      - ./firstmate-data:/home/agentdev/firstmate
+      # Persistent work/projects dir — kept separate from the baked ~/firstmate clone
+      # so the mount doesn't shadow it. firstmate's own state is ephemeral per
+      # container; snapshot the container (`shipshape snapshot <tag>`) to persist it.
+      - ./firstmate-data:/home/agentdev/work
       # Rotatable credential drop. Daily creds land here; read-only to the agent.
       - ./auth:/auth:ro
     networks:

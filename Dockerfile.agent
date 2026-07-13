@@ -1,19 +1,31 @@
-# Lean base: framework plumbing only (proxy-aware tooling, gcloud/gh, git, python).
-# Project dev stacks (Flutter, Android/adb, Node, …) are NOT baked in — agents
-# install what they need at runtime via the install-* skills, so one image serves
-# a Python day and a Flutter day without over-provisioning.
+# ShipShape agent image — firstmate-ready.
+#
+# The base still installs on-demand for project dev stacks (Flutter/adb via the
+# install-* skills), but the firstmate orchestration toolchain + coding-agent CLIs
+# the user asked for are baked in: tmux, herdr, node, jq, gh, the Claude Code CLI,
+# the Antigravity CLI, and a clone of the user's firstmate fork.
+#
+# "Best-effort" installs (herdr, antigravity, treehouse/no-mistakes, *-axi) are
+# tolerant (|| true) so one flaky upstream installer can't break the whole image;
+# check the build log for any that warned. Reproducible pinning of those is future
+# work. This image MUST be built + smoke-tested live (many network installs).
 FROM python:3.11-slim-bullseye@sha256:9e25f400253a5fa3191813d6a67eb801ca1e6f012b3bd2588fa6920b59e3eba6
 
-# Avoid user interaction during apt installations
 ENV DEBIAN_FRONTEND=noninteractive
+# User-installed CLIs (claude, herdr, agy, treehouse, no-mistakes, npm globals) land here.
+ENV PATH="/home/agentdev/.local/bin:${PATH}"
 
-# 1. Minimal system tooling to bootstrap runtime installs + the auth/egress flow.
+# 1. System tooling: bootstrap essentials + firstmate deps (tmux/jq), all baked.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git unzip xz-utils gnupg \
+    ca-certificates curl git unzip xz-utils gnupg tmux jq procps \
     && rm -rf /var/lib/apt/lists/*
 
+# 1b. Node.js (firstmate + the *-axi tooling need it) via NodeSource.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
 # 2. Google Cloud CLI (the auth flow activates the injected SA key on start).
-# (apt-key is deprecated; dearmor the key into a dedicated keyring instead.)
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
     apt-get update && apt-get install -y --no-install-recommends google-cloud-cli && \
@@ -26,8 +38,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
     apt-get update && apt-get install -y --no-install-recommends gh && \
     rm -rf /var/lib/apt/lists/*
 
-# 3b. File-based GitHub auth glue so a rotated /auth/gh-token is picked up LIVE
-#     (an env var cannot be refreshed in a running container).
+# 3b. File-based GitHub auth glue so a rotated /auth/gh-token is picked up LIVE.
 RUN printf '%s\n' '#!/bin/sh' \
       'if [ -r /auth/gh-token ]; then GH_TOKEN="$(cat /auth/gh-token)"; export GH_TOKEN; fi' \
       'exec /usr/bin/gh "$@"' > /usr/local/bin/gh && \
@@ -35,8 +46,7 @@ RUN printf '%s\n' '#!/bin/sh' \
     git config --system credential."https://github.com".helper \
       '!f() { echo username=x-access-token; echo "password=$(cat /auth/gh-token 2>/dev/null)"; }; f'
 
-# 3c. Entrypoint: activate the injected GCP SA key on start so BOTH the gcloud CLI
-#     and client-library ADC (GOOGLE_APPLICATION_CREDENTIALS) work from one file.
+# 3c. Entrypoint: activate the injected GCP SA key on start (serves gcloud + ADC).
 RUN printf '%s\n' '#!/bin/sh' \
       'if [ -r /auth/gcp-sa.json ]; then' \
       '  gcloud auth activate-service-account --key-file=/auth/gcp-sa.json >/dev/null 2>&1 || true' \
@@ -44,27 +54,45 @@ RUN printf '%s\n' '#!/bin/sh' \
       'exec "$@"' > /usr/local/bin/agent-entrypoint && \
     chmod +x /usr/local/bin/agent-entrypoint
 
-# 3d. Control-plane client commands (talk to the in-container broker) + runtime
-#     component installers. Tiny shell scripts; the dev stacks they fetch are
-#     installed on demand, never baked into the image.
+# 3d. Control-plane client commands + runtime component installers.
 COPY agent-bin/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
              /usr/local/bin/refresh-daily-auth /usr/local/bin/install-flutter \
              /usr/local/bin/install-adb
 
-# 4. Non-root user for the agent. UID is a build arg so it can match the host
-#    operator's uid — the injected 0600 /auth files are only readable in-container
-#    if they align (build with:  HOST_UID=$(id -u) docker compose build).
+# 4. Non-root user (UID configurable so the 0600 /auth creds are readable).
 ARG HOST_UID=1000
 RUN useradd -ms /bin/bash -u ${HOST_UID} agentdev
 USER agentdev
 WORKDIR /home/agentdev
 
-# 4b. Make the ShipShape skills discoverable to the in-container Claude agent.
+# 4b. ShipShape skills, discoverable by the in-container Claude agent.
 COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
 
-# 5. Optional base Python deps (add your own to requirements.txt).
-#    --user: install into agentdev's home (non-root can't write system site-packages).
+# 4c. npm global prefix in $HOME so `npm i -g` works as non-root.
+RUN npm config set prefix /home/agentdev/.local
+
+# 5. Coding-agent CLIs (user-space).
+#    Claude Code — honors HTTP(S)_PROXY; auth via copied creds or CLAUDE_CODE_OAUTH_TOKEN.
+RUN curl -fsSL https://claude.ai/install.sh | bash
+#    herdr — firstmate's agent-native terminal multiplexer backend (herdr.dev).
+RUN curl -fsSL https://herdr.dev/install.sh | sh || echo "WARN: herdr install failed (best-effort)"
+#    Antigravity CLI (agy) — BEST-EFFORT: documented to ignore HTTP(S)_PROXY on Linux,
+#    self-updates, and uses a keyring the container lacks. May not work behind Squid.
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash || echo "WARN: antigravity (agy) install failed (best-effort)"
+
+# 6. firstmate — cloned from the user's fork, defaulted to the herdr backend + claude harness.
+RUN git clone --depth 1 https://github.com/Marl0nL/firstmate.git /home/agentdev/firstmate && \
+    mkdir -p /home/agentdev/firstmate/config && \
+    printf 'herdr\n' > /home/agentdev/firstmate/config/backend && \
+    printf 'claude\n' > /home/agentdev/firstmate/config/crew-harness
+# 6b. firstmate bootstrap toolchain (best-effort; fm-bootstrap reports any that are missing).
+RUN curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh || echo "WARN: treehouse install failed" ; \
+    curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh || echo "WARN: no-mistakes install failed"
+RUN npm install -g gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi || echo "WARN: *-axi npm install failed" ; \
+    for t in gh-axi chrome-devtools-axi lavish-axi; do "$t" setup hooks >/dev/null 2>&1 || true; done
+
+# 7. Optional base Python deps.
 COPY --chown=agentdev:agentdev requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 

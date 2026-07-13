@@ -16,11 +16,12 @@ Verified, scriptable interface over the same core the TUI uses:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 
 from . import commands as cmds
-from . import components, creds, docker_ops, egress, otp, spool, watcher
+from . import components, creds, docker_ops, egress, firstmate, images, otp, spool, watcher
 from .allowlist import Allowlist
 from .config import Config, Paths
 from .harvester import parse_line
@@ -121,10 +122,41 @@ def cmd_creds(paths: Paths, _args) -> int:
 
 
 def cmd_up(paths: Paths, _args) -> int:
-    print("booting stack (first run builds images — can take a few minutes)…")
-    r = docker_ops.compose(paths.root, ["up", "-d"], timeout=1800)
+    img = images.active(paths)
+    print(f"booting stack (image {img}; first run builds — can take a few minutes)…")
+    r = docker_ops.compose(paths.root, ["up", "-d"], image=img, timeout=1800)
     print(r.output)
     return 0 if r.ok else 1
+
+
+def cmd_snapshot(_paths: Paths, args) -> int:
+    r = images.snapshot(args.tag)
+    print(r.output or ("snapshot saved" if r.ok else "failed"))
+    return 0 if r.ok else 1
+
+
+def cmd_images(paths: Paths, _args) -> int:
+    act = images.active(paths)
+    snaps = images.snapshots()
+    if not snaps:
+        print("(no shipshape-agent images yet — build the stack, then `snapshot <tag>`)")
+        return 0
+    for s in snaps:
+        mark = "* " if f"{images.PREFIX}:{s['tag']}" == act else "  "
+        print(f"{mark}{s['tag']:<20} {s['size']:<10} {s['created']}")
+    print(f"\nactive: {act}")
+    return 0
+
+
+def cmd_use(paths: Paths, args) -> int:
+    print(f"active image set to {images.set_active(paths, args.tag)} (applies on next `shipshape up`)")
+    return 0
+
+
+def cmd_quickstart(paths: Paths, _args) -> int:
+    ok, msg = firstmate.quick_start(paths, Config.load(paths.root))
+    print(msg)
+    return 0 if ok else 1
 
 
 def cmd_down(paths: Paths, _args) -> int:
@@ -137,6 +169,12 @@ def cmd_status(paths: Paths, _args) -> int:
     r = docker_ops.compose(paths.root, ["ps"], timeout=30)
     print(r.output)
     return 0 if r.ok else 1
+
+
+def cmd_shell(_paths: Paths, args) -> int:
+    # hand off the terminal to an interactive shell in the container
+    os.execvp("docker", ["docker", "exec", "-it", args.container, "/bin/bash"])
+    return 0  # unreachable (execvp replaces the process)
 
 
 def cmd_reload(_paths: Paths, _args) -> int:
@@ -301,6 +339,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("up", help="boot the stack (docker compose up -d)").set_defaults(fn=cmd_up)
     sub.add_parser("down", help="tear down the stack (docker compose down)").set_defaults(fn=cmd_down)
     sub.add_parser("status", help="show stack status (docker compose ps)").set_defaults(fn=cmd_status)
+    sp = sub.add_parser("snapshot", help="save the running agent container as shipshape-agent:<tag>")
+    sp.add_argument("tag")
+    sp.set_defaults(fn=cmd_snapshot)
+    sub.add_parser("images", help="list saved agent image snapshots").set_defaults(fn=cmd_images)
+    sp = sub.add_parser("use", help="select which image tag `up` boots")
+    sp.add_argument("tag")
+    sp.set_defaults(fn=cmd_use)
+    sub.add_parser("quickstart", help="boot + inject Claude creds + open a firstmate claude session").set_defaults(fn=cmd_quickstart)
+    sp = sub.add_parser("shell", help="open an interactive shell in a container")
+    sp.add_argument("container", nargs="?", default="agent-sandbox")
+    sp.set_defaults(fn=cmd_shell)
     sub.add_parser("reload", help="squid -k reconfigure").set_defaults(fn=cmd_reload)
     sub.add_parser("refresh-gcp", help="mint + inject a fresh GCP SA key").set_defaults(fn=cmd_refresh_gcp)
     sub.add_parser("creds", help="show injected credential status").set_defaults(fn=cmd_creds)

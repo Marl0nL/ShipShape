@@ -22,6 +22,7 @@ from textual.widgets import (
     DataTable,
     Footer,
     Header,
+    Input,
     SelectionList,
     Static,
     TabbedContent,
@@ -30,7 +31,7 @@ from textual.widgets import (
 from textual.widgets.selection_list import Selection
 
 from . import commands as cmds
-from . import components, creds, docker_ops, egress, otp, spool, watcher
+from . import components, creds, docker_ops, egress, firstmate, images, otp, spool, watcher
 from .allowlist import Allowlist
 from .config import Config, Paths
 from .harvester import parse_line
@@ -56,6 +57,8 @@ class ShipShapeApp(App):
         ("n", "cmd_decline", "Decline cmd"),
         ("p", "provision", "Provision"),
         ("u", "stack_up", "Boot stack"),
+        ("t", "shell", "Shell"),
+        ("f", "quickstart", "Quick-start FM"),
     ]
 
     def __init__(self, paths: Paths):
@@ -71,6 +74,8 @@ class ShipShapeApp(App):
                 with Horizontal():
                     yield Button("Boot (u)", id="stack_up", variant="success")
                     yield Button("Shut down", id="stack_down", variant="error")
+                    yield Button("Shell (t)", id="open_shell")
+                    yield Button("Quick-start firstmate (f)", id="quickstart", variant="primary")
             with TabPane("Pending", id="pending"):
                 yield DataTable(id="pending_table", cursor_type="row")
             with TabPane("Allow-list", id="allowlist"):
@@ -94,21 +99,33 @@ class ShipShapeApp(App):
                 yield SelectionList(id="prov_select")
                 with Horizontal():
                     yield Button("Apply (p)", id="prov_apply", variant="primary")
+            with TabPane("Images", id="images"):
+                yield Static("Snapshot the running container to a tag, then boot that "
+                             "tag later. '●' marks the active image.", id="img_help")
+                yield DataTable(id="img_table", cursor_type="row")
+                with Horizontal():
+                    yield Input(placeholder="new snapshot tag", id="snap_name")
+                    yield Button("Snapshot", id="snapshot")
+                    yield Button("Use selected", id="use_image")
         yield Static("", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#pending_table", DataTable).add_columns("hits", "method", "domain")
         self.query_one("#cmd_table", DataTable).add_columns("id", "reason", "command")
+        self.query_one("#img_table", DataTable).add_columns("", "tag", "size", "created")
         self._cmd_rows: list[str] = []
+        self._img_rows: list[str] = []
         self._refresh_pending()
         self._refresh_commands()
         self._reload_allowlist()
         self._refresh_creds()
         self._reload_provision()
         self._reload_stack()
+        self._reload_images()
         self._harvest()
         self._spool_watch()
+        self.set_interval(5.0, self._tick)  # auto-refresh so changes are visible
 
     # --- status helper ---
     def _status(self, msg: str) -> None:
@@ -192,6 +209,19 @@ class ShipShapeApp(App):
         elif event.button.id == "stack_down":
             self._status("shutting down stack…")
             self._do_stack("down")
+        elif event.button.id == "open_shell":
+            self.action_shell()
+        elif event.button.id == "quickstart":
+            self.action_quickstart()
+        elif event.button.id == "use_image":
+            self.action_use_image()
+        elif event.button.id == "snapshot":
+            tag = self.query_one("#snap_name", Input).value.strip()
+            if tag:
+                self._status(f"snapshotting → shipshape-agent:{tag}…")
+                self._do_snapshot(tag)
+            else:
+                self._status("enter a snapshot tag first")
 
     def action_refresh(self) -> None:
         self.store.load()
@@ -202,6 +232,61 @@ class ShipShapeApp(App):
         self._reload_provision()
         self._reload_stack()
         self._status("refreshed")
+
+    def _tick(self) -> None:
+        # Lightweight periodic refresh (every 5s) so the operator sees live changes
+        # without pressing 'r'. File-backed reads only — no docker subprocess here.
+        self._hb = getattr(self, "_hb", 0) + 1
+        self.store.load()
+        self._refresh_pending()
+        self._refresh_commands()
+        self._refresh_creds()
+        self.sub_title = "auto-refresh " + ("●" if self._hb % 2 else "○")
+
+    def action_shell(self) -> None:
+        self._status(docker_ops.open_shell("agent-sandbox").output)
+
+    def action_quickstart(self) -> None:
+        self._status("quick-start firstmate: booting + injecting Claude creds…")
+        self._do_quickstart()
+
+    @work(thread=True, exclusive=True)
+    def _do_quickstart(self) -> None:
+        ok, msg = firstmate.quick_start(self.paths, Config.load(self.paths.root))
+        self.call_from_thread(self._status, ("firstmate: " + msg).replace("\n", " "))
+        self.call_from_thread(self._reload_stack)
+
+    # --- images tab (snapshot & relaunch) ---
+    def _reload_images(self) -> None:
+        table = self.query_one("#img_table", DataTable)
+        table.clear()
+        self._img_rows = []
+        act = images.active(self.paths)
+        for s in images.snapshots():
+            mark = "●" if f"{images.PREFIX}:{s['tag']}" == act else ""
+            table.add_row(mark, s["tag"], s["size"], s["created"])
+            self._img_rows.append(s["tag"])
+
+    def _selected_image(self) -> str | None:
+        table = self.query_one("#img_table", DataTable)
+        if not self._img_rows or table.cursor_row is None:
+            return None
+        if 0 <= table.cursor_row < len(self._img_rows):
+            return self._img_rows[table.cursor_row]
+        return None
+
+    def action_use_image(self) -> None:
+        tag = self._selected_image()
+        if tag:
+            self._status(f"active image → {images.set_active(self.paths, tag)} (applies on next boot)")
+            self._reload_images()
+
+    @work(thread=True)
+    def _do_snapshot(self, tag: str) -> None:
+        r = images.snapshot(tag)
+        msg = (f"saved shipshape-agent:{tag}" if r.ok else r.output).replace("\n", " ")
+        self.call_from_thread(self._status, msg)
+        self.call_from_thread(self._reload_images)
 
     # --- stack tab ---
     def _reload_stack(self) -> None:
@@ -217,7 +302,7 @@ class ShipShapeApp(App):
     @work(thread=True, exclusive=True)
     def _do_stack(self, action: str) -> None:
         if action == "up":
-            r = docker_ops.compose(self.paths.root, ["up", "-d"], timeout=1800)
+            r = docker_ops.compose(self.paths.root, ["up", "-d"], image=images.active(self.paths), timeout=1800)
         else:
             r = docker_ops.compose(self.paths.root, ["down"], timeout=180)
         msg = f"stack {action}: {'ok' if r.ok else 'FAILED ' + r.output[:120]}".replace("\n", " ")
