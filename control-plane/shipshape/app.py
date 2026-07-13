@@ -79,6 +79,11 @@ class ShipShapeApp(App):
     #status { dock: bottom; height: 1; color: $text-muted; padding: 0 1; }
     DataTable { height: 1fr; }
     SelectionList { height: 1fr; }
+    /* Action rows: fixed height + let each button size to its label, so a row of
+       buttons never clips off the right edge. Constrain the greedy Inputs too. */
+    TabPane Horizontal { height: auto; }
+    TabPane Horizontal Button { width: auto; }
+    #snap_name, #claude_token_input { width: 34; }
     """
     BINDINGS = [
         ("q", "request_quit", "Quit"),
@@ -151,9 +156,10 @@ class ShipShapeApp(App):
                 with Horizontal():
                     yield Input(placeholder="tag / new name", id="snap_name")
                     yield Button("Snapshot", id="snapshot")
-                    yield Button("Use selected", id="use_image")
                     yield Button("Rename→", id="rename_image")
-                    yield Button("Delete", id="delete_image", variant="error")
+                with Horizontal():
+                    yield Button("Use selected", id="use_image")
+                    yield Button("Delete selected", id="delete_image", variant="error")
                     yield Button("Rebuild base", id="rebuild_image", variant="warning")
         yield Static("", id="status")
         yield Footer()
