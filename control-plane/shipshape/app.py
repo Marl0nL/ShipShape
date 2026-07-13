@@ -250,7 +250,7 @@ class ShipShapeApp(App):
         self._status("quick-start firstmate: booting + injecting Claude creds…")
         self._do_quickstart()
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="ops")
     def _do_quickstart(self) -> None:
         ok, msg = firstmate.quick_start(self.paths, Config.load(self.paths.root))
         self.call_from_thread(self._status, ("firstmate: " + msg).replace("\n", " "))
@@ -299,7 +299,7 @@ class ShipShapeApp(App):
         self._status("booting stack (first run builds images — can take minutes)…")
         self._do_stack("up")
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="ops")
     def _do_stack(self, action: str) -> None:
         if action == "up":
             r = docker_ops.compose(self.paths.root, ["up", "-d"], image=images.active(self.paths), timeout=1800)
@@ -397,7 +397,7 @@ class ShipShapeApp(App):
         self._status("applying provisioning (installs can take a while)…")
         self._do_provision(chosen)
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="ops")
     def _do_provision(self, chosen: set) -> None:
         cfg = Config.load(self.paths.root)
         msgs = []
@@ -414,7 +414,7 @@ class ShipShapeApp(App):
         self.call_from_thread(self._reload_allowlist)
 
     # --- background spool watcher (broker requests -> operator queues) ---
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="spool")
     def _spool_watch(self) -> None:
         import time as _t
 
@@ -431,7 +431,7 @@ class ShipShapeApp(App):
             _t.sleep(1)
 
     # --- background harvester ---
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="harvest")
     def _harvest(self) -> None:
         import time
 
