@@ -26,10 +26,15 @@ class Denied:
 def _host_port(target: str) -> tuple[str | None, str | None]:
     if "://" in target:
         u = urlsplit(target)
-        return (u.hostname, str(u.port) if u.port else "80")
+        try:
+            port = u.port  # raises ValueError on a malformed/out-of-range port
+        except ValueError:
+            return (None, None)
+        default = "443" if u.scheme == "https" else "80"
+        return (u.hostname, str(port) if port else default)
     if ":" in target:  # CONNECT host:443
         host, _, port = target.rpartition(":")
-        return (host or None, port)
+        return (host.strip("[]") or None, port)  # strip IPv6 brackets
     return (target or None, None)
 
 

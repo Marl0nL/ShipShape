@@ -66,6 +66,10 @@ def unprocessed_requests(spool: Path) -> list[dict]:
         if resp_path(spool, f.stem).exists():
             continue
         r = read_json(f)
-        if r:
+        if r is not None:
+            # Canonical id = the filename stem. A filename can't contain a path
+            # separator, so this both fixes the reprocess loop (skip-check is keyed
+            # on the stem) and prevents a crafted JSON "id" from escaping spool/.
+            r["id"] = f.stem
             out.append(r)
     return out

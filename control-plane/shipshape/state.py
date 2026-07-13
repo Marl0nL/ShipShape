@@ -22,7 +22,8 @@ class PendingStore:
     def load(self) -> None:
         if self.path.exists():
             try:
-                self.data = json.loads(self.path.read_text())
+                data = json.loads(self.path.read_text())
+                self.data = data if isinstance(data, dict) else {}
             except (json.JSONDecodeError, OSError):
                 self.data = {}
 
@@ -41,6 +42,7 @@ class PendingStore:
         now: float | None = None,
     ) -> None:
         now = time.time() if now is None else now
+        self.load()  # re-read so a concurrent writer (watcher vs harvester) isn't clobbered
         entry = self.data.get(host)
         if entry:
             entry["count"] += 1
@@ -51,17 +53,18 @@ class PendingStore:
             self.data[host] = entry
         if reason:
             entry["reason"] = reason
-        if rid:
-            entry["rid"] = rid  # links a broker request so approval can reply via the spool
+        if rid and "rid" not in entry:
+            entry["rid"] = rid  # first broker requester gets the spool reply on approval
         self.save()
 
     def remove(self, host: str) -> None:
+        self.load()
         if host in self.data:
             del self.data[host]
             self.save()
 
     def items(self) -> list[tuple[str, dict]]:
-        return sorted(self.data.items(), key=lambda kv: kv[1]["last_seen"], reverse=True)
+        return sorted(self.data.items(), key=lambda kv: kv[1].get("last_seen", 0), reverse=True)
 
 
 class CommandStore:
@@ -75,7 +78,8 @@ class CommandStore:
     def load(self) -> None:
         if self.path.exists():
             try:
-                self.data = json.loads(self.path.read_text())
+                data = json.loads(self.path.read_text())
+                self.data = data if isinstance(data, dict) else {}
             except (json.JSONDecodeError, OSError):
                 self.data = {}
 
@@ -87,6 +91,7 @@ class CommandStore:
 
     def add(self, rid: str, command: str, reason: str = "", now: float | None = None) -> None:
         now = time.time() if now is None else now
+        self.load()
         self.data[rid] = {
             "command": command,
             "reason": reason,
@@ -99,7 +104,18 @@ class CommandStore:
     def get(self, rid: str) -> dict | None:
         return self.data.get(rid)
 
+    def claim(self, rid: str) -> bool:
+        """Atomically move a pending command to 'running' (blocks double-execution)."""
+        self.load()
+        entry = self.data.get(rid)
+        if not entry or entry["status"] != "pending":
+            return False
+        entry["status"] = "running"
+        self.save()
+        return True
+
     def edit(self, rid: str, command: str) -> bool:
+        self.load()
         entry = self.data.get(rid)
         if entry and entry["status"] == "pending":
             entry["command"] = command
@@ -108,6 +124,7 @@ class CommandStore:
         return False
 
     def set_result(self, rid: str, status: str, output: str) -> None:
+        self.load()
         entry = self.data.get(rid)
         if entry:
             entry["status"] = status

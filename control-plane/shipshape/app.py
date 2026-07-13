@@ -30,9 +30,8 @@ from textual.widgets import (
 from textual.widgets.selection_list import Selection
 
 from . import commands as cmds
-from . import creds, docker_ops, otp, spool, watcher
+from . import components, creds, docker_ops, egress, otp, spool, watcher
 from .allowlist import Allowlist
-from .cli import _apply
 from .config import Config, Paths
 from .harvester import parse_line
 from .state import CommandStore, PendingStore
@@ -55,6 +54,7 @@ class ShipShapeApp(App):
         ("o", "gen_otp", "New passphrase"),
         ("y", "cmd_accept", "Accept cmd"),
         ("n", "cmd_decline", "Decline cmd"),
+        ("p", "provision", "Provision"),
     ]
 
     def __init__(self, paths: Paths):
@@ -78,6 +78,16 @@ class ShipShapeApp(App):
                 with Horizontal():
                     yield Button("Refresh GCP now (g)", id="refresh_gcp", variant="warning")
                     yield Button("New passphrase (o)", id="gen_otp")
+            with TabPane("Provision", id="provision"):
+                yield Static(
+                    "Check the dev stacks you want, then Apply: enables their egress "
+                    "domains + installs them in the container (unchecking disables the "
+                    "domains it added).",
+                    id="prov_help",
+                )
+                yield SelectionList(id="prov_select")
+                with Horizontal():
+                    yield Button("Apply (p)", id="prov_apply", variant="primary")
         yield Static("", id="status")
         yield Footer()
 
@@ -89,6 +99,7 @@ class ShipShapeApp(App):
         self._refresh_commands()
         self._reload_allowlist()
         self._refresh_creds()
+        self._reload_provision()
         self._harvest()
         self._spool_watch()
 
@@ -98,6 +109,7 @@ class ShipShapeApp(App):
 
     # --- pending tab ---
     def _refresh_pending(self) -> None:
+        self.store.load()  # pick up entries the spool watcher wrote from its own instance
         table = self.query_one("#pending_table", DataTable)
         table.clear()
         for host, e in self.store.items():
@@ -114,7 +126,7 @@ class ShipShapeApp(App):
         entry = self.store.data.get(host)
         al = Allowlist.load(self.paths.allowlist)
         al.add(domain, enabled=True)
-        res = _apply(al)
+        res = egress.apply(al)
         if res.ok:
             if entry and entry.get("rid"):  # a broker request — reply via the spool
                 spool.write_response(
@@ -156,7 +168,7 @@ class ShipShapeApp(App):
         al = Allowlist.load(self.paths.allowlist)
         for ln in al.entries():
             al.set_enabled(ln.domain, ln.domain in chosen)
-        res = _apply(al)
+        res = egress.apply(al)
         self._status(("applied — " + res.output).strip() if res.output else "applied")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -166,6 +178,8 @@ class ShipShapeApp(App):
             self.action_refresh_gcp()
         elif event.button.id == "gen_otp":
             self.action_gen_otp()
+        elif event.button.id == "prov_apply":
+            self.action_provision()
 
     def action_refresh(self) -> None:
         self.store.load()
@@ -213,7 +227,7 @@ class ShipShapeApp(App):
         table.clear()
         self._cmd_rows = []
         for rid, e in CommandStore(self.paths.commands).pending():
-            table.add_row(rid[:8], e.get("reason", ""), e["command"])
+            table.add_row(rid[:8], cmds.sanitize(e.get("reason", "")), cmds.sanitize(e["command"]))
             self._cmd_rows.append(rid)
 
     def _selected_command(self) -> str | None:
@@ -248,6 +262,35 @@ class ShipShapeApp(App):
         phrase = otp.generate(self.paths.state)
         self._status(f"one-time passphrase (single-use, 15m):  {phrase}")
         self._refresh_creds()
+
+    # --- provision tab (init wizard) ---
+    def _reload_provision(self) -> None:
+        sel = self.query_one("#prov_select", SelectionList)
+        sel.clear_options()
+        for s in components.statuses(self.paths, Config.load(self.paths.root)):
+            label = f"{s['name']}  —  {s['description']}"
+            sel.add_option(Selection(label, s["name"], initial_state=s["provisioned"]))
+
+    def action_provision(self) -> None:
+        chosen = set(self.query_one("#prov_select", SelectionList).selected)
+        self._status("applying provisioning (installs can take a while)…")
+        self._do_provision(chosen)
+
+    @work(thread=True, exclusive=True)
+    def _do_provision(self, chosen: set) -> None:
+        cfg = Config.load(self.paths.root)
+        msgs = []
+        for s in components.statuses(self.paths, cfg):
+            name = s["name"]
+            if name in chosen:
+                ok, _ = components.provision(self.paths, cfg, name)
+                msgs.append(f"{name}:{'ok' if ok else 'FAIL'}")
+            elif s["provisioned"]:
+                components.deprovision(self.paths, name)
+                msgs.append(f"{name}:off")
+        self.call_from_thread(self._status, "provision — " + "  ".join(msgs))
+        self.call_from_thread(self._reload_provision)
+        self.call_from_thread(self._reload_allowlist)
 
     # --- background spool watcher (broker requests -> operator queues) ---
     @work(thread=True, exclusive=True)

@@ -8,6 +8,7 @@ DEST="${ANDROID_HOME:-$HOME/android}"
 URL="https://dl.google.com/android/repository/platform-tools-latest-linux.zip"
 mkdir -p "$DEST"
 tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
 curl -fsSL "$URL" -o "$tmp"
 unzip -oq "$tmp" -d "$DEST"
 rm -f "$tmp"

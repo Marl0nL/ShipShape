@@ -8,6 +8,7 @@ this function never runs a command or approves a domain on its own.
 
 from __future__ import annotations
 
+import re
 import time
 
 from . import creds, otp, spool
@@ -20,6 +21,8 @@ def process_once(paths: Paths, cfg: Config) -> int:
     handled = 0
     for req in spool.unprocessed_requests(paths.spool):
         rid = req.get("id", "")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", rid):
+            continue  # id is the trusted filename stem; ignore anything malformed
         kind = req.get("kind", "")
         payload = req.get("payload", {}) or {}
         now = time.time()

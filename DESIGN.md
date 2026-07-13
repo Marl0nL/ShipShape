@@ -203,13 +203,48 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
   connected device (`adb shell` = arbitrary commands on the phone). Toggle off when
   not debugging.
 
-### Phase 5 — Init / provision wizard (planned)
-A TUI wizard that toggles which components get installed into a running container,
-plus the egress domains each needs. Foundation: a **component manifest** (name →
-install command + required domains); enabling a component (a) ensures its domains
-are allow-listed and (b) runs its installer in the container via `docker exec`.
-The wizard is a thin visual layer over `shipshape provision <component>` (to be
-added) and the existing allow-list + install-skill machinery.
+### Phase 5 — Init / provision wizard  ✅ built (CLI tested; TUI tab needs a smoke test)
+- `components.py`: a **component manifest** (`REGISTRY` + `[components.*]` in
+  shipshape.toml) mapping each dev stack to an install command (a PATH command in
+  the agent image) + the egress domains it needs. Builtins: `flutter`, `adb`.
+- `provision(name)`: enables the component's domains (recording only the ones it
+  *newly added*) then runs the installer via `docker exec`. `deprovision(name)`
+  disables exactly those added domains — baseline/shared domains are never touched
+  — without uninstalling.
+- CLI: `shipshape components [--probe]`, `provision <name>`, `deprovision <name>`.
+- TUI **Provision** tab: check the stacks you want → Apply provisions the checked
+  and deprovisions the unchecked (the init wizard).
+- Refactor: the allow-list apply/reload (with rollback) moved to `egress.apply`,
+  shared by the CLI, TUI, and provisioner.
+
+## Known limitations / deferred (from the code review)
+
+Fixed already: reprocess-loop + path-traversal via spool id, cross-thread store
+clobbering, command double-run, GCP failed-delete accounting + activation check +
+concurrency lock, harvester crash on bad port, sentinel-comment promotion, broker
+body cap, command-display sanitization, SSRF `deny to_localhost`, `.env` in
+`.dockerignore`, `pip --user`, egress-proxy resource limits.
+
+Deferred (documented, lower priority):
+- **Pin images by digest** — `b4tman/squid`, `alpine/socat:latest`, and the
+  `python:*-slim` bases are unpinned; the isolation rests on the squid image, so
+  pin it by `@sha256:…`.
+- **UID alignment** — the injected key is `0600` and read in-container as
+  `agentdev` (uid 1000); on a host whose operator uid ≠ 1000 the key is unreadable
+  (activation/ADC silently skip). Deployment precondition; align uids if needed.
+- **Disabling *every* allow-list domain** may make Squid reject the empty external
+  ACL (reconfigure fails → rollback), so full lock-down via the list needs ≥1
+  entry. Broad shared-host allows (`.googleapis.com`, `storage.googleapis.com`)
+  remain an exfil surface inherent to domain-granular filtering.
+- **Spool request count** is unbounded (per-request size is capped) — a prune/cap
+  in the watcher is future work.
+- **Single-process assumption** — running the TUI and `shipshape watch` at once
+  can race the OTP/store read-modify-writes (stores now reload-before-mutate, but
+  there's no cross-process lock). OTP passphrase currently rides in argv (visible
+  in the container's `/proc`) and is hashed with single-round salted SHA-256 (fine
+  for the generated phrase; weak operator phrases are only bounded by TTL + single
+  use + rate-limit).
+- **Healthcheck ordering** — `depends_on` doesn't wait for Squid readiness.
 
 ## Verification
 

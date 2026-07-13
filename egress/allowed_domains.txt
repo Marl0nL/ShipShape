@@ -14,7 +14,6 @@
 # --- GitHub ---
 .github.com
 .githubusercontent.com
-codeload.github.com
 
 # --- Google Cloud / gcloud ---
 .googleapis.com

@@ -25,6 +25,7 @@ from pathlib import Path
 SPOOL = Path(os.environ.get("SHIPSHAPE_SPOOL", "/spool"))
 PORT = int(os.environ.get("SHIPSHAPE_BROKER_PORT", "8099"))
 POLL_SECONDS = float(os.environ.get("SHIPSHAPE_BROKER_POLL", "8"))
+MAX_BODY = 64 * 1024  # cap per-request body so a hostile agent can't OOM/fill disk
 
 ROUTES = {"/request-domain": "domain", "/request-command": "command", "/refresh-auth": "refresh"}
 
@@ -53,7 +54,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_body(self) -> dict:
-        n = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            return {}
+        n = max(0, min(n, MAX_BODY))  # clamp: bounds memory and ignores a negative length
         try:
             return json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:

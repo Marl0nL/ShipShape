@@ -77,6 +77,8 @@ services:
       - internet_access
     security_opt:
       - no-new-privileges:true
+    mem_limit: 512m
+    pids_limit: 256
     # VPN — Option A (host VPN + host routing):
     # Squid egresses via the bridge, which is NAT'd through the host's routing
     # table. A split-tunnel host VPN therefore routes internal subnets for free

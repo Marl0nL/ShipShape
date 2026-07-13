@@ -16,32 +16,15 @@ Verified, scriptable interface over the same core the TUI uses:
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 import time
 
 from . import commands as cmds
-from . import creds, docker_ops, otp, spool, watcher
+from . import components, creds, docker_ops, egress, otp, spool, watcher
 from .allowlist import Allowlist
 from .config import Config, Paths
 from .harvester import parse_line
 from .state import CommandStore, PendingStore
-
-
-def _apply(al: Allowlist) -> docker_ops.Result:
-    """Save the allow-list then hot-reload Squid, rolling back on failure so a
-    bad rule set can never silently take egress down."""
-    al.save()
-    if not docker_ops.container_running():
-        return docker_ops.Result(True, "saved (egress-proxy not running; will apply on next start)")
-    r = docker_ops.reconfigure()
-    if not r.ok and al.path is not None:
-        bak = al.path.with_name(al.path.name + ".bak")
-        if bak.exists():
-            shutil.copy2(bak, al.path)
-            docker_ops.reconfigure()
-        return docker_ops.Result(False, f"reconfigure failed — rolled back:\n{r.output}")
-    return r
 
 
 def _print_result(r: docker_ops.Result) -> int:
@@ -61,7 +44,7 @@ def cmd_enable(paths: Paths, args) -> int:
     if not al.set_enabled(args.domain, True):
         print(f"not in allow-list: {args.domain} (use `add`)", file=sys.stderr)
         return 1
-    return _print_result(_apply(al))
+    return _print_result(egress.apply(al))
 
 
 def cmd_disable(paths: Paths, args) -> int:
@@ -69,13 +52,13 @@ def cmd_disable(paths: Paths, args) -> int:
     if not al.set_enabled(args.domain, False):
         print(f"not in allow-list: {args.domain}", file=sys.stderr)
         return 1
-    return _print_result(_apply(al))
+    return _print_result(egress.apply(al))
 
 
 def cmd_add(paths: Paths, args) -> int:
     al = Allowlist.load(paths.allowlist)
     al.add(args.domain, enabled=True)
-    return _print_result(_apply(al))
+    return _print_result(egress.apply(al))
 
 
 def cmd_approve(paths: Paths, args) -> int:
@@ -83,7 +66,7 @@ def cmd_approve(paths: Paths, args) -> int:
     entry = store.data.get(args.host)
     al = Allowlist.load(paths.allowlist)
     al.add(args.host, enabled=True)
-    res = _apply(al)
+    res = egress.apply(al)
     if res.ok:
         if entry and entry.get("rid"):  # a broker request — reply via the spool
             spool.write_response(
@@ -173,8 +156,8 @@ def cmd_commands(paths: Paths, _args) -> int:
         print("(no pending commands)")
         return 0
     for rid, e in items:
-        reason = f"  — {e['reason']}" if e.get("reason") else ""
-        print(f"{rid[:8]}{reason}\n          $ {e['command']}")
+        reason = f"  — {cmds.sanitize(e['reason'])}" if e.get("reason") else ""
+        print(f"{rid[:8]}{reason}\n          $ {cmds.sanitize(e['command'])}")
     return 0
 
 
@@ -241,6 +224,28 @@ def cmd_watch(paths: Paths, _args) -> int:
     return 0
 
 
+def cmd_components(paths: Paths, args) -> int:
+    cfg = Config.load(paths.root)
+    for s in components.statuses(paths, cfg, probe=args.probe):
+        dom = "on " if s["domains_enabled"] else "off"
+        prov = " provisioned" if s["provisioned"] else ""
+        inst = "" if s["installed"] is None else (" installed" if s["installed"] else " NOT-installed")
+        print(f"{s['name']:<10} domains:{dom}{prov}{inst}   {s['description']}")
+    return 0
+
+
+def cmd_provision(paths: Paths, args) -> int:
+    ok, msg = components.provision(paths, Config.load(paths.root), args.name)
+    print(msg)
+    return 0 if ok else 1
+
+
+def cmd_deprovision(paths: Paths, args) -> int:
+    ok, msg = components.deprovision(paths, args.name)
+    print(msg)
+    return 0 if ok else 1
+
+
 def cmd_tui(paths: Paths, _args) -> int:
     try:
         from .app import ShipShapeApp
@@ -297,6 +302,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_command_decline)
 
     sub.add_parser("watch", help="headless: harvest denials + process broker spool").set_defaults(fn=cmd_watch)
+
+    sp = sub.add_parser("components", help="list installable components")
+    sp.add_argument("--probe", action="store_true", help="check installed state in the container")
+    sp.set_defaults(fn=cmd_components)
+    sp = sub.add_parser("provision", help="enable a component's domains + install it in the container")
+    sp.add_argument("name")
+    sp.set_defaults(fn=cmd_provision)
+    sp = sub.add_parser("deprovision", help="disable the domains a component added (no uninstall)")
+    sp.add_argument("name")
+    sp.set_defaults(fn=cmd_deprovision)
+
     sub.add_parser("tui", help="launch the TUI").set_defaults(fn=cmd_tui)
     return p
 

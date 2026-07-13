@@ -14,3 +14,11 @@ agent_container = "agent-sandbox"
 # Working directory for operator-approved agent commands (run on the host as you).
 # Default: the repo root. Uncomment to override.
 # cwd = "/home/marlon/PersonalCode/ShipShape"
+
+# Extra components for the provision wizard (builtin: flutter, adb). Each maps to
+# an install command available in the container plus the egress domains it needs.
+# [components.node]
+# install = "install-node"          # add a matching script to agent-bin/
+# domains = ["deb.nodesource.com"]
+# check = "node --version"
+# description = "Node.js"

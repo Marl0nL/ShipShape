@@ -67,7 +67,11 @@ class Config:
         if toml.is_file():
             import tomllib
 
-            doc = tomllib.loads(toml.read_text())
+            try:
+                with toml.open("rb") as f:  # tomllib requires UTF-8 bytes
+                    doc = tomllib.load(f)
+            except (OSError, tomllib.TOMLDecodeError):
+                doc = {}
         gcp = doc.get("gcp", {})
         cmds = doc.get("commands", {})
         return cls(

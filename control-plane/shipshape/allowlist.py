@@ -44,7 +44,13 @@ class Allowlist:
         for raw in text.splitlines():
             s = raw.strip()
             if s.startswith(SENTINEL):
-                lines.append(Line("entry", raw, s[len(SENTINEL):].strip(), enabled=False))
+                rest = s[len(SENTINEL):].strip()
+                # Only a single bare token is a disabled entry; "#SS-OFF# note: …"
+                # (with whitespace) is an operator comment, preserved as decoration.
+                if rest and not any(c.isspace() for c in rest):
+                    lines.append(Line("entry", raw, rest, enabled=False))
+                else:
+                    lines.append(Line("deco", raw))
             elif s == "" or s.startswith("#"):
                 lines.append(Line("deco", raw))
             else:
@@ -102,9 +108,13 @@ class Allowlist:
         if target.exists():
             shutil.copy2(target, target.with_name(target.name + ".bak"))
         tmp = target.with_name(target.name + ".tmp")
-        with open(tmp, "w") as f:
-            f.write(self.render())
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target)
+        try:
+            with open(tmp, "w") as f:
+                f.write(self.render())
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, target)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
         return target

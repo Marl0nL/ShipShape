@@ -33,7 +33,7 @@ RUN printf '%s\n' '#!/bin/sh' \
       'exec /usr/bin/gh "$@"' > /usr/local/bin/gh && \
     chmod +x /usr/local/bin/gh && \
     git config --system credential."https://github.com".helper \
-      '!f() { echo username=x-access-token; echo "password=$(cat /auth/gh-token)"; }; f'
+      '!f() { echo username=x-access-token; echo "password=$(cat /auth/gh-token 2>/dev/null)"; }; f'
 
 # 3c. Entrypoint: activate the injected GCP SA key on start so BOTH the gcloud CLI
 #     and client-library ADC (GOOGLE_APPLICATION_CREDENTIALS) work from one file.
@@ -61,8 +61,9 @@ WORKDIR /home/agentdev
 COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
 
 # 5. Optional base Python deps (add your own to requirements.txt).
+#    --user: install into agentdev's home (non-root can't write system site-packages).
 COPY --chown=agentdev:agentdev requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Activate injected creds on start, then keep the container alive for firstmate.
 ENTRYPOINT ["/usr/local/bin/agent-entrypoint"]

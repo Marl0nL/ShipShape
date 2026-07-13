@@ -23,6 +23,8 @@ def run(args: list[str], timeout: int = 30) -> Result:
         return Result(False, f"command not found: {args[0]}")
     except subprocess.TimeoutExpired:
         return Result(False, f"timed out: {' '.join(args)}")
+    except OSError as e:
+        return Result(False, f"{args[0]}: {e}")
 
 
 def container_running(name: str = PROXY) -> bool:
