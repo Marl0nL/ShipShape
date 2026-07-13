@@ -1,0 +1,16 @@
+[project]
+name = "shipshape-controlplane"
+version = "0.1.0"
+description = "ShipShape control plane: egress allow-list management + request-approval TUI/CLI"
+requires-python = ">=3.10"
+dependencies = ["textual>=0.60"]
+
+[project.scripts]
+shipshape = "shipshape.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["shipshape"]

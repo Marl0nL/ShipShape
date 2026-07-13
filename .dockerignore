@@ -1,0 +1,11 @@
+# Keep the agent image build context small and free of host-side material.
+# (The broker image builds from ./control-plane/broker with its own context.)
+.git
+.gitignore
+.dockerignore
+control-plane/
+auth/
+firstmate-data/
+DESIGN.md
+# NOTE: do not add `*.md` here — it would exclude skills/*/SKILL.md, which the
+# agent image needs to COPY.

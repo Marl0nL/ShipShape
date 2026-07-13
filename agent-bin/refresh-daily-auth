@@ -1,0 +1,9 @@
+#!/bin/sh
+# Trigger a GCP credential refresh using a one-time passphrase the operator gave
+# you out-of-band. Validated + executed on the host; you only pass the passphrase.
+set -eu
+BROKER="${SHIPSHAPE_BROKER:-http://control-plane:8099}"
+[ $# -ge 1 ] || { echo "usage: refresh-daily-auth <passphrase>" >&2; exit 2; }
+payload=$(python3 -c 'import json,sys; print(json.dumps({"passphrase":sys.argv[1]}))' "$1")
+curl -fsS -X POST "$BROKER/refresh-auth" -H 'Content-Type: application/json' -d "$payload"
+echo

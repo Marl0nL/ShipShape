@@ -1,0 +1,9 @@
+#!/bin/sh
+# Propose a command for the operator to run on the host (e.g. a gcloud IAM grant).
+# The operator reviews/edits/declines it; nothing runs without their approval.
+set -eu
+BROKER="${SHIPSHAPE_BROKER:-http://control-plane:8099}"
+[ $# -ge 1 ] || { echo 'usage: request-command "<command>" [reason]' >&2; exit 2; }
+payload=$(python3 -c 'import json,sys; print(json.dumps({"command":sys.argv[1],"reason":sys.argv[2] if len(sys.argv)>2 else ""}))' "$@")
+curl -fsS -X POST "$BROKER/request-command" -H 'Content-Type: application/json' -d "$payload"
+echo

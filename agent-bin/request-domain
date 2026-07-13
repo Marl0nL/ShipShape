@@ -1,0 +1,8 @@
+#!/bin/sh
+# Ask the operator to allow-list an egress domain the sandbox is blocked from.
+set -eu
+BROKER="${SHIPSHAPE_BROKER:-http://control-plane:8099}"
+[ $# -ge 1 ] || { echo "usage: request-domain <domain> [reason]" >&2; exit 2; }
+payload=$(python3 -c 'import json,sys; print(json.dumps({"domain":sys.argv[1],"reason":sys.argv[2] if len(sys.argv)>2 else ""}))' "$@")
+curl -fsS -X POST "$BROKER/request-domain" -H 'Content-Type: application/json' -d "$payload"
+echo

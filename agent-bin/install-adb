@@ -1,0 +1,22 @@
+#!/bin/sh
+# Install Android platform-tools (adb) into the user's home at runtime (no root).
+# adb talks to a HOST-run adb server via the toggle-able adb relay — set
+# ADB_SERVER_SOCKET=tcp:adb-relay:5037 and start the relay on the host (DESIGN.md).
+# Requires the allow-list to permit dl.google.com.
+set -eu
+DEST="${ANDROID_HOME:-$HOME/android}"
+URL="https://dl.google.com/android/repository/platform-tools-latest-linux.zip"
+mkdir -p "$DEST"
+tmp="$(mktemp)"
+curl -fsSL "$URL" -o "$tmp"
+unzip -oq "$tmp" -d "$DEST"
+rm -f "$tmp"
+LINE="export PATH=\"$DEST/platform-tools:\$PATH\""
+for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+  grep -qF "$DEST/platform-tools" "$rc" 2>/dev/null || echo "$LINE" >> "$rc"
+done
+export PATH="$DEST/platform-tools:$PATH"
+adb version || true
+echo
+echo ">> adb installed. In THIS shell run:  $LINE"
+echo ">> then: export ADB_SERVER_SOCKET=tcp:adb-relay:5037  (and start the relay on the host)"

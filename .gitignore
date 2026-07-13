@@ -1,0 +1,22 @@
+# Credentials — NEVER commit
+.env
+.env.*
+!.env.example
+auth/*
+!auth/README.md
+
+# Control-plane runtime state and IPC spool
+control-plane/spool/
+control-plane/state/
+
+# Persistent agent working data
+firstmate-data/
+
+# Control-plane backups
+egress/*.bak
+
+# Python
+__pycache__/
+*.pyc
+control-plane/.venv/
+control-plane/*.egg-info/

@@ -1,0 +1,16 @@
+# ShipShape control-plane configuration (tracked; contains no secrets).
+# Overridable with env: $SHIPSHAPE_AGENT_SA, $SHIPSHAPE_AGENT_CONTAINER.
+
+[gcp]
+# Dedicated, scope-limited service account the control plane mints keys for.
+# Create it once and grant your user roles/iam.serviceAccountKeyAdmin on it
+# (see DESIGN.md → "Operator one-time GCP setup"), then put its email here.
+agent_sa = "agent-daily@market-operations.iam.gserviceaccount.com"
+
+# The agent container name — must match docker-compose.yml `container_name`.
+agent_container = "agent-sandbox"
+
+[commands]
+# Working directory for operator-approved agent commands (run on the host as you).
+# Default: the repo root. Uncomment to override.
+# cwd = "/home/marlon/PersonalCode/ShipShape"

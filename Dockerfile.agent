@@ -1,43 +1,69 @@
-# Use a slim Python base image to save space, but with Debian under the hood
+# Lean base: framework plumbing only (proxy-aware tooling, gcloud/gh, git, python).
+# Project dev stacks (Flutter, Android/adb, Node, …) are NOT baked in — agents
+# install what they need at runtime via the install-* skills, so one image serves
+# a Python day and a Flutter day without over-provisioning.
 FROM python:3.11-slim-bullseye
 
 # Avoid user interaction during apt installations
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Install system dependencies for Flutter, gcloud, and gh
-RUN apt-get update && apt-get install -y \
-    curl git unzip xz-utils zip libglu1-mesa wget gnupg software-properties-common \
+# 1. Minimal system tooling to bootstrap runtime installs + the auth/egress flow.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git unzip xz-utils gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Install Google Cloud CLI
-# (apt-key is deprecated; dearmor the key into a dedicated keyring instead, and
-#  use `>` rather than `tee -a` so rebuilds don't append duplicate repo lines.)
+# 2. Google Cloud CLI (the auth flow activates the injected SA key on start).
+# (apt-key is deprecated; dearmor the key into a dedicated keyring instead.)
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list && \
     curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && \
-    apt-get update && apt-get install -y google-cloud-cli && \
+    apt-get update && apt-get install -y --no-install-recommends google-cloud-cli && \
     rm -rf /var/lib/apt/lists/*
 
-# 3. Install GitHub CLI (gh)
+# 3. GitHub CLI (gh)
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh && \
     rm -rf /var/lib/apt/lists/*
 
-# 4. Create a non-root user for the agent to run as
+# 3b. File-based GitHub auth glue so a rotated /auth/gh-token is picked up LIVE
+#     (an env var cannot be refreshed in a running container).
+RUN printf '%s\n' '#!/bin/sh' \
+      'if [ -r /auth/gh-token ]; then GH_TOKEN="$(cat /auth/gh-token)"; export GH_TOKEN; fi' \
+      'exec /usr/bin/gh "$@"' > /usr/local/bin/gh && \
+    chmod +x /usr/local/bin/gh && \
+    git config --system credential."https://github.com".helper \
+      '!f() { echo username=x-access-token; echo "password=$(cat /auth/gh-token)"; }; f'
+
+# 3c. Entrypoint: activate the injected GCP SA key on start so BOTH the gcloud CLI
+#     and client-library ADC (GOOGLE_APPLICATION_CREDENTIALS) work from one file.
+RUN printf '%s\n' '#!/bin/sh' \
+      'if [ -r /auth/gcp-sa.json ]; then' \
+      '  gcloud auth activate-service-account --key-file=/auth/gcp-sa.json >/dev/null 2>&1 || true' \
+      'fi' \
+      'exec "$@"' > /usr/local/bin/agent-entrypoint && \
+    chmod +x /usr/local/bin/agent-entrypoint
+
+# 3d. Control-plane client commands (talk to the in-container broker) + runtime
+#     component installers. Tiny shell scripts; the dev stacks they fetch are
+#     installed on demand, never baked into the image.
+COPY agent-bin/ /usr/local/bin/
+RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
+             /usr/local/bin/refresh-daily-auth /usr/local/bin/install-flutter \
+             /usr/local/bin/install-adb
+
+# 4. Non-root user for the agent
 RUN useradd -ms /bin/bash agentdev
 USER agentdev
 WORKDIR /home/agentdev
 
-# 5. Install Flutter (as the non-root user)
-RUN git clone https://github.com/flutter/flutter.git -b stable /home/agentdev/flutter
-ENV PATH="/home/agentdev/flutter/bin:${PATH}"
-# Run flutter doctor to pre-download Dart SDK and toolchains
-RUN flutter doctor
+# 4b. Make the ShipShape skills discoverable to the in-container Claude agent.
+COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
 
-# 6. Set up the Python environment (optional, but good practice)
+# 5. Optional base Python deps (add your own to requirements.txt).
 COPY --chown=agentdev:agentdev requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Keep the container alive for firstmate to orchestrate
+# Activate injected creds on start, then keep the container alive for firstmate.
+ENTRYPOINT ["/usr/local/bin/agent-entrypoint"]
 CMD ["tail", "-f", "/dev/null"]

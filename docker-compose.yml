@@ -4,9 +4,6 @@
 # egress-proxy (Squid), which enforces a default-deny domain allow-list. This
 # is fail-closed: a tool that ignores the proxy env vars simply cannot reach
 # the network, rather than silently bypassing the controls.
-#
-# (The obsolete top-level `version:` key has been removed — Compose v2 ignores
-# it and warns.)
 
 services:
   agent-sandbox:
@@ -14,6 +11,9 @@ services:
       context: .
       dockerfile: Dockerfile.agent
     user: "agentdev" # Enforce running as the non-root user
+    # Pinned so the control plane can `docker exec agent-sandbox …` (re-activate
+    # gcloud after a key rotation). Without it the name is shipshape-agent-sandbox-1.
+    container_name: agent-sandbox
     environment:
       # Route proxy-aware tooling through Squid. Set BOTH cases plus NO_PROXY —
       # coverage of upper/lower-case varies across git, pip, apt, gcloud, gh…
@@ -21,18 +21,24 @@ services:
       - HTTPS_PROXY=http://egress-proxy:3128
       - http_proxy=http://egress-proxy:3128
       - https_proxy=http://egress-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,egress-proxy,control-plane,.local
-      - no_proxy=localhost,127.0.0.1,egress-proxy,control-plane,.local
-      # gcloud and the Google SDKs auto-detect this.
+      - NO_PROXY=localhost,127.0.0.1,egress-proxy,control-plane,adb-relay,.local
+      - no_proxy=localhost,127.0.0.1,egress-proxy,control-plane,adb-relay,.local
+      # Android debugging (optional): adb client -> host adb server via the
+      # toggle-able `adb-relay` sidecar. When the relay is down this name doesn't
+      # resolve and adb fails closed. adb ignores HTTP_PROXY so it never hits Squid.
+      - ADB_SERVER_SOCKET=tcp:adb-relay:5037
+      # GCP: the control plane injects a dedicated, scope-limited SA key at
+      # /auth/gcp-sa.json (rotated on demand). This ONE file serves BOTH client
+      # libraries (via GOOGLE_APPLICATION_CREDENTIALS below) and the gcloud CLI
+      # (activated on start by the entrypoint; re-activated after each rotation).
       - GOOGLE_APPLICATION_CREDENTIALS=/auth/gcp-sa.json
-      # NOTE: environment-variable credentials CANNOT be rotated in a running
-      # container. The daily-key feature injects FILE-based creds into /auth
-      # instead (see the control plane). Treat GH_TOKEN here as a bootstrap only.
-      - GH_TOKEN=${GITHUB_FINE_GRAINED_TOKEN:-}
+      # GitHub auth is FILE-based (/auth/gh-token), NOT an env var: env vars can't
+      # be rotated in a running container, and a set GH_TOKEN would SHADOW the
+      # file. Drop a fine-grained PAT into ./auth/gh-token (see auth/README.md).
     volumes:
       # Mount your firstmate projects so they persist
       - ./firstmate-data:/home/agentdev/firstmate
-      # Rotatable credential drop. Daily keys land here; read-only to the agent.
+      # Rotatable credential drop. Daily creds land here; read-only to the agent.
       - ./auth:/auth:ro
     networks:
       - isolated_agent_net
@@ -47,15 +53,24 @@ services:
     pids_limit: 512
     depends_on:
       - egress-proxy
+      - control-plane
 
   egress-proxy:
     # Lightweight Squid image
     image: b4tman/squid
+    # Pinned name so `docker exec egress-proxy squid -k reconfigure` (used by the
+    # control plane to hot-reload the allow-list) resolves — without this the
+    # container would be named `shipshape-egress-proxy-1` and the exec would fail.
+    container_name: egress-proxy
     volumes:
-      # Our custom rules (read-only to the container)
+      # Our custom rules (static at runtime; single-file mount is fine here)
       - ./squid.conf:/etc/squid/squid.conf:ro
-      # Allow-list managed live by the host control plane; Squid only reads it.
-      - ./allowed_domains.txt:/etc/squid/allowed_domains.txt:ro
+      # Allow-list, managed live by the control plane. This is a DIRECTORY mount,
+      # not a single-file mount, on purpose: the control plane replaces the file
+      # atomically (write-tmp + rename). A single-file bind mount pins the host
+      # inode at container start, so an atomic replace would leave the container
+      # reading the OLD file and `squid -k reconfigure` reloading stale rules.
+      - ./egress:/etc/squid/shipshape:ro
     networks:
       # The proxy is the bridge: isolated net (inbound from agent) AND internet.
       - isolated_agent_net
@@ -72,6 +87,50 @@ services:
     #   - 10.0.0.53
     #   - 1.1.1.1
 
+  # In-container broker: the agent's only reachable control-plane endpoint. It is
+  # powerless — no creds, no host access — and can only drop request files into the
+  # shared spool that the host `shipshape` process approves. See DESIGN.md Phase 3.
+  control-plane:
+    build:
+      context: ./control-plane/broker
+      dockerfile: Dockerfile.broker
+    container_name: control-plane
+    volumes:
+      - ./control-plane/spool:/spool   # its ONLY host contact (read/write)
+    networks:
+      - isolated_agent_net             # agent-facing only; no internet, no host
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 128m
+    pids_limit: 64
+
+  # OPTIONAL Android-debug relay (OFF by default): `docker compose --profile adb
+  # up -d adb-relay`. Forwards adb-relay:5037 -> the HOST adb server. It is the
+  # ONLY thing dual-homed to the host; a container does not route between its
+  # networks, so the agent gains exactly one host port — not LAN/internet access.
+  adb-relay:
+    image: alpine/socat:latest
+    container_name: adb-relay
+    profiles: ["adb"]
+    command: TCP-LISTEN:5037,fork,reuseaddr TCP:host.docker.internal:5037
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - isolated_agent_net             # agent reaches the relay here
+      - adb_host_net                   # relay reaches the host adb server here
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    mem_limit: 128m
+    pids_limit: 64
+
 networks:
   isolated_agent_net:
     # 'internal: true' blocks all direct outside access. The agent-sandbox
@@ -79,4 +138,8 @@ networks:
     internal: true
   internet_access:
     # Default bridge (outbound). ONLY the egress-proxy is attached.
+    driver: bridge
+  adb_host_net:
+    # Sole purpose: give ONLY the adb-relay a route to the host's adb server.
+    # The agent-sandbox is never attached here, so its isolation is unchanged.
     driver: bridge

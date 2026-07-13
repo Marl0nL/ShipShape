@@ -1,0 +1,20 @@
+#!/bin/sh
+# Install Flutter into the user's home at runtime (no root needed). The base
+# image does NOT bake Flutter in — install it only when you need it.
+# Requires the allow-list to permit github.com + dl.google.com + storage.googleapis.com.
+set -eu
+DEST="${FLUTTER_HOME:-$HOME/flutter}"
+CHANNEL="${1:-stable}"
+if [ -d "$DEST/bin" ]; then
+  echo "flutter already installed at $DEST"
+else
+  git clone --depth 1 -b "$CHANNEL" https://github.com/flutter/flutter.git "$DEST"
+fi
+LINE="export PATH=\"$DEST/bin:\$PATH\""
+for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+  grep -qF "$DEST/bin" "$rc" 2>/dev/null || echo "$LINE" >> "$rc"
+done
+export PATH="$DEST/bin:$PATH"
+flutter --version || true
+echo
+echo ">> flutter installed. In THIS shell run:  $LINE"
