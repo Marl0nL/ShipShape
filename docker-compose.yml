@@ -41,9 +41,11 @@ services:
       # GitHub auth is FILE-based (/auth/gh-token), NOT an env var: env vars can't
       # be rotated in a running container, and a set GH_TOKEN would SHADOW the
       # file. Drop a fine-grained PAT into ./auth/gh-token (see auth/README.md).
-      # Claude Code honors HTTP(S)_PROXY. Auth = copied ~/.claude/.credentials.json
-      # (quick-start) with this token as fallback; telemetry off so it needs no
-      # egress beyond api.anthropic.com / claude.ai / platform.claude.com.
+      # Claude Code honors HTTP(S)_PROXY. Auth, in order: the persistent token in
+      # auth/claude-token (from `claude setup-token`) which the control plane injects
+      # here on `up` AND a baked /etc/profile.d snippet re-reads live per login shell;
+      # then the copied ~/.claude/.credentials.json (quick-start); then this host env
+      # var. Telemetry off so it needs no egress beyond api.anthropic.com / claude.ai.
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - DISABLE_TELEMETRY=1
       - DISABLE_ERROR_REPORTING=1

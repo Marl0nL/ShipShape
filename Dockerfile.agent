@@ -95,8 +95,17 @@ COPY agent-bin/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
              /usr/local/bin/refresh-daily-auth /usr/local/bin/await-request \
              /usr/local/bin/install-flutter /usr/local/bin/install-adb
+# Auto-auth Claude Code from the mounted, rotatable token file (auth/claude-token):
+# every login shell (the quick-start runs `bash -lc`) re-reads the LIVE mount, so a
+# rotated token reaches new sessions without recreating the container.
+RUN printf '%s\n' \
+      '[ -s /auth/claude-token ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat /auth/claude-token)"' \
+      > /etc/profile.d/claude-token.sh
 USER agentdev
 COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
+
+# Pre-trust the baked firstmate project so `claude` skips its startup trust dialog.
+RUN printf '%s' '{"projects":{"/home/agentdev/firstmate":{"hasTrustDialogAccepted":true,"allowedTools":[],"mcpServers":{},"enabledMcpjsonServers":[],"disabledMcpjsonServers":[],"projectOnboardingSeenCount":0,"hasClaudeMdExternalIncludesApproved":false,"hasClaudeMdExternalIncludesWarningShown":false}}}' > /home/agentdev/.claude.json
 
 # Activate injected creds on start, then keep the container alive for firstmate.
 ENTRYPOINT ["/usr/local/bin/agent-entrypoint"]

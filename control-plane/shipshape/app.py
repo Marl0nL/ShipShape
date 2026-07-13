@@ -89,6 +89,7 @@ class ShipShapeApp(App):
         ("s", "apply_allowlist", "Apply toggles"),
         ("g", "refresh_gcp", "Refresh GCP"),
         ("o", "gen_otp", "New passphrase"),
+        ("c", "set_claude_token", "Set Claude tok"),
         ("y", "cmd_accept", "Accept cmd"),
         ("n", "cmd_decline", "Decline cmd"),
         ("p", "provision", "Provision"),
@@ -125,6 +126,10 @@ class ShipShapeApp(App):
                 with Horizontal():
                     yield Button("Refresh GCP now (g)", id="refresh_gcp", variant="warning")
                     yield Button("New passphrase (o)", id="gen_otp")
+                with Horizontal():
+                    yield Input(placeholder="paste `claude setup-token` output",
+                                password=True, id="claude_token_input")
+                    yield Button("Set Claude token (c)", id="set_claude_token", variant="primary")
             with TabPane("Provision", id="provision"):
                 yield Static(
                     "Check the dev stacks you want, then Apply: enables their egress "
@@ -137,12 +142,19 @@ class ShipShapeApp(App):
                     yield Button("Apply (p)", id="prov_apply", variant="primary")
             with TabPane("Images", id="images"):
                 yield Static("Snapshot the running container to a tag, then boot that "
-                             "tag later. '●' marks the active image.", id="img_help")
+                             "tag later. '●' marks the active image. The box feeds "
+                             "Snapshot (new tag) and Rename→ (new name for the selected "
+                             "row); Use/Delete act on the selected row; Rebuild base "
+                             "rebuilds shipshape-agent:base from the Dockerfile.",
+                             id="img_help")
                 yield DataTable(id="img_table", cursor_type="row")
                 with Horizontal():
-                    yield Input(placeholder="new snapshot tag", id="snap_name")
+                    yield Input(placeholder="tag / new name", id="snap_name")
                     yield Button("Snapshot", id="snapshot")
                     yield Button("Use selected", id="use_image")
+                    yield Button("Rename→", id="rename_image")
+                    yield Button("Delete", id="delete_image", variant="error")
+                    yield Button("Rebuild base", id="rebuild_image", variant="warning")
         yield Static("", id="status")
         yield Footer()
 
@@ -246,6 +258,8 @@ class ShipShapeApp(App):
             self.action_refresh_gcp()
         elif event.button.id == "gen_otp":
             self.action_gen_otp()
+        elif event.button.id == "set_claude_token":
+            self.action_set_claude_token()
         elif event.button.id == "prov_apply":
             self.action_provision()
         elif event.button.id == "stack_up":
@@ -266,6 +280,26 @@ class ShipShapeApp(App):
                 self._do_snapshot(tag)
             else:
                 self._status("enter a snapshot tag first")
+        elif event.button.id == "rename_image":
+            tag = self._selected_image()
+            new = self.query_one("#snap_name", Input).value.strip()
+            if not tag:
+                self._status("select an image to rename")
+            elif not new:
+                self._status("enter the new name in the tag box")
+            else:
+                self._status(f"renaming {tag} → {new}…")
+                self._do_image_op("rename", tag, new)
+        elif event.button.id == "delete_image":
+            tag = self._selected_image()
+            if tag:
+                self._status(f"deleting shipshape-agent:{tag}…")
+                self._do_image_op("delete", tag)
+            else:
+                self._status("select an image to delete")
+        elif event.button.id == "rebuild_image":
+            self._status("rebuilding shipshape-agent:base (can take minutes)…")
+            self._do_image_op("rebuild")
 
     def action_refresh(self) -> None:
         self.store.load()
@@ -332,6 +366,27 @@ class ShipShapeApp(App):
         self.call_from_thread(self._status, msg)
         self.call_from_thread(self._reload_images)
 
+    @work(thread=True, group="ops")
+    def _do_image_op(self, op: str, *a) -> None:
+        if op == "rename":
+            old, new = a
+            was_active = f"{images.PREFIX}:{old}" == images.active(self.paths)
+            r = images.rename(old, new)
+            if r.ok and was_active:
+                images.set_active(self.paths, new)
+            msg = f"renamed {old} → {new}" if r.ok else r.output
+        elif op == "delete":
+            (tag,) = a
+            if f"{images.PREFIX}:{tag}" == images.active(self.paths):
+                images.set_active(self.paths, "base")
+            r = images.delete(tag)
+            msg = f"deleted {tag}" if r.ok else r.output
+        else:  # rebuild the base image from the Dockerfile
+            r = images.rebuild(self.paths)
+            msg = "rebuilt shipshape-agent:base" if r.ok else r.output[-160:]
+        self.call_from_thread(self._status, msg.replace("\n", " "))
+        self.call_from_thread(self._reload_images)
+
     # --- stack tab ---
     def _reload_stack(self) -> None:
         r = docker_ops.compose(self.paths.root, ["ps"], timeout=20)
@@ -374,7 +429,16 @@ class ShipShapeApp(App):
             otpline = "passphrase: expired (press 'o' for a new one)"
         else:
             otpline = f"passphrase: active, expires in {ost['expires_in']}s"
-        self.query_one("#creds_status", Static).update(gcp + "\n\n" + otpline)
+        cst = creds.claude_token_status(self.paths)
+        if cst.get("present"):
+            age = time.time() - cst["mtime"]
+            claudeline = (
+                f"Claude token: set ({cst['chars']} chars, updated "
+                f"{int(age // 86400)}d {int((age % 86400) // 3600)}h ago)"
+            )
+        else:
+            claudeline = "Claude token: none — paste `claude setup-token` output below to add one"
+        self.query_one("#creds_status", Static).update(gcp + "\n\n" + otpline + "\n" + claudeline)
 
     def action_refresh_gcp(self) -> None:
         self._status("minting + injecting GCP key…")
@@ -426,6 +490,17 @@ class ShipShapeApp(App):
     def action_gen_otp(self) -> None:
         phrase = otp.generate(self.paths.state)
         self._status(f"one-time passphrase (single-use, 15m):  {phrase}")
+        self._refresh_creds()
+
+    def action_set_claude_token(self) -> None:
+        inp = self.query_one("#claude_token_input", Input)
+        tok = inp.value.strip()
+        if not tok:
+            self._status("paste the `claude setup-token` output into the box first")
+            return
+        res = creds.set_claude_token(self.paths, tok)
+        inp.value = ""  # don't leave the secret on screen
+        self._status(res.message.replace("\n", " "))
         self._refresh_creds()
 
     # --- provision tab (init wizard) ---

@@ -115,14 +115,31 @@ def cmd_creds(paths: Paths, _args) -> int:
     import time
 
     st = creds.status(paths)
-    if not st:
-        print("no GCP key minted yet (run `shipshape refresh-gcp`)")
-        return 0
-    age = time.time() - st.get("created", 0)
-    print(f"SA:     {st.get('sa', '?')}")
-    print(f"key id: {st.get('key_id', '?')}")
-    print(f"age:    {int(age // 3600)}h {int((age % 3600) // 60)}m  (on-demand rotation)")
+    if st:
+        age = time.time() - st.get("created", 0)
+        print(f"GCP SA:  {st.get('sa', '?')}")
+        print(f"key id:  {st.get('key_id', '?')}")
+        print(f"age:     {int(age // 3600)}h {int((age % 3600) // 60)}m  (on-demand rotation)")
+    else:
+        print("GCP:     no key minted yet (run `shipshape refresh-gcp`)")
+    cst = creds.claude_token_status(paths)
+    if cst.get("present"):
+        age = time.time() - cst["mtime"]
+        print(f"Claude:  token set ({cst['chars']} chars, updated {int(age // 86400)}d ago)")
+    else:
+        print("Claude:  no token (run `shipshape claude-token` to add one)")
     return 0
+
+
+def cmd_claude_token(paths: Paths, args) -> int:
+    token = args.token
+    if not token:
+        if sys.stdin.isatty():
+            print("paste the `claude setup-token` output, then press Ctrl-D:", file=sys.stderr)
+        token = sys.stdin.read()
+    res = creds.set_claude_token(paths, token)
+    print(res.message)
+    return 0 if res.ok else 1
 
 
 def cmd_up(paths: Paths, _args) -> int:
@@ -155,6 +172,35 @@ def cmd_images(paths: Paths, _args) -> int:
 def cmd_use(paths: Paths, args) -> int:
     print(f"active image set to {images.set_active(paths, args.tag)} (applies on next `shipshape up`)")
     return 0
+
+
+def cmd_image_delete(paths: Paths, args) -> int:
+    q = images._qualify(args.tag)
+    if q == images.active(paths):
+        images.set_active(paths, "base")
+        print(f"(was the active image; reset active to {images.DEFAULT})")
+    r = images.delete(args.tag)
+    print(r.output or ("deleted" if r.ok else "failed"))
+    return 0 if r.ok else 1
+
+
+def cmd_image_rename(paths: Paths, args) -> int:
+    was_active = images._qualify(args.old) == images.active(paths)
+    r = images.rename(args.old, args.new)
+    if r.ok:
+        if was_active:
+            images.set_active(paths, args.new)
+        print(f"renamed {images._qualify(args.old)} → {images._qualify(args.new)}")
+    else:
+        print(r.output or "failed")
+    return 0 if r.ok else 1
+
+
+def cmd_rebuild(paths: Paths, _args) -> int:
+    print(f"rebuilding {images.DEFAULT} from the Dockerfile (can take several minutes)…")
+    r = images.rebuild(paths)
+    print(r.output[-2000:] if r.output else ("built" if r.ok else "failed"))
+    return 0 if r.ok else 1
 
 
 def cmd_quickstart(paths: Paths, _args) -> int:
@@ -350,6 +396,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("use", help="select which image tag `up` boots")
     sp.add_argument("tag")
     sp.set_defaults(fn=cmd_use)
+    sub.add_parser("rebuild", help="rebuild shipshape-agent:base from the Dockerfile").set_defaults(fn=cmd_rebuild)
+    sp = sub.add_parser("image-delete", help="delete a saved image tag (docker rmi)")
+    sp.add_argument("tag")
+    sp.set_defaults(fn=cmd_image_delete)
+    sp = sub.add_parser("image-rename", help="rename a saved image tag")
+    sp.add_argument("old")
+    sp.add_argument("new")
+    sp.set_defaults(fn=cmd_image_rename)
     sub.add_parser("quickstart", help="boot + inject Claude creds + open a firstmate claude session").set_defaults(fn=cmd_quickstart)
     sp = sub.add_parser("shell", help="open an interactive shell in a container")
     sp.add_argument("container", nargs="?", default="agent-sandbox")
@@ -357,6 +411,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("reload", help="squid -k reconfigure").set_defaults(fn=cmd_reload)
     sub.add_parser("refresh-gcp", help="mint + inject a fresh GCP SA key").set_defaults(fn=cmd_refresh_gcp)
     sub.add_parser("creds", help="show injected credential status").set_defaults(fn=cmd_creds)
+    sp = sub.add_parser("claude-token", help="set/rotate the persistent Claude OAuth token (from `claude setup-token`)")
+    sp.add_argument("token", nargs="?", help="the token (omit to read from stdin — keeps it out of shell history)")
+    sp.set_defaults(fn=cmd_claude_token)
 
     sp = sub.add_parser("otp", help="register a one-time passphrase for remote refresh")
     sp.add_argument("phrase", nargs="?", help="passphrase (omit to auto-generate)")

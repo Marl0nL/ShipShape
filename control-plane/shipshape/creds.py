@@ -153,3 +153,63 @@ def refresh_gcp(
 
 def status(paths: Paths) -> dict:
     return _load_state(paths)
+
+
+# --- Claude Code OAuth token (persistent; from `claude setup-token` on the host) ---
+#
+# Unlike the GCP key, this isn't minted by the control plane — the operator runs
+# `claude setup-token` on their authenticated host and drops the result here. It's
+# file-based (auth/claude-token) so it rotates without a rebuild: the stack injects
+# it as CLAUDE_CODE_OAUTH_TOKEN on boot, and a baked /etc/profile.d snippet re-reads
+# the live mount in every login shell (so a rotation reaches new sessions at once).
+
+CLAUDE_TOKEN_FILE = "claude-token"
+
+
+def _claude_token_path(paths: Paths) -> Path:
+    return paths.auth / CLAUDE_TOKEN_FILE
+
+
+def claude_token(paths: Paths) -> str:
+    """The persistent Claude OAuth token from auth/claude-token, or '' if absent."""
+    try:
+        return _claude_token_path(paths).read_text().strip()
+    except OSError:
+        return ""
+
+
+def set_claude_token(paths: Paths, token: str) -> RefreshResult:
+    """Write/rotate the Claude OAuth token to auth/claude-token (0600, atomic)."""
+    token = (token or "").strip()
+    if not token:
+        return RefreshResult(
+            False, "empty token — run `claude setup-token` on your authed host and paste the output"
+        )
+    paths.auth.mkdir(parents=True, exist_ok=True)
+    f = _claude_token_path(paths)
+    tmp = f.with_name(f.name + ".tmp")
+    try:
+        tmp.write_text(token + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, f)
+    except OSError as e:
+        _safe_unlink(tmp)
+        return RefreshResult(False, f"could not write {f}: {e}")
+    return RefreshResult(
+        True,
+        f"Claude token saved ({len(token)} chars). New firstmate sessions pick it up "
+        "immediately; reboot the stack to refresh the running container's env.",
+    )
+
+
+def claude_token_status(paths: Paths) -> dict:
+    """Presence/metadata for the Credentials screen — never returns the token itself."""
+    f = _claude_token_path(paths)
+    if not f.is_file():
+        return {}
+    try:
+        tok = f.read_text().strip()
+        mtime = f.stat().st_mtime
+    except OSError:
+        return {}
+    return {"present": bool(tok), "chars": len(tok), "mtime": mtime}

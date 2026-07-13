@@ -46,6 +46,23 @@ def snapshot(tag: str, container: str = "agent-sandbox") -> docker_ops.Result:
     return docker_ops.run(["docker", "commit", container, _qualify(tag)], timeout=180)
 
 
+def delete(tag: str) -> docker_ops.Result:
+    return docker_ops.run(["docker", "rmi", _qualify(tag)], timeout=60)
+
+
+def rename(old: str, new: str) -> docker_ops.Result:
+    r = docker_ops.run(["docker", "tag", _qualify(old), _qualify(new)], timeout=30)
+    if not r.ok:
+        return r
+    return docker_ops.run(["docker", "rmi", _qualify(old)], timeout=30)
+
+
+def rebuild(paths: Paths) -> docker_ops.Result:
+    """Rebuild the BASE image from the Dockerfile. Always targets shipshape-agent:base
+    (image=DEFAULT) so it never overwrites a saved snapshot."""
+    return docker_ops.compose(paths.root, ["build", "agent-sandbox"], image=DEFAULT, timeout=1800)
+
+
 def snapshots() -> list[dict]:
     r = docker_ops.run(
         ["docker", "images", PREFIX, "--format", "{{.Tag}}|{{.Size}}|{{.CreatedSince}}"],

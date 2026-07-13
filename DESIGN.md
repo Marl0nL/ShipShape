@@ -260,6 +260,32 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
 - **Dockerfile reorder:** client commands + skills COPY last, so iterating on them is
   a cheap rebuild.
 
+### Phase 8 — image lifecycle, quick-start kickoff, pre-trusted firstmate  ✅ built
+- **Full image lifecycle (`images.py`)** beyond snapshot/use: `rebuild` rebuilds
+  `shipshape-agent:base` from the Dockerfile (always targets `base` via `image=DEFAULT`,
+  so it never clobbers a snapshot); `image-delete <tag>` (`docker rmi`, and if it was the
+  active tag the pointer resets to `base`); `image-rename <old> <new>` (`docker tag` +
+  `docker rmi`, moving the active pointer if the renamed tag was active). The TUI **Images**
+  tab gains **Rename→** (new name from the tag box), **Delete** (selected row), and
+  **Rebuild base** buttons alongside Snapshot/Use.
+- **Quick-start kicks the agent off immediately.** The `claude` session now launches as
+  `claude --permission-mode auto "Ahoy firstmate, get yourself oriented and ready to work."`
+  so firstmate starts orienting itself the moment the window opens.
+- **firstmate project pre-trusted.** The image bakes `~/.claude.json` with
+  `hasTrustDialogAccepted: true` for `/home/agentdev/firstmate` (the quick-start CWD), so
+  `claude` skips its startup trust dialog. Baked in the cheap-rebuild tail; valid JSON,
+  `0600`, owned by `agentdev`.
+- **Persistent Claude token (`auth/claude-token`).** Drop the output of
+  `claude setup-token` (a ~1y OAuth token) into `auth/claude-token`. Two mechanisms feed
+  it to `claude`: (1) on `up`, `docker_ops.compose` reads the file and injects
+  `CLAUDE_CODE_OAUTH_TOKEN` into the container config env (visible to every `docker exec`,
+  like `docker run -e …`); (2) a baked `/etc/profile.d/claude-token.sh` re-reads the LIVE
+  mount in every login shell, so a rotation reaches new firstmate sessions without a
+  recreate. Rotate from the TUI **Credentials** tab (masked input + **Set Claude token** /
+  `c`) or `shipshape claude-token` (arg or stdin); `creds` shows presence + age.
+  This layers under the quick-start's copied `~/.claude/.credentials.json` as another
+  auth path.
+
 ## Known limitations / deferred (from the code review)
 
 Fixed: reprocess-loop + path-traversal via spool id, cross-thread store

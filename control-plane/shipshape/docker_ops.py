@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 PROXY = "egress-proxy"
 
@@ -49,6 +50,17 @@ def compose(root, args: list[str], timeout: int = 1800, image: str | None = None
     env = {**os.environ, "HOST_UID": str(os.getuid())}
     if image:
         env["SHIPSHAPE_AGENT_IMAGE"] = image
+    # Push the persistent Claude token (auth/claude-token) into the container env so
+    # `claude` auto-authenticates on start — mirrors `docker run -e CLAUDE_CODE_OAUTH_TOKEN=…`.
+    # Compose interpolates ${CLAUDE_CODE_OAUTH_TOKEN:-} with this; falls back to the host
+    # env var (or empty) when the file is absent. (Rotation reaches new login shells live
+    # via the baked /etc/profile.d snippet; the container's config env updates on recreate.)
+    try:
+        tok = (Path(root) / "auth" / "claude-token").read_text().strip()
+        if tok:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
+    except OSError:
+        pass
     cmd = ["docker", "compose", "-f", f"{root}/docker-compose.yml", *args]
     try:
         p = subprocess.run(

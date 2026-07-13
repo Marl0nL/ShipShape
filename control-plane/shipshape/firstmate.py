@@ -37,6 +37,11 @@ def quick_start(paths: Paths, cfg: Config, run=docker_ops.run) -> tuple[bool, st
     else:
         note = "no host ~/.claude/.credentials.json (using CLAUDE_CODE_OAUTH_TOKEN if set); "
 
-    # 3. open a live claude session in the baked firstmate dir, in a new window
-    term = docker_ops.open_terminal(cfg.agent_container, "cd ~/firstmate && exec claude")
+    # 3. open a live claude session in the baked firstmate dir, in a new window,
+    #    kicked off so the agent starts orienting itself immediately.
+    inner = (
+        "cd ~/firstmate && exec claude --permission-mode auto "
+        '"Ahoy firstmate, get yourself oriented and ready to work."'
+    )
+    term = docker_ops.open_terminal(cfg.agent_container, inner)
     return term.ok, note + term.output
