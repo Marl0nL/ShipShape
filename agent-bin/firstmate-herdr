@@ -1,46 +1,56 @@
 #!/usr/bin/env bash
 # Launch the firstmate PRIMARY (claude) inside a persistent herdr workspace, so the
-# primary session and the crewmates firstmate spawns (backend=herdr) share one
-# visible, attachable workspace.
+# primary session and the crewmates firstmate spawns (backend=herdr) share one visible,
+# attachable workspace.
 #
-# Sequence (validated against herdr 0.7.3):
-#   1. ensure a headless herdr server for the session
-#   2. on a FRESH session, create the primary workspace, launch claude in it via
-#      `agent start` (spawns claude as the pane's REAL process — unlike `pane run`,
-#      which types into a shell and races the shell's startup), then close the empty
-#      root shell so claude gets the whole workspace
-#   3. attach the interactive workspace (the foreground TUI the operator sees)
-# Re-running against an already-live session just re-attaches (no duplicate primary).
+# Strategy (validated against herdr 0.7.3): ATTACH FIRST, then inject claude into the
+# LIVE session from a detached helper. Pre-creating the agent headless and then attaching
+# is racy — the attaching client "adopts" a still-initializing agent pane and can drop it.
+# Adding claude AFTER the client is attached avoids that entirely.
+#
+# The helper: waits for the attach to bring the server + default workspace up, launches
+# claude as a real agent process (`agent start` — no shell-typing race), and moves it to
+# its own full-screen tab (the attach's shell stays as tab 1). If a firstmate primary is
+# already present (re-attach), it does nothing (no duplicate).
 set -u
 
 SESSION="${FM_HERDR_SESSION:-firstmate}"
 FMDIR="${FM_DIR:-$HOME/firstmate}"
-PROMPT="${1:-Ahoy firstmate, get yourself oriented and ready to work.}"
+PROMPT="${FM_PROMPT:-${1:-Ahoy firstmate, get yourself oriented and ready to work.}}"
 
-cd "$FMDIR" 2>/dev/null || true
-
-fresh=1
-if herdr --session "$SESSION" status server >/dev/null 2>&1; then
-  fresh=0                                   # already running -> reattach, don't duplicate
-else
-  herdr --session "$SESSION" server >/dev/null 2>&1 &
-  for _ in $(seq 1 40); do
+if [ "${FM_INJECT:-}" = 1 ]; then
+  # --- detached injector: add claude to the attached session ---
+  for _ in $(seq 1 80); do
     herdr --session "$SESSION" status server >/dev/null 2>&1 && break
     sleep 0.25
   done
-fi
-
-if [ "$fresh" = 1 ]; then
-  ws="$(herdr --session "$SESSION" workspace create --cwd "$FMDIR" --label firstmate 2>/dev/null)"
-  wsid="$(printf '%s' "$ws" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)"
-  rootpane="$(printf '%s' "$ws" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)"
-  if [ -n "$wsid" ]; then
-    if herdr --session "$SESSION" agent start firstmate --workspace "$wsid" --cwd "$FMDIR" --focus \
-         -- claude --permission-mode auto "$PROMPT" >/dev/null 2>&1; then
-      # claude launched in its own pane — drop the leftover root shell so it's full-screen
-      [ -n "$rootpane" ] && herdr --session "$SESSION" pane close "$rootpane" >/dev/null 2>&1 || true
+  # already have a primary (re-attach)? leave it alone
+  herdr --session "$SESSION" agent list 2>/dev/null | grep -q '"name":"firstmate"' && exit 0
+  # Launch claude, RETRYING against the attach-adoption race (herdr occasionally drops a
+  # freshly-started agent pane while the client is still settling). Each attempt starts
+  # claude, waits, and only keeps it (moves to its own tab) once it's confirmed present.
+  for attempt in 1 2 3 4 5; do
+    wsid="$(herdr --session "$SESSION" workspace list 2>/dev/null \
+            | jq -r '.result.workspaces[0].workspace_id // empty' 2>/dev/null)"
+    if [ -n "$wsid" ]; then
+      out="$(herdr --session "$SESSION" agent start firstmate --workspace "$wsid" --cwd "$FMDIR" --focus \
+               -- claude --permission-mode auto "$PROMPT" 2>/dev/null)"
+      apane="$(printf '%s' "$out" | jq -r '.result.agent.pane_id // empty' 2>/dev/null)"
+      if [ -n "$apane" ]; then
+        sleep 1.5
+        if herdr --session "$SESSION" agent list 2>/dev/null | grep -q '"name":"firstmate"'; then
+          herdr --session "$SESSION" pane move "$apane" --new-tab --label firstmate --focus >/dev/null 2>&1
+          exit 0
+        fi
+      fi
     fi
-  fi
+    sleep 1
+  done
+  exit 0
 fi
 
+# --- main: launch the injector detached, then attach (the attach starts the server) ---
+cd "$FMDIR" 2>/dev/null || true
+FM_INJECT=1 FM_HERDR_SESSION="$SESSION" FM_DIR="$FMDIR" FM_PROMPT="$PROMPT" \
+  setsid "$0" >/dev/null 2>&1 &
 exec herdr --session "$SESSION"
