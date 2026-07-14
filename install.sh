@@ -66,6 +66,17 @@ pipx ensurepath >/dev/null 2>&1 || true
 mkdir -p "$CONF_DIR" && printf '%s\n' "$SCRIPT_DIR" > "$CONF_DIR/root"
 log "recorded repo root ($SCRIPT_DIR) — '$BIN' will work from any directory"
 
+# Seed local config from the tracked *.example templates (the live files are
+# gitignored, so personal entries never land in the repo). Only creates them if absent.
+for pair in \
+  "egress/allowed_domains.example.txt:egress/allowed_domains.txt" \
+  "shipshape.toml.example:shipshape.toml"; do
+  tmpl="$SCRIPT_DIR/${pair%%:*}"; live="$SCRIPT_DIR/${pair##*:}"
+  if [ -f "$tmpl" ] && [ ! -f "$live" ]; then
+    cp "$tmpl" "$live" && log "seeded $(basename "$live") from its template"
+  fi
+done
+
 if command -v "$BIN" >/dev/null 2>&1; then
   log "$BIN installed at $(command -v "$BIN")"
 else

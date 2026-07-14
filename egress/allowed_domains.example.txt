@@ -1,11 +1,15 @@
-# ShipShape egress allow-list — managed by the control plane (`shipshape`).
+# ShipShape egress allow-list — TEMPLATE (tracked defaults).
+#
+# On first run the control plane copies this to `allowed_domains.txt` (gitignored —
+# your live, local list). Edit the live list via the `shipshape` TUI/CLI; the domains
+# you approve stay local and never land in git. Re-copy from here for a clean reset.
 #
 # One domain per line; a leading dot matches subdomains (.github.com).
 # Lines beginning '#' are comments (ignored by Squid). The control plane uses a
 # sentinel to represent a DISABLED (unchecked) domain WITHOUT deleting it:
 #     #SS-OFF# .github.com     <- disabled; flip back to `.github.com` to enable.
 # Any other '# ...' line is treated as a section header and left untouched, so
-# your hand-written headers below survive round-trips.
+# hand-written headers survive round-trips.
 #
 # Apply changes live (no restart, no dropped connections):
 #     docker exec egress-proxy squid -k reconfigure
@@ -51,8 +55,3 @@ files.pythonhosted.org
 # --- Dart / Flutter ---  (storage.googleapis.com covered by .googleapis.com above)
 pub.dev
 .gstatic.com
-
-# --- Approved via control plane ---
-.repositpower.com
-nsw-vpp-backend-cbl36bws6q-uc.a.run.app
-.nsw-vpp-backend-63343774299.us-central1.run.app

@@ -126,16 +126,16 @@ These fixed real defects in the first hardening pass:
 - Config: `shipshape.toml` `[gcp].agent_sa` (+ `agent_container`), env-overridable.
 - TUI **Credentials** tab: SA, current key id, age, "Refresh GCP now".
 
-**Operator one-time GCP setup** (touches the `market-operations` project — run these yourself):
+**Operator one-time GCP setup** (touches your GCP project (shown as YOUR_GCP_PROJECT) — run these yourself):
 ```bash
 # 1. Dedicated, scope-limited agent SA (grant only narrow, resource-level roles)
-gcloud iam service-accounts create agent-daily --project market-operations \
+gcloud iam service-accounts create agent-daily --project YOUR_GCP_PROJECT \
   --display-name "ShipShape agent (rotating short-lived creds)"
 
 # 2. Let your user create/delete keys for it (least privilege: only on this one SA)
 gcloud iam service-accounts add-iam-policy-binding \
-  agent-daily@market-operations.iam.gserviceaccount.com \
-  --member "user:marlon.leicester@repositpower.com" \
+  agent-daily@YOUR_GCP_PROJECT.iam.gserviceaccount.com \
+  --member "user:you@example.com" \
   --role roles/iam.serviceAccountKeyAdmin
 
 # 3. Grant the agent SA the NARROW, resource-level roles the agent actually needs

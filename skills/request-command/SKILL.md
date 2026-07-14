@@ -14,8 +14,8 @@ cannot run these yourself. Propose the exact command:
 request-command "<command>" [reason]
 # e.g.
 request-command \
-  "gcloud projects add-iam-policy-binding market-operations \
-     --member serviceAccount:agent-daily@market-operations.iam.gserviceaccount.com \
+  "gcloud projects add-iam-policy-binding YOUR_GCP_PROJECT \
+     --member serviceAccount:agent-daily@YOUR_GCP_PROJECT.iam.gserviceaccount.com \
      --role roles/bigquery.dataViewer" \
   "need to read the analytics dataset for this task"
 ```

@@ -54,6 +54,18 @@ class Paths:
         self.state.mkdir(parents=True, exist_ok=True)
         (self.spool / "req").mkdir(parents=True, exist_ok=True)
         (self.spool / "resp").mkdir(parents=True, exist_ok=True)
+        # Seed local config from the tracked *.example templates on first run. The live
+        # files are gitignored, so personal entries (approved domains, your SA email)
+        # never land in the repo or get inherited by other installs.
+        for live, template in (
+            (self.allowlist, self.allowlist.with_name("allowed_domains.example.txt")),
+            (self.root / "shipshape.toml", self.root / "shipshape.toml.example"),
+        ):
+            if not live.exists() and template.exists():
+                try:
+                    live.write_text(template.read_text())
+                except OSError:
+                    pass
 
     @classmethod
     def discover(cls) -> "Paths":

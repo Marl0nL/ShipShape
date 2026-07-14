@@ -12,6 +12,11 @@ control-plane/state/
 # Persistent agent working data
 firstmate-data/
 
+# Local config — personal, must NOT be inherited by other installs. Seeded on first
+# run from the tracked *.example templates; edit the live files locally.
+/shipshape.toml
+egress/allowed_domains.txt
+
 # Control-plane backups
 egress/*.bak
 
