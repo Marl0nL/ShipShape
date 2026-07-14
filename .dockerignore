@@ -8,6 +8,7 @@ auth/
 firstmate-data/
 .env
 .env.*
-DESIGN.md
+docs/
+README.md
 # NOTE: do not add `*.md` here — it would exclude skills/*/SKILL.md, which the
 # agent image needs to COPY.

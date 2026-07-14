@@ -48,3 +48,6 @@ files.pythonhosted.org
 # --- Dart / Flutter ---  (storage.googleapis.com covered by .googleapis.com above)
 pub.dev
 .gstatic.com
+
+# --- Approved via control plane ---
+.repositpower.com

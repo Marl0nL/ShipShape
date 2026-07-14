@@ -3,6 +3,7 @@ anywhere — the control plane runs as the host user and shells out to the CLI."
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from dataclasses import dataclass
@@ -60,6 +61,13 @@ def compose(root, args: list[str], timeout: int = 1800, image: str | None = None
         if tok:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
     except OSError:
+        pass
+    # Build the agent image from the configured firstmate source repo (Settings/wizard).
+    try:
+        sj = json.loads((Path(root) / "control-plane" / "state" / "settings.json").read_text())
+        if sj.get("firstmate_repo"):
+            env["FIRSTMATE_REPO"] = sj["firstmate_repo"]
+    except (OSError, json.JSONDecodeError):
         pass
     cmd = ["docker", "compose", "-f", f"{root}/docker-compose.yml", *args]
     try:

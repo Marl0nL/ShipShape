@@ -74,8 +74,10 @@ RUN curl -fsSL https://herdr.dev/install.sh | sh || echo "WARN: herdr install fa
 #    self-updates, and uses a keyring the container lacks. May not work behind Squid.
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash || echo "WARN: antigravity (agy) install failed (best-effort)"
 
-# 6. firstmate — cloned from the user's fork, defaulted to the herdr backend + claude harness.
-RUN git clone --depth 1 https://github.com/Marl0nL/firstmate.git /home/agentdev/firstmate && \
+# 6. firstmate — cloned from the CONFIGURED fork (Settings/wizard sets FIRSTMATE_REPO;
+#    default: the user's), defaulted to the herdr backend + claude harness.
+ARG FIRSTMATE_REPO=https://github.com/Marl0nL/firstmate.git
+RUN git clone --depth 1 "$FIRSTMATE_REPO" /home/agentdev/firstmate && \
     mkdir -p /home/agentdev/firstmate/config && \
     printf 'herdr\n' > /home/agentdev/firstmate/config/backend && \
     printf 'claude\n' > /home/agentdev/firstmate/config/crew-harness
@@ -94,7 +96,8 @@ USER root
 COPY agent-bin/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
              /usr/local/bin/refresh-daily-auth /usr/local/bin/await-request \
-             /usr/local/bin/install-flutter /usr/local/bin/install-adb
+             /usr/local/bin/install-flutter /usr/local/bin/install-adb \
+             /usr/local/bin/firstmate-herdr
 # Auto-auth Claude Code from the mounted, rotatable token file (auth/claude-token):
 # every login shell (the quick-start runs `bash -lc`) re-reads the LIVE mount and
 # synthesizes ~/.claude/.credentials.json from it, so a rotated token reaches new

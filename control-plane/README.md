@@ -2,7 +2,7 @@
 
 Host-side management for the ShipShape agent sandbox. Runs as **you** on the
 host (it shells out to `docker`, `gcloud`, `gh` — no docker socket is mounted
-anywhere). See `../DESIGN.md` for the full architecture and phase roadmap.
+anywhere). See `../docs/DESIGN.md` for the full architecture and phase roadmap.
 
 ## Install
 

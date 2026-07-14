@@ -16,6 +16,8 @@ services:
       args:
         # Match the host operator's uid so the 0600 creds in /auth are readable.
         HOST_UID: ${HOST_UID:-1000}
+        # firstmate source repo (Settings/wizard-configurable; applied on rebuild).
+        FIRSTMATE_REPO: ${FIRSTMATE_REPO:-https://github.com/Marl0nL/firstmate.git}
     user: "agentdev" # Enforce running as the non-root user
     # Pinned so the control plane can `docker exec agent-sandbox …` (re-activate
     # gcloud after a key rotation). Without it the name is shipshape-agent-sandbox-1.

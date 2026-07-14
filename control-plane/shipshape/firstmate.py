@@ -41,11 +41,9 @@ def quick_start(paths: Paths, cfg: Config, run=docker_ops.run) -> tuple[bool, st
     else:
         note = "Claude auth: no claude-token or host creds — add one on the Credentials tab. "
 
-    # 3. open a live claude session in the baked firstmate dir, in a new window,
-    #    kicked off so the agent starts orienting itself immediately.
-    inner = (
-        "cd ~/firstmate && exec claude --permission-mode auto "
-        '"Ahoy firstmate, get yourself oriented and ready to work."'
-    )
-    term = docker_ops.open_terminal(cfg.agent_container, inner)
+    # 3. open the firstmate primary in a herdr workspace, in a new window, kicked off
+    #    so the agent starts orienting itself immediately. firstmate-herdr starts a
+    #    herdr session, `pane run`s claude in it, then attaches — so the primary and the
+    #    crewmates firstmate spawns (backend=herdr) share one visible workspace.
+    term = docker_ops.open_terminal(cfg.agent_container, "exec firstmate-herdr")
     return term.ok, note + term.output
