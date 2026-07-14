@@ -58,6 +58,10 @@ services:
       - ./firstmate-data:/home/agentdev/work
       # Rotatable credential drop. Daily creds land here; read-only to the agent.
       - ./auth:/auth:ro
+      # Persist the Antigravity CLI (agy) OAuth token across container recreations so you
+      # sign in once (`agy-login`). Named volume (not a bind mount) so it inherits the
+      # image dir's agentdev ownership and agy can write its file-based token store.
+      - agy-data:/home/agentdev/.gemini
     networks:
       - isolated_agent_net
     # --- Container hardening ---
@@ -167,3 +171,8 @@ networks:
     # Sole purpose: give ONLY the adb-relay a route to the host's adb server.
     # The agent-sandbox is never attached here, so its isolation is unchanged.
     driver: bridge
+
+volumes:
+  # Persists the Antigravity CLI (agy) OAuth token (~/.gemini/antigravity-cli) so you
+  # sign in once. Remove with `docker compose down -v` (forces a fresh agy-login).
+  agy-data:

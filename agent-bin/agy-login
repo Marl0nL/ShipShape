@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# One-time Antigravity (agy) sign-in for the sandbox.
+#
+# The container has no browser, so agy uses a copy/paste OAuth flow (and detects the
+# container automatically, storing the token as a FILE in ~/.gemini/antigravity-cli —
+# no OS keyring needed). That directory is on the persistent `agy-data` volume, so you
+# only sign in once; the token survives container restarts.
+#
+# Flow (agy prompts for it on start if you're not already signed in):
+#   1. A Google sign-in URL prints.
+#   2. Open it in a browser ON YOUR HOST machine and approve access.
+#   3. Copy the authorization code shown on the antigravity.google callback page.
+#   4. Paste it back here and press Enter.
+#
+# Heads up: agy gives ~60s once the URL appears — have your browser ready. If it times
+# out, just re-run `agy-login`. Once signed in, `agy` / `agy -p "…"` work normally.
+set -u
+
+cat <<'MSG'
+──────────────────────────────────────────────────────────────────────
+ Antigravity (agy) sign-in — copy/paste OAuth (no in-container browser)
+   • If a Google URL appears, open it on your HOST, approve, then paste the
+     authorization code from the callback page back here.
+   • If nothing prompts, you're already signed in — agy will just start.
+   • Token is saved to ~/.gemini/antigravity-cli (persistent agy-data volume).
+──────────────────────────────────────────────────────────────────────
+MSG
+
+# Launch agy; it triggers the paste-code sign-in first if needed, then the session is
+# ready. Extra args pass through (e.g. `agy-login -p "hello"` for a one-shot).
+exec agy "$@"

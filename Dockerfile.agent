@@ -16,6 +16,9 @@ FROM python:3.11-slim-bookworm@sha256:f5cf0344c9886ff24d34797578d5d7dd6e8911ae0f
 ENV DEBIAN_FRONTEND=noninteractive
 # User-installed CLIs (claude, herdr, agy, treehouse, no-mistakes, npm globals) land here.
 ENV PATH="/home/agentdev/.local/bin:${PATH}"
+# Antigravity CLI: pin the baked binary — the sandbox uses a default-deny proxy and a
+# self-update would fetch/replace it out of band. (agy honors HTTPS_PROXY; auth = agy-login.)
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 
 # 1. System tooling: bootstrap essentials + firstmate deps (tmux/jq), all baked.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,8 +65,10 @@ RUN useradd -ms /bin/bash -u ${HOST_UID} agentdev
 USER agentdev
 WORKDIR /home/agentdev
 
-# 4b. npm global prefix in $HOME so `npm i -g` works as non-root; ensure ~/.claude.
-RUN npm config set prefix /home/agentdev/.local && mkdir -p /home/agentdev/.claude
+# 4b. npm global prefix in $HOME so `npm i -g` works as non-root; ensure ~/.claude and
+#     ~/.gemini (agy's data dir — agentdev-owned so the persistent agy-data volume mounts
+#     writable and agy can store its OAuth token there).
+RUN npm config set prefix /home/agentdev/.local && mkdir -p /home/agentdev/.claude /home/agentdev/.gemini
 
 # 5. Coding-agent CLIs (user-space).
 #    Claude Code — honors HTTP(S)_PROXY; auth via copied creds or CLAUDE_CODE_OAUTH_TOKEN.
@@ -97,7 +102,7 @@ COPY agent-bin/ /usr/local/bin/
 RUN chmod +x /usr/local/bin/request-domain /usr/local/bin/request-command \
              /usr/local/bin/refresh-daily-auth /usr/local/bin/await-request \
              /usr/local/bin/install-flutter /usr/local/bin/install-adb \
-             /usr/local/bin/firstmate-herdr
+             /usr/local/bin/firstmate-herdr /usr/local/bin/agy-login
 # Auto-auth Claude Code from the mounted, rotatable token file (auth/claude-token):
 # every login shell (the quick-start runs `bash -lc`) re-reads the LIVE mount and
 # synthesizes ~/.claude/.credentials.json from it, so a rotated token reaches new

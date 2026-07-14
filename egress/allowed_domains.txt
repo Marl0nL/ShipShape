@@ -32,11 +32,14 @@ claude.ai
 platform.claude.com
 downloads.claude.ai
 
-# --- Antigravity CLI (agy) — best-effort; may not honor the proxy (see DESIGN.md) ---
+# --- Antigravity CLI (agy) — VERIFIED working through Squid on agy 1.1.2 ---
+# (agy honors HTTPS_PROXY and tunnels via CONNECT; auth is copy/paste OAuth — `agy-login`.)
 antigravity.google
 antigravity-unleash.goog
 antigravity-cli-auto-updater-974169037036.us-central1.run.app
-# (Google API + accounts.google.com are already covered above.)
+.googleusercontent.com
+# (accounts.google.com, oauth2/cloudaicompanion/cloudcode-pa/play/generativelanguage
+#  .googleapis.com, and storage.googleapis.com are already covered above.)
 
 # --- npm registry (runtime `npm i -g` by agents) ---
 registry.npmjs.org

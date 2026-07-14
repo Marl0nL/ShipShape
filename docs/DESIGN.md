@@ -354,9 +354,19 @@ Remaining deferred (documented, low priority):
   (claude.ai, herdr.dev, antigravity.google, treehouse/no-mistakes, npm *-axi) that can
   only be validated by a live `docker compose build`. herdr's Linux install and the `agy`
   binary especially need a smoke test; reproducible pinning of those is future work.
-- **Antigravity (`agy`) may not work behind Squid** — documented history of ignoring
-  HTTP(S)_PROXY on Linux (gRPC dialers bypass it), background self-update, and keyring
-  token storage the container lacks. Baked best-effort; verify end-to-end before relying on it.
+- **Antigravity (`agy`) — RESOLVED (works through Squid on agy 1.1.2).** Earlier
+  concern (proxy-bypass / keyring) is fixed upstream and verified live in the sandbox:
+  agy honors `HTTPS_PROXY` and tunnels via CONNECT (Squid logs show
+  `CONNECT antigravity-unleash.goog:443` / `play.googleapis.com:443` succeed while direct
+  TCP is blocked), and it auto-detects the container to use **file-based token storage**
+  (`~/.gemini/antigravity-cli`, no keyring — `token_storage.go: "container environment
+  detected"`). Setup: (a) `.googleusercontent.com` added to the allow-list (other hosts are
+  `.googleapis.com`); (b) `ENV AGY_CLI_DISABLE_AUTO_UPDATE=1` pins the baked binary; (c) a
+  named `agy-data` volume persists `~/.gemini` (agentdev-owned, writable) so you sign in
+  once; (d) `agy-login` runs the copy/paste OAuth (no browser needed — authorize on the
+  host, paste the code). Caveat: agy has **no API-key/service-account auth** (OAuth only,
+  upstream #78) and an upstream file-store read bug in some builds (#479) — if it asks to
+  re-login every run, that's #479, not our setup.
 - **Claude credentials in the sandbox** — quick-start copies the operator's Claude OAuth
   (and passes `CLAUDE_CODE_OAUTH_TOKEN`), so the autonomous agent runs as the operator's
   Claude account. Accepted tradeoff for convenience.
