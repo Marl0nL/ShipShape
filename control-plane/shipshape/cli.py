@@ -223,7 +223,11 @@ def cmd_status(paths: Paths, _args) -> int:
 
 def cmd_shell(_paths: Paths, args) -> int:
     # hand off the terminal to an interactive shell in the container
-    os.execvp("docker", ["docker", "exec", "-it", args.container, "/bin/bash"])
+    argv = ["docker", "exec", "-it"]
+    if args.root:
+        argv += ["-u", "0"]
+    argv += [args.container, "/bin/bash"]
+    os.execvp("docker", argv)
     return 0  # unreachable (execvp replaces the process)
 
 
@@ -407,6 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("quickstart", help="boot + inject Claude creds + open a firstmate claude session").set_defaults(fn=cmd_quickstart)
     sp = sub.add_parser("shell", help="open an interactive shell in a container")
     sp.add_argument("container", nargs="?", default="agent-sandbox")
+    sp.add_argument("--root", action="store_true", help="open as root (uid 0) instead of agentdev")
     sp.set_defaults(fn=cmd_shell)
     sub.add_parser("reload", help="squid -k reconfigure").set_defaults(fn=cmd_reload)
     sub.add_parser("refresh-gcp", help="mint + inject a fresh GCP SA key").set_defaults(fn=cmd_refresh_gcp)

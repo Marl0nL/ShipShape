@@ -286,6 +286,28 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
   This layers under the quick-start's copied `~/.claude/.credentials.json` as another
   auth path.
 
+### Phase 9 — prompt-free firstmate boot, focus-aware TUI, root shell  ✅ built
+- **Zero-prompt claude launch.** The exact gating keys were read out of the installed
+  `claude` binary and pre-seeded in the baked `~/.claude.json`: `hasCompletedOnboarding`
+  (theme/onboarding), `bypassPermissionsModeAccepted` (the `--dangerously-skip-permissions`
+  warning firstmate's own launch hits), `hasAcknowledgedCostThreshold`, `theme`, plus
+  per-project `hasCompletedProjectOnboarding` / `projectOnboardingSeenCount` / trust.
+- **Token → credentials file.** `CLAUDE_CODE_OAUTH_TOKEN` alone is unreliable, so
+  `container/claude-login.sh` (COPYd to `/etc/profile.d/claude-token.sh`) synthesizes a
+  structured `~/.claude/.credentials.json` (`claudeAiOauth.accessToken` + far-future
+  `expiresAt` + scopes) from the live `/auth/claude-token` on each login shell when none
+  exists. Quick-start now **prefers the persistent token** over copying the host's
+  interactive creds (long-lived + container-appropriate); host-copy is the fallback.
+- **Focus-aware TUI refresh.** The file-backed auto-refresh runs at **1s while the window
+  is focused** (`on_app_focus`) and eases to **5s when blurred** (`on_app_blur`), retimed
+  by stopping/replacing the interval timer. Header shows the current rate.
+- **Stack transitional indicators.** Boot/Shut-down now paint `⏳ Booting…` / `⏳ Shutting
+  down services…` into the Stack pane immediately, so there's feedback while compose works
+  (the worker overwrites it with `ps` output on completion).
+- **Root shell.** A **Root shell** button (Stack tab) and `shipshape shell --root` open a
+  `docker exec -u 0` terminal; `docker_ops.open_terminal(..., user=…)` gained the `-u` hook.
+  The default Shell stays the unprivileged `agentdev`.
+
 ## Known limitations / deferred (from the code review)
 
 Fixed: reprocess-loop + path-traversal via spool id, cross-thread store

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.worker import get_current_worker
 from textual.containers import Horizontal, Vertical
@@ -116,8 +116,10 @@ class ShipShapeApp(App):
                 with Horizontal():
                     yield Button("Boot (u)", id="stack_up", variant="success")
                     yield Button("Shut down", id="stack_down", variant="error")
-                    yield Button("Shell (t)", id="open_shell")
                     yield Button("Quick-start firstmate (f)", id="quickstart", variant="primary")
+                with Horizontal():
+                    yield Button("Shell (t)", id="open_shell")
+                    yield Button("Root shell", id="open_root_shell", variant="warning")
             with TabPane("Pending", id="pending"):
                 yield DataTable(id="pending_table", cursor_type="row")
             with TabPane("Allow-list", id="allowlist"):
@@ -179,7 +181,10 @@ class ShipShapeApp(App):
         self._reload_images()
         self._harvest()
         self._spool_watch()
-        self.set_interval(5.0, self._tick)  # auto-refresh so changes are visible
+        # Auto-refresh so changes are visible. Fast (1s) while this is the active
+        # window; drop to 5s when the terminal loses focus (see on_app_focus/blur).
+        self._tick_interval = 1.0
+        self._tick_timer = self.set_interval(self._tick_interval, self._tick)
 
     # --- status helper ---
     def _status(self, msg: str) -> None:
@@ -272,9 +277,14 @@ class ShipShapeApp(App):
             self.action_stack_up()
         elif event.button.id == "stack_down":
             self._status("shutting down stack…")
+            self.query_one("#stack_status", Static).update(
+                "⏳  Shutting down services…  (waiting for a graceful stop)"
+            )
             self._do_stack("down")
         elif event.button.id == "open_shell":
             self.action_shell()
+        elif event.button.id == "open_root_shell":
+            self.action_root_shell()
         elif event.button.id == "quickstart":
             self.action_quickstart()
         elif event.button.id == "use_image":
@@ -318,17 +328,37 @@ class ShipShapeApp(App):
         self._status("refreshed")
 
     def _tick(self) -> None:
-        # Lightweight periodic refresh (every 5s) so the operator sees live changes
-        # without pressing 'r'. File-backed reads only — no docker subprocess here.
+        # Lightweight periodic refresh so the operator sees live changes without
+        # pressing 'r'. File-backed reads only — no docker subprocess here — so it's
+        # cheap enough to run every second while focused.
         self._hb = getattr(self, "_hb", 0) + 1
         self.store.load()
         self._refresh_pending()
         self._refresh_commands()
         self._refresh_creds()
-        self.sub_title = "auto-refresh " + ("●" if self._hb % 2 else "○")
+        rate = int(getattr(self, "_tick_interval", 1))
+        self.sub_title = f"refresh {rate}s " + ("●" if self._hb % 2 else "○")
+
+    def _set_tick_interval(self, seconds: float) -> None:
+        if getattr(self, "_tick_interval", None) == seconds:
+            return
+        timer = getattr(self, "_tick_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._tick_interval = seconds
+        self._tick_timer = self.set_interval(seconds, self._tick)
+
+    def on_app_focus(self, event: events.AppFocus) -> None:
+        self._set_tick_interval(1.0)  # active window → smoother 1s refresh
+
+    def on_app_blur(self, event: events.AppBlur) -> None:
+        self._set_tick_interval(5.0)  # backgrounded → ease off to 5s
 
     def action_shell(self) -> None:
         self._status(docker_ops.open_shell("agent-sandbox").output)
+
+    def action_root_shell(self) -> None:
+        self._status(docker_ops.open_shell("agent-sandbox", user="0").output + " (root)")
 
     def action_quickstart(self) -> None:
         self._status("quick-start firstmate: booting + injecting Claude creds…")
@@ -402,6 +432,9 @@ class ShipShapeApp(App):
 
     def action_stack_up(self) -> None:
         self._status("booting stack (first run builds images — can take minutes)…")
+        self.query_one("#stack_status", Static).update(
+            "⏳  Booting stack…  (first run builds images — can take minutes)"
+        )
         self._do_stack("up")
 
     @work(thread=True, exclusive=True, group="ops")

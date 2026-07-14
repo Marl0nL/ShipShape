@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import docker_ops, images
+from . import creds, docker_ops, images
 from .config import Config, Paths
 
 HOST_CREDS = Path.home() / ".claude" / ".credentials.json"
@@ -24,18 +24,22 @@ def quick_start(paths: Paths, cfg: Config, run=docker_ops.run) -> tuple[bool, st
     if not up.ok:
         return False, f"stack up failed:\n{up.output}"
 
-    # 2. copy the host's Claude credentials in (best-effort; token env is the fallback)
-    note = ""
-    if HOST_CREDS.is_file():
+    # 2. Claude auth. PREFER the persistent token (auth/claude-token): it's long-lived
+    #    and container-appropriate, and the sandbox's login shell synthesizes a
+    #    credentials file from it (container/claude-login.sh). Only fall back to copying
+    #    the host's interactive credentials when no token is configured.
+    if creds.claude_token(paths):
+        note = "Claude auth: persistent claude-token (synthesized in-container). "
+    elif HOST_CREDS.is_file():
         cp = run(["docker", "cp", str(HOST_CREDS), f"{cfg.agent_container}:{IN_CONTAINER_CREDS}"])
         if cp.ok:
             run(["docker", "exec", "-u", "0", cfg.agent_container,
                  "chown", "agentdev:agentdev", IN_CONTAINER_CREDS])
-            note = "copied host Claude creds; "
+            note = "Claude auth: copied host credentials. "
         else:
-            note = "creds copy failed (falling back to CLAUDE_CODE_OAUTH_TOKEN); "
+            note = "Claude auth: host-creds copy failed (using CLAUDE_CODE_OAUTH_TOKEN if set). "
     else:
-        note = "no host ~/.claude/.credentials.json (using CLAUDE_CODE_OAUTH_TOKEN if set); "
+        note = "Claude auth: no claude-token or host creds — add one on the Credentials tab. "
 
     # 3. open a live claude session in the baked firstmate dir, in a new window,
     #    kicked off so the agent starts orienting itself immediately.

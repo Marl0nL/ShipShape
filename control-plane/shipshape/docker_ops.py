@@ -75,13 +75,19 @@ def compose(root, args: list[str], timeout: int = 1800, image: str | None = None
         return Result(False, str(e))
 
 
-def open_terminal(container: str = "agent-sandbox", inner: str | None = None) -> Result:
+def open_terminal(
+    container: str = "agent-sandbox", inner: str | None = None, user: str | None = None
+) -> Result:
     """Open a container shell (or `bash -lc <inner>`) in a NEW terminal window so the
-    operator can keep the control plane visible. $SHIPSHAPE_TERMINAL overrides the
-    auto-detected emulator; falls back to a message with the manual command."""
+    operator can keep the control plane visible. `user` maps to `docker exec -u` (pass
+    "0" for a root shell). $SHIPSHAPE_TERMINAL overrides the auto-detected emulator;
+    falls back to a message with the manual command."""
     import shutil as _sh
 
-    exec_cmd = ["docker", "exec", "-it", container, "/bin/bash"]
+    exec_cmd = ["docker", "exec", "-it"]
+    if user is not None:
+        exec_cmd += ["-u", user]
+    exec_cmd += [container, "/bin/bash"]
     if inner:
         exec_cmd += ["-lc", inner]
     custom = os.environ.get("SHIPSHAPE_TERMINAL")
@@ -102,8 +108,8 @@ def open_terminal(container: str = "agent-sandbox", inner: str | None = None) ->
     return Result(False, f"no terminal emulator found — run: {' '.join(exec_cmd)}")
 
 
-def open_shell(container: str = "agent-sandbox") -> Result:
-    return open_terminal(container)
+def open_shell(container: str = "agent-sandbox", user: str | None = None) -> Result:
+    return open_terminal(container, user=user)
 
 
 def logs_popen(name: str = PROXY, tail: str = "0") -> subprocess.Popen:
