@@ -308,6 +308,27 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
   `docker exec -u 0` terminal; `docker_ops.open_terminal(..., user=…)` gained the `-u` hook.
   The default Shell stays the unprivileged `agentdev`.
 
+### Phase 10 — herdr quick-start, Dashboard, Settings + wizard, docs  ✅ built
+- **firstmate launches inside herdr.** Quick-start opens `agent-bin/firstmate-herdr`:
+  headless herdr server → `workspace create --cwd ~/firstmate` → `pane run` the kicked-off
+  `claude --permission-mode auto "Ahoy…"` → attach. Primary + crew (backend=herdr) share
+  one visible workspace. Sequence validated against herdr 0.7.3.
+- **Dashboard** (new default pane): service dots (`● control-plane / egress-proxy /
+  agent-sandbox` from one `docker ps`) with quick Shell/Shut-down when up, or Boot /
+  Quick-start when down; an **Actionables** queue unifying pending network requests +
+  agent commands + credential issues (approve/dismiss/accept/decline act on the selected
+  row); and a live **event feed** (proxy CONNECT/DENIED via a new `harvester.parse_access`,
+  plus spool + operator-action events). New actionables ring the terminal bell (window
+  attention) unless muted (`m`).
+- **Settings pane** folds in **Allow-list** and **Provision** as `Collapsible`
+  sub-sections, and adds **General**: firstmate source repo (a `FIRSTMATE_REPO` build arg
+  wired through `docker_ops.compose`, applied on Rebuild) and the egress bandwidth cap
+  (`egress.set_bandwidth` rewrites squid.conf's delay pool, force-recreating a running
+  proxy). Backed by `settings.py` (a `state/settings.json` overlay).
+- **First-launch wizard** (`SetupWizard`, shown when `first_run_done` is false): picks the
+  firstmate repo + bandwidth; notes the default allow-list is already in place.
+- **Docs:** `DESIGN.md` moved under `docs/`; a repo-root `README.md` added.
+
 ## Known limitations / deferred (from the code review)
 
 Fixed: reprocess-loop + path-traversal via spool id, cross-thread store

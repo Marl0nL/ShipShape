@@ -23,6 +23,14 @@ class Denied:
     method: str
 
 
+@dataclass
+class Access:
+    host: str
+    method: str
+    result: str  # e.g. TCP_DENIED/403, TCP_TUNNEL/200
+    allowed: bool
+
+
 def _host_port(target: str) -> tuple[str | None, str | None]:
     if "://" in target:
         u = urlsplit(target)
@@ -51,3 +59,19 @@ def parse_line(line: str) -> Denied | None:
     if port not in (None, "80", "443"):
         return None
     return Denied(host=host, method=method)
+
+
+def parse_access(line: str) -> Access | None:
+    """Parse ANY agent_audit access line (allowed or denied) for the event feed.
+    field[3] is `%Ss/%03>Hs` (e.g. TCP_TUNNEL/200); its '/' distinguishes real
+    access lines from cache.log noise on the same stream."""
+    parts = line.split()
+    if len(parts) < 7:
+        return None
+    result = parts[3]
+    if "/" not in result:
+        return None
+    host, _ = _host_port(parts[6])
+    if not host:
+        return None
+    return Access(host=host, method=parts[5], result=result, allowed=not result.startswith("TCP_DENIED"))

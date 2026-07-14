@@ -35,6 +35,13 @@ def container_running(name: str = PROXY) -> bool:
     return r.ok and r.output.strip() == "true"
 
 
+def running_containers() -> set[str]:
+    """Names of all currently-running containers (one `docker ps`, for the dashboard
+    service dots — cheaper than inspecting each container separately)."""
+    r = run(["docker", "ps", "--format", "{{.Names}}"], timeout=10)
+    return set(r.output.split()) if r.ok else set()
+
+
 def reconfigure(name: str = PROXY) -> Result:
     """Hot-reload Squid's config (picks up allow-list changes, no restart)."""
     return run(["docker", "exec", name, "squid", "-k", "reconfigure"])
