@@ -54,3 +54,5 @@ pub.dev
 
 # --- Approved via control plane ---
 .repositpower.com
+nsw-vpp-backend-cbl36bws6q-uc.a.run.app
+.nsw-vpp-backend-63343774299.us-central1.run.app
