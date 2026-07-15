@@ -9,7 +9,7 @@ services:
   agent-sandbox:
     # Relaunch a saved snapshot by setting SHIPSHAPE_AGENT_IMAGE=shipshape-agent:<tag>.
     # `docker compose build` builds + tags shipshape-agent:base; `up` runs the selected tag.
-    image: ${SHIPSHAPE_AGENT_IMAGE:-shipshape-agent:base}
+    image: ${SHIPSHAPE_AGENT_IMAGE:-shipshape-agent-default:base}
     build:
       context: .
       dockerfile: Dockerfile.agent
@@ -21,7 +21,7 @@ services:
     user: "agentdev" # Enforce running as the non-root user
     # Pinned so the control plane can `docker exec agent-sandbox …` (re-activate
     # gcloud after a key rotation). Without it the name is shipshape-agent-sandbox-1.
-    container_name: agent-sandbox
+    container_name: ${SS_AGENT_CONTAINER:-default-agent-sandbox}
     environment:
       # Route proxy-aware tooling through Squid. Set BOTH cases plus NO_PROXY —
       # coverage of upper/lower-case varies across git, pip, apt, gcloud, gh…
@@ -55,9 +55,9 @@ services:
       # Persistent work/projects dir — kept separate from the baked ~/firstmate clone
       # so the mount doesn't shadow it. firstmate's own state is ephemeral per
       # container; snapshot the container (`shipshape snapshot <tag>`) to persist it.
-      - ./firstmate-data:/home/agentdev/work
+      - ${SS_INSTANCE_DIR:-./instances/default}/firstmate-data:/home/agentdev/work
       # Rotatable credential drop. Daily creds land here; read-only to the agent.
-      - ./auth:/auth:ro
+      - ${SS_INSTANCE_DIR:-./instances/default}/auth:/auth:ro
       # Persist the Antigravity CLI (agy) OAuth token across container recreations so you
       # sign in once (`agy-login`). Named volume (not a bind mount) so it inherits the
       # image dir's agentdev ownership and agy can write its file-based token store.
@@ -84,19 +84,19 @@ services:
     # Pinned name so `docker exec egress-proxy squid -k reconfigure` (used by the
     # control plane to hot-reload the allow-list) resolves — without this the
     # container would be named `shipshape-egress-proxy-1` and the exec would fail.
-    container_name: egress-proxy
+    container_name: ${SS_PROXY_CONTAINER:-default-egress-proxy}
     volumes:
       # Squid's own rules. Single-file mount: editing this file needs
       #   docker compose up -d --force-recreate egress-proxy
       # to take effect (the mount pins the inode, so `reconfigure` alone won't see
       # a rewrite). The DYNAMIC allow-list below is dir-mounted so it reloads live.
-      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ${SS_INSTANCE_DIR:-./instances/default}/squid.conf:/etc/squid/squid.conf:ro
       # Allow-list, managed live by the control plane. This is a DIRECTORY mount,
       # not a single-file mount, on purpose: the control plane replaces the file
       # atomically (write-tmp + rename). A single-file bind mount pins the host
       # inode at container start, so an atomic replace would leave the container
       # reading the OLD file and `squid -k reconfigure` reloading stale rules.
-      - ./egress:/etc/squid/shipshape:ro
+      - ${SS_INSTANCE_DIR:-./instances/default}/egress:/etc/squid/shipshape:ro
     networks:
       # The proxy is the bridge: isolated net (inbound from agent) AND internet.
       - isolated_agent_net
@@ -122,9 +122,9 @@ services:
     build:
       context: ./control-plane/broker
       dockerfile: Dockerfile.broker
-    container_name: control-plane
+    container_name: ${SS_BROKER_CONTAINER:-default-control-plane}
     volumes:
-      - ./control-plane/spool:/spool   # its ONLY host contact (read/write)
+      - ${SS_INSTANCE_DIR:-./instances/default}/spool:/spool   # its ONLY host contact (read/write)
     networks:
       - isolated_agent_net             # agent-facing only; no internet, no host
     security_opt:
@@ -143,7 +143,7 @@ services:
   # networks, so the agent gains exactly one host port — not LAN/internet access.
   adb-relay:
     image: alpine/socat@sha256:d85531a29ef5ba99dfb4717485c239307e2902d522a1bc010992a2728c92cfad
-    container_name: adb-relay
+    container_name: ${SS_ADB_CONTAINER:-default-adb-relay}
     profiles: ["adb"]
     command: TCP-LISTEN:5037,fork,reuseaddr TCP:host.docker.internal:5037
     extra_hosts:

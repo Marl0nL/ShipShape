@@ -5,7 +5,23 @@ control-plane) on one host at once — e.g. a **company** instance and a **perso
 instance, each with its own credentials/Claude account, allow-list, image, and
 control-plane window.
 
-Status: **planned; implementation in progress.** No agent-side behaviour changes.
+Status: **implemented on the `multi-instance` branch** (validated; not yet merged to
+`main`). No agent-side behaviour changes.
+
+## Usage
+```sh
+shipshape instances                       # list instances + running state
+shipshape new-instance personal           # scaffold instances/personal from templates
+shipshape --instance company up           # boot the company stack (own image/proxy/creds)
+shipshape --instance personal quickstart  # boot personal + open its firstmate window
+export SHIPSHAPE_INSTANCE=company          # or set it once per terminal, then drop --instance
+shipshape --instance personal fork-image --from company   # seed personal's image from company's
+```
+Each instance gets its own control-plane window (TUI header shows the instance), its own
+`instances/<name>/` data (auth, allow-list, state, squid.conf, firstmate-data), its own
+image (`shipshape-agent-<name>:base`), and its own compose project + containers
+(`<name>-agent-sandbox`, …). An existing single-stack install is migrated to
+`instances/default/` automatically on the first run after upgrading.
 
 ## Why it's tractable
 - **No host ports are published** — Squid (3128) and the broker (8099) are reachable
@@ -78,19 +94,22 @@ call: `COMPOSE_PROJECT_NAME`, `SS_AGENT_CONTAINER`, `SS_PROXY_CONTAINER`,
 `FIRSTMATE_REPO`, `HOST_UID`. Mounts become `${SS_INSTANCE_DIR}/auth`, `…/egress`,
 `…/squid.conf`, `…/spool`, `…/firstmate-data`. `container_name:` becomes `${SS_*:-<old default>}`.
 
-## Migration (install.sh + a code guard)
-Runs once when an old-layout install is detected (root-level `auth/` with real files,
-`control-plane/state`, `control-plane/spool`, live `egress/allowed_domains.txt`, live
-`shipshape.toml`, `firstmate-data/`) and `instances/default/` does not yet exist:
-1. Back up the root data (tar under `instances/.backup-<ts>/`).
-2. `docker compose down` the OLD (unprefixed) stack so the old-named containers don't linger.
-3. Move the data dirs into `instances/default/`.
-4. Retag images: `docker tag shipshape-agent:base shipshape-agent-default:base` (+ snapshots).
-5. Best-effort copy the old `agy-data` volume → `shipshape-default_agy-data` (else note re-login).
-6. Idempotent: if `instances/default/` exists, do nothing. Never delete source on any failure.
+## Migration (`shipshape/migrate.py`, triggered by every CLI run + install.sh)
+Runs once when an old-layout install is detected (root-level `control-plane/state`,
+`control-plane/spool`, live `egress/allowed_domains.txt`, live `shipshape.toml`,
+`firstmate-data/`, or `auth/{gcp-sa.json,gh-token,claude-token}`) and `instances/default/`
+does not yet exist:
+1. `docker compose down` the OLD (unprefixed) stack so the old-named containers don't linger.
+2. **Move** (relocate, not copy-delete — non-destructive) the live data into
+   `instances/default/`, only when the destination is absent. Tracked templates and
+   `auth/README.md` stay at the root.
+3. Retag images `docker tag shipshape-agent:<t> shipshape-agent-default:<t>` so `up` finds
+   them without a rebuild.
+4. Idempotent: if `instances/default/` exists, do nothing. Never deletes a source on failure.
 
-`Paths.ensure()` also seeds a **new/empty** instance dir from the templates (so instances
-created outside install.sh still work).
+`agy-data` (a Docker named volume) can't be renamed, so the default instance's agy token is
+a one-time `agy-login` after migrating. `Paths.ensure()` also seeds a **new/empty** instance
+dir from the templates (so instances created outside install.sh still work).
 
 ## CLI/TUI surface
 - `shipshape --instance <name> <cmd>` (env `$SHIPSHAPE_INSTANCE`; default `default`).
@@ -101,15 +120,15 @@ created outside install.sh still work).
   instance's containers.
 
 ## Work breakdown
-- **P1 — instance plumbing** (Config/Paths instance-aware; derive the four container names;
+- **[done] P1 — instance plumbing** (Config/Paths instance-aware; derive the four container names;
   name validation; selection precedence).
-- **P2 — docker_ops + compose** (project + env per call; drop the `PROXY` constant; thread
+- **[done] P2 — docker_ops + compose** (project + env per call; drop the `PROXY` constant; thread
   the instance's proxy/agent names through exec/reconfigure/logs/running/commit/open_shell).
-- **P3 — images per instance** (namespace, active-image, build args, `fork-image`).
-- **P4 — CLI/TUI** (`--instance`, `instances`, `new-instance`; header + scoping).
-- **P5 — scaffolding + templates + docs** (`squid.conf.example`; `.gitignore instances/`;
+- **[done] P3 — images per instance** (namespace, active-image, build args, `fork-image`).
+- **[done] P4 — CLI/TUI** (`--instance`, `instances`, `new-instance`; header + scoping).
+- **[done] P5 — scaffolding + templates + docs** (`squid.conf.example`; `.gitignore instances/`;
   seeding; docs).
-- **P6 — install.sh migration + testing** (migrate an existing install; boot company +
+- **[done] P6 — install.sh migration + testing** (migrate an existing install; boot company +
   personal simultaneously; verify full isolation + single-default back-compat).
 
 ## Risks

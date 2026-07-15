@@ -1,21 +1,47 @@
-"""Thin subprocess wrappers around docker. No docker socket is mounted
-anywhere — the control plane runs as the host user and shells out to the CLI."""
+"""Thin subprocess wrappers around docker. No docker socket is mounted anywhere —
+the control plane runs as the host user and shells out to the CLI.
+
+Container targets default to the ACTIVE instance (config.set_active), so callers
+usually pass no name: `reconfigure()` hits this instance's proxy, `open_shell()`
+this instance's agent, `compose([...])` this instance's compose project.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import subprocess
-from dataclasses import dataclass
-from pathlib import Path
 
-PROXY = "egress-proxy"
+
+from dataclasses import dataclass
 
 
 @dataclass
 class Result:
     ok: bool
     output: str
+
+
+def _active():
+    from . import config
+
+    return config.active_paths(), config.active_config()
+
+
+def _proxy(name: str | None) -> str:
+    if name:
+        return name
+    from . import config
+
+    return config.active_config().proxy_container
+
+
+def _agent(name: str | None) -> str:
+    if name:
+        return name
+    from . import config
+
+    return config.active_config().agent_container
 
 
 def run(args: list[str], timeout: int = 30) -> Result:
@@ -30,8 +56,8 @@ def run(args: list[str], timeout: int = 30) -> Result:
         return Result(False, f"{args[0]}: {e}")
 
 
-def container_running(name: str = PROXY) -> bool:
-    r = run(["docker", "inspect", "-f", "{{.State.Running}}", name], timeout=10)
+def container_running(name: str | None = None) -> bool:
+    r = run(["docker", "inspect", "-f", "{{.State.Running}}", _proxy(name)], timeout=10)
     return r.ok and r.output.strip() == "true"
 
 
@@ -42,44 +68,52 @@ def running_containers() -> set[str]:
     return set(r.output.split()) if r.ok else set()
 
 
-def reconfigure(name: str = PROXY) -> Result:
-    """Hot-reload Squid's config (picks up allow-list changes, no restart)."""
-    return run(["docker", "exec", name, "squid", "-k", "reconfigure"])
+def reconfigure(name: str | None = None) -> Result:
+    """Hot-reload this instance's Squid config (picks up allow-list changes, no restart)."""
+    return run(["docker", "exec", _proxy(name), "squid", "-k", "reconfigure"])
 
 
-def logs_tail(name: str = PROXY, n: int = 2000) -> Result:
-    return run(["docker", "logs", f"--tail={n}", name], timeout=20)
+def logs_tail(name: str | None = None, n: int = 2000) -> Result:
+    return run(["docker", "logs", f"--tail={n}", _proxy(name)], timeout=20)
 
 
-def compose(root, args: list[str], timeout: int = 1800, image: str | None = None) -> Result:
-    """Run `docker compose` for the ShipShape project. Passes HOST_UID so a build
-    matches the host operator's uid (keeps the 0600 /auth creds readable), and
-    SHIPSHAPE_AGENT_IMAGE so `up` runs the selected snapshot tag."""
-    env = {**os.environ, "HOST_UID": str(os.getuid())}
+def compose(args: list[str], timeout: int = 1800, image: str | None = None) -> Result:
+    """Run `docker compose` for the ACTIVE instance's project. Sets COMPOSE_PROJECT_NAME
+    + the SS_* container-name vars + SS_INSTANCE_DIR (per-instance mount paths) + HOST_UID,
+    and injects this instance's Claude token / firstmate repo."""
+    paths, cfg = _active()
+    idir = str(paths.instance_dir)
+    env = {
+        **os.environ,
+        "HOST_UID": str(os.getuid()),
+        "COMPOSE_PROJECT_NAME": cfg.project,
+        "SS_INSTANCE_DIR": idir,
+        "SS_AGENT_CONTAINER": cfg.agent_container,
+        "SS_PROXY_CONTAINER": cfg.proxy_container,
+        "SS_BROKER_CONTAINER": cfg.broker_container,
+        "SS_ADB_CONTAINER": cfg.adb_container,
+    }
     if image:
         env["SHIPSHAPE_AGENT_IMAGE"] = image
-    # Push the persistent Claude token (auth/claude-token) into the container env so
-    # `claude` auto-authenticates on start — mirrors `docker run -e CLAUDE_CODE_OAUTH_TOKEN=…`.
-    # Compose interpolates ${CLAUDE_CODE_OAUTH_TOKEN:-} with this; falls back to the host
-    # env var (or empty) when the file is absent. (Rotation reaches new login shells live
-    # via the baked /etc/profile.d snippet; the container's config env updates on recreate.)
+    # Push this instance's persistent Claude token into the container env so `claude`
+    # auto-authenticates on start (compose interpolates ${CLAUDE_CODE_OAUTH_TOKEN:-}).
     try:
-        tok = (Path(root) / "auth" / "claude-token").read_text().strip()
+        tok = (paths.auth / "claude-token").read_text().strip()
         if tok:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
     except OSError:
         pass
-    # Build the agent image from the configured firstmate source repo (Settings/wizard).
+    # Build the agent image from this instance's configured firstmate source repo.
     try:
-        sj = json.loads((Path(root) / "control-plane" / "state" / "settings.json").read_text())
+        sj = json.loads((paths.state / "settings.json").read_text())
         if sj.get("firstmate_repo"):
             env["FIRSTMATE_REPO"] = sj["firstmate_repo"]
     except (OSError, json.JSONDecodeError):
         pass
-    cmd = ["docker", "compose", "-f", f"{root}/docker-compose.yml", *args]
+    cmd = ["docker", "compose", "-f", f"{paths.root}/docker-compose.yml", *args]
     try:
         p = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(root), env=env
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=str(paths.root), env=env
         )
         return Result(p.returncode == 0, (p.stdout + p.stderr).strip())
     except FileNotFoundError:
@@ -91,7 +125,7 @@ def compose(root, args: list[str], timeout: int = 1800, image: str | None = None
 
 
 def open_terminal(
-    container: str = "agent-sandbox", inner: str | None = None, user: str | None = None
+    container: str | None = None, inner: str | None = None, user: str | None = None
 ) -> Result:
     """Open a container shell (or `bash -lc <inner>`) in a NEW terminal window so the
     operator can keep the control plane visible. `user` maps to `docker exec -u` (pass
@@ -99,6 +133,7 @@ def open_terminal(
     falls back to a message with the manual command."""
     import shutil as _sh
 
+    container = _agent(container)
     exec_cmd = ["docker", "exec", "-it"]
     if user is not None:
         exec_cmd += ["-u", user]
@@ -123,14 +158,14 @@ def open_terminal(
     return Result(False, f"no terminal emulator found — run: {' '.join(exec_cmd)}")
 
 
-def open_shell(container: str = "agent-sandbox", user: str | None = None) -> Result:
+def open_shell(container: str | None = None, user: str | None = None) -> Result:
     return open_terminal(container, user=user)
 
 
-def logs_popen(name: str = PROXY, tail: str = "0") -> subprocess.Popen:
-    """Stream the proxy log (for the live denied-domain harvester)."""
+def logs_popen(name: str | None = None, tail: str = "0") -> subprocess.Popen:
+    """Stream this instance's proxy log (for the live denied-domain harvester)."""
     return subprocess.Popen(
-        ["docker", "logs", f"--tail={tail}", "--follow", name],
+        ["docker", "logs", f"--tail={tail}", "--follow", _proxy(name)],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

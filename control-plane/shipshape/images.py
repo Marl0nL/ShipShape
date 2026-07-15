@@ -1,27 +1,32 @@
-"""Snapshot & relaunch tagged agent images.
+"""Per-instance snapshot & relaunch of tagged agent images.
 
-Flow: build/provision the base once, install what you need at runtime, then
-`snapshot <tag>` (docker commit) to save a reusable image `shipshape-agent:<tag>`.
-The active tag is persisted; the stack boots whichever tag is active (via the
-SHIPSHAPE_AGENT_IMAGE compose var).
+Each instance has its own image namespace, `shipshape-agent-<instance>:<tag>`, so a
+company instance and a personal instance keep entirely separate images. Flow: build
+the base once, install what you need at runtime, then `snapshot <tag>` (docker commit)
+to save a reusable image. The active tag is persisted per instance; the stack boots it
+via the SHIPSHAPE_AGENT_IMAGE compose var. `fork` copies another instance's image into
+this one's namespace as a convenient starting point.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from . import docker_ops
+from . import config, docker_ops
 from .config import Paths
 
-DEFAULT = "shipshape-agent:base"
-PREFIX = "shipshape-agent"
+
+def prefix(paths: Paths) -> str:
+    return f"shipshape-agent-{paths.instance}"
 
 
-def _qualify(tag: str) -> str:
-    return tag if ":" in tag else f"{PREFIX}:{tag}"
+def default_image(paths: Paths) -> str:
+    return f"{prefix(paths)}:base"
 
 
-def _active_file(paths: Paths) -> Path:
+def _qualify(paths: Paths, tag: str) -> str:
+    return tag if ":" in tag else f"{prefix(paths)}:{tag}"
+
+
+def _active_file(paths: Paths):
     return paths.state / "active_image"
 
 
@@ -31,41 +36,52 @@ def active(paths: Paths) -> str:
         v = f.read_text().strip()
         if v:
             return v
-    return DEFAULT
+    return default_image(paths)
 
 
 def set_active(paths: Paths, tag: str) -> str:
     paths.state.mkdir(parents=True, exist_ok=True)
-    q = _qualify(tag)
+    q = _qualify(paths, tag)
     _active_file(paths).write_text(q + "\n")
     return q
 
 
-def snapshot(tag: str, container: str = "agent-sandbox") -> docker_ops.Result:
-    """Commit the running container's current state to shipshape-agent:<tag>."""
-    return docker_ops.run(["docker", "commit", container, _qualify(tag)], timeout=180)
+def snapshot(paths: Paths, tag: str, container: str | None = None) -> docker_ops.Result:
+    """Commit this instance's running container to shipshape-agent-<instance>:<tag>."""
+    container = container or config.active_config().agent_container
+    return docker_ops.run(["docker", "commit", container, _qualify(paths, tag)], timeout=180)
 
 
-def delete(tag: str) -> docker_ops.Result:
-    return docker_ops.run(["docker", "rmi", _qualify(tag)], timeout=60)
+def delete(paths: Paths, tag: str) -> docker_ops.Result:
+    return docker_ops.run(["docker", "rmi", _qualify(paths, tag)], timeout=60)
 
 
-def rename(old: str, new: str) -> docker_ops.Result:
-    r = docker_ops.run(["docker", "tag", _qualify(old), _qualify(new)], timeout=30)
+def rename(paths: Paths, old: str, new: str) -> docker_ops.Result:
+    r = docker_ops.run(["docker", "tag", _qualify(paths, old), _qualify(paths, new)], timeout=30)
     if not r.ok:
         return r
-    return docker_ops.run(["docker", "rmi", _qualify(old)], timeout=30)
+    return docker_ops.run(["docker", "rmi", _qualify(paths, old)], timeout=30)
 
 
 def rebuild(paths: Paths) -> docker_ops.Result:
-    """Rebuild the BASE image from the Dockerfile. Always targets shipshape-agent:base
-    (image=DEFAULT) so it never overwrites a saved snapshot."""
-    return docker_ops.compose(paths.root, ["build", "agent-sandbox"], image=DEFAULT, timeout=1800)
+    """Rebuild this instance's BASE image from the Dockerfile. Always targets
+    shipshape-agent-<instance>:base so it never overwrites a saved snapshot."""
+    return docker_ops.compose(["build", "agent-sandbox"], image=default_image(paths), timeout=1800)
 
 
-def snapshots() -> list[dict]:
+def fork(paths: Paths, from_instance: str, src_tag: str = "base", dst_tag: str = "base") -> docker_ops.Result:
+    """Copy another instance's image into THIS instance's namespace (docker tag), e.g.
+    seed `personal` from `company`'s configured base. NOTE: this carries over whatever is
+    baked into that image, including any credentials snapshotted into it."""
+    src = f"shipshape-agent-{from_instance}:{src_tag}"
+    dst = _qualify(paths, dst_tag)
+    r = docker_ops.run(["docker", "tag", src, dst], timeout=30)
+    return docker_ops.Result(r.ok, f"forked {src} → {dst}" if r.ok else r.output)
+
+
+def snapshots(paths: Paths) -> list[dict]:
     r = docker_ops.run(
-        ["docker", "images", PREFIX, "--format", "{{.Tag}}|{{.Size}}|{{.CreatedSince}}"],
+        ["docker", "images", prefix(paths), "--format", "{{.Tag}}|{{.Size}}|{{.CreatedSince}}"],
         timeout=20,
     )
     out: list[dict] = []

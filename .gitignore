@@ -27,3 +27,7 @@ control-plane/.venv/
 control-plane/*.egg-info/
 control-plane/build/
 control-plane/dist/
+
+# Multi-instance: all per-instance data is local
+/instances/
+/squid.conf

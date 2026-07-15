@@ -20,7 +20,7 @@ IN_CONTAINER_CREDS = "/home/agentdev/.claude/.credentials.json"
 
 def quick_start(paths: Paths, cfg: Config, run=docker_ops.run) -> tuple[bool, str]:
     # 1. boot the active image
-    up = docker_ops.compose(paths.root, ["up", "-d"], image=images.active(paths))
+    up = docker_ops.compose(["up", "-d"], image=images.active(paths))
     if not up.ok:
         return False, f"stack up failed:\n{up.output}"
 

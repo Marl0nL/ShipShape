@@ -45,6 +45,7 @@ from textual.worker import get_current_worker
 from . import commands as cmds
 from . import (
     components,
+    config,
     creds,
     docker_ops,
     egress,
@@ -60,8 +61,6 @@ from .config import Config, Paths
 from .harvester import parse_access, parse_line
 from .state import CommandStore, PendingStore
 
-SERVICES = [("control-plane", "control-plane"), ("egress-proxy", "egress-proxy"),
-            ("agent-sandbox", "agent-sandbox")]
 ACTION_ICON = {"domain": "🌐", "command": "⌘", "cred": "🔑"}
 
 
@@ -191,6 +190,9 @@ class ShipShapeApp(App):
     def __init__(self, paths: Paths):
         super().__init__()
         self.paths = paths
+        self.cfg = Config.load(paths)
+        config.set_active(paths, self.cfg)  # so docker_ops targets THIS instance
+        self.title = f"ShipShape · {paths.instance}"
         self.store = PendingStore(paths.pending)
         self._action_rows: list[dict] = []
 
@@ -310,18 +312,25 @@ class ShipShapeApp(App):
     # ------------------------------------------------------------------ dashboard
     def _reload_services(self) -> None:
         running = docker_ops.running_containers()
-        anyrun = any(cname in running for _, cname in SERVICES)
+        services = [
+            ("control-plane", self.cfg.broker_container),
+            ("egress-proxy", self.cfg.proxy_container),
+            ("agent-sandbox", self.cfg.agent_container),
+        ]
+        anyrun = any(cname in running for _, cname in services)
         dots = "   ".join(
             f"[green]●[/] {label}" if cname in running else f"[red]○[/] {label}"
-            for label, cname in SERVICES
+            for label, cname in services
         )
-        self.query_one("#dash_services", Static).update(dots if anyrun else "Stack is not running — boot it below.")
+        self.query_one("#dash_services", Static).update(
+            dots if anyrun else f"Instance '{self.paths.instance}' is not running — boot it below."
+        )
         self.query_one("#dash_svc_buttons").display = anyrun
         self.query_one("#dash_boot_buttons").display = not anyrun
 
     def _cred_issues(self) -> list[str]:
         out = []
-        cfg = Config.load(self.paths.root)
+        cfg = Config.load(self.paths)
         if cfg.agent_sa and not creds.status(self.paths):
             out.append("GCP key not minted — Credentials tab (g)")
         if not creds.claude_token(self.paths) and not (firstmate.HOST_CREDS.is_file()):
@@ -426,7 +435,7 @@ class ShipShapeApp(App):
 
     @work(thread=True)
     def _do_cmd_accept(self, rid: str) -> None:
-        ok, output = cmds.accept(self.paths, Config.load(self.paths.root), rid)
+        ok, output = cmds.accept(self.paths, Config.load(self.paths), rid)
         msg = f"{rid[:8]} {'ok' if ok else 'FAILED'} — {output[:120]}".replace("\n", " ")
         self.call_from_thread(self._status, msg)
         self.call_from_thread(self._feed, f"{'[green]✓ ran[/]' if ok else '[red]✗ failed[/]'} {rid[:8]}")
@@ -535,7 +544,7 @@ class ShipShapeApp(App):
 
     # ------------------------------------------------------------------ stack
     def _reload_stack(self) -> None:
-        r = docker_ops.compose(self.paths.root, ["ps"], timeout=20)
+        r = docker_ops.compose(["ps"], timeout=20)
         self.query_one("#stack_status", Static).update(
             r.output.strip() or "(stack not running — press 'u' to boot)"
         )
@@ -556,10 +565,10 @@ class ShipShapeApp(App):
     @work(thread=True, exclusive=True, group="ops")
     def _do_stack(self, action: str) -> None:
         if action == "up":
-            r = docker_ops.compose(self.paths.root, ["up", "-d"],
+            r = docker_ops.compose(["up", "-d"],
                                    image=images.active(self.paths), timeout=1800)
         else:
-            r = docker_ops.compose(self.paths.root, ["down"], timeout=180)
+            r = docker_ops.compose(["down"], timeout=180)
         msg = f"stack {action}: {'ok' if r.ok else 'FAILED ' + r.output[:120]}".replace("\n", " ")
         self.call_from_thread(self._status, msg)
         self.call_from_thread(self._feed, f"{'[green]✓[/]' if r.ok else '[red]✗[/]'} stack {action}")
@@ -567,10 +576,10 @@ class ShipShapeApp(App):
         self.call_from_thread(self._reload_services)
 
     def action_shell(self) -> None:
-        self._status(docker_ops.open_shell("agent-sandbox").output)
+        self._status(docker_ops.open_shell().output)
 
     def action_root_shell(self) -> None:
-        self._status(docker_ops.open_shell("agent-sandbox", user="0").output + " (root)")
+        self._status(docker_ops.open_shell(user="0").output + " (root)")
 
     def action_quickstart(self) -> None:
         self._status("quick-start firstmate: booting + wiring Claude auth…")
@@ -579,7 +588,7 @@ class ShipShapeApp(App):
 
     @work(thread=True, exclusive=True, group="ops")
     def _do_quickstart(self) -> None:
-        ok, msg = firstmate.quick_start(self.paths, Config.load(self.paths.root))
+        ok, msg = firstmate.quick_start(self.paths, Config.load(self.paths))
         self.call_from_thread(self._status, ("firstmate: " + msg).replace("\n", " "))
         self.call_from_thread(self._reload_stack)
         self.call_from_thread(self._reload_services)
@@ -641,7 +650,7 @@ class ShipShapeApp(App):
     def _reload_provision(self) -> None:
         sel = self.query_one("#prov_select", SelectionList)
         sel.clear_options()
-        for s in components.statuses(self.paths, Config.load(self.paths.root)):
+        for s in components.statuses(self.paths, Config.load(self.paths)):
             sel.add_option(Selection(f"{s['name']}  —  {s['description']}", s["name"],
                                      initial_state=s["provisioned"]))
 
@@ -655,7 +664,7 @@ class ShipShapeApp(App):
 
     @work(thread=True, exclusive=True, group="ops")
     def _do_provision(self, chosen: set) -> None:
-        cfg = Config.load(self.paths.root)
+        cfg = Config.load(self.paths)
         msgs = []
         for s in components.statuses(self.paths, cfg):
             name = s["name"]
@@ -703,7 +712,7 @@ class ShipShapeApp(App):
 
     @work(thread=True)
     def _do_refresh_gcp(self) -> None:
-        res = creds.refresh_gcp(self.paths, Config.load(self.paths.root))
+        res = creds.refresh_gcp(self.paths, Config.load(self.paths))
         self.call_from_thread(self._status, res.message.replace("\n", " "))
         self.call_from_thread(self._feed, f"{'[green]✓[/]' if res.ok else '[red]✗[/]'} GCP key refresh")
         self.call_from_thread(self._refresh_creds)
@@ -732,8 +741,8 @@ class ShipShapeApp(App):
         table.clear()
         self._img_rows = []
         act = images.active(self.paths)
-        for s in images.snapshots():
-            mark = "●" if f"{images.PREFIX}:{s['tag']}" == act else ""
+        for s in images.snapshots(self.paths):
+            mark = "●" if f"{images.prefix(self.paths)}:{s['tag']}" == act else ""
             table.add_row(mark, s["tag"], s["size"], s["created"])
             self._img_rows.append(s["tag"])
 
@@ -753,7 +762,7 @@ class ShipShapeApp(App):
 
     @work(thread=True)
     def _do_snapshot(self, tag: str) -> None:
-        r = images.snapshot(tag)
+        r = images.snapshot(self.paths, tag)
         msg = (f"saved shipshape-agent:{tag}" if r.ok else r.output).replace("\n", " ")
         self.call_from_thread(self._status, msg)
         self.call_from_thread(self._reload_images)
@@ -762,16 +771,16 @@ class ShipShapeApp(App):
     def _do_image_op(self, op: str, *a) -> None:
         if op == "rename":
             old, new = a
-            was_active = f"{images.PREFIX}:{old}" == images.active(self.paths)
-            r = images.rename(old, new)
+            was_active = f"{images.prefix(self.paths)}:{old}" == images.active(self.paths)
+            r = images.rename(self.paths, old, new)
             if r.ok and was_active:
                 images.set_active(self.paths, new)
             msg = f"renamed {old} → {new}" if r.ok else r.output
         elif op == "delete":
             (tag,) = a
-            if f"{images.PREFIX}:{tag}" == images.active(self.paths):
+            if f"{images.prefix(self.paths)}:{tag}" == images.active(self.paths):
                 images.set_active(self.paths, "base")
-            r = images.delete(tag)
+            r = images.delete(self.paths, tag)
             msg = f"deleted {tag}" if r.ok else r.output
         else:
             r = images.rebuild(self.paths)
@@ -783,7 +792,7 @@ class ShipShapeApp(App):
     @work(thread=True, exclusive=True, group="spool")
     def _spool_watch(self) -> None:
         import time as _t
-        cfg = Config.load(self.paths.root)
+        cfg = Config.load(self.paths)
         worker = get_current_worker()
         while not worker.is_cancelled:
             try:

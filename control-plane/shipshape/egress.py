@@ -15,7 +15,7 @@ def set_bandwidth(paths: Paths, mbps: int) -> docker_ops.Result:
     """Rewrite Squid's delay-pool cap (MB/s) in squid.conf. squid.conf is a single-file
     mount, so a RUNNING proxy needs a force-recreate to pick it up — we do that when it's
     up; otherwise the change applies on next boot."""
-    conf = paths.root / "squid.conf"
+    conf = paths.squid_conf
     try:
         lines = conf.read_text().splitlines()
     except OSError as e:
@@ -32,7 +32,7 @@ def set_bandwidth(paths: Paths, mbps: int) -> docker_ops.Result:
         return docker_ops.Result(False, "no `delay_parameters 1` line in squid.conf")
     conf.write_text("\n".join(out) + "\n")
     if docker_ops.container_running():
-        r = docker_ops.compose(paths.root, ["up", "-d", "--force-recreate", "egress-proxy"], timeout=120)
+        r = docker_ops.compose(["up", "-d", "--force-recreate", "egress-proxy"], timeout=120)
         return docker_ops.Result(
             r.ok, f"bandwidth → {mbps} MB/s; egress-proxy recreated" if r.ok else r.output
         )

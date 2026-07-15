@@ -21,9 +21,9 @@ import sys
 import time
 
 from . import commands as cmds
-from . import components, creds, docker_ops, egress, firstmate, images, otp, spool, watcher
+from . import components, config, creds, docker_ops, egress, firstmate, images, otp, spool, watcher
 from .allowlist import Allowlist
-from .config import Config, Paths
+from .config import Config, Paths, resolve_instance
 from .harvester import parse_line
 from .state import CommandStore, PendingStore
 
@@ -106,7 +106,7 @@ def cmd_pending(paths: Paths, args) -> int:
 
 
 def cmd_refresh_gcp(paths: Paths, _args) -> int:
-    res = creds.refresh_gcp(paths, Config.load(paths.root))
+    res = creds.refresh_gcp(paths, Config.load(paths))
     print(res.message)
     return 0 if res.ok else 1
 
@@ -145,25 +145,25 @@ def cmd_claude_token(paths: Paths, args) -> int:
 def cmd_up(paths: Paths, _args) -> int:
     img = images.active(paths)
     print(f"booting stack (image {img}; first run builds — can take a few minutes)…")
-    r = docker_ops.compose(paths.root, ["up", "-d"], image=img, timeout=1800)
+    r = docker_ops.compose(["up", "-d"], image=img, timeout=1800)
     print(r.output)
     return 0 if r.ok else 1
 
 
-def cmd_snapshot(_paths: Paths, args) -> int:
-    r = images.snapshot(args.tag)
+def cmd_snapshot(paths: Paths, args) -> int:
+    r = images.snapshot(paths, args.tag)
     print(r.output or ("snapshot saved" if r.ok else "failed"))
     return 0 if r.ok else 1
 
 
 def cmd_images(paths: Paths, _args) -> int:
     act = images.active(paths)
-    snaps = images.snapshots()
+    snaps = images.snapshots(paths)
     if not snaps:
         print("(no shipshape-agent images yet — build the stack, then `snapshot <tag>`)")
         return 0
     for s in snaps:
-        mark = "* " if f"{images.PREFIX}:{s['tag']}" == act else "  "
+        mark = "* " if f"{images.prefix(paths)}:{s['tag']}" == act else "  "
         print(f"{mark}{s['tag']:<20} {s['size']:<10} {s['created']}")
     print(f"\nactive: {act}")
     return 0
@@ -175,60 +175,92 @@ def cmd_use(paths: Paths, args) -> int:
 
 
 def cmd_image_delete(paths: Paths, args) -> int:
-    q = images._qualify(args.tag)
+    q = images._qualify(paths, args.tag)
     if q == images.active(paths):
         images.set_active(paths, "base")
-        print(f"(was the active image; reset active to {images.DEFAULT})")
-    r = images.delete(args.tag)
+        print(f"(was the active image; reset active to {images.default_image(paths)})")
+    r = images.delete(paths, args.tag)
     print(r.output or ("deleted" if r.ok else "failed"))
     return 0 if r.ok else 1
 
 
 def cmd_image_rename(paths: Paths, args) -> int:
-    was_active = images._qualify(args.old) == images.active(paths)
-    r = images.rename(args.old, args.new)
+    was_active = images._qualify(paths, args.old) == images.active(paths)
+    r = images.rename(paths, args.old, args.new)
     if r.ok:
         if was_active:
             images.set_active(paths, args.new)
-        print(f"renamed {images._qualify(args.old)} → {images._qualify(args.new)}")
+        print(f"renamed {images._qualify(paths, args.old)} → {images._qualify(args.new)}")
     else:
         print(r.output or "failed")
     return 0 if r.ok else 1
 
 
 def cmd_rebuild(paths: Paths, _args) -> int:
-    print(f"rebuilding {images.DEFAULT} from the Dockerfile (can take several minutes)…")
+    print(f"rebuilding {images.default_image(paths)} from the Dockerfile (can take several minutes)…")
     r = images.rebuild(paths)
     print(r.output[-2000:] if r.output else ("built" if r.ok else "failed"))
     return 0 if r.ok else 1
 
 
 def cmd_quickstart(paths: Paths, _args) -> int:
-    ok, msg = firstmate.quick_start(paths, Config.load(paths.root))
+    ok, msg = firstmate.quick_start(paths, Config.load(paths))
     print(msg)
     return 0 if ok else 1
 
 
 def cmd_down(paths: Paths, _args) -> int:
-    r = docker_ops.compose(paths.root, ["down"], timeout=180)
+    r = docker_ops.compose(["down"], timeout=180)
     print(r.output or "stack down")
     return 0 if r.ok else 1
 
 
 def cmd_status(paths: Paths, _args) -> int:
-    r = docker_ops.compose(paths.root, ["ps"], timeout=30)
+    r = docker_ops.compose(["ps"], timeout=30)
     print(r.output)
     return 0 if r.ok else 1
 
 
 def cmd_shell(_paths: Paths, args) -> int:
-    # hand off the terminal to an interactive shell in the container
+    # hand off the terminal to an interactive shell in this instance's container
     argv = ["docker", "exec", "-it"]
     if args.root:
         argv += ["-u", "0"]
-    argv += [args.container, "/bin/bash"]
+    argv += [args.container or config.active_config().agent_container, "/bin/bash"]
     os.execvp("docker", argv)
     return 0  # unreachable (execvp replaces the process)
+
+
+def cmd_instances(paths: Paths, _args) -> int:
+    idir = paths.root / "instances"
+    names = sorted(d.name for d in idir.iterdir() if d.is_dir()) if idir.is_dir() else []
+    if not names:
+        print("(no instances yet — `shipshape --instance <name> up` or `new-instance <name>`)")
+        return 0
+    running = docker_ops.running_containers()
+    for n in names:
+        up = f"{n}-agent-sandbox" in running or f"{n}-egress-proxy" in running
+        cur = "  (active)" if n == paths.instance else ""
+        print(f"{'● running' if up else '○ stopped'}  {n}{cur}")
+    return 0
+
+
+def cmd_new_instance(paths: Paths, args) -> int:
+    name = resolve_instance(args.name)  # validates the name
+    p = Paths(paths.root, name)
+    if p.exists():
+        print(f"instance '{name}' already exists at {p.instance_dir}", file=sys.stderr)
+        return 1
+    p.ensure()  # create dirs + seed config from the tracked templates
+    print(f"created instance '{name}' at {p.instance_dir}")
+    print(f"next: `shipshape --instance {name} up`  (or fork-image --from <other>)")
+    return 0
+
+
+def cmd_fork_image(paths: Paths, args) -> int:
+    r = images.fork(paths, resolve_instance(args.from_instance), src_tag=args.tag)
+    print(r.output)
+    return 0 if r.ok else 1
 
 
 def cmd_reload(_paths: Paths, _args) -> int:
@@ -273,7 +305,7 @@ def cmd_commands(paths: Paths, _args) -> int:
 
 
 def cmd_command_accept(paths: Paths, args) -> int:
-    ok, output = cmds.accept(paths, Config.load(paths.root), args.id)
+    ok, output = cmds.accept(paths, Config.load(paths), args.id)
     print(output)
     return 0 if ok else 1
 
@@ -298,7 +330,7 @@ def cmd_watch(paths: Paths, _args) -> int:
     """Headless daemon: harvest egress denials + process broker spool requests."""
     import threading
 
-    cfg = Config.load(paths.root)
+    cfg = Config.load(paths)
     store = PendingStore(paths.pending)
     stop = threading.Event()
 
@@ -336,7 +368,7 @@ def cmd_watch(paths: Paths, _args) -> int:
 
 
 def cmd_components(paths: Paths, args) -> int:
-    cfg = Config.load(paths.root)
+    cfg = Config.load(paths)
     for s in components.statuses(paths, cfg, probe=args.probe):
         dom = "on " if s["domains_enabled"] else "off"
         prov = " provisioned" if s["provisioned"] else ""
@@ -346,7 +378,7 @@ def cmd_components(paths: Paths, args) -> int:
 
 
 def cmd_provision(paths: Paths, args) -> int:
-    ok, msg = components.provision(paths, Config.load(paths.root), args.name)
+    ok, msg = components.provision(paths, Config.load(paths), args.name)
     print(msg)
     return 0 if ok else 1
 
@@ -369,7 +401,20 @@ def cmd_tui(paths: Paths, _args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="shipshape", description="ShipShape control plane")
+    p.add_argument(
+        "--instance", "-I", default=None, metavar="NAME",
+        help="which instance to act on (or $SHIPSHAPE_INSTANCE; default 'default')",
+    )
     sub = p.add_subparsers(dest="cmd")
+
+    sub.add_parser("instances", help="list instances + running state").set_defaults(fn=cmd_instances)
+    sp = sub.add_parser("new-instance", help="scaffold a new instance from the templates")
+    sp.add_argument("name")
+    sp.set_defaults(fn=cmd_new_instance)
+    sp = sub.add_parser("fork-image", help="copy another instance's image into this instance")
+    sp.add_argument("--from", dest="from_instance", required=True, metavar="INSTANCE", help="source instance")
+    sp.add_argument("--tag", default="base", help="source tag (default: base)")
+    sp.set_defaults(fn=cmd_fork_image)
 
     sub.add_parser("list", help="show the allow-list").set_defaults(fn=cmd_list)
     for name, fn, helptext in [
@@ -409,8 +454,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("new")
     sp.set_defaults(fn=cmd_image_rename)
     sub.add_parser("quickstart", help="boot + inject Claude creds + open a firstmate claude session").set_defaults(fn=cmd_quickstart)
-    sp = sub.add_parser("shell", help="open an interactive shell in a container")
-    sp.add_argument("container", nargs="?", default="agent-sandbox")
+    sp = sub.add_parser("shell", help="open an interactive shell in this instance's container")
+    sp.add_argument("container", nargs="?", default=None, help="container (default: this instance's agent)")
     sp.add_argument("--root", action="store_true", help="open as root (uid 0) instead of agentdev")
     sp.set_defaults(fn=cmd_shell)
     sub.add_parser("reload", help="squid -k reconfigure").set_defaults(fn=cmd_reload)
@@ -455,9 +500,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import migrate
+
     args = build_parser().parse_args(argv)
-    paths = Paths.discover()
+    paths = Paths.discover(getattr(args, "instance", None))
+    migrate.migrate_if_needed(paths.root)  # one-time: old root layout -> instances/default
     paths.ensure()
+    config.set_active(paths, Config.load(paths))  # so docker_ops targets THIS instance
     fn = getattr(args, "fn", None)
     if fn is None:
         return cmd_tui(paths, args)  # bare `shipshape` launches the TUI

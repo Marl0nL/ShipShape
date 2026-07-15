@@ -66,16 +66,16 @@ pipx ensurepath >/dev/null 2>&1 || true
 mkdir -p "$CONF_DIR" && printf '%s\n' "$SCRIPT_DIR" > "$CONF_DIR/root"
 log "recorded repo root ($SCRIPT_DIR) — '$BIN' will work from any directory"
 
-# Seed local config from the tracked *.example templates (the live files are
-# gitignored, so personal entries never land in the repo). Only creates them if absent.
-for pair in \
-  "egress/allowed_domains.example.txt:egress/allowed_domains.txt" \
-  "shipshape.toml.example:shipshape.toml"; do
-  tmpl="$SCRIPT_DIR/${pair%%:*}"; live="$SCRIPT_DIR/${pair##*:}"
-  if [ -f "$tmpl" ] && [ ! -f "$live" ]; then
-    cp "$tmpl" "$live" && log "seeded $(basename "$live") from its template"
-  fi
-done
+# Migrate an existing (pre-multi-instance) install into instances/default/, and seed the
+# default instance's config from the tracked *.example templates. Running the CLI once
+# triggers both (migrate_if_needed + Paths.ensure) — idempotent and safe to re-run.
+# NOTE: migrating an OLD-layout install stops the old (unprefixed) stack so its old-named
+# containers don't linger; reboot afterwards with `$BIN up`.
+if command -v "$BIN" >/dev/null 2>&1; then
+  log "migrating/seeding instances (default) — this may stop an old-layout stack…"
+  SHIPSHAPE_ROOT="$SCRIPT_DIR" "$BIN" instances >/dev/null 2>&1 || \
+    warn "instance migrate/seed step reported an issue; run '$BIN instances' to check"
+fi
 
 if command -v "$BIN" >/dev/null 2>&1; then
   log "$BIN installed at $(command -v "$BIN")"
