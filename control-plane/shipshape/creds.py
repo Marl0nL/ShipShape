@@ -178,8 +178,36 @@ def claude_token(paths: Paths) -> str:
         return ""
 
 
+def push_token_to_container(paths: Paths, container: str | None = None) -> bool:
+    """Best-effort: overwrite the RUNNING container's ~/.claude/.credentials.json from the
+    current /auth/claude-token, so a new/rotated token (e.g. a different account) takes
+    effect immediately — even on snapshot images whose baked login script won't replace an
+    existing creds file (the cause of a stale-token 401). Returns True if it ran."""
+    if not claude_token(paths):
+        return False
+    if container is None:
+        from . import config
+
+        try:
+            container = config.active_config().agent_container
+        except Exception:
+            return False
+    if not docker_ops.container_running(container):
+        return False
+    exp = int((time.time() + 31536000) * 1000)  # ~1y out, in ms
+    script = (
+        "mkdir -p ~/.claude && "
+        "printf '{\"claudeAiOauth\":{\"accessToken\":\"%s\",\"expiresAt\":%s,"
+        "\"scopes\":[\"user:inference\",\"user:profile\"]}}' "
+        f'"$(cat /auth/claude-token)" {exp} > ~/.claude/.credentials.json && '
+        "chmod 600 ~/.claude/.credentials.json"
+    )
+    return docker_ops.run(["docker", "exec", container, "bash", "-lc", script], timeout=15).ok
+
+
 def set_claude_token(paths: Paths, token: str) -> RefreshResult:
-    """Write/rotate the Claude OAuth token to auth/claude-token (0600, atomic)."""
+    """Write/rotate the Claude OAuth token to auth/claude-token (0600, atomic), and push it
+    into the running container so it takes effect live (no recreate needed)."""
     token = (token or "").strip()
     if not token:
         return RefreshResult(
@@ -195,10 +223,12 @@ def set_claude_token(paths: Paths, token: str) -> RefreshResult:
     except OSError as e:
         _safe_unlink(tmp)
         return RefreshResult(False, f"could not write {f}: {e}")
+    pushed = push_token_to_container(paths)
+    live = " and pushed into the running container" if pushed else ""
     return RefreshResult(
         True,
-        f"Claude token saved ({len(token)} chars). New firstmate sessions pick it up "
-        "immediately; reboot the stack to refresh the running container's env.",
+        f"Claude token saved ({len(token)} chars){live}. New firstmate sessions use it "
+        "immediately.",
     )
 
 

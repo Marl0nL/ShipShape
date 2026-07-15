@@ -29,7 +29,10 @@ def quick_start(paths: Paths, cfg: Config, run=docker_ops.run) -> tuple[bool, st
     #    credentials file from it (container/claude-login.sh). Only fall back to copying
     #    the host's interactive credentials when no token is configured.
     if creds.claude_token(paths):
-        note = "Claude auth: persistent claude-token (synthesized in-container). "
+        # Push the current token into the running container so it takes effect even if a
+        # stale credentials.json (baked into a snapshot / from a prior account) is present.
+        creds.push_token_to_container(paths, cfg.agent_container)
+        note = "Claude auth: persistent claude-token (pushed to container). "
     elif HOST_CREDS.is_file():
         cp = run(["docker", "cp", str(HOST_CREDS), f"{cfg.agent_container}:{IN_CONTAINER_CREDS}"])
         if cp.ok:
