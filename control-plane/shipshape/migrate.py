@@ -87,4 +87,15 @@ def migrate_if_needed(root: Path) -> str | None:
                 timeout=30,
             )
 
+    # The retag duplicated the tags, but the migrated active-image pointer still names the
+    # old shipshape-agent:<tag>. Rewrite it into the per-instance namespace so `up` boots
+    # the right image and the Images tab shows the active mark.
+    active = dst / "state" / "active_image"
+    try:
+        v = active.read_text().strip()
+        if v.startswith("shipshape-agent:"):
+            active.write_text(v.replace("shipshape-agent:", "shipshape-agent-default:", 1) + "\n")
+    except OSError:
+        pass
+
     return str(dst)

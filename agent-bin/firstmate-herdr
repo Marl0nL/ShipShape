@@ -51,6 +51,15 @@ fi
 
 # --- main: launch the injector detached, then attach (the attach starts the server) ---
 cd "$FMDIR" 2>/dev/null || true
+
+# Ensure herdr's first-run onboarding modal is OFF before attaching. It blocks the default
+# workspace from being created until dismissed, which starves the claude injector (it times
+# out waiting for a workspace). Done at runtime too (not just baked) so it also covers
+# snapshot images that predate the bake. Idempotent.
+mkdir -p "$HOME/.config/herdr"
+grep -qs '^onboarding' "$HOME/.config/herdr/config.toml" 2>/dev/null || \
+  printf 'onboarding = false\n' >> "$HOME/.config/herdr/config.toml"
+
 FM_INJECT=1 FM_HERDR_SESSION="$SESSION" FM_DIR="$FMDIR" FM_PROMPT="$PROMPT" \
   setsid "$0" >/dev/null 2>&1 &
 exec herdr --session "$SESSION"

@@ -121,6 +121,12 @@ COPY --chown=agentdev:agentdev skills/ /home/agentdev/.claude/skills/
 # (claude merges its own runtime keys in on first run; these survive.)
 RUN printf '%s' '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true,"hasAcknowledgedCostThreshold":true,"theme":"dark","projects":{"/home/agentdev/firstmate":{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true,"projectOnboardingSeenCount":1,"allowedTools":[],"mcpServers":{},"enabledMcpjsonServers":[],"disabledMcpjsonServers":[],"hasClaudeMdExternalIncludesApproved":false,"hasClaudeMdExternalIncludesWarningShown":false}}}' > /home/agentdev/.claude.json
 
+# Disable herdr's first-run onboarding modal — it blocks the default workspace from being
+# created until dismissed, which starves firstmate-herdr's claude injector (it times out
+# waiting for a workspace). With it off, the workspace is created immediately on attach.
+RUN mkdir -p /home/agentdev/.config/herdr && \
+    printf 'onboarding = false\n' > /home/agentdev/.config/herdr/config.toml
+
 # Activate injected creds on start, then keep the container alive for firstmate.
 ENTRYPOINT ["/usr/local/bin/agent-entrypoint"]
 CMD ["tail", "-f", "/dev/null"]

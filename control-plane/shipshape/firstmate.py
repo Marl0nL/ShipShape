@@ -41,9 +41,17 @@ def quick_start(paths: Paths, cfg: Config, run=docker_ops.run) -> tuple[bool, st
     else:
         note = "Claude auth: no claude-token or host creds — add one on the Credentials tab. "
 
-    # 3. open the firstmate primary in a herdr workspace, in a new window, kicked off
-    #    so the agent starts orienting itself immediately. firstmate-herdr starts a
-    #    herdr session, `pane run`s claude in it, then attaches — so the primary and the
-    #    crewmates firstmate spawns (backend=herdr) share one visible workspace.
+    # 3. Disable herdr's first-run onboarding modal in the RUNNING container. That modal
+    #    blocks the default workspace from being created until dismissed, which starves
+    #    firstmate-herdr's claude injector. Done from the host so it works no matter which
+    #    image/snapshot is active (older snapshots have neither the bake nor the runtime
+    #    guard). Idempotent.
+    run(["docker", "exec", cfg.agent_container, "bash", "-lc",
+         "mkdir -p ~/.config/herdr && (grep -qs '^onboarding' ~/.config/herdr/config.toml || "
+         "printf 'onboarding = false\\n' >> ~/.config/herdr/config.toml)"])
+
+    # 4. open the firstmate primary in a herdr workspace, in a new window, kicked off so
+    #    the agent starts orienting itself immediately. firstmate-herdr attaches herdr,
+    #    injects claude as an agent, and moves it to its own tab.
     term = docker_ops.open_terminal(cfg.agent_container, "exec firstmate-herdr")
     return term.ok, note + term.output
