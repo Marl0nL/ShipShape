@@ -93,8 +93,12 @@ ship-fleet set ship-01 ssh_listen=overlay
 ```
 
 It is refused until the Ship has joined, and `overlay leave` turns it back to
-`any` first, so the Ship can never be locked out by these commands. If the
-overlay itself breaks, the Proxmox console still works.
+`any` first, so the Ship can never be locked out by these commands. **The
+computer FleetLedger runs on must be on the overlay too** before you do this:
+otherwise its own logins come from the LAN and are refused ("refused
+FleetLedger's admin key"). If the overlay itself breaks, the Proxmox console
+still works, and `sudo ship-ctl set network.ssh_listen=any` there opens the LAN
+again.
 
 ## 4. Your laptop
 
