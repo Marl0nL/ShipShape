@@ -378,6 +378,40 @@ def test_verify_sums_needs_goodsig_even_without_the_dead_key_list(tmp_path, monk
     with pytest.raises(FleetError, match="good signature"):
         pins.verify_sums(sums, signature, armored, fpr)
 
+
+@needs_gpg
+def test_verify_sums_accepts_a_live_key_with_an_old_expired_signing_subkey(tmp_path):
+    """gpgv prints KEYEXPIRED for the old subkey, but the live primary made a good
+    signature: that is not a dead key, so it must pass."""
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    gpg = ["gpg", "--batch", "--homedir", str(home), "--passphrase", "",
+           "--pinentry-mode", "loopback"]
+    then = int(time.time()) - 3 * 86400
+    subprocess.run([*gpg, f"--faked-system-time={then}!", "--quick-gen-key",
+                    "Live <live@example.com>", "ed25519", "sign", "never"],
+                   check=True, capture_output=True)
+    listing = subprocess.run([*gpg, "--with-colons", "--list-keys"], check=True,
+                             capture_output=True, text=True).stdout
+    fpr = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+    subprocess.run([*gpg, f"--faked-system-time={then}!", "--quick-add-key", fpr, "ed25519",
+                    "sign", "1d"], check=True, capture_output=True)
+    sums = sums_text()
+    signature = subprocess.run([*gpg, "-u", f"{fpr}!", "--detach-sign", "--armor"],
+                               input=sums, check=True, capture_output=True).stdout
+    armored = subprocess.run([*gpg, "--armor", "--export", fpr], check=True,
+                             capture_output=True).stdout
+    keyring = tmp_path / "k.gpg"
+    keyring.write_bytes(subprocess.run([*gpg, "--export", fpr], check=True,
+                                       capture_output=True).stdout)
+    (tmp_path / "s").write_bytes(sums)
+    (tmp_path / "s.asc").write_bytes(signature)
+    raw = subprocess.run(["gpgv", "--status-fd", "1", "--keyring", str(keyring),
+                          str(tmp_path / "s.asc"), str(tmp_path / "s")],
+                         capture_output=True, text=True).stdout
+    assert "[GNUPG:] KEYEXPIRED " in raw and "[GNUPG:] GOODSIG " in raw  # the case is real
+    pins.verify_sums(sums, signature, armored, fpr)
+
 def test_primary_fingerprints_skips_subkeys():
     colons = "\n".join([
         "pub:-:255:22:AAAA:1:::-:::scESC::::::23::0:", "fpr:::::::::" + "A" * 40 + ":",

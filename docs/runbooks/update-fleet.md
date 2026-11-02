@@ -104,7 +104,8 @@ ship-fleet pins set ubuntu 20261101
 FleetLedger fetches that build's `SHA256SUMS` and its signature, checks the
 signature with `gpgv` against the pinned Ubuntu signing key alone (a keyserver
 answer carrying any other key is refused, and so is the key itself once it is
-expired or revoked), and takes the image hashes from the verified file. Only new Ships use the image: rebuild the
-Proxmox template from it (`docs/runbooks/proxmox-setup.md`, the template steps,
-checking the download against the new `sha256`). Existing Ships are never
+expired or revoked), and takes the image hashes from the verified file. Only
+new Ships use the image: rebuild the Proxmox template from it
+(`docs/runbooks/proxmox-setup.md`, the template steps, checking the download
+against the new `sha256`). Existing Ships are never
 re-imaged; unattended-upgrades keeps them current.

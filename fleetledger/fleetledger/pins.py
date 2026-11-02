@@ -263,8 +263,11 @@ def _primary_fingerprints(colons: str) -> list[str]:
     return out
 
 
-# gpgv status words for a signature by a key that is no longer good to trust.
-DEAD_KEY_STATUS = frozenset({"EXPKEYSIG", "REVKEYSIG", "KEYEXPIRED", "KEYREVOKED", "EXPSIG"})
+# gpgv status words that say a signature was made by a key no longer good to trust
+# (expired or revoked), or has itself expired. Not KEYEXPIRED or KEYREVOKED: gpgv
+# prints those about any key or subkey it looks at, such as an old expired signing
+# subkey beside the live key that made the signature.
+DEAD_KEY_STATUS = frozenset({"EXPKEYSIG", "REVKEYSIG", "EXPSIG"})
 
 
 def verify_sums(sums: bytes, signature: bytes, armored_key: bytes, fingerprint: str) -> None:
