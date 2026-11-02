@@ -1,0 +1,11 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "apply",
+  "ok": true,
+  "changed": [],
+  "messages": [],
+  "error": {
+    "code": "internal",
+    "message": "x"
+  }
+}

@@ -1,0 +1,29 @@
+# Checksums are 64 lower-case hex characters.
+schema = 1
+[shipshape]
+tooling = "0.1.0"
+[ubuntu]
+release = "26.04"
+build = "20260101"
+base_url = "https://cloud-images.example.com/26.04"
+signing_key = "0000000000000000000000000000000000000000"
+[ubuntu.images.amd64]
+file = "example.img"
+sha256 = "abc"
+[herdr]
+version = "0.9.5"
+[herdr.assets.x86_64]
+url = "https://downloads.example.com/herdr"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+[claude]
+install = "native"
+default_channel = "latest"
+minimum_version = "2.1.0"
+release_key = "0000000000000000000000000000000000000000"
+manifest_base = "https://downloads.example.com/claude"
+[node]
+major = 26
+[uv]
+version = "0.1.0"
+[npm]
+[apt]

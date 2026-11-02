@@ -1,0 +1,71 @@
+{
+  "schema": "shipshape.ship-status/1",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "ship": {
+    "name": "ship-01",
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "tags": [
+      "work"
+    ],
+    "tooling": "0.1.0",
+    "bundle_commit": "0123456789ab"
+  },
+  "state": "provisioning",
+  "attention": [],
+  "host": {
+    "uptime_s": 86400,
+    "load1": 0.4,
+    "cpus": 4,
+    "mem_total_mb": 7951,
+    "mem_used_pct": 41.2,
+    "disk_total_gb": 38.6,
+    "disk_used_pct": 22.0,
+    "reboot_required": false,
+    "updates_pending": 3
+  },
+  "provision": {
+    "cloud_init": "running",
+    "last_run": null,
+    "result": "running"
+  },
+  "herdr": {
+    "version": null,
+    "server": "unknown",
+    "agents": [],
+    "last_resume": null
+  },
+  "claude": {
+    "version": null,
+    "channel": "latest",
+    "remote_control": "on",
+    "default_mode": "auto",
+    "allow_bypass": false
+  },
+  "auth": {
+    "claude": {
+      "state": "unknown",
+      "account": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "gcloud": {
+      "state": "unknown",
+      "account": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "gcloud_adc": {
+      "state": "unknown",
+      "account": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "github": {
+      "state": "unknown",
+      "account": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  "tools": {},
+  "net": null,
+  "errors": [
+    "herdr: socket not found"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "set",
+  "ok": false,
+  "changed": [],
+  "messages": [],
+  "error": {
+    "code": "invalid-ship-toml",
+    "message": "claude.default_mode bypassPermissions needs allow_bypass = true"
+  }
+}

@@ -1,0 +1,7 @@
+# A skill folder copied into ~/.claude/skills/.
+schema = 1
+id = "example-skill"
+description = "Teaches agents about this Ship"
+kind = "skill-dir"
+skill_dir = "skills/example"
+check = "test -f ~/.claude/skills/example-skill/SKILL.md"

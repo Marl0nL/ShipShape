@@ -1,0 +1,9 @@
+# also_npm entries must be name@version.
+schema = 1
+id = "example-cli"
+description = "Unpinned helper"
+kind = "npm"
+package = "example-cli"
+version = "1.0.0"
+also_npm = ["example-helper"]
+check = "example-cli --version"

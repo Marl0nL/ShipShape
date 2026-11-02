@@ -1,0 +1,12 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "apply",
+  "ok": true,
+  "changed": [
+    "/etc/claude-code/managed-settings.json"
+  ],
+  "messages": [
+    "Applied."
+  ],
+  "error": null
+}

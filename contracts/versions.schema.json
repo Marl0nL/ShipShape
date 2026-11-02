@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/versions.schema.json",
+  "title": "versions.toml: pinned versions shared by both tracks",
+  "description": "Repo root file. ship-provision installs these (W4); the seed generator reads [ubuntu] (W3); ship-fleet compares [shipshape].tooling with each Ship (W8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "shipshape", "ubuntu", "herdr", "claude", "node", "uv", "npm", "apt"],
+  "properties": {
+    "schema": { "const": 1 },
+    "shipshape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tooling"],
+      "properties": { "tooling": { "$ref": "#/$defs/semver" } }
+    },
+    "ubuntu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "build", "base_url", "signing_key", "images"],
+      "properties": {
+        "release": { "type": "string", "pattern": "^[0-9]{2}\\.[0-9]{2}$" },
+        "build": { "type": "string", "pattern": "^[0-9]{8}(\\.[0-9]+)?$" },
+        "base_url": { "$ref": "#/$defs/httpsUrl" },
+        "signing_key": { "$ref": "#/$defs/fingerprint" },
+        "images": {
+          "type": "object",
+          "propertyNames": { "enum": ["amd64", "arm64"] },
+          "required": ["amd64"],
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "sha256"],
+            "properties": {
+              "file": { "type": "string", "pattern": "^[A-Za-z0-9._-]+\\.img$" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "herdr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "assets"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "assets": {
+          "type": "object",
+          "propertyNames": { "enum": ["x86_64", "aarch64"] },
+          "required": ["x86_64"],
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url", "sha256"],
+            "properties": {
+              "url": { "$ref": "#/$defs/httpsUrl" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "claude": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install", "default_channel", "minimum_version", "release_key", "manifest_base"],
+      "properties": {
+        "install": { "const": "native" },
+        "default_channel": { "enum": ["latest", "stable"] },
+        "minimum_version": { "$ref": "#/$defs/semver" },
+        "release_key": { "$ref": "#/$defs/fingerprint" },
+        "manifest_base": { "$ref": "#/$defs/httpsUrl" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["major"],
+      "properties": { "major": { "type": "integer", "minimum": 20 } }
+    },
+    "uv": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version"],
+      "properties": { "version": { "$ref": "#/$defs/semver" } }
+    },
+    "npm": {
+      "type": "object",
+      "description": "Pinned npm packages, name = version.",
+      "propertyNames": { "pattern": "^(@[a-z0-9-]+/)?[a-z0-9._-]+$" },
+      "additionalProperties": { "$ref": "#/$defs/semver" }
+    },
+    "apt": {
+      "type": "object",
+      "description": "Third-party apt repositories, keyed by a short id.",
+      "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "suite", "components", "key_url", "key_fingerprints", "packages"],
+        "properties": {
+          "url": { "$ref": "#/$defs/httpsUrl" },
+          "suite": { "type": "string", "minLength": 1 },
+          "components": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "key_url": { "$ref": "#/$defs/httpsUrl" },
+          "key_fingerprints": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/fingerprint" },
+            "minItems": 1,
+            "description": "Every primary key in the downloaded keyring must be one of these."
+          },
+          "packages": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "architectures": {
+            "type": "array",
+            "items": { "enum": ["amd64", "arm64"] },
+            "description": "Omitted: all."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "semver": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "fingerprint": { "type": "string", "pattern": "^[0-9A-F]{40}$" },
+    "httpsUrl": { "type": "string", "pattern": "^https://[^\\s]+$" }
+  }
+}

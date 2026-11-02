@@ -1,0 +1,7 @@
+# npm recipes must pin a version.
+schema = 1
+id = "example-cli"
+description = "Unpinned"
+kind = "npm"
+package = "example-cli"
+check = "example-cli --version"

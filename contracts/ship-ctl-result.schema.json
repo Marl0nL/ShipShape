@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/ship-ctl-result.schema.json",
+  "title": "ship-ctl --json result for commands other than status",
+  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version and logs. The exit code carries the same outcome (see contracts/ship-ctl.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "command", "ok", "changed", "messages", "error"],
+  "properties": {
+    "schema": { "const": "shipshape.ship-ctl-result/1" },
+    "command": {
+      "enum": ["apply", "set", "autostart", "converge", "tools", "version", "logs"]
+    },
+    "ok": { "type": "boolean" },
+    "changed": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 300 },
+      "description": "What changed: file paths, agent names started, tool ids installed."
+    },
+    "messages": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 1000 },
+      "description": "Short human-readable notes, safe to show as-is."
+    },
+    "data": {
+      "type": "object",
+      "description": "Command-specific payload, documented per command in contracts/ship-ctl.md."
+    },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": {
+              "enum": [
+                "usage",
+                "not-root",
+                "invalid-ship-toml",
+                "invalid-bundle",
+                "bundle-checksum",
+                "provision-failed",
+                "tool-failed",
+                "herdr-unavailable",
+                "internal"
+              ]
+            },
+            "message": { "type": "string", "maxLength": 1000 }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": true } } },
+      "then": { "properties": { "error": { "type": "null" } } },
+      "else": { "properties": { "error": { "type": "object" } } }
+    }
+  ]
+}

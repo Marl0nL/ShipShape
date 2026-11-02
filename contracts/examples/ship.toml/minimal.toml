@@ -1,0 +1,6 @@
+# The smallest valid ship.toml: everything else takes its default.
+schema = 1
+
+[ship]
+name = "ship-03"
+id = "b3d9e2a1-6f4c-4e8b-a7d2-1c5f9e3b8a60"

@@ -1,0 +1,11 @@
+# A tool with an apt dependency and a pinned helper package.
+schema = 1
+id = "example-browser-tool"
+description = "Browser automation for agents"
+kind = "npm"
+package = "example-browser-tool"
+version = "0.4.0"
+apt = ["example-browser"]
+also_npm = ["example-browser-mcp@2.0.1"]
+env = { EXAMPLE_BROWSER_MCP_PATH = "~/.local/lib/node_modules/example-browser-mcp/bin/server.js" }
+check = "example-browser-tool --version"
