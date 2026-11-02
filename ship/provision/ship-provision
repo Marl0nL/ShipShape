@@ -38,7 +38,7 @@ AGENT_HOME=/home/agent
 
 # Ubuntu packages every Ship has (contracts/ship-runtime.md, plan "What is on a Ship").
 BASE_PACKAGES=(ca-certificates curl gnupg git jq tmux ripgrep python3 build-essential
-  avahi-daemon unattended-upgrades qemu-guest-agent unzip xz-utils)
+  avahi-daemon unattended-upgrades qemu-guest-agent unzip xz-utils nftables)
 # Third-party repos whose packages every Ship has. Other repos are added too, but
 # their packages come from recipes (Google Chrome for chrome-devtools-axi).
 CORE_REPOS=(github-cli google-cloud nodesource)
@@ -500,7 +500,8 @@ step_system_config() {
 
 step_units() {
   local unit system_changed=0 user_changed=0
-  for unit in ship-status.service ship-status.timer; do
+  # ship-lan-guard.service is enabled or disabled by `ship-ctl apply` (lan_guard).
+  for unit in ship-status.service ship-status.timer ship-lan-guard.service; do
     put_file "$FILES/systemd/system/$unit" "/etc/systemd/system/$unit" 0644
     [ "$CHANGED" = 0 ] || system_changed=1
   done

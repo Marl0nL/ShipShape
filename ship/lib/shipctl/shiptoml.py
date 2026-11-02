@@ -57,6 +57,17 @@ class ShipToml:
         return bool(self.doc.get("network", {}).get("lan_guard", False))
 
     @property
+    def lan_guard_allow(self) -> list[str]:
+        return list(self.doc.get("network", {}).get("lan_guard_allow", []))
+
+    @property
+    def updates(self) -> dict:
+        """OS update policy with defaults filled in (settings.md, "OS updates")."""
+        out = {"auto_reboot": False, "reboot_time": "04:00"}
+        out.update(self.doc.get("updates", {}))
+        return out
+
+    @property
     def autostart(self) -> list[dict]:
         return list(self.doc.get("autostart", []))
 

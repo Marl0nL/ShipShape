@@ -1,0 +1,15 @@
+# The LAN guard (contracts/settings.md, "LAN guard"). Enabled and disabled by
+# `ship-ctl apply` as network.lan_guard says; at boot it finds the default
+# gateways and DNS servers again and reloads the nftables table.
+[Unit]
+Description=ShipShape LAN guard
+Wants=network-online.target
+After=network-online.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ship-ctl lan-guard
+
+[Install]
+WantedBy=multi-user.target

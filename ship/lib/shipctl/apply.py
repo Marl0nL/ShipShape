@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import sshtrust, tomlw
+from . import languard, sshtrust, tomlw
 from .context import Context
 from .errors import CtlError
 from .fsutil import remove, write_atomic
@@ -52,6 +52,21 @@ def managed_settings(ship: ShipToml, versions: dict) -> dict:
     # the Ship starts get a lasting name from `claude --name` (naming.py).
     doc["env"] = {"CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": c["session_prefix"]}
     return doc
+
+
+UNATTENDED_CONF = "/etc/apt/apt.conf.d/52shipshape-unattended-upgrades"
+
+
+def unattended_upgrades(ship: ShipToml) -> str:
+    """The automatic reboot policy (contracts/settings.md, "OS updates")."""
+    policy = ship.updates
+    reboot = "true" if policy["auto_reboot"] else "false"
+    return (
+        "// Written by ship-ctl apply from /etc/shipshape/ship.toml [updates].\n"
+        f'Unattended-Upgrade::Automatic-Reboot "{reboot}";\n'
+        'Unattended-Upgrade::Automatic-Reboot-WithUsers "true";\n'
+        f'Unattended-Upgrade::Automatic-Reboot-Time "{policy["reboot_time"]}";\n'
+    )
 
 
 def avahi_service(ship: ShipToml) -> str:
@@ -180,8 +195,14 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
         note(path, True)
     messages += ssh_messages
 
-    if ship.lan_guard:
-        messages.append("network.lan_guard is not built yet (phase 2); no rules were written.")
+    # Root-owned: the unattended-upgrades reboot policy, written in full.
+    upgrades = paths.p(UNATTENDED_CONF)
+    note(upgrades, write_atomic(upgrades, unattended_upgrades(ship), 0o644, dry_run=dry_run))
+
+    # The LAN guard: one nftables table, plus the unit that reloads it at boot.
+    guard_changed, guard_messages = languard.sync(ctx, ship, dry_run=dry_run)
+    changed += guard_changed
+    messages += guard_messages
 
     # Agent-owned files: merge only our keys. The agent controls this folder, so
     # everything goes through HomeFS, which never follows a symlink (homefs.py).

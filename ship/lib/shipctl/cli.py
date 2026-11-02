@@ -14,7 +14,19 @@ import os
 import sys
 from pathlib import Path
 
-from . import CONTRACTS, apply, autostart, converge, logs, net, shiptoml, sshtrust, status, tools
+from . import (
+    CONTRACTS,
+    apply,
+    autostart,
+    converge,
+    languard,
+    logs,
+    net,
+    shiptoml,
+    sshtrust,
+    status,
+    tools,
+)
 from .context import Context
 from .errors import CtlError
 from .fsutil import read_json, write_atomic
@@ -30,6 +42,9 @@ SET_KEYS = {
     "claude.session_prefix": "str",
     "agent.sudo": "bool",
     "network.lan_guard": "bool",
+    "network.lan_guard_allow": "list",
+    "updates.auto_reboot": "bool",
+    "updates.reboot_time": "str",
 }
 RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart "
@@ -95,6 +110,8 @@ def build_parser() -> Parser:
     cmd("version", "Print the tooling version and contract versions.")
     r = sub.add_parser("refresh", help="(internal) refresh the status cache and react to sign-ins")
     r.add_argument("--json", action="store_true")
+    g = sub.add_parser("lan-guard", help="(internal) reload the LAN guard rules (boot unit)")
+    g.add_argument("--json", action="store_true")
     return p
 
 
@@ -131,7 +148,7 @@ def _coerce(key: str, kind: str, raw: str) -> object:
         if raw not in ("true", "false"):
             raise CtlError("usage", f"{key} must be true or false")
         return raw == "true"
-    if kind == "tags":
+    if kind in ("tags", "list"):
         return [t.strip() for t in raw.split(",") if t.strip()]
     return raw
 
@@ -307,6 +324,17 @@ def cmd_refresh(ctx: Context, args) -> dict:
     return result("status", messages=messages)
 
 
+def cmd_lan_guard(ctx: Context, args) -> dict:
+    """Run by ship-lan-guard.service at boot: find the gateways and DNS servers
+    again and reload the table (or remove it if the guard is off)."""
+    ship = shiptoml.load(ctx.paths)
+    changed, messages = languard.sync(ctx, ship, reload=True)
+    for m in messages:
+        ctx.log(m)
+    state = "on" if ship.lan_guard else "off"
+    return result("apply", changed=changed, messages=[f"LAN guard {state}.", *messages])
+
+
 COMMANDS = {
     "status": cmd_status,
     "apply": cmd_apply,
@@ -319,7 +347,12 @@ COMMANDS = {
     "refresh": cmd_refresh,
     "ssh-trust": cmd_ssh_trust,
     "net": cmd_net,
+    "lan-guard": cmd_lan_guard,
 }
+
+
+# Internal commands report under a contract command name (ship-ctl-result.schema.json).
+INTERNAL_REPORTS = {"refresh": "status", "lan-guard": "apply"}
 
 
 def _print_human(doc: dict) -> None:
@@ -377,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
         doc = COMMANDS[command](ctx, args)
         code = 0
     except CtlError as exc:
-        reported = "status" if command == "refresh" else command
+        reported = INTERNAL_REPORTS.get(command, command)
         doc = result(
             reported,
             ok=False,
@@ -390,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # anything else still ends in exactly one JSON document
         ctx.log(f"internal error: {type(exc).__name__}: {exc}")
         doc = result(
-            "status" if command == "refresh" else command,
+            INTERNAL_REPORTS.get(command, command),
             ok=False,
             error={"code": "internal", "message": f"{type(exc).__name__}: {exc}"[:1000]},
         )

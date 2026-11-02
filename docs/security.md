@@ -70,6 +70,11 @@ from the LAN to other machines or cloud VMs.
   The collector runs with `ProtectHome=yes` and never touches a home folder.
 - **Bypass is opt-in per Ship.** Without `allow_bypass`, managed settings disable
   bypass mode outright.
+- **The LAN guard is opt-in per Ship** (`lan_guard=true`): an nftables table that
+  refuses new outgoing connections to private and overlay ranges except the
+  gateway, DNS and `lan_guard_allow`. It is visibility's counterpart, not a
+  sandbox: an agent with sudo can remove it, so pair it with sudo off. Incoming
+  SSH (FleetLedger, herdr attach) is never affected.
 
 ## Where each secret lives
 
@@ -125,7 +130,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 
 | Threat | What it could do | What limits it |
 |---|---|---|
-| A misbehaving or prompt-injected agent (more so in bypass) | use or leak that Ship's sign-ins; push to repos you can reach; probe your LAN | separate sign-ins per Ship (sign one out without touching others); no sudo; bypass only where allowed; no admin keys or agent forwarding on Ships; the network visibility record (LAN destinations included) for review afterwards |
+| A misbehaving or prompt-injected agent (more so in bypass) | use or leak that Ship's sign-ins; push to repos you can reach; probe your LAN | separate sign-ins per Ship (sign one out without touching others); no sudo; bypass only where allowed; no admin keys or agent forwarding on Ships; the network visibility record (LAN destinations included) for review afterwards; the optional LAN guard (`ship-fleet set SHIP lan_guard=true`) refuses new connections to private addresses other than the gateway and DNS, so Ships of different tags cannot reach each other |
 | A Ship on the wrong account | work done with personal credentials, or the reverse | expected accounts per tag, checked after every sign-in and on every poll |
 | Someone else on your LAN | fake an mDNS announcement; answer at a Ship's name; try passwords | pinned host keys; key-only SSH; announcements are hints only |
 | A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; treat snapshots as sensitive; re-seed and `adopt --replace` (which also lists the old host key as revoked for trusted machines); host certificates last 90 days; sign Ships out from FleetLedger |

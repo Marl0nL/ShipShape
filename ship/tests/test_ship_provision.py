@@ -62,6 +62,9 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     assert (root / "etc/systemd/journald.conf.d/50-shipshape.conf").exists()
     assert (root / "etc/systemd/user/herdr.service").exists()
     assert (root / "etc/systemd/system/ship-status.timer").exists()
+    # The LAN guard unit is installed, but only ship-ctl apply enables it.
+    assert (root / "etc/systemd/system/ship-lan-guard.service").exists()
+    assert not list(root.glob("etc/systemd/system/*.wants/ship-lan-guard.service"))
     assert mode(root / "home/agent/.claude") == "0o700"
     assert mode(root / "home/agent/.local/state/shipshape") == "0o700"
     assert (root / "home/agent/.npmrc").read_text() == "prefix=/home/agent/.local\n"
@@ -243,6 +246,20 @@ def test_status_timer():
     assert service["Service"]["ExecStart"] == "/usr/local/bin/ship-ctl refresh"
     timer = unit(FILES / "systemd/system/ship-status.timer")
     assert timer["Timer"]["OnUnitActiveSec"] == "30s"
+
+
+def test_lan_guard_unit():
+    service = unit(FILES / "systemd/system/ship-lan-guard.service")
+    assert service["Service"]["ExecStart"] == "/usr/local/bin/ship-ctl lan-guard"
+    assert service["Service"]["Type"] == "oneshot"
+    assert "network-online.target" in service["Unit"]["After"]
+    assert service["Install"]["WantedBy"] == "multi-user.target"
+
+
+def test_nftables_is_a_base_package():
+    text = (SHIP / "provision/ship-provision").read_text()
+    base = text[text.index("BASE_PACKAGES=("):]
+    assert "nftables" in base[: base.index(")")]
 
 
 def test_sshd_drop_in_matches_contract():
