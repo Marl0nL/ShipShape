@@ -17,5 +17,5 @@ binaries are pinned by version and sha256 in their install scripts.
 | `no-mistakes` | | script | release binary into `~/.local/bin` |
 
 Adding a tool: write `<id>.toml`, pin any npm package in `versions.toml`, and take
-apt packages only from a `versions.toml` `[apt.*]` repo. `ship/tests/test_catalogue.py`
+apt packages only from a `versions.toml` `[apt.*]` repo. `ship/tests/test_ship_catalogue.py`
 checks all of this.
