@@ -248,3 +248,37 @@ def test_real_ssh_refuses_impostor(store, sshd, tmp_path):
     assert len(inv.known_hosts.read_text().splitlines()) == 3
 
 
+
+
+def test_probe_certificate_tries_each_name_and_stops_on_a_bad_key(store, tmp_path):
+    inv = store.load()
+    ship = inv.ship("ship-02")  # names: ship-02.local, ship-02.example.net
+    kh = tmp_path / "kh"
+    kh.write_text("@cert-authority ship-02 ssh-ed25519 AAAA\n")
+    seen = []
+
+    def runner(answers):
+        def run(argv, **kw):
+            seen.append(argv)
+            code, err = answers[argv[-2]]
+            return subprocess.CompletedProcess(argv, code, b"", err.encode())
+        return run
+
+    ok = SSH(inv, runner=runner({
+        "ship-02.local": (255, "ssh: Could not resolve hostname ship-02.local"),
+        "ship-02.example.net": (0, ""),
+    }))
+    assert ok.probe_certificate(ship, kh) is None
+    argv = seen[-1]
+    assert opt(argv, "UserKnownHostsFile") == str(kh)
+    assert opt(argv, "HostKeyAlgorithms") == "ssh-ed25519-cert-v01@openssh.com"
+    assert opt(argv, "ControlPath") == "none"  # never an open pinned connection
+    assert argv.count("-o") == len([a for a in argv if a == "-o"])
+    assert sum(1 for a in argv if a.startswith("UserKnownHostsFile=")) == 1
+    seen.clear()
+    bad = SSH(inv, runner=runner({
+        "ship-02.local": (255, "Host key verification failed."),
+        "ship-02.example.net": (0, ""),
+    }))
+    assert "verification failed" in bad.probe_certificate(ship, kh)
+    assert len(seen) == 1  # a wrong key is not retried at another name

@@ -137,7 +137,15 @@ ship-fleet untrust laptop
 ```
 
 This marks the machine revoked in `ships.toml`, adds its key to the revocation
-list, and pushes the list to every Ship. A Ship that is unreachable at that
+list, and pushes the list to every Ship.
+
+Expiry and revocation stop **new** connections. sshd checks a certificate only
+when a connection opens. herdr keeps its SSH connection to each saved machine
+open (and idle for up to 10 minutes), so a client that is already attached
+stays attached until that connection closes. To cut a machine off at once,
+also end the agent's SSH sessions on the Ships in its scope, for example
+`ship-fleet ssh ship-01 --as fleet -- sudo pkill -u agent -x sshd-session`. That
+ends every attached session, yours included; agents and herdr keep running. A Ship that is unreachable at that
 moment keeps accepting the machine's current certificate until it lapses, or
 until you run `ship-fleet ca sign` once the Ship is back; FleetLedger lists
 which Ships still need it. A revoked machine is never certified again under
@@ -151,9 +159,13 @@ refuse it after their next `install.sh`. Then run `ship-fleet ca sign <ship>`.
 
 ## Checks (phase 3 acceptance)
 
+Checked Ship to Ship on the test pool: one Ship played the trusted machine,
+herdr 0.9.5 and OpenSSH 10.2.
+
 - From a second machine, `herdr --remote ship-01` works with no host-key prompt.
 - A lapsed certificate cannot connect. Test it with `ship-fleet trust laptop
   --hours 1`, wait an hour, then run `ssh ship-01 true`.
-- After `ship-fleet untrust laptop`, its certificate is refused at once.
+- After `ship-fleet untrust laptop`, its certificate is refused for every new
+  connection.
 
 `fleetledger/tests/test_ca_sshd.py` runs the same checks against a real sshd.

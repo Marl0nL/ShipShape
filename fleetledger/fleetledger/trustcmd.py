@@ -108,6 +108,7 @@ def certify(app, inv: Inventory, ship: Ship, *, force: bool = False,
         ctl.call("ssh-trust", "--file", "-", input=json.dumps(doc).encode("utf-8"), timeout=60)
     except ShipCtlError as exc:
         raise FleetError(exc.message) from exc
+    status.fetch(ssh, inv, ship)  # refresh the cached status, so `ca show` is current
     messages = []
     if cert:
         messages.append(f"{ship.name}: host certificate installed "
