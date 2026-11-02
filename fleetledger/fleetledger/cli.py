@@ -21,8 +21,8 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "set", "tag", "tools", "update", "reboot", "attention", "ssh", "logs", "ca", "trust",
-    "untrust", "net", "ui",
+    "set", "tag", "tools", "update", "reboot", "attention", "pins", "ssh", "logs", "ca",
+    "trust", "untrust", "net", "ui",
 )  # fmt: skip
 
 
@@ -44,6 +44,7 @@ class App:
     resolves: Callable[[str], bool] = None  # (host) -> does it resolve here?
     sleep: Callable[[float], None] = None
     clock: Callable[[], float] = time.monotonic
+    http_factory: Callable = None  # () -> pins.Http
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
 
     def __post_init__(self) -> None:
@@ -67,6 +68,10 @@ class App:
         self.resolves = self.resolves or _resolves
         self.sleep = self.sleep or time.sleep
         self.keyscan = self.keyscan or scan.keyscan
+        if self.http_factory is None:
+            from fleetledger.pins import Http
+
+            self.http_factory = Http
 
     def say(self, text: str = "") -> None:
         print(text, file=self.out)
@@ -266,6 +271,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="print JSON")
     p.add_argument("--watch", type=float, nargs="?", const=30.0, metavar="SECONDS",
                    help="poll every SECONDS (default 30) and print new items")
+
+    p = _add(sub, "pins", "check or move the versions.toml pins in this checkout",
+             "  ship-fleet pins                   herdr, uv, the Ubuntu image and npm tools\n"
+             "                                    against their newest releases\n"
+             "  ship-fleet pins set herdr 0.9.6   new URLs; each download must match\n"
+             "                                    GitHub's published SHA-256\n"
+             "  ship-fleet pins set ubuntu 20261101\n"
+             "                                    hashes from the signed SHA256SUMS\n"
+             "  ship-fleet pins set gh-axi 0.1.48 must exist in the npm registry\n\n"
+             "Then run scripts/check, commit, and roll it out with ship-fleet update\n"
+             "(docs/runbooks/update-fleet.md).")
+    p.add_argument("action", nargs="?", choices=("check", "set"), default="check")
+    p.add_argument("pin", nargs="?", help="herdr, uv, ubuntu or an npm package")
+    p.add_argument("value", nargs="?", help="the version (or image build) to pin")
+    p.add_argument("--json", action="store_true", help="print JSON (check)")
 
     p = _add(sub, "ssh", "open a shell on a Ship (as agent by default)")
     p.add_argument("name")

@@ -32,6 +32,7 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)) |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
+| `fleetledger/pins.py` | phase 2 | `ship-fleet pins`: check and move the `versions.toml` pins with their checksums and signatures |
 | `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
 | `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |
 | `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
@@ -327,6 +328,18 @@ for every Ship (an unknown setting or tool) is refused before any Ship is touche
 `update` and `reboot` on more than one Ship ask first (or need `--yes` when not
 run from a terminal). `ship-fleet status SHIP` also shows herdr's version and last
 resume, the bundle commit, provisioning and pending OS updates.
+
+`ship-fleet pins` (`fleetledger/pins.py`) checks and moves the pins in this
+checkout's `versions.toml`:
+
+| Pin | `pins set` checks |
+|---|---|
+| `herdr`, `uv` | each architecture's asset is downloaded and hashed; the hash must equal the SHA-256 digest GitHub publishes for it |
+| an npm package | the exact version exists in the registry |
+| `ubuntu BUILD` | `SHA256SUMS` carries a good signature from the pinned key (fetched by fingerprint, fingerprint checked again, `gpgv` with that key alone); the image hashes come from it |
+
+The file is edited with tomlkit (comments stay) and must still validate against
+`contracts/versions.schema.json`; nothing is written if any check fails.
 
 How to roll out a new pin: `docs/runbooks/update-fleet.md`.
 
