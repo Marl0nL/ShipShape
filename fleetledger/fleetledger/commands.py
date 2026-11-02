@@ -21,6 +21,9 @@ from fleetledger.ssh import ship_ctl
 from fleetledger.store import new_inventory, ship_entry
 
 MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
+# Autostart agents always get a first prompt: the Ship's mode ledger records a
+# session's mode when it receives one, and resume restores bypass from it.
+DEFAULT_AUTOSTART_PROMPT = "Get oriented and ready to work."
 LOG_SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 TAG_RE = NAME_RE
@@ -171,7 +174,7 @@ def cmd_init(args, app) -> int:
 # --- new -----------------------------------------------------------------
 
 
-def parse_autostart(values: list[str]) -> list[Autostart]:
+def parse_autostart(values: list[str], prompt: str = DEFAULT_AUTOSTART_PROMPT) -> list[Autostart]:
     agents = []
     for value in values:
         parts = value.split(":")
@@ -180,7 +183,7 @@ def parse_autostart(values: list[str]) -> list[Autostart]:
         mode = parts[2] if len(parts) == 3 else None
         if mode is not None and mode not in MODES:
             raise FleetError(f"--autostart {value}: unknown mode '{mode}'.")
-        agents.append(Autostart(parts[0], parts[1], mode))
+        agents.append(Autostart(parts[0], parts[1], mode, prompt or DEFAULT_AUTOSTART_PROMPT))
     return agents
 
 
@@ -221,7 +224,7 @@ def cmd_new(args, app) -> int:
         draft = Ship(**{**draft.__dict__, "tools": tuple(dict.fromkeys([*base, *extra]))})
 
     options = SeedOptions(
-        autostart=parse_autostart(args.autostart),
+        autostart=parse_autostart(args.autostart, args.autostart_prompt),
         agent_sudo=True if args.agent_sudo else None,
     )
     seed = make_seed(inv, draft, repo, options)

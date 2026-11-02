@@ -93,7 +93,7 @@ def _add(sub, name: str, help_text: str, description: str | None = None):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from fleetledger.commands import LOG_SOURCES, MODES
+    from fleetledger.commands import DEFAULT_AUTOSTART_PROMPT, LOG_SOURCES, MODES
 
     parser = argparse.ArgumentParser(
         prog="ship-fleet",
@@ -136,6 +136,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--disk-gb", type=int)
     p.add_argument("--autostart", action="append", default=[], metavar="NAME:CWD[:MODE]",
                    help="agent to start at boot, e.g. main:~/work/main:auto (repeatable)")
+    p.add_argument("--autostart-prompt", default=DEFAULT_AUTOSTART_PROMPT, metavar="TEXT",
+                   help="first prompt sent to each autostart agent (default: %(default)r); "
+                   "it also records the agent's mode, so bypass survives a reboot")
     p.add_argument("--agent-sudo", action="store_true", help="give the agent user sudo")
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for the Ship to provision and enrol")

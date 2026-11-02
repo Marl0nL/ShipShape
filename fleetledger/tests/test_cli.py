@@ -252,8 +252,19 @@ def test_new_manual_bypass_ship(env, home):
     ship_toml = tomllib.loads(user["write_files"][0]["content"])
     assert ship_toml["claude"]["default_mode"] == "bypassPermissions"
     assert ship_toml["claude"]["allow_bypass"] is True
-    assert ship_toml["autostart"] == [{"name": "main", "cwd": "~/work/main", "mode": "auto"}]
+    assert ship_toml["autostart"] == [{"name": "main", "cwd": "~/work/main", "mode": "auto",
+                                       "prompt": "Get oriented and ready to work."}]
     assert env.run("new", "ship-03")[0] == 1  # already there
+
+
+def test_new_autostart_prompt(env, home):
+    code, _, err = env.run("new", "ship-08", "--autostart", "a:~/work/a",
+                           "--autostart-prompt", "Run the tests.")
+    assert code == 0, err
+    seed = next((home / "data" / "seeds").glob("ship-08-*.iso"))
+    _, files = iso.read(seed.read_bytes())
+    ship_toml = tomllib.loads(yaml.safe_load(files["user-data"])["write_files"][0]["content"])
+    assert ship_toml["autostart"] == [{"name": "a", "cwd": "~/work/a", "prompt": "Run the tests."}]
 
 
 def test_new_proxmox_waits_and_enrols(env, home):
