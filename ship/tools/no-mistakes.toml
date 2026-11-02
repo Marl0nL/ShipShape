@@ -1,0 +1,7 @@
+# A local review-and-ship pipeline for agent changes (github.com/kunchenguid/no-mistakes).
+schema = 1
+id = "no-mistakes"
+description = "A local pipeline that reviews, tests and ships agent changes"
+kind = "script"
+script = "no-mistakes.sh"
+check = "no-mistakes --version"

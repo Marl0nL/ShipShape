@@ -1,0 +1,12 @@
+# firstmate: an orchestrator repo plus the tools it drives. The repo URL is yours,
+# so it lives in your local ships.toml [profile_options.firstmate], never here.
+schema = 1
+id = "firstmate"
+description = "The firstmate orchestrator repo and the tools it drives"
+tools = ["treehouse", "no-mistakes", "lavish-axi", "tasks-axi"]
+setup = "firstmate/setup.sh"
+
+[options.repo_url]
+description = "Git URL of your firstmate repo (local config only)"
+required = true
+pattern = "^(https://|git@)[^\\s]+$"

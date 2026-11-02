@@ -47,6 +47,8 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     assert mode(root / "opt/shipshape/shim/claude") == "0o755"
     assert mode(root / "opt/shipshape/hooks/mode-ledger") == "0o755"
     assert os.readlink(root / "usr/local/bin/ship-ctl") == "/opt/shipshape/current/bin/ship-ctl"
+    axi = os.readlink(root / "usr/local/bin/ship-axi")
+    assert axi == "/opt/shipshape/current/axi/bin/ship-axi.js"
     assert (root / "etc/ssh/sshd_config.d/10-shipshape.conf").exists()
     assert (root / "etc/systemd/logind.conf.d/50-shipshape.conf").exists()
     assert (root / "etc/systemd/journald.conf.d/50-shipshape.conf").exists()
@@ -576,3 +578,13 @@ def test_install_claude_refuses_tampered_manifest(release):
     r = install()
     assert r.returncode == 1 and "signature check failed" in r.stderr
     assert not (home / ".local/bin/claude").exists()
+
+
+def test_npmrc_fifo_does_not_hang(tmp_path):
+    home = tmp_path / "home/agent"
+    home.mkdir(parents=True)
+    os.mkfifo(home / ".npmrc")
+    r = provision("--converge", "--root", str(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (home / ".npmrc").is_file()
+    assert (home / ".npmrc").read_text() == "prefix=/home/agent/.local\n"

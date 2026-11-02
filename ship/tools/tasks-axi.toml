@@ -1,0 +1,9 @@
+# A task backlog for agents, kept in a hand-editable backlog.md.
+schema = 1
+id = "tasks-axi"
+description = "A task backlog for agents in a hand-editable backlog.md"
+kind = "npm"
+package = "tasks-axi"
+version = "0.2.6"
+after = ["tasks-axi setup hooks"]
+check = "tasks-axi --version"

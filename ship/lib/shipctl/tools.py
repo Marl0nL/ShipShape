@@ -371,6 +371,40 @@ def run_profile(ctx: Context, inst: Installer, ship: ShipToml, pid: str) -> Outc
     return Outcome("ok") if r.ok else Outcome("failed", message=f"profile {pid}: setup failed")
 
 
+def run_profiles(
+    ctx: Context, ship: ShipToml, pids: list[str], inst: Installer | None = None
+) -> tuple[dict[str, str], list[str]]:
+    """Run the given profiles' setup; record each outcome in profiles.json (internal)."""
+    inst = inst or Installer(ctx, ToolLog(ctx))
+    path = ctx.paths.state / "profiles.json"
+    recorded = read_json(path, {})
+    recorded = recorded if isinstance(recorded, dict) else {}
+    states: dict[str, str] = {}
+    messages: list[str] = []
+    for pid in pids:
+        try:
+            outcome = run_profile(ctx, inst, ship, pid)
+        except CtlError as exc:
+            outcome = Outcome("failed", message=exc.message)
+        states[pid] = outcome.state
+        recorded[pid] = {"state": outcome.state, "updated_at": utc_now()}
+        if outcome.message:
+            messages.append(outcome.message)
+    write_atomic(path, json.dumps(recorded, indent=2) + "\n", 0o644)
+    return states, messages
+
+
+def failed_profiles(ctx: Context, ship: ShipToml) -> list[str]:
+    """Profiles whose setup failed last time (retried after a new sign-in)."""
+    recorded = read_json(ctx.paths.state / "profiles.json", {})
+    recorded = recorded if isinstance(recorded, dict) else {}
+    return [
+        p
+        for p in ship.profiles
+        if isinstance(recorded.get(p), dict) and recorded[p].get("state") == "failed"
+    ]
+
+
 def run(
     ctx: Context, ship: ShipToml, ids: list[str] | None = None
 ) -> tuple[dict, list[str], list[str]]:
@@ -424,15 +458,9 @@ def run(
 
     profiles_state: dict[str, str] = {}
     if not ids:
-        for pid in ship.profiles:
-            try:
-                outcome = run_profile(ctx, inst, ship, pid)
-            except CtlError as exc:
-                outcome = Outcome("failed", message=exc.message)
-            profiles_state[pid] = outcome.state
-            if outcome.state == "failed":
-                failed.append(f"profile:{pid}")
-                messages.append(outcome.message)
+        profiles_state, profile_messages = run_profiles(ctx, ship, ship.profiles, inst)
+        failed += [f"profile:{p}" for p, st in profiles_state.items() if st == "failed"]
+        messages += profile_messages
     write_atomic(state_path, json.dumps(state, indent=2) + "\n", 0o644)
 
     data = {

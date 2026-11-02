@@ -244,6 +244,11 @@ def cmd_refresh(ctx: Context, args) -> dict:
             tools.run(ctx, ship, waiting)
         except CtlError as exc:
             messages.append(exc.message)
+    retry = tools.failed_profiles(ctx, ship) if newly_ok else []
+    if retry:  # e.g. a private repo clone that needed the GitHub sign-in
+        states, why = tools.run_profiles(ctx, ship, retry)
+        messages.append("profiles retried: " + ", ".join(f"{p} {s}" for p, s in states.items()))
+        messages += why
     if "claude" in newly_ok and ship.autostart:
         state = "ready" if doc["state"] in ("needs-sign-in", "unknown") else doc["state"]
         try:

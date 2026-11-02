@@ -1,0 +1,13 @@
+# GitHub for agents: a compact wrapper around gh. Its setup waits for the GitHub sign-in.
+schema = 1
+id = "gh-axi"
+description = "GitHub through a compact, agent-friendly wrapper around gh"
+kind = "npm"
+package = "gh-axi"
+version = "0.1.47"
+needs = ["github"]
+# setup-git lets plain git (clones, pushes) use the GitHub sign-in.
+after = ["gh auth setup-git --hostname github.com", "gh-axi setup hooks"]
+check = "gh-axi --version"
+default = true
+bake = true

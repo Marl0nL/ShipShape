@@ -59,10 +59,19 @@ mode = "bypassPermissions"
 """
 
 
-def make_bundle(dest: Path) -> Path:
-    """A tooling bundle laid out as on a Ship: ship/ contents plus versions.toml."""
-    for part in ("lib", "bin", "schemas", "files"):
-        shutil.copytree(SHIP / part, dest / part, ignore=shutil.ignore_patterns("__pycache__"))
+def make_bundle(dest: Path, catalogue: bool = False) -> Path:
+    """A tooling bundle laid out as on a Ship: ship/ contents plus versions.toml.
+
+    With `catalogue`, the real recipes, profiles and skills come along; otherwise
+    tools/ and profiles/ start empty for a test to fill.
+    """
+    parts = ["lib", "bin", "schemas", "files"]
+    if catalogue:
+        parts += ["tools", "profiles", "skills"]
+    for part in parts:
+        shutil.copytree(
+            SHIP / part, dest / part, ignore=shutil.ignore_patterns("__pycache__", "node_modules")
+        )
     for part in ("tools", "profiles", "provision"):
         (dest / part).mkdir(exist_ok=True)
     shutil.copy(REPO / "versions.toml", dest / "versions.toml")
