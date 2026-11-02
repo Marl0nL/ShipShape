@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import secrets
+import signal
 import sys
 import tempfile
 import time
@@ -57,8 +59,111 @@ def step(title: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+RELAY: Relay | None = None  # set by --relay-*: someone else relays links and answers
+
+
 def ask(question: str) -> bool:
+    if RELAY is not None:
+        return RELAY.ask(question)
     return input(f"\n>>> {question} [y/n] ").strip().lower() in ("y", "yes")
+
+
+class Relay:
+    """Run with nobody at this terminal: a person reached through a relay.
+
+    - Sign-in links (and GitHub's device code) are appended to a 0600 links
+      file, announced with a line in a status file.
+    - Pasted codes arrive as message files (*.msg) in an inbox folder, as a line
+      `claude: <code>` or `gcloud: <code>`. A code is never printed; once read
+      it is scrubbed from the message, which then moves to inbox/handled/.
+    - Questions about the Claude app go to the status file as needs-decision
+      lines; answers arrive as a line `answer: yes` or `answer: no`.
+    """
+
+    def __init__(self, links: Path, inbox: Path, status: Path) -> None:
+        self.links, self.inbox, self.status = links, inbox, status
+        fd = os.open(links, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.close(fd)
+        os.chmod(links, 0o600)
+        self.questions = 0
+
+    def say(self, state: str, text: str) -> None:
+        with self.status.open("a") as fh:
+            fh.write(f"{state}: {text}\n")
+
+    def write_links(self, text: str) -> None:
+        with self.links.open("a") as fh:
+            fh.write(text.rstrip() + "\n\n")
+
+    def take(self, pattern: re.Pattern[str], what: str, timeout: float) -> str | None:
+        """The first group of the first inbox message matching pattern."""
+        deadline = time.monotonic() + timeout
+        noted: set[str] = set()
+        while time.monotonic() < deadline:
+            for msg in sorted(self.inbox.glob("*.msg")):
+                text = msg.read_text(errors="replace")
+                body = text.split("\n--\n", 1)[-1]
+                match = pattern.search(body)
+                if not match:
+                    if msg.name not in noted:
+                        print(f"(waiting for {what}; leaving {msg.name} in the inbox)", flush=True)
+                        noted.add(msg.name)
+                    continue
+                value = match.group(1)
+                msg.write_text(text.replace(value, "[used]"))
+                handled = self.inbox / "handled"
+                handled.mkdir(exist_ok=True)
+                msg.rename(handled / msg.name)
+                return value
+            time.sleep(3)
+        return None
+
+    def ask(self, question: str) -> bool:
+        self.questions += 1
+        self.say("needs-decision", f"[key=acceptance-app-{self.questions}] {question} "
+                 "Reply with a line 'answer: yes' or 'answer: no'.")
+        print(f"\n>>> asked through the relay: {question}", flush=True)
+        answer = self.take(re.compile(r"^\s*answer\s*:\s*(yes|no)\b", re.M | re.I),
+                           "an answer", timeout=3600)
+        return (answer or "").lower() == "yes"
+
+
+LABEL_KEYS = {"Claude Code": "claude", "gcloud and ADC": "gcloud", "Google ADC": "gcloud-adc",
+              "GitHub": "github"}
+
+
+class RelayPrompter:
+    """The concierge's prompter, through a Relay (see TerminalPrompter)."""
+
+    def __init__(self, relay: Relay, ship: str, label: str) -> None:
+        self.relay, self.ship, self.label = relay, ship, label
+        self.key = LABEL_KEYS.get(label, label.lower())
+
+    def show_link(self, url: str, code: str | None, expires_in: float) -> None:
+        until = time.strftime("%H:%M", time.localtime(time.time() + expires_in))
+        lines = [f"== {self.label} sign-in for {self.ship} (valid until about {until})",
+                 f"Open: {url}"]
+        if code:
+            lines.append(f"Enter this code on that page: {code}")
+        else:
+            lines.append(f"Approve, then send the code the page shows as:  {self.key}: <code>")
+        self.relay.write_links("\n".join(lines))
+        self.relay.say("working", f"acceptance: {self.label} sign-in link ready in "
+                       f"{self.relay.links} (valid until about {until})")
+        print(f"{self.label}: link written to the links file", flush=True)
+
+    def ask_code(self) -> str | None:
+        pattern = re.compile(rf"^\s*{re.escape(self.key)}\s*:\s*(\S+)\s*$", re.M)
+        code = self.relay.take(pattern, f"the {self.key} code", timeout=900)
+        print(f"{self.label}: code received" if code else f"{self.label}: no code", flush=True)
+        return code
+
+    def waiting(self, remaining: float) -> None:
+        pass
+
+    def offer_live(self, reason: str, seen: str) -> bool:
+        self.relay.write_links(f"!! {self.label}: {reason} (sign-in abandoned)")
+        return False
 
 
 def agents(view: dict) -> dict[str, dict]:
@@ -85,7 +190,22 @@ def main() -> int:
     parser.add_argument("--config", required=True,
                         help="ships.toml with [drivers.proxmox] and [tag.e2e]")
     parser.add_argument("--keep", action="store_true", help="do not destroy the Ship at the end")
+    parser.add_argument("--relay-links", type=Path, help="relay mode: file for sign-in links")
+    parser.add_argument("--relay-inbox", type=Path, help="relay mode: folder of *.msg replies")
+    parser.add_argument("--relay-status", type=Path, help="relay mode: file for status lines")
     args = parser.parse_args()
+    relay_args = (args.relay_links, args.relay_inbox, args.relay_status)
+    if any(relay_args) and not all(relay_args):
+        sys.exit("Relay mode needs --relay-links, --relay-inbox and --relay-status.")
+    if all(relay_args):
+        global RELAY
+        RELAY = Relay(*relay_args)
+        RELAY.write_links(f"===== acceptance run started {time.strftime('%H:%M')} =====")
+
+    def stop(signum, frame):
+        raise KeyboardInterrupt  # so a plain `kill` still destroys the Ship
+
+    signal.signal(signal.SIGTERM, stop)
     config = tomllib.loads(Path(args.config).expanduser().read_text())
     if "proxmox" not in config.get("drivers", {}):
         sys.exit("The config needs a [drivers.proxmox] section.")
@@ -111,6 +231,32 @@ def main() -> int:
     return 0 if results and all(ok for _, ok, _ in results) else 1
 
 
+def relay_login(fleet: Fleet, name: str, attempts: int = 3) -> int:
+    """Sign in service by service; a link that lapses is replaced with a new one."""
+    from fleetledger import cli
+
+    app = cli.App(prompter_factory=lambda ship, label, _open: RelayPrompter(RELAY, ship, label))
+    failed = 0
+    for service in ("claude", "gcloud", "github"):
+        for attempt in range(1, attempts + 1):
+            code = cli.main(["login", name, service], app)
+            if code == 130:
+                raise KeyboardInterrupt
+            auth = (fleet.status(name).get("status") or {}).get("auth", {})
+            if code == 0 or (auth.get(service) or {}).get("state") == "ok":
+                break
+            more = "a new link is coming" if attempt < attempts else "giving up on it"
+            RELAY.say("working", f"acceptance: the {service} sign-in did not complete "
+                      f"(attempt {attempt} of {attempts}); {more}.")
+        else:
+            failed += 1
+    return 1 if failed else 0
+
+
+def config_tag(fleet: Fleet) -> dict:
+    return dict(fleet.store.load().doc.get("tag", {}).get("e2e", {}))
+
+
 def run(fleet: Fleet, name: str) -> None:
     print(f"Creating {name} (about 10 minutes; nothing to do yet).")
     fleet.cli("new", name, "--tag", "e2e", "--driver", "proxmox", "--mode", "auto",
@@ -122,13 +268,25 @@ def run(fleet: Fleet, name: str) -> None:
 
     print("\nNow sign the Ship in. For each service, open the link, approve, and paste the "
           "code (or type the device code on GitHub's page).")
-    proc = fleet.cli("login", name, "all", interactive=True, check=False, timeout=3600)
+    if RELAY is None:
+        login_code = fleet.cli("login", name, "all", interactive=True, check=False,
+                               timeout=3600).returncode
+    else:
+        login_code = relay_login(fleet, name)
     view = fleet.status(name)
+    expected = config_tag(fleet)
+    if "github" not in expected:
+        # No GitHub login given: take the one now signed in as the expected one.
+        account = ((view.get("status") or {}).get("auth", {}).get("github") or {}).get("account")
+        if account:
+            with fleet.store.edit() as ed:
+                ed.doc["tag"]["e2e"]["github"] = account
+            view = fleet.status(name)
     auth = (view.get("status") or {}).get("auth", {})
     wrong = [a for a in view["attention"] if a["code"] == "signin-wrong-account"]
     states = {k: v["state"] for k, v in auth.items()}
     step("Claude, gcloud (with ADC) and GitHub sign in through ship-fleet login",
-         proc.returncode == 0 and all(states.get(s) == "ok" for s in
+         login_code == 0 and all(states.get(s) == "ok" for s in
                                       ("claude", "gcloud", "gcloud_adc", "github")), str(states))
     step("Signed-in accounts match the tag", not wrong, "; ".join(a["message"] for a in wrong))
 
