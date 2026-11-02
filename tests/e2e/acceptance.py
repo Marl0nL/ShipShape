@@ -6,6 +6,11 @@ between you, your browser and the Ship: nothing is recorded.
 
     python tests/e2e/acceptance.py --config ~/.config/fleetledger/e2e.toml
 
+Or, with the person elsewhere, in relay mode (--relay-links, --relay-inbox,
+--relay-status; see Relay below). Then the sign-in links and GitHub's device
+code are written to the links file (mode 0600), which is deleted when the run
+ends; pasted codes arrive in inbox messages and are scrubbed once used.
+
 The config is a ships.toml with [drivers.proxmox] (the scoped token) and
 [tag.e2e] naming the accounts the test Ship should sign in as:
 
@@ -92,8 +97,14 @@ class Relay:
             fh.write(f"{state}: {text}\n")
 
     def write_links(self, text: str) -> None:
-        with self.links.open("a") as fh:
+        # Opened with 0600 on every write, in case the file was removed meanwhile.
+        fd = os.open(self.links, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "a") as fh:
             fh.write(text.rstrip() + "\n\n")
+
+    def close(self) -> None:
+        self.links.unlink(missing_ok=True)
 
     def take(self, pattern: re.Pattern[str], what: str, timeout: float) -> str | None:
         """The first group of the first inbox message matching pattern."""
@@ -112,10 +123,14 @@ class Relay:
                 value = match.group(1)
                 head = text[: len(text) - len(body)]
                 # Scrub only the matched value, not every look-alike in the message.
-                msg.write_text(head + body[: match.start(1)] + "[used]" + body[match.end(1) :])
-                handled = self.inbox / "handled"
-                handled.mkdir(exist_ok=True)
-                msg.rename(handled / msg.name)
+                body = body[: match.start(1)] + "[used]" + body[match.end(1) :]
+                msg.write_text(head + body)
+                # A message can carry more than one code (or an answer too): it
+                # stays in the inbox until every one of them has been used.
+                if not UNUSED.search(body):
+                    handled = self.inbox / "handled"
+                    handled.mkdir(exist_ok=True)
+                    msg.rename(handled / msg.name)
                 return value
             time.sleep(3)
         return None
@@ -129,6 +144,9 @@ class Relay:
                            "an answer", timeout=3600)
         return (answer or "").lower() == "yes"
 
+
+# A relay line not yet used: a code or an answer whose value is not "[used]".
+UNUSED = re.compile(r"^\s*(?:claude|gcloud|gcloud-adc|answer)\s*:\s*(?!\[used\])\S", re.M | re.I)
 
 LABEL_KEYS = {"Claude Code": "claude", "gcloud and ADC": "gcloud", "Google ADC": "gcloud-adc",
               "GitHub": "github"}
@@ -155,7 +173,7 @@ class RelayPrompter:
         print(f"{self.label}: link written to the links file", flush=True)
 
     def ask_code(self) -> str | None:
-        pattern = re.compile(rf"^\s*{re.escape(self.key)}\s*:\s*(\S+)\s*$", re.M)
+        pattern = re.compile(rf"^\s*{re.escape(self.key)}\s*:\s*(?!\[used\])(\S+)\s*$", re.M)
         code = self.relay.take(pattern, f"the {self.key} code", timeout=900)
         print(f"{self.label}: code received" if code else f"{self.label}: no code", flush=True)
         return code
@@ -222,6 +240,8 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if RELAY is not None:
+            RELAY.close()  # the links file: sign-in URLs and device codes
         if args.keep:
             print(f"\nKept {name}; FleetLedger home: {workdir}")
         else:

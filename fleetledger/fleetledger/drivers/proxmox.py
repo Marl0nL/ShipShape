@@ -135,17 +135,24 @@ class ProxmoxDriver(Driver):
             driver_ref={"vmid": vmid, "seed": seed.instance_id},
         )
 
+    def _checked_vm(self, ship: Ship) -> str:
+        """The API path of the Ship's VM, after checking it is that Ship."""
+        vmid = self._vmid(ship)
+        if not self.check_name(vmid, ship.name):
+            raise FleetError(f"VM {vmid} ({ship.name}) no longer exists.")
+        return self._vm(vmid)
+
     def start(self, ship: Ship) -> Outcome:
-        self._task(self.api.post(self._vm(self._vmid(ship)) + "/status/start"))
+        self._task(self.api.post(self._checked_vm(ship) + "/status/start"))
         return Outcome(done=True, messages=[f"Started {ship.name}."])
 
     def stop(self, ship: Ship) -> Outcome:
         # ACPI shutdown, so herdr can save its state (logind inhibitor).
-        self._task(self.api.post(self._vm(self._vmid(ship)) + "/status/shutdown", timeout=180))
+        self._task(self.api.post(self._checked_vm(ship) + "/status/shutdown", timeout=180))
         return Outcome(done=True, messages=[f"Shut down {ship.name}."])
 
     def reboot(self, ship: Ship) -> Outcome:
-        self._task(self.api.post(self._vm(self._vmid(ship)) + "/status/reboot"))
+        self._task(self.api.post(self._checked_vm(ship) + "/status/reboot"))
         return Outcome(done=True, messages=[f"Rebooted {ship.name}."])
 
     def destroy(self, ship: Ship) -> Outcome:
@@ -206,12 +213,21 @@ class ProxmoxDriver(Driver):
         except ProxmoxError as exc:
             if is_gone(exc):
                 return False
-            if exc.status == 403:
-                raise FleetError(
-                    f"VM {vmid} is not visible to the token (not in the pool?); "
-                    f"not touching it as {name}."
-                ) from exc
-            raise
+            if exc.status != 403:
+                raise
+            # The token sees VMs only through the pool, and a destroyed VM leaves
+            # it, so a VMID that is simply free also answers 403. Ask whether the
+            # number is free (open to every user); taken means hidden, not ours.
+            try:
+                self.api.get("/cluster/nextid", vmid=vmid)
+            except ProxmoxError as taken:
+                if taken.status == 400:
+                    raise FleetError(
+                        f"VM {vmid} is not visible to the token (not in the pool?); "
+                        f"not touching it as {name}."
+                    ) from exc
+                raise
+            return False
         if actual != name:
             raise FleetError(
                 f"VM {vmid} is now '{actual}', not {name} (its VMID was reused); "

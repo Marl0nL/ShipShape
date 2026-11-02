@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "fleetledger"))
 
 from fleetledger.drivers.proxmox import ProxmoxDriver, seed_volume  # noqa: E402
+from fleetledger.drivers.proxmox_api import ProxmoxError  # noqa: E402
 from fleetledger.inventory import Ship  # noqa: E402
 from fleetledger.ssh import SSH  # noqa: E402
 from fleetledger.store import TomlFileStore, new_inventory  # noqa: E402
@@ -207,8 +208,10 @@ class Fleet:
         for vmid in candidates:
             try:
                 self.driver.api.get("/cluster/nextid", vmid=vmid)
-            except Exception:  # noqa: BLE001 - in use
-                continue
+            except ProxmoxError as exc:
+                if exc.status == 400:  # in use
+                    continue
+                raise
             return vmid
         raise AssertionError(f"no free VMID in {first}-{last}")
 
