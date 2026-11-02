@@ -9,8 +9,9 @@ changed pin out. This module does the careful part of changing one:
 - npm tools: the exact version must exist in the npm registry.
 - The Ubuntu cloud image: SHA256SUMS and its signature are fetched for the new
   build, the signature is checked with gpgv against the pinned signing key alone
-  (fetched by fingerprint, and its fingerprint checked again), and the image
-  hashes are taken from the verified file. The image itself is not downloaded.
+  (fetched by fingerprint; the keyserver's answer must hold exactly that one key,
+  only it goes into gpgv's keyring, and gpgv must name it as the signer), and the
+  image hashes are taken from the verified file. The image itself is not downloaded.
 
 versions.toml is edited in place with tomlkit, so comments and layout stay, and
 the result must still validate against contracts/versions.schema.json.
@@ -249,35 +250,64 @@ def _gpg(args: list[str], home: Path, input: bytes | None = None) -> subprocess.
         raise FleetError("gpg is needed to check the Ubuntu image signature.") from exc
 
 
+def _primary_fingerprints(colons: str) -> list[str]:
+    """Primary-key fingerprints in gpg --with-colons output: the fpr line that
+    follows each pub line (subkeys' fpr lines follow sub lines)."""
+    out, after_pub = [], False
+    for line in colons.splitlines():
+        kind = line.split(":", 1)[0]
+        if kind == "fpr" and after_pub:
+            out.append(line.split(":")[9].upper())
+        after_pub = kind == "pub"
+    return out
+
+
 def verify_sums(sums: bytes, signature: bytes, armored_key: bytes, fingerprint: str) -> None:
-    """Check SHA256SUMS against its signature with the pinned key and nothing else."""
+    """Check SHA256SUMS against its signature with the pinned key and nothing else.
+
+    The keyserver's answer must hold exactly one key, the pinned one; only that
+    key is exported into the keyring gpgv uses, and gpgv must report a good
+    signature whose primary key is the pinned fingerprint.
+    """
     fingerprint = fingerprint.replace(" ", "").upper()
     with tempfile.TemporaryDirectory(prefix="fleetledger-gpg-") as tmp:
         home = Path(tmp) / "home"
         home.mkdir(mode=0o700)
-        keyring = Path(tmp) / "key.gpg"
+        fetched = Path(tmp) / "fetched.gpg"
         dearmored = _gpg(["--dearmor"], home, armored_key)
         if dearmored.returncode != 0 or not dearmored.stdout:
             raise FleetError("The signing key from the keyserver could not be read.")
-        keyring.write_bytes(dearmored.stdout)
+        fetched.write_bytes(dearmored.stdout)
         shown = _gpg(["--with-colons", "--import-options", "show-only", "--import",
-                      str(keyring)], home)
-        fingerprints = [line.split(":")[9] for line in shown.stdout.decode().splitlines()
-                        if line.startswith("fpr:")]
-        if not fingerprints or fingerprints[0].upper() != fingerprint:
-            raise FleetError("The keyserver returned a key whose primary fingerprint is not "
-                             "the pinned signing_key. Not trusting it.")
+                      str(fetched)], home)
+        primaries = _primary_fingerprints(shown.stdout.decode("utf-8", "replace"))
+        if primaries != [fingerprint]:
+            raise FleetError("The keyserver did not return exactly the pinned signing_key "
+                             f"(it returned {len(primaries)} key(s)). Not trusting it.")
+        # Import, then export only the pinned key: the keyring gpgv trusts can
+        # hold nothing else, whatever else the answer carried.
+        _gpg(["--import", str(fetched)], home)
+        exported = _gpg(["--export", fingerprint], home)
+        if exported.returncode != 0 or not exported.stdout:
+            raise FleetError("The pinned signing_key could not be read from the keyserver's "
+                             "answer. Not trusting it.")
+        keyring = Path(tmp) / "pinned.gpg"
+        keyring.write_bytes(exported.stdout)
         (Path(tmp) / "SHA256SUMS").write_bytes(sums)
         (Path(tmp) / "SHA256SUMS.gpg").write_bytes(signature)
         try:
             result = subprocess.run(
-                ["gpgv", "--keyring", str(keyring), str(Path(tmp) / "SHA256SUMS.gpg"),
-                 str(Path(tmp) / "SHA256SUMS")],
+                ["gpgv", "--status-fd", "1", "--keyring", str(keyring),
+                 str(Path(tmp) / "SHA256SUMS.gpg"), str(Path(tmp) / "SHA256SUMS")],
                 capture_output=True, timeout=60,
             )
         except FileNotFoundError as exc:
             raise FleetError("gpgv is needed to check the Ubuntu image signature.") from exc
-        if result.returncode != 0:
+        # [GNUPG:] VALIDSIG <signing key fpr> ... <primary key fpr> (the last field)
+        signed_by = [line.split()[-1].upper() for line in
+                     result.stdout.decode("utf-8", "replace").splitlines()
+                     if line.startswith("[GNUPG:] VALIDSIG ")]
+        if result.returncode != 0 or signed_by != [fingerprint]:
             raise FleetError("SHA256SUMS does not carry a good signature from the pinned "
                              "Ubuntu signing key. Not pinning it.")
 

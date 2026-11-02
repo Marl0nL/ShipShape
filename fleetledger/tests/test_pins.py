@@ -12,6 +12,7 @@ import json
 import shutil
 import subprocess
 import tomllib
+from pathlib import Path
 
 import pytest
 from fleetledger.errors import FleetError
@@ -81,6 +82,19 @@ def test_set_herdr_rewrites_urls_and_hashes_and_keeps_comments(fake_repo):
         k: x for k, x in v.items() if k != "herdr"}
 
 
+def test_set_herdr_refuses_a_url_without_its_version(fake_repo):
+    """A URL that does not name its version (a `latest` link, say) cannot be moved:
+    the new pin would still fetch the old release under the new version's name."""
+    text = fake_repo.versions_path.read_text()
+    fake_repo.versions_path.write_text(text.replace("/download/v0.9.5/", "/download/latest/"))
+    before = fake_repo.versions_path.read_text()
+    pages = herdr_pages()
+    pages.update({k.replace("tags/v0.9.6", "tags/latest"): v for k, v in pages.items()})
+    with pytest.raises(FleetError, match="does not contain its version 0.9.5"):
+        pins.set_pin(fake_repo, "herdr", "0.9.6", FakeWeb(pages))
+    assert fake_repo.versions_path.read_text() == before
+
+
 def test_set_herdr_refuses_a_download_that_does_not_match_github(fake_repo):
     before = fake_repo.versions_path.read_text()
     pages = herdr_pages(digest_arm="sha256:" + "0" * 64)
@@ -134,6 +148,15 @@ def test_set_npm(fake_repo):
     assert versions(fake_repo)["npm"]["gh-axi"] == "0.1.48"
 
 
+def test_set_npm_refuses_an_answer_for_another_version(fake_repo):
+    """The registry answering with some other version is not the version asked for."""
+    before = fake_repo.versions_path.read_text()
+    web = FakeWeb({"https://registry.npmjs.org/gh-axi/0.1.48": {"version": "0.1.47"}})
+    with pytest.raises(FleetError, match="has no gh-axi@0.1.48"):
+        pins.set_pin(fake_repo, "gh-axi", "0.1.48", web)
+    assert fake_repo.versions_path.read_text() == before
+
+
 def test_set_npm_refuses_a_missing_version_or_unpinned_package(fake_repo):
     with pytest.raises(FleetError):
         pins.set_pin(fake_repo, "gh-axi", "9.9.9", FakeWeb({}))
@@ -150,15 +173,13 @@ needs_gpg = pytest.mark.skipif(not (shutil.which("gpg") and shutil.which("gpgv")
                                reason="gpg and gpgv needed")
 
 
-@pytest.fixture(scope="module")
-def signer(tmp_path_factory):
+def make_signer(home, uid):
     """A throwaway signing key: (sign(data) -> detached signature, armored key, fpr)."""
-    home = tmp_path_factory.mktemp("gnupg")
     home.chmod(0o700)
     gpg = ["gpg", "--batch", "--homedir", str(home), "--passphrase", "",
            "--pinentry-mode", "loopback"]
-    subprocess.run([*gpg, "--quick-gen-key", "Example Image Signing <images@example.com>",
-                    "ed25519", "sign", "never"], check=True, capture_output=True)
+    subprocess.run([*gpg, "--quick-gen-key", uid, "ed25519", "sign", "never"],
+                   check=True, capture_output=True)
     listing = subprocess.run([*gpg, "--with-colons", "--list-keys"], check=True,
                              capture_output=True, text=True).stdout
     fpr = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
@@ -170,6 +191,17 @@ def signer(tmp_path_factory):
                               capture_output=True).stdout
 
     return sign, armored, fpr
+
+
+@pytest.fixture(scope="module")
+def signer(tmp_path_factory):
+    return make_signer(tmp_path_factory.mktemp("gnupg"),
+                       "Example Image Signing <images@example.com>")
+
+
+@pytest.fixture(scope="module")
+def attacker(tmp_path_factory):
+    return make_signer(tmp_path_factory.mktemp("gnupg-other"), "Someone Else <other@example.com>")
 
 
 def ubuntu_pages(signer, sums: bytes | None = None, signature: bytes | None = None,
@@ -222,8 +254,90 @@ def test_set_ubuntu_refuses_a_key_that_is_not_the_pinned_one(fake_repo, signer):
     real = versions(fake_repo)["ubuntu"]["signing_key"]
     pages = ubuntu_pages(signer)
     pages[pins.KEYSERVER.format(fingerprint=real)] = signer[1]
-    with pytest.raises(FleetError, match="primary fingerprint"):
+    with pytest.raises(FleetError, match="exactly the pinned signing_key"):
         pins.set_pin(fake_repo, "ubuntu", "20261101", FakeWeb(pages))
+
+
+def sums_text():
+    return (f"{'a' * 64} *ubuntu-26.04-server-cloudimg-amd64.img\n"
+            f"{'b' * 64} *ubuntu-26.04-server-cloudimg-arm64.img\n").encode()
+
+
+@needs_gpg
+@pytest.mark.parametrize("order", ["pinned-first", "other-first"])
+@pytest.mark.parametrize("signed_by", ["other", "pinned"])
+def test_verify_sums_refuses_a_keyserver_answer_with_a_second_key(signer, attacker, order,
+                                                                  signed_by):
+    """A hostile keyserver bundling its own key next to the pinned one gets nowhere,
+    whichever key signed and in whichever order the keys come."""
+    keys = signer[1] + attacker[1] if order == "pinned-first" else attacker[1] + signer[1]
+    sign = attacker[0] if signed_by == "other" else signer[0]
+    sums = sums_text()
+    with pytest.raises(FleetError, match="exactly the pinned signing_key"):
+        pins.verify_sums(sums, sign(sums), keys, signer[2])
+
+
+@needs_gpg
+def test_verify_sums_refuses_a_signature_by_another_key(signer, attacker):
+    sums = sums_text()
+    with pytest.raises(FleetError, match="good signature"):
+        pins.verify_sums(sums, attacker[0](sums), signer[1], signer[2])
+    pins.verify_sums(sums, signer[0](sums), signer[1], signer[2])  # the real thing passes
+
+
+@needs_gpg
+def test_verify_sums_keyring_holds_only_the_pinned_key(signer, attacker, monkeypatch, tmp_path):
+    """Defence in depth: even if the one-key check let a second key through, the
+    keyring gpgv is given holds the pinned key alone, exported on its own."""
+    primaries = pins._primary_fingerprints
+    monkeypatch.setattr(pins, "_primary_fingerprints", lambda colons: [signer[2].upper()])
+    real_run = subprocess.run
+    seen = []
+
+    def spy(argv, *args, **kwargs):
+        if argv[0] == "gpgv":
+            keyring = Path(argv[argv.index("--keyring") + 1])
+            seen.append(keyring.read_bytes())
+        return real_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(pins.subprocess, "run", spy)
+    sums = sums_text()
+    with pytest.raises(FleetError, match="good signature"):
+        pins.verify_sums(sums, attacker[0](sums), signer[1] + attacker[1], signer[2])
+    monkeypatch.setattr(pins.subprocess, "run", real_run)
+    (tmp_path / "home").mkdir(mode=0o700)
+    (tmp_path / "keyring.gpg").write_bytes(seen[0])
+    listing = real_run(["gpg", "--batch", "--homedir", str(tmp_path / "home"), "--with-colons",
+                        "--import-options", "show-only", "--import",
+                        str(tmp_path / "keyring.gpg")], capture_output=True, text=True).stdout
+    assert primaries(listing) == [signer[2].upper()]
+
+
+@needs_gpg
+def test_verify_sums_checks_who_signed(signer, attacker, monkeypatch):
+    """And even if gpgv were given every key, only a VALIDSIG from the pinned key counts."""
+    monkeypatch.setattr(pins, "_primary_fingerprints", lambda colons: [signer[2].upper()])
+    real_gpg = pins._gpg
+
+    def export_everything(args, home, input=None):
+        if args[:1] == ["--export"]:
+            args = ["--export"]  # every key in the temporary home
+        return real_gpg(args, home, input)
+
+    monkeypatch.setattr(pins, "_gpg", export_everything)
+    sums = sums_text()
+    with pytest.raises(FleetError, match="good signature"):
+        pins.verify_sums(sums, attacker[0](sums), signer[1] + attacker[1], signer[2])
+
+
+def test_primary_fingerprints_skips_subkeys():
+    colons = "\n".join([
+        "pub:-:255:22:AAAA:1:::-:::scESC::::::23::0:", "fpr:::::::::" + "A" * 40 + ":",
+        "uid:-::::1::X::Example::::::::::0:",
+        "sub:-:255:18:BBBB:1::::::e::::::23:", "fpr:::::::::" + "B" * 40 + ":",
+        "pub:-:255:22:CCCC:1:::-:::scESC::::::23::0:", "fpr:::::::::" + "c" * 40 + ":",
+    ])
+    assert pins._primary_fingerprints(colons) == ["A" * 40, "C" * 40]
 
 
 @needs_gpg
