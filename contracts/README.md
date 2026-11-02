@@ -19,6 +19,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | Pinned versions (`/versions.toml`) | `versions.schema.json` | shared | Ship (W4), Fleet (W3, W8) |
 | SSH certificates for a Ship (`ship-ctl ssh-trust` stdin) | `ssh-trust.schema.json` | Fleet: the certificate authority (phase 3) | Ship: ship-ctl |
 | Network visibility summary (`ship-ctl net --json` data) | `net-summary.schema.json` | Ship: ship-netwatch and ship-ctl (phase 3) | Fleet: Network tab, first-seen destinations, who-talked search |
+| Baked image manifest | `image-manifest.schema.json` | Ship: `ship/image/bake` (phase 4) | Fleet: `ship-fleet image` (phase 4) |
 
 Prose documents:
 
@@ -27,6 +28,7 @@ Prose documents:
 - `ship-ctl.md`: every ship-ctl command, its output and exit codes, and how status is worked out.
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
+- `image.md`: what a baked image holds, how `ship/image/bake` is called, image ids, pinning and rollout (phase 4).
 
 Examples live in `examples/<contract>/`. Every file there must validate, and every
 file in `examples/<contract>/invalid/` must fail; `tests/contracts/` checks both.

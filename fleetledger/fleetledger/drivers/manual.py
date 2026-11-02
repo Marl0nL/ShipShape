@@ -11,7 +11,15 @@ import shlex
 from collections.abc import Mapping
 from typing import Any
 
-from fleetledger.drivers.base import Driver, Outcome, PowerState, SeedFile
+from fleetledger.drivers.base import (
+    Driver,
+    ImageFile,
+    Outcome,
+    PowerState,
+    PublishedImage,
+    SeedFile,
+    check_snapshot_name,
+)
 from fleetledger.inventory import Ship
 
 GENERIC = (
@@ -40,14 +48,24 @@ class ManualDriver(Driver):
     def _free_seed(self, ship: Ship) -> str:
         return shlex.join(["pvesm", "free", self._volume(str(ship.driver_ref["seed"]))])
 
-    def create(self, ship: Ship, seed: SeedFile, size: Mapping[str, int]) -> Outcome:
+    def create(
+        self,
+        ship: Ship,
+        seed: SeedFile,
+        size: Mapping[str, int],
+        image: PublishedImage | None = None,
+    ) -> Outcome:
         ref: dict[str, str | int] = {"seed": seed.instance_id}
         if "vmid" in ship.driver_ref:
             ref["vmid"] = ship.driver_ref["vmid"]
         if not self.px:
             text = GENERIC.format(release=self.release, seed=seed.path, **size)
+            if image is not None:
+                text = text.replace(f"the Ubuntu {self.release} cloud image",
+                                    f"the baked image {image.id}")
             return Outcome(done=False, instructions=[text], driver_ref=ref)
         px, vmid = self.px, self._vmid(ship)
+        template = str(image.ref.get("template_vmid")) if image else str(px["template_vmid"])
         volume = self._volume(seed.instance_id)
         steps = [
             f"# 1. Upload {seed.path} to the {px['seed_storage']} storage as an ISO image named "
@@ -55,7 +73,7 @@ class ManualDriver(Driver):
             "# 2. On the Proxmox host, as root:",
             shlex.join(
                 [
-                    "qm", "clone", str(px["template_vmid"]), vmid, "--name", ship.name,
+                    "qm", "clone", template, vmid, "--name", ship.name,
                     "--pool", px["pool"], "--full", "--storage", px["disk_storage"],
                 ]
             ),
@@ -99,6 +117,64 @@ class ManualDriver(Driver):
 
     def status(self, ship: Ship) -> PowerState:
         return PowerState("unknown")
+
+    def snapshot(self, ship: Ship, name: str, description: str = "") -> Outcome:
+        check_snapshot_name(name)
+        if self.px:
+            return Outcome(done=False, instructions=[
+                shlex.join(["qm", "snapshot", self._vmid(ship), name])])
+        return Outcome(done=False, instructions=[
+            f"Take a disk snapshot of {ship.name}'s VM named {name}."])
+
+    def rollback(self, ship: Ship, name: str) -> Outcome:
+        check_snapshot_name(name)
+        if self.px:
+            vmid = self._vmid(ship)
+            return Outcome(done=False, instructions=[
+                shlex.join(["qm", "shutdown", vmid]),
+                shlex.join(["qm", "rollback", vmid, name, "--start", "1"])])
+        return Outcome(done=False, instructions=[
+            f"Shut {ship.name}'s VM down, roll it back to {name} and start it."])
+
+    def delete_snapshot(self, ship: Ship, name: str) -> Outcome:
+        check_snapshot_name(name)
+        if self.px:
+            return Outcome(done=False, instructions=[
+                shlex.join(["qm", "delsnapshot", self._vmid(ship), name])])
+        return Outcome(done=False, instructions=[f"Delete snapshot {name} of {ship.name}'s VM."])
+
+    def publish_image(self, image: ImageFile) -> Outcome:
+        """Print how to turn the qcow2 into a template; record it afterwards with
+        `ship-fleet image publish <id> --template-vmid N`."""
+        if not self.px:
+            return Outcome(done=False, instructions=[
+                f"Import {image.path} as a VM template on your hypervisor (sha256 "
+                f"{image.sha256}), then record it: ship-fleet image publish {image.id} "
+                "--driver manual --template-vmid <id>"])
+        px = self.px
+        q = shlex.quote
+        remote = f"/var/tmp/{image.path.name}"
+        return Outcome(done=False, instructions=[
+            f"# 1. Copy {image.path} to the Proxmox host as {remote}.",
+            "# 2. On the host, as root, with VMID set to a free VM id (e.g. VMID=9050):",
+            f"echo {q(image.sha256 + '  ' + remote)} | sha256sum -c",
+            f'qm create "$VMID" --name {q("shipshape-img-" + image.id)} --pool {q(px["pool"])} '
+            "--memory 2048 --cores 2 --cpu host --ostype l26 "
+            f"--net0 {q('virtio,bridge=' + px['bridge'])} --scsihw virtio-scsi-pci "
+            f"--scsi0 {q(px['disk_storage'] + ':0,import-from=' + remote)} "
+            "--boot order=scsi0 --agent enabled=1",
+            'qm template "$VMID"',
+            f"rm {q(remote)}",
+            f"# 3. Here: ship-fleet image publish {image.id} --driver manual "
+            "--template-vmid <the VMID>",
+        ])
+
+    def remove_image(self, image: PublishedImage) -> Outcome:
+        vmid = str(image.ref.get("template_vmid", "<vmid>"))
+        if self.px:
+            return Outcome(done=False, instructions=[
+                shlex.join(["qm", "destroy", vmid, "--purge"])])
+        return Outcome(done=False, instructions=[f"Delete the template made from {image.id}."])
 
     def finish_enrolment(self, ship: Ship) -> Outcome:
         if not self.px:

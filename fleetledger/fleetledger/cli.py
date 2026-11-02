@@ -22,8 +22,12 @@ from fleetledger.errors import FleetError
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "set", "tag", "tools", "update", "reboot", "attention", "pins", "ssh", "logs", "ca",
-    "trust", "untrust", "net", "ui",
+    "trust", "untrust", "net", "ui", "destroy", "snapshot", "image",
 )  # fmt: skip
+
+# Modules whose commands live outside commands.py; each has add_parsers(sub, add)
+# and cmd_<name> handlers.
+EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle",)
 
 
 @dataclass
@@ -146,8 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-default-tools", action="store_true",
                    help="install only the tools given with --tools")
     p.add_argument("--profile", action="append", default=[], help="profile (repeatable)")
-    p.add_argument("--driver", choices=("manual", "proxmox"),
-                   help="manual (default) prints the steps; proxmox is the phase 1 test helper")
+    p.add_argument("--driver", "--on", dest="driver", choices=("manual", "proxmox"),
+                   help="where to create it: manual prints the steps; proxmox does it "
+                   "through the API (default: defaults.driver)")
+    p.add_argument("--image", metavar="ID|stock",
+                   help="base image (default: the pinned one, defaults.image; see "
+                   "ship-fleet image ls)")
     p.add_argument("--vmid", type=int, help="VM id to use (Proxmox)")
     p.add_argument("--host", action="append", default=[],
                    help="name to reach the Ship by (repeatable; default <name>.local)")
@@ -368,6 +376,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="print the link instead of opening a browser")
     p.add_argument("--interval", type=float, default=30.0,
                    help="seconds between status checks while the UI is open (default 30)")
+
+    import importlib
+
+    for module in EXTRA_COMMAND_MODULES:
+        importlib.import_module(module).add_parsers(sub, _add)
     return parser
 
 
@@ -424,7 +437,12 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     if not getattr(args, "command", None):
         parser.print_help(app.out)
         return 0
-    handler = getattr(commands, "cmd_" + args.command.replace("-", "_"))
+    import importlib
+
+    name = "cmd_" + args.command.replace("-", "_")
+    handler = getattr(commands, name, None)
+    for module in EXTRA_COMMAND_MODULES:
+        handler = handler or getattr(importlib.import_module(module), name, None)
     try:
         return handler(args, app) or 0
     except FleetError as exc:

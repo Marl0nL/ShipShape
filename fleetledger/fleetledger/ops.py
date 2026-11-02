@@ -81,6 +81,7 @@ SEVERITY = {
     "herdr-restart-pending": "medium",
     "host-cert-expiring": "medium",
     "host-cert-missing": "medium",
+    "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
     "behind-tooling": "low",
     "tool-waiting": "low",
     "tags-differ": "low",

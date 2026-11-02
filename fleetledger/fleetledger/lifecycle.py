@@ -1,0 +1,282 @@
+"""ship-fleet destroy, snapshot and image (phase 4).
+
+Hypervisor work goes through the driver interface (drivers/base.py); nothing
+here knows which hypervisor a Ship runs on.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from fleetledger import enrol, images, paths
+from fleetledger.commands import table
+from fleetledger.drivers import NotSupported, PublishedImage
+from fleetledger.errors import FleetError
+from fleetledger.inventory import STOCK_IMAGE
+
+COMMANDS = ("destroy", "snapshot", "image")
+
+SNAPSHOT_WARNING = (
+    "A snapshot holds the Ship's sign-ins (Claude, gcloud, GitHub) as they were: "
+    "treat it like the Ship itself."
+)
+
+
+def add_parsers(sub, add) -> None:
+    p = add(sub, "destroy", "delete a Ship's VM, its seed and its inventory entry",
+            "Stop and delete the Ship's VM and disks through its driver, delete any seed\n"
+            "left over, and remove it from the inventory. Asks you to type the Ship's\n"
+            "name unless --yes. The driver checks the VM's name before deleting it.")
+    p.add_argument("name")
+    p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    p.add_argument("--forget", action="store_true",
+                   help="only remove it from the inventory (the VM is already gone, or you "
+                   "deleted it by hand)")
+
+    p = add(sub, "snapshot", "take, list, roll back or delete a Ship's disk snapshots",
+            "  ship-fleet snapshot ls ship-01\n"
+            "  ship-fleet snapshot take ship-01 [NAME] [--note TEXT]\n"
+            "  ship-fleet snapshot rollback ship-01 NAME     (asks first)\n"
+            "  ship-fleet snapshot rm ship-01 NAME\n\n"
+            "Snapshots are of the disk only, never memory. " + SNAPSHOT_WARNING)
+    p.add_argument("action", choices=("ls", "take", "rollback", "rm"))
+    p.add_argument("name", help="the Ship")
+    p.add_argument("snapshot", nargs="?", help="snapshot name (take: default snap-<time>)")
+    p.add_argument("--note", default="", help="description stored with the snapshot")
+    p.add_argument("--yes", action="store_true", help="roll back without asking")
+
+    p = add(sub, "image", "build, publish and pin baked base images",
+            "  ship-fleet image build [--recipes ID,...] [--backend virt-customize|qemu]\n"
+            "  ship-fleet image ls\n"
+            "  ship-fleet image publish ID [--driver proxmox] [--template-vmid N]\n"
+            "  ship-fleet image use ID|stock      pin the image new Ships start from\n"
+            "  ship-fleet image rm ID\n\n"
+            "Existing Ships are never re-imaged; update them in place.\n"
+            "See docs/runbooks/images.md.")
+    p.add_argument("action", choices=("build", "ls", "publish", "use", "rm"))
+    p.add_argument("image", nargs="?", help="image id (or stock, for use)")
+    p.add_argument("--recipes", help="build: bake these recipes (default: every bake = true)")
+    p.add_argument("--backend", choices=("virt-customize", "qemu"), default="virt-customize",
+                   help="build: libguestfs offline (default) or one local QEMU boot")
+    p.add_argument("--driver", help="publish: driver (default: defaults.driver)")
+    p.add_argument("--template-vmid", type=int,
+                   help="publish: record a template you made by hand instead")
+    p.add_argument("--keep-file", action="store_true",
+                   help="rm: keep the local qcow2")
+
+
+# --- destroy -------------------------------------------------------------------
+
+
+def cmd_destroy(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    ship = inv.ship(args.name)
+    if not args.yes:
+        if not app.stdin_isatty():
+            raise FleetError(f"Destroying {ship.name} deletes its VM and disks; rerun with --yes.")
+        answer = app.confirm(f"This deletes {ship.name}'s VM, disks and sign-ins. "
+                             "Type its name to go on: ")
+        if answer.strip() != ship.name:
+            raise FleetError("Not destroyed.")
+    if not args.forget:
+        hook = getattr(app, "before_destroy", None)
+        if hook is not None:
+            hook(inv, ship)
+        driver = app.driver_factory(inv, ship.driver)
+        outcome = driver.destroy(ship)
+        for message in outcome.messages:
+            app.say(message)
+        if not outcome.done:
+            app.say(f"Delete {ship.name} by hand:")
+            for line in outcome.instructions:
+                app.say(f"  {line}")
+            app.say(f"Then: ship-fleet destroy {ship.name} --forget")
+            return 0
+    with store.edit() as ed:
+        ed.remove_ship(ship.name)
+    seed = enrol.local_seed(ship)
+    if seed is not None:
+        seed.unlink(missing_ok=True)
+    (paths.status_cache_dir() / f"{ship.name}.json").unlink(missing_ok=True)
+    app.say(f"{ship.name} is removed from the inventory.")
+    return 0
+
+
+# --- snapshot -------------------------------------------------------------------
+
+
+def cmd_snapshot(args, app) -> int:
+    inv = app.store_factory().load()
+    ship = inv.ship(args.name)
+    driver = app.driver_factory(inv, ship.driver)
+    if args.action == "ls":
+        if args.snapshot:
+            raise FleetError("snapshot ls takes only the Ship's name.")
+        snaps = driver.snapshots(ship)
+        if not snaps:
+            app.say(f"{ship.name} has no snapshots.")
+            return 0
+        app.say(table([[s.name, s.created or "-", s.description] for s in snaps],
+                      ["SNAPSHOT", "TAKEN", "NOTE"]))
+        return 0
+    if args.action == "take":
+        name = args.snapshot or datetime.now(UTC).strftime("snap-%Y%m%d-%H%M%S")
+        outcome = driver.snapshot(ship, name, args.note)
+        _report(app, outcome)
+        app.note(SNAPSHOT_WARNING)
+        return 0
+    if not args.snapshot:
+        raise FleetError(f"snapshot {args.action} needs a snapshot name.")
+    if args.action == "rollback":
+        if not args.yes:
+            if not app.stdin_isatty():
+                raise FleetError("Rolling back discards everything since the snapshot; "
+                                 "rerun with --yes.")
+            answer = app.confirm(f"Roll {ship.name} back to {args.snapshot}? Everything since "
+                                 "then is lost, sign-ins included. Type yes: ")
+            if answer.strip().lower() != "yes":
+                raise FleetError("Not rolled back.")
+        _report(app, driver.rollback(ship, args.snapshot))
+        return 0
+    _report(app, driver.delete_snapshot(ship, args.snapshot))
+    return 0
+
+
+def _report(app, outcome) -> None:
+    for message in outcome.messages:
+        app.say(message)
+    for line in outcome.instructions:
+        app.say(f"  {line}")
+
+
+# --- image ------------------------------------------------------------------------
+
+
+def cmd_image(args, app) -> int:
+    handler = {
+        "build": _image_build,
+        "ls": _image_ls,
+        "publish": _image_publish,
+        "use": _image_use,
+        "rm": _image_rm,
+    }[args.action]
+    if args.action in ("publish", "use", "rm") and not args.image:
+        raise FleetError(f"image {args.action} needs an image id.")
+    if args.action in ("build", "ls") and args.image:
+        raise FleetError(f"image {args.action} takes no image id.")
+    return handler(args, app)
+
+
+def _image_build(args, app) -> int:
+    store = app.store_factory()
+    store.load()  # fail early on a broken inventory
+    recipes = [r.strip() for r in args.recipes.split(",") if r.strip()] if args.recipes else None
+    builder = getattr(app, "image_builder", None) or images.build
+    built = builder(app.repo_factory(), recipes=recipes, backend=args.backend, note=app.note)
+    with store.edit() as ed:
+        ed.add_image(built.id, built.entry)
+    app.say(f"Built image {built.id}: {built.path} (sha256 {built.entry['sha256'][:16]}...).")
+    app.say(f"Next: ship-fleet image publish {built.id}, then ship-fleet image use {built.id}")
+    return 0
+
+
+def _image_ls(args, app) -> int:
+    inv = app.store_factory().load()
+    pinned = inv.pinned_image
+    if not inv.images:
+        app.say("No baked images yet; new Ships use the stock template. "
+                "Build one with ship-fleet image build.")
+        return 0
+    using: dict[str, int] = {}
+    for ship in inv.ships():
+        if ship.image:
+            using[ship.image] = using.get(ship.image, 0) + 1
+    rows = []
+    for image_id, entry in sorted(inv.images.items()):
+        where = ", ".join(f"{d} {'/'.join(str(v) for v in ref.values())}"
+                          for d, ref in sorted(entry.get("published", {}).items())) or "-"
+        rows.append([("* " if image_id == pinned else "  ") + image_id,
+                     entry["ubuntu"]["build"], entry["tooling"] + (" dirty" if entry.get(
+                         "dirty") else ""), ",".join(entry.get("recipes", [])) or "-", where,
+                     str(using.get(image_id, 0)), "kept" if "file" in entry else "-"])
+    app.say(table(rows, ["IMAGE", "UBUNTU", "TOOLING", "BAKED", "PUBLISHED", "SHIPS", "FILE"]))
+    app.say("* pinned: new Ships start from it" if pinned != STOCK_IMAGE
+            else "New Ships use the stock template (ship-fleet image use ID to pin one).")
+    return 0
+
+
+def _image_publish(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    inv.image(args.image)
+    driver_id = args.driver or inv.defaults.get("driver", "manual")
+    if args.template_vmid is not None:
+        ref = {"template_vmid": args.template_vmid}
+        app.say(f"Recorded image {args.image} as {driver_id} template {args.template_vmid}.")
+    else:
+        image = images.local_file(inv, args.image)
+        driver = app.driver_factory(inv, driver_id)
+        outcome = driver.publish_image(image)
+        _report(app, outcome)
+        if not outcome.done:
+            return 0
+        ref = dict(outcome.driver_ref)
+    with store.edit() as ed:
+        current = dict(store.load().image(args.image).get("published", {}))
+        current[driver_id] = ref
+        ed.set_image_field(args.image, "published", current)
+    app.say(f"Pin it for new Ships with: ship-fleet image use {args.image}")
+    return 0
+
+
+def _image_use(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    if args.image != STOCK_IMAGE:
+        entry = inv.image(args.image)
+        driver_id = inv.defaults.get("driver", "manual")
+        if driver_id not in entry.get("published", {}):
+            raise FleetError(
+                f"Image {args.image} is not published to the {driver_id} driver (defaults.driver).",
+                hint=f"ship-fleet image publish {args.image} --driver {driver_id}",
+            )
+    with store.edit() as ed:
+        ed.set_default("image", None if args.image == STOCK_IMAGE else args.image)
+    chosen = "the stock template" if args.image == STOCK_IMAGE else args.image
+    app.say(f"New Ships now start from {chosen}. Existing Ships are not changed.")
+    return 0
+
+
+def _image_rm(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    entry = inv.image(args.image)
+    if inv.pinned_image == args.image:
+        raise FleetError(f"Image {args.image} is pinned for new Ships.",
+                         hint="Pin another first: ship-fleet image use ID|stock")
+    remaining = dict(entry.get("published", {}))
+    for driver_id, ref in sorted(entry.get("published", {}).items()):
+        driver = app.driver_factory(inv, driver_id)
+        try:
+            outcome = driver.remove_image(PublishedImage(args.image, dict(ref)))
+        except NotSupported as exc:
+            app.note(f"{driver_id}: {exc.message}")
+            continue
+        _report(app, outcome)
+        if outcome.done:
+            remaining.pop(driver_id)
+    if remaining:
+        with store.edit() as ed:
+            ed.set_image_field(args.image, "published", remaining)
+        app.say(f"Image {args.image} is still published to {', '.join(remaining)}; "
+                "remove it there, then run this again.")
+        return 1
+    if not args.keep_file:
+        images.remove_local(inv, args.image)
+    with store.edit() as ed:
+        ed.remove_image(args.image)
+    app.say(f"Removed image {args.image}.")
+    if any(s.image == args.image for s in inv.ships()):
+        app.say("Ships made from it keep running: they are full copies.")
+    return 0

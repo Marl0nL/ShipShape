@@ -1,0 +1,13 @@
+# "stock" is reserved for the driver's own template; it cannot be an image id.
+schema = 1
+
+[fleet]
+admin_key = "~/.ssh/shipshape_fleet_ed25519"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+
+[image.stock]
+created = "2026-11-02T10:00:00Z"
+sha256 = "0f343b0931126a20f133d67c2b018a3b1d7e2e5c3a64d5f3e46b0b0e45c1a7d2"
+ubuntu = { release = "26.04", build = "20261016" }
+tooling = "0.1.0"
+commit = "unknown"

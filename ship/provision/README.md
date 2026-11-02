@@ -9,7 +9,14 @@ ship-provision --first-boot   # seed bootstrap: everything, then apply, tools, s
 ship-provision --converge     # ship-ctl converge: everything; ship-ctl then applies and runs tools
 ship-provision --converge --dry-run      # on a Ship: what would change, changing nothing
 ship-provision --first-boot --root DIR   # anywhere: write the files under DIR, skip the rest
+ship-provision --bake --recipes ID,...   # inside an image being baked (ship/image/bake)
 ```
+
+`--bake` (phase 4, `contracts/image.md`) runs only steps 1 to 3 below plus the apt
+packages of the given recipes (each must be marked `bake = true`). It creates no
+users' files, keys, settings or units and writes no provisioning record, so a
+Ship from a baked image still provisions itself fully at first boot; the baked
+steps just find nothing to do.
 
 What it does, in order (each step checks first and only counts real changes):
 

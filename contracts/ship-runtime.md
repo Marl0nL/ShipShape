@@ -82,6 +82,17 @@ Agent home (`/home/agent`), owned by `agent`:
 | `~/.local` | npm global prefix: packages in `~/.local/lib/node_modules`, commands in `~/.local/bin`. |
 | `~/work/` | Default root for project folders. |
 
+Phase 4 and 5 add:
+
+| Path | Owner, mode | What it is |
+|---|---|---|
+| `/etc/shipshape/image.json` | root, 0644 | Present on Ships made from a baked image: its manifest (`image-manifest.schema.json`). |
+| `/etc/ssh/sshd_config.d/20-shipshape-listen.conf` | root, 0644 | Present only when `network.ssh_listen = "overlay"` (`settings.md`). |
+| `/var/lib/shipshape/overlay.json` | root, 0600 | Internal: the overlay record (`ship-ctl overlay`). Holds no key. |
+
+`tailscaled` is installed only on Ships that joined the overlay, and is disabled
+and stopped again when a Ship leaves.
+
 Reserved, not created yet: `/var/lib/shipshape/outbox/` and
 `/var/lib/shipshape/inbox/` (ship-axi requests and messages, collected by
 FleetLedger over SSH).

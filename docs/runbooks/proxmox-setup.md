@@ -132,3 +132,50 @@ vmid_range = [9100, 9199]           # VMIDs FleetLedger may use
 
 The token expires after 90 days: make a new one with the same `pveum user token
 add` and the two `acl modify --tokens` lines, and replace the file.
+
+## 4. Snapshots and baked images (phase 4, optional)
+
+Two additions to the same token, nothing else. Both are optional: without them
+`ship-fleet snapshot` and `ship-fleet image publish` fail with a permission
+error, and everything else works as before.
+
+Snapshots need two more VM rights on the pool (`VM.Snapshot` to take and delete,
+`VM.Snapshot.Rollback` to roll back). Adding them to the role reaches both the
+user and the token, which already have the role on `/pool/shipshape`:
+
+```sh
+pveum role modify ShipShapeVM --append 1 --privs "VM.Snapshot VM.Snapshot.Rollback"
+```
+
+Publishing baked images through the API needs one more storage, used only for
+uploading them (content type `import`; Proxmox VE 8.4 or newer). An image holds
+no secrets, but keeping it apart keeps the token's delete right off every other
+storage. The same seed-storage role covers upload, delete and reading it:
+
+```sh
+mkdir -p /var/lib/shipshape-images && chmod 700 /var/lib/shipshape-images
+pvesm add dir shipshape-images --path /var/lib/shipshape-images --content import
+pveum acl modify /storage/shipshape-images --users shipshape@pve --roles ShipShapeSeeds
+pveum acl modify /storage/shipshape-images --tokens 'shipshape@pve!build' --roles ShipShapeSeeds
+pveum user token permissions shipshape@pve build   # review again
+```
+
+and in `ships.toml`:
+
+```toml
+[drivers.proxmox]
+# ...
+image_storage = "shipshape-images"
+```
+
+What the token then does with an image: it uploads the qcow2 to
+`shipshape-images`, creates a VM in the pool whose disk imports it
+(`scsi0: <disk storage>:0,import-from=shipshape-images:import/<file>`), turns that
+VM into a template, and deletes the upload. Creating the VM uses rights the role
+already has (`VM.Allocate`, `VM.Config.*` on the pool, `Datastore.AllocateSpace`
+on the disk storage, the bridge). The template leaves out the serial console the
+stock template has, so `VM.Config.HWType` is not needed.
+
+If you would rather not give these rights, publish images by hand instead:
+`ship-fleet image publish <id> --driver manual` prints the `qm` commands to run
+on the host, and `--template-vmid` records the result. See [images.md](images.md).

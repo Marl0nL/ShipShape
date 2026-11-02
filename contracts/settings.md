@@ -72,6 +72,7 @@ integration and agents edit these files too):
 | `agent.sudo` | `/etc/sudoers.d/91-shipshape-agent` present (`NOPASSWD: ALL`) or absent |
 | `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent, loaded at boot by `ship-lan-guard-early.service` and refreshed by `ship-lan-guard.service` (see "LAN guard") |
 | `updates.auto_reboot`, `updates.reboot_time` | `/etc/apt/apt.conf.d/52shipshape-unattended-upgrades`: `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-Time` (see "OS updates") |
+| `network.ssh_listen` | `/etc/ssh/sshd_config.d/20-shipshape-listen.conf`: absent for `any`; for `overlay`, a `Match LocalAddress` block that denies every user on any local address other than loopback and the Ship's own overlay addresses (phase 5, `ship-ctl.md` overlay) |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
 | `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
 

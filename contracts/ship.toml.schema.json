@@ -56,6 +56,11 @@
           "uniqueItems": true,
           "default": [],
           "description": "Extra addresses or CIDRs the guard lets through. The default gateway, the DNS servers and DHCP are always allowed."
+        },
+        "ssh_listen": {
+          "enum": ["any", "overlay"],
+          "default": "any",
+          "description": "Where sshd accepts logins. any: every interface. overlay: only over the overlay network (and loopback); allowed only once the Ship has joined it (ship-ctl overlay join), and reset to any when it leaves."
         }
       }
     },

@@ -127,6 +127,49 @@ def test_upload_is_multipart_with_checksum(server):
     assert parts["filename"].get_payload(decode=True) == b"ISO!"
 
 
+def test_upload_file_streams_from_disk(server, tmp_path):
+    config, seen = server
+    image = tmp_path / "img.qcow2"
+    data = bytes(range(256)) * 9000  # several chunks
+    image.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    ProxmoxAPI(config).upload_file("pve", "shipshape-images", "shipshape-x.qcow2", image,
+                                   "import", sha256=digest, chunk_size=4096)
+    method, path, headers, body = seen[-1]
+    assert (method, path) == ("POST", "/api2/json/nodes/pve/storage/shipshape-images/upload")
+    assert headers["Authorization"] == f"PVEAPIToken=shipshape@pve!build={SECRET}"
+    assert int(headers["Content-Length"]) == len(body)
+    message = BytesParser(policy=HTTP).parsebytes(
+        f"Content-Type: {headers['Content-Type']}\r\n\r\n".encode() + body
+    )
+    parts = {p.get_param("name", header="content-disposition"): p for p in message.iter_parts()}
+    assert list(parts) == ["content", "checksum-algorithm", "checksum", "filename"]
+    assert parts["content"].get_content().strip() == "import"
+    assert parts["checksum"].get_content().strip() == digest
+    assert parts["filename"].get_filename() == "shipshape-x.qcow2"
+    assert parts["filename"].get_payload(decode=True) == data
+
+
+def test_upload_file_refuses_a_changed_file(server, tmp_path):
+    config, seen = server
+    image = tmp_path / "img.qcow2"
+    image.write_bytes(b"tampered")
+    with pytest.raises(ProxmoxError, match="does not match"):
+        ProxmoxAPI(config).upload_file("pve", "s", "x.qcow2", image, "import", sha256="0" * 64)
+    assert seen == []  # nothing was sent, not even the token
+
+
+def test_upload_file_checks_the_pin_before_sending(server, tmp_path):
+    config, seen = server
+    image = tmp_path / "img.qcow2"
+    image.write_bytes(b"IMG")
+    api = ProxmoxAPI(dict(config, tls_fingerprint=":".join(["AB"] * 32)))
+    with pytest.raises(TLSPinMismatch) as exc:
+        api.upload_file("pve", "s", "x.qcow2", image, "import",
+                        sha256=hashlib.sha256(b"IMG").hexdigest())
+    assert seen == [] and SECRET not in str(exc.value)
+
+
 def test_token_file_rules(tmp_path):
     token = tmp_path / "t"
     token.write_text("secret\n")

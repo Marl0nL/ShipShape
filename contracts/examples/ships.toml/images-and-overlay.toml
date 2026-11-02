@@ -1,0 +1,54 @@
+# Baked images (phase 4) and the overlay network (phase 5). Generic example values.
+schema = 1
+
+[fleet]
+admin_key = "~/.ssh/shipshape_fleet_ed25519"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+
+[defaults]
+driver = "proxmox"
+image = "26.04-20261102-3f9a1c2e"
+
+[image."26.04-20261102-3f9a1c2e"]
+created = "2026-11-02T10:00:00Z"
+sha256 = "0f343b0931126a20f133d67c2b018a3b1d7e2e5c3a64d5f3e46b0b0e45c1a7d2"
+file = "~/.local/share/fleetledger/images/26.04-20261102-3f9a1c2e.qcow2"
+ubuntu = { release = "26.04", build = "20261016" }
+tooling = "0.1.0"
+commit = "0123456789abcdef0123456789abcdef01234567"
+recipes = ["chrome-devtools-axi"]
+published = { proxmox = { template_vmid = 9181 } }
+
+[overlay]
+provider = "tailscale"
+tags = ["tag:ship"]
+key_source = "tailscale-api"
+
+[overlay.api]
+tailnet = "-"
+oauth_client_id = "kExampleClient1"
+oauth_secret_file = "~/.config/fleetledger/tailscale-oauth"
+key_expiry_s = 600
+
+[drivers.proxmox]
+api_url = "https://pve.example.com:8006/api2/json"
+node = "pve"
+pool = "shipshape"
+template_vmid = 9000
+seed_storage = "shipshape-seeds"
+image_storage = "shipshape-images"
+disk_storage = "local-lvm"
+bridge = "vmbr0"
+token_id = "shipshape@pve!build"
+token_file = "~/.config/fleetledger/proxmox-token"
+tls_fingerprint = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
+vmid_range = [9100, 9199]
+
+[ship.ship-01]
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+tags = ["work"]
+driver = "proxmox"
+driver_ref = { vmid = 9101 }
+names = ["ship-01.local", "ship-01.example-tailnet.ts.net"]
+host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZXlleGFt ship-01"
+image = "26.04-20261102-3f9a1c2e"

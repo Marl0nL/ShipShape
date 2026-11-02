@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fleetledger import concierge, enrol, ops, paths, schemas, status
+from fleetledger import concierge, enrol, images, ops, paths, schemas, status
 from fleetledger.catalogue import Catalogue
 from fleetledger.concierge import providers
 from fleetledger.drivers import SeedFile
@@ -198,6 +198,8 @@ def cmd_new(args, app) -> int:
     size = {k: v for k, v in (("cores", args.cores), ("memory_mb", args.memory_mb),
                                ("disk_gb", args.disk_gb)) if v is not None}
     driver_id = args.driver or inv.defaults.get("driver", "manual")
+    image_id = args.image or inv.pinned_image
+    image = images.published(inv, image_id, driver_id)  # checks it exists for this driver
     draft = Ship(
         name=name,
         id=new_ship_id(),
@@ -209,6 +211,7 @@ def cmd_new(args, app) -> int:
         size=size,
         claude=claude,
         profiles=tuple(args.profile) or None,
+        image=image_id,
     )
     if args.tools is not None or args.no_default_tools:
         base = [] if args.no_default_tools else tools_for(inv, draft, catalogue)
@@ -237,7 +240,7 @@ def cmd_new(args, app) -> int:
                                 ubuntu_release=repo.versions["ubuntu"]["release"])
     try:
         outcome = driver.create(ship, SeedFile(seed.path, seed.instance_id),
-                                inv.effective_size(ship))
+                                inv.effective_size(ship), image)
     except BaseException:
         with store.edit() as ed:
             ed.remove_ship(name)

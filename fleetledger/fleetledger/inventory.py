@@ -29,6 +29,9 @@ CLAUDE_DEFAULTS = {
 
 SIZE_DEFAULTS = {"cores": 4, "memory_mb": 8192, "disk_gb": 40}
 
+STOCK_IMAGE = "stock"
+"""The driver's own template, made from Ubuntu's cloud image (contracts/image.md)."""
+
 
 def now_timestamp() -> str:
     """UTC, RFC 3339, Z suffix, whole seconds (the contracts' timestamp format)."""
@@ -57,6 +60,7 @@ class Ship:
     tools: tuple[str, ...] | None = None
     profiles: tuple[str, ...] | None = None
     notes: str | None = None
+    image: str | None = None  # the base image it was made from (None: before images)
 
     @classmethod
     def from_entry(cls, name: str, entry: Mapping[str, Any]) -> Ship:
@@ -75,6 +79,7 @@ class Ship:
             tools=tuple(entry["tools"]) if "tools" in entry else None,
             profiles=tuple(entry["profiles"]) if "profiles" in entry else None,
             notes=entry.get("notes"),
+            image=entry.get("image"),
         )
 
     @property
@@ -143,6 +148,28 @@ class Inventory:
 
     def driver_config(self, driver: str) -> Mapping[str, Any] | None:
         return self.doc.get("drivers", {}).get(driver)
+
+    # --- images and the overlay (phases 4 and 5) ---------------------------
+    @property
+    def images(self) -> Mapping[str, Mapping[str, Any]]:
+        """[image.<id>] entries (contracts/image.md)."""
+        return self.doc.get("image", {})
+
+    def image(self, image_id: str) -> Mapping[str, Any]:
+        entry = self.images.get(image_id)
+        if entry is None:
+            known = ", ".join(sorted(self.images)) or "none yet"
+            raise NotFound(f"No image '{image_id}' in the inventory (known: {known}).")
+        return entry
+
+    @property
+    def pinned_image(self) -> str:
+        """The image new Ships are made from: an image id, or "stock"."""
+        return self.defaults.get("image", STOCK_IMAGE)
+
+    @property
+    def overlay(self) -> Mapping[str, Any] | None:
+        return self.doc.get("overlay")
 
     # --- ships ------------------------------------------------------------
     def ships(self, tag: str | None = None) -> list[Ship]:

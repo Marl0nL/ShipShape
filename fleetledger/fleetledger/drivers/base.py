@@ -7,6 +7,7 @@ you exactly what to do (manual); both report back the same way.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -48,14 +49,63 @@ class PowerState:
     addresses: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class PublishedImage:
+    """A baked image ready to create Ships from on this driver (contracts/image.md).
+
+    ref is what publish_image returned, as stored in ships.toml
+    image.<id>.published.<driver>.
+    """
+
+    id: str
+    ref: Mapping[str, str | int]
+
+
+@dataclass(frozen=True)
+class ImageFile:
+    """A baked image on this computer, checked against its recorded sha256."""
+
+    id: str
+    path: Path
+    sha256: str
+    size: int
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    name: str
+    created: str | None  # UTC timestamp, if the hypervisor says
+    description: str = ""
+    parent: str | None = None
+
+
+SNAPSHOT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{1,39}$")
+
+
+def check_snapshot_name(name: str) -> str:
+    if not SNAPSHOT_NAME.match(name) or name.lower() == "current":
+        raise FleetError(
+            f"'{name}' is not a usable snapshot name: a letter, then letters, digits, - or _ "
+            "(2 to 40 characters), and not 'current'."
+        )
+    return name
+
+
 class Driver(ABC):
     id: str
 
     @abstractmethod
-    def create(self, ship: Ship, seed: SeedFile, size: Mapping[str, int]) -> Outcome:
+    def create(
+        self,
+        ship: Ship,
+        seed: SeedFile,
+        size: Mapping[str, int],
+        image: PublishedImage | None = None,
+    ) -> Outcome:
         """Make the VM from the base image, attach the seed, start it.
 
-        driver_ref in the outcome is stored in ships.toml; it includes
+        image: a baked image published to this driver; None for the stock
+        template. driver_ref in the outcome is stored in ships.toml; it includes
         seed = <instance id> until enrolment finishes.
         """
 
@@ -82,5 +132,27 @@ class Driver(ABC):
         """Fingerprints the hypervisor can vouch for, or None if it cannot."""
         return None
 
-    def snapshot(self, ship: Ship, name: str) -> Outcome:
+    # --- snapshots (optional) ---------------------------------------------
+    # A snapshot holds the Ship's sign-ins: treat it like the Ship itself.
+    def snapshot(self, ship: Ship, name: str, description: str = "") -> Outcome:
         raise NotSupported(f"The {self.id} driver cannot take snapshots.")
+
+    def snapshots(self, ship: Ship) -> list[Snapshot]:
+        raise NotSupported(f"The {self.id} driver cannot list snapshots.")
+
+    def rollback(self, ship: Ship, name: str) -> Outcome:
+        raise NotSupported(f"The {self.id} driver cannot roll back to a snapshot.")
+
+    def delete_snapshot(self, ship: Ship, name: str) -> Outcome:
+        raise NotSupported(f"The {self.id} driver cannot delete snapshots.")
+
+    # --- baked images (optional) --------------------------------------------
+    def publish_image(self, image: ImageFile) -> Outcome:
+        """Make a baked image something create() can start from.
+
+        driver_ref in the outcome is stored as image.<id>.published.<driver>.
+        """
+        raise NotSupported(f"The {self.id} driver cannot publish images.")
+
+    def remove_image(self, image: PublishedImage) -> Outcome:
+        raise NotSupported(f"The {self.id} driver cannot remove images.")

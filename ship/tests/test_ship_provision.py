@@ -82,6 +82,7 @@ def test_apt_sources_from_versions(tmp_path):
         "shipshape-google-chrome.sources",
         "shipshape-google-cloud.sources",
         "shipshape-nodesource.sources",
+        "shipshape-tailscale.sources",
     ]
     chrome = (sources / "shipshape-google-chrome.sources").read_text()
     assert "URIs: https://dl.google.com/linux/chrome/deb\n" in chrome
