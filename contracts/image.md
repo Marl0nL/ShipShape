@@ -53,15 +53,17 @@ bake --base IMG --bundle BUNDLE.tar.gz --manifest MANIFEST.json --out OUT.qcow2
   NoCloud seed that only runs the bake and powers off. Both run the same steps.
 - Inside the image it runs `ship-provision --bake --recipes ID,...` from the
   unpacked bundle, writes `/etc/shipshape/image.json`, then cleans up (above).
+  The clean-up is the very last write: with `--backend qemu` it runs from a unit
+  ordered after cloud-init's final stage, then the copy powers off cleanly.
 - Exit 0 and the qcow2 on success; non-zero and no output file otherwise.
 
 ## Image ids
 
 `<ubuntu release>-<bake date, UTC, YYYYMMDD>-<first 8 hex of inputs_sha256>`,
 for example `26.04-20261102-3f9a1c2e`. `inputs_sha256` is the SHA-256 of the
-base image's sha256, `versions.toml`, the baked recipe files and
-`ship-provision`, so a rebuild from the same inputs on the same day has the same
-id.
+base image's sha256, `versions.toml`, the baked recipe files, `ship-provision`
+and the bake scripts, so a rebuild from the same inputs on the same day has the
+same id.
 
 ## Pinning and rollout
 
