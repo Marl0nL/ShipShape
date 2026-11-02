@@ -22,9 +22,9 @@ from .fsutil import ensure_dir, read_json, write_atomic
 from .shiptoml import ShipToml
 from .status import boot_id, herdr_agents
 
-# Sent to an agent whose [[autostart]] entry has no prompt. A first prompt makes
-# the mode-ledger hook record the session's mode, so bypass is restored when
-# herdr resumes the session after a reboot.
+# Sent to an agent whose [[autostart]] entry has no prompt: a deliberate default,
+# so every autostart agent starts by getting its bearings. (Its mode is recorded
+# either way: the ledger hook reads it from claude's flags at SessionStart.)
 DEFAULT_PROMPT = "Get oriented and ready to work."
 RESUME_GRACE_S = 600  # after this much uptime, stop waiting for ship-resume
 START_TIMEOUT_MS = 120000
@@ -173,10 +173,9 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
             "started_at": utc_now(),
         }
         prompt = entry.get("prompt") or DEFAULT_PROMPT
-        if prompt:
-            sent, why = _herdr_json(ctx, ["agent", "prompt", name, prompt], 30)
-            if sent is None:
-                messages.append(f"{name}: started, but the first prompt was not sent ({why}).")
+        sent, why = _herdr_json(ctx, ["agent", "prompt", name, prompt], 30)
+        if sent is None:
+            messages.append(f"{name}: started, but the first prompt was not sent ({why}).")
 
     write_atomic(ctx.paths.state / "autostart.json", json.dumps(record, indent=2) + "\n", 0o644)
     if failures:

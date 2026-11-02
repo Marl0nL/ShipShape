@@ -29,12 +29,21 @@ from fleetledger.ssh import SSH  # noqa: E402
 from fleetledger.store import TomlFileStore, new_inventory  # noqa: E402
 
 
-def e2e_config() -> dict | None:
+def e2e_config() -> tuple[dict | None, str]:
+    """(config, why not) from SHIPSHAPE_E2E: a file with [drivers.proxmox]."""
     path = os.environ.get("SHIPSHAPE_E2E")
     if not path:
-        return None
-    with Path(path).expanduser().open("rb") as fh:
-        return tomllib.load(fh)
+        return None, "set SHIPSHAPE_E2E to run"
+    file = Path(path).expanduser()
+    if not file.is_file():
+        return None, f"SHIPSHAPE_E2E: {file} does not exist"
+    try:
+        config = tomllib.loads(file.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return None, f"SHIPSHAPE_E2E: cannot read {file}: {exc}"
+    if "proxmox" not in config.get("drivers", {}):
+        return None, f"SHIPSHAPE_E2E: {file} has no [drivers.proxmox] section"
+    return config, ""
 
 
 def keygen(path: Path, comment: str) -> Path:
@@ -77,6 +86,7 @@ class Fleet:
             doc["tag"] = config["tag"]
         self.store.create(doc)
         self.driver = ProxmoxDriver(self.proxmox)
+        self.attempted: list[str] = []  # Ship names `new` was asked to create
 
     def close(self) -> None:
         for sock in self.runtime.glob("cm-*"):
@@ -87,6 +97,8 @@ class Fleet:
     # --- ship-fleet ---------------------------------------------------------
     def cli(self, *args: str, timeout: float = 600, check: bool = True,
             interactive: bool = False) -> subprocess.CompletedProcess:
+        if args[:1] == ("new",):
+            self.attempted.append(args[1])
         argv = [sys.executable, "-m", "fleetledger.cli", *args]
         log("ship-fleet " + " ".join(args))
         if interactive:
@@ -165,6 +177,25 @@ class Fleet:
             self.driver.destroy(ship)
         with self.store.edit() as ed:
             ed.remove_ship(name)
+
+    def clean_up(self, vmids_before: set[int], seeds_before: set[str]) -> None:
+        """Destroy everything this run made, recorded in the inventory or not.
+
+        If `new` died before recording a VMID (killed on a timeout, say), the
+        VM is found by its name among the pool members that were not there
+        before; leftover seed ISOs are found by the Ship's name.
+        """
+        for ship in self.store.load().ships():
+            self.destroy(ship.name)
+        members = self.driver.api.get(f"/pools/{self.proxmox['pool']}").get("members", [])
+        for member in members:
+            if member.get("vmid") not in vmids_before and member.get("name") in self.attempted:
+                log(f"destroying orphan VM {member['vmid']} ({member['name']})")
+                self.driver._destroy_vm(int(member["vmid"]))
+        for volume in self.seed_volumes() - seeds_before:
+            if any(volume.split("/", 1)[-1].startswith(f"{n}-") for n in self.attempted):
+                log(f"deleting orphan seed {volume}")
+                self.driver._delete_volume(volume)
 
     def pool_vmids(self) -> set[int]:
         members = self.driver.api.get(f"/pools/{self.proxmox['pool']}").get("members", [])

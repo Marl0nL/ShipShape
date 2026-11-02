@@ -7,7 +7,7 @@ first do [proxmox-setup.md](proxmox-setup.md) once.
 ## 1. Install FleetLedger (once)
 
 ```sh
-git clone https://github.com/Marl0nL/ShipShape.git && cd ShipShape
+git clone <this repository> ShipShape && cd ShipShape
 fleetledger/install.sh            # pipx, editable: `git pull` updates it
 ship-fleet --version
 ```
@@ -62,7 +62,7 @@ Useful options (`ship-fleet new --help` lists them all):
 | Option | Effect |
 |---|---|
 | `--mode bypassPermissions` | new agents start in bypass, with no warning dialog (implies `--allow-bypass`); the default is `auto` |
-| `--autostart main:~/work/main:auto` | an agent started at boot and resumed after reboots (repeatable); each gets a first prompt (`--autostart-prompt` to choose it), which also records its mode so bypass survives reboots |
+| `--autostart main:~/work/main:auto` | an agent started at boot and resumed after reboots, each in its mode (repeatable); each starts with a first prompt, "Get oriented and ready to work." unless you choose one with `--autostart-prompt` |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
 | `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults) |

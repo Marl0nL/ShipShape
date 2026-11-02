@@ -21,9 +21,6 @@ from fleetledger.ssh import ship_ctl
 from fleetledger.store import new_inventory, ship_entry
 
 MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
-# Autostart agents always get a first prompt: the Ship's mode ledger records a
-# session's mode when it receives one, and resume restores bypass from it.
-DEFAULT_AUTOSTART_PROMPT = "Get oriented and ready to work."
 LOG_SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 TAG_RE = NAME_RE
@@ -174,7 +171,9 @@ def cmd_init(args, app) -> int:
 # --- new -----------------------------------------------------------------
 
 
-def parse_autostart(values: list[str], prompt: str = DEFAULT_AUTOSTART_PROMPT) -> list[Autostart]:
+def parse_autostart(values: list[str], prompt: str | None = None) -> list[Autostart]:
+    """--autostart NAME:CWD[:MODE] values. Without a prompt, the Ship sends its own
+    default first prompt (contracts/ship-ctl.md, autostart)."""
     agents = []
     for value in values:
         parts = value.split(":")
@@ -183,7 +182,7 @@ def parse_autostart(values: list[str], prompt: str = DEFAULT_AUTOSTART_PROMPT) -
         mode = parts[2] if len(parts) == 3 else None
         if mode is not None and mode not in MODES:
             raise FleetError(f"--autostart {value}: unknown mode '{mode}'.")
-        agents.append(Autostart(parts[0], parts[1], mode, prompt or DEFAULT_AUTOSTART_PROMPT))
+        agents.append(Autostart(parts[0], parts[1], mode, prompt or None))
     return agents
 
 
@@ -265,9 +264,10 @@ def cmd_new(args, app) -> int:
 def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None:
     """Make sure FleetLedger can reach a Ship the driver just started.
 
-    Once the hypervisor reports the Ship's address, its names are checked. If
-    none resolves on this computer (for example .local names without mDNS
-    name resolution), the address is added as the last name to try.
+    Once the hypervisor reports the Ship's address, its names are checked for
+    about 30 seconds (the mDNS announcement can come up a little after the
+    address). If none resolves on this computer (for example .local names
+    without mDNS name resolution), the address is added as the last name to try.
     """
     ship = store.load().ship(name)
     waited = 0.0
@@ -280,8 +280,11 @@ def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None
             return
         app.sleep(10)
         waited += 10
-    if any(app.resolves(host) for host in ship.names):
-        return
+    for attempt in range(4):
+        if any(app.resolves(host) for host in ship.names):
+            return
+        if attempt < 3:
+            app.sleep(10)
     with store.edit() as ed:
         ed.set_field(name, "names", [*ship.names, addresses[0]])
     app.note(f"{name}: {', '.join(ship.names)} does not resolve on this computer, so "

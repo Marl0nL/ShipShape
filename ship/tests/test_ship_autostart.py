@@ -30,8 +30,7 @@ def test_autostart_starts_each_agent_in_its_mode(ship):
         "--no-focus",
     ]
     assert ship.p("/home/agent/work/main").is_dir()
-    # grinder (bypass) has no prompt of its own: it gets the default, so the mode
-    # ledger records its session and bypass comes back after a reboot.
+    # grinder has no prompt of its own: it gets the default first prompt.
     assert ship.scenario()["herdr"]["prompts"] == [
         ["main", "Get oriented."],
         ["grinder", "Get oriented and ready to work."],

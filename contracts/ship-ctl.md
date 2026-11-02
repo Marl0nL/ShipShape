@@ -91,8 +91,8 @@ atomically, then runs `apply`.
 
 Starts every `[[autostart]]` agent that is not running, in its own mode, with
 `herdr agent start <name> --kind claude`, then sends its prompt, or "Get oriented
-and ready to work." if the entry has none (a first prompt makes the mode ledger
-record the session, so bypass survives a reboot). It does nothing
+and ready to work." if the entry has none (a chosen default: every autostart
+agent starts with a first prompt). It does nothing
 while the Ship is `provisioning` or `needs-sign-in`.
 
 The Ship runs it on its own: at boot (the first status refresh after

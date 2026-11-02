@@ -20,8 +20,8 @@ from fleetledger.catalogue import Catalogue
 from fleetledger.repo import Repo
 from jsonschema import Draft202012Validator
 
-CONFIG = e2e_config()
-pytestmark = pytest.mark.skipif(CONFIG is None, reason="set SHIPSHAPE_E2E to run")
+CONFIG, WHY_NOT = e2e_config()
+pytestmark = pytest.mark.skipif(CONFIG is None, reason=WHY_NOT)
 VERSIONS = tomllib.loads((ROOT / "versions.toml").read_text())
 DEFAULT_TOOLS = Catalogue.from_repo(Repo(ROOT)).default_tools()
 STATUS_SCHEMA = Draft202012Validator(
@@ -32,10 +32,22 @@ STATUS_SCHEMA = Draft202012Validator(
 @pytest.fixture
 def fleet(tmp_path):
     fleet = Fleet(tmp_path, CONFIG)
-    yield fleet
-    for ship in fleet.store.load().ships():
-        fleet.destroy(ship.name)
-    fleet.close()
+    vmids_before, seeds_before = fleet.pool_vmids(), fleet.seed_volumes()
+    try:
+        yield fleet
+    finally:
+        try:
+            fleet.clean_up(vmids_before, seeds_before)
+        finally:
+            fleet.close()
+    # Machine-checked: nothing this run made is left. Other users of the pool
+    # may come and go meanwhile, so only our VMID range and our seeds count.
+    first, last = fleet.proxmox.get("vmid_range", [0, 1 << 30])
+    left = {v for v in fleet.pool_vmids() - vmids_before if first <= v <= last}
+    assert not left, f"VMs left in the pool: {sorted(left)}"
+    seeds = {v for v in fleet.seed_volumes() - seeds_before
+             if any(v.split("/", 1)[-1].startswith(f"{n}-") for n in fleet.attempted)}
+    assert not seeds, f"seed ISOs left: {sorted(seeds)}"
 
 
 def check_needs_sign_in(view: dict) -> dict:
@@ -109,7 +121,8 @@ def test_seed_boot_reboot_destroy(fleet):
     assert f"{name} is enrolled." in proc.stdout
     ship = fleet.ship(name)
     vmid = ship.driver_ref["vmid"]
-    assert 9100 <= vmid and ship.enrolled and "seed" not in ship.driver_ref
+    first, last = fleet.proxmox.get("vmid_range", [100, 999999999])
+    assert first <= vmid <= last and ship.enrolled and "seed" not in ship.driver_ref
 
     log("the seed is gone: ejected, deleted from storage, and no local copy")
     config = fleet.driver.api.get(f"/nodes/{fleet.proxmox['node']}/qemu/{vmid}/config")

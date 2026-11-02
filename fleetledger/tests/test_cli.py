@@ -252,8 +252,8 @@ def test_new_manual_bypass_ship(env, home):
     ship_toml = tomllib.loads(user["write_files"][0]["content"])
     assert ship_toml["claude"]["default_mode"] == "bypassPermissions"
     assert ship_toml["claude"]["allow_bypass"] is True
-    assert ship_toml["autostart"] == [{"name": "main", "cwd": "~/work/main", "mode": "auto",
-                                       "prompt": "Get oriented and ready to work."}]
+    # No prompt given: none is written, and the Ship sends its own default.
+    assert ship_toml["autostart"] == [{"name": "main", "cwd": "~/work/main", "mode": "auto"}]
     assert env.run("new", "ship-03")[0] == 1  # already there
 
 
@@ -265,6 +265,12 @@ def test_new_autostart_prompt(env, home):
     _, files = iso.read(seed.read_bytes())
     ship_toml = tomllib.loads(yaml.safe_load(files["user-data"])["write_files"][0]["content"])
     assert ship_toml["autostart"] == [{"name": "a", "cwd": "~/work/a", "prompt": "Run the tests."}]
+    # An empty prompt is the same as none: the Ship's default applies.
+    assert env.run("new", "ship-09", "--autostart", "b:~/work/b", "--autostart-prompt", "")[0] == 0
+    seed = next((home / "data" / "seeds").glob("ship-09-*.iso"))
+    _, files = iso.read(seed.read_bytes())
+    ship_toml = tomllib.loads(yaml.safe_load(files["user-data"])["write_files"][0]["content"])
+    assert ship_toml["autostart"] == [{"name": "b", "cwd": "~/work/b"}]
 
 
 def test_new_proxmox_waits_and_enrols(env, home):
@@ -285,6 +291,28 @@ def test_new_proxmox_keeps_names_that_resolve(env):
     env.app.resolves = lambda host: host == "ship-06.local"
     assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0
     assert env.store.load().ship("ship-06").names == ("ship-06.local",)
+
+
+def test_new_proxmox_waits_for_a_late_mdns_name(env):
+    """The announcement can come up a little after the address: no fallback then."""
+    tries = []
+    env.app.resolves = lambda host: tries.append(host) or len(tries) >= 3
+    assert env.run("new", "ship-10", "--driver", "proxmox")[0] == 0
+    assert env.store.load().ship("ship-10").names == ("ship-10.local",)
+
+
+def test_new_proxmox_without_an_address(env):
+    from fleetledger.drivers.base import PowerState
+
+    env.driver.status = lambda ship: PowerState("running", [])
+    code, out, err = env.run("new", "ship-11", "--driver", "proxmox")
+    assert code == 0 and "reported no address" in err
+    assert env.store.load().ship("ship-11").names == ("ship-11.local",)
+
+
+def test_resolves_uses_the_system_resolver():
+    assert cli._resolves("localhost")
+    assert not cli._resolves("ship-01.invalid")
 
 
 def test_new_failure_leaves_nothing(env, home):

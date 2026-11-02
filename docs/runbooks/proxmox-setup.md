@@ -47,20 +47,27 @@ Why each piece:
 
 ## 2. The template VM
 
-From Ubuntu's signed cloud image, checked before use (release and checksum as
-pinned in the repo's `versions.toml` `[ubuntu]`):
+From Ubuntu's signed cloud image, at the build pinned in the repo's
+`versions.toml` `[ubuntu]` (`base_url`, `signing_key`, and the image's `sha256`).
+Check the signature with `gpgv` against that one key, then the checksum against
+both `SHA256SUMS` and the pin:
 
 ```sh
 cd /var/lib/vz/template/iso
-U=https://cloud-images.ubuntu.com/releases/26.04/release
-wget $U/ubuntu-26.04-server-cloudimg-amd64.img $U/SHA256SUMS $U/SHA256SUMS.gpg
-gpg --keyserver keyserver.ubuntu.com --recv-keys D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
-gpg --verify SHA256SUMS.gpg SHA256SUMS
+U=https://cloud-images.ubuntu.com/releases/resolute/release-20261016   # [ubuntu].base_url
+KEY=D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81                           # [ubuntu].signing_key
+IMG=ubuntu-26.04-server-cloudimg-amd64.img
+wget $U/$IMG $U/SHA256SUMS $U/SHA256SUMS.gpg
+curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$KEY" \
+  | gpg --dearmor > ubuntu-cloud.gpg
+gpg --show-keys --with-colons ubuntu-cloud.gpg | grep -q "^fpr:::::::::$KEY:" && echo key-ok
+gpgv --keyring ./ubuntu-cloud.gpg SHA256SUMS.gpg SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
-
+echo "5645d0318ad21f643ebb1ac4567514620e9893380b07b0201fda163baa5b7eb5  $IMG" | sha256sum -c
+                                                    # [ubuntu.images.amd64].sha256
 qm create 9000 --name shipshape-base --pool shipshape --memory 8192 \
   --cores 4 --cpu host --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci \
-  --scsi0 local-lvm:0,import-from=$PWD/ubuntu-26.04-server-cloudimg-amd64.img \
+  --scsi0 local-lvm:0,import-from=$PWD/$IMG \
   --boot order=scsi0 --serial0 socket --vga serial0 --agent enabled=1
 qm template 9000
 ```

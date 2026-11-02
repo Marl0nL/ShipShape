@@ -30,7 +30,6 @@ import argparse
 import json
 import re
 import secrets
-import shlex
 import sys
 import tempfile
 import time
@@ -40,10 +39,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from e2e_harness import Fleet, log  # noqa: E402
 
-# Token shapes that must never appear in a log, history or audit file.
+# Token shapes, plus Google's authorization-code shape, that must never appear
+# in a log, history or audit file. (GitHub's and Claude's one-time codes are too
+# plain to search for.)
 TOKEN_PATTERNS = (
     r"sk-ant-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9]{20,}"
-    r"|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{20,}"
+    r"|ya29\.[A-Za-z0-9_-]{20,}|1//0[A-Za-z0-9_-]{20,}|4/0A[A-Za-z0-9_-]{20,}"
 )
 
 results: list[tuple[str, bool, str]] = []
@@ -86,6 +87,8 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="do not destroy the Ship at the end")
     args = parser.parse_args()
     config = tomllib.loads(Path(args.config).expanduser().read_text())
+    if "proxmox" not in config.get("drivers", {}):
+        sys.exit("The config needs a [drivers.proxmox] section.")
     if "e2e" not in config.get("tag", {}):
         sys.exit("The config needs a [tag.e2e] section with the accounts to expect.")
 
@@ -189,12 +192,15 @@ def run(fleet: Fleet, name: str) -> None:
     fleet.cli("set", name, "remote_control=off")
     fleet.reboot(name)
     fleet.wait_for("agents back", lambda: trio <= set(agents(fleet.status(name))), timeout=600)
-    step("With Remote Control off, neither session shows",
-         ask(f"Give it a minute. Are the '{name}' sessions now gone or disconnected in the app?"))
+    step("With Remote Control off, the sessions drop out of the app",
+         ask(f"The app can take a few minutes. Are the '{name}' sessions now gone or "
+             "disconnected?"))
 
     fleet.cli("set", name, "remote_control=on", "default_mode=bypassPermissions")
     done = add_autostart(fleet, name, 'name = "fresh"\ncwd = "~/work/fresh"\n')
-    time.sleep(45)
+    fleet.wait_for("the fresh agent", lambda: agents(fleet.status(name)).get("fresh", {})
+                   .get("mode"), timeout=300)
+    time.sleep(20)  # long enough for a permission dialog to show as "blocked"
     fresh = agents(fleet.status(name)).get("fresh", {})
     procs = [p for p in agent_processes(fleet, name) if "--resume" not in p]
     step("A bypass-default Ship starts new agents in bypass with no warning dialog",
@@ -203,14 +209,19 @@ def run(fleet: Fleet, name: str) -> None:
          and any("--dangerously-skip-permissions" in p for p in procs),
          f"fresh: {fresh.get('mode')}, {fresh.get('state')}")
 
+    # The patterns go in on stdin, so they never appear on a command line (sudo
+    # logs command lines to the journal the sweep reads).
     sweep = (
-        "{ journalctl -o cat --no-pager; cat /var/log/shipshape/*.log /home/*/.bash_history "
-        "/root/.bash_history 2>/dev/null; } | grep -cE " + shlex.quote(TOKEN_PATTERNS) + " || true"
+        'p="$(mktemp)"; cat > "$p"; sudo -n bash -c "{ journalctl -o cat --no-pager; '
+        "cat /var/log/shipshape/*.log /home/*/.bash_history /root/.bash_history "
+        "/home/agent/.config/gcloud/logs/*/*.log 2>/dev/null; } | grep -cEf $p || true\"; "
+        'rm -f "$p"'
     )
-    leaks = fleet.ssh(name, "sudo", "-n", "bash", "-c", sweep, timeout=300).text.strip()
+    leaks = fleet.ssh_input(name, TOKEN_PATTERNS + "\n", "bash", "-c", sweep,
+                            timeout=300).text.strip()
     local = sum(len(re.findall(TOKEN_PATTERNS, p.read_text(errors="replace")))
                 for p in (fleet.workdir / "data").rglob("*") if p.is_file())
-    step("No code or token in any log or shell history, on either side",
+    step("No token or Google sign-in code in any log or shell history, on either side",
          leaks in ("0", "") and local == 0,
          f"Ship matches {leaks or 0}, FleetLedger matches {local}")
 

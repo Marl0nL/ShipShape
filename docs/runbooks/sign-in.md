@@ -47,6 +47,25 @@ sign-in columns).
 Within a minute of Claude signing in, the Ship starts its autostart agents by
 itself; FleetLedger does nothing more.
 
+## Remote Control
+
+Remote Control is on by default: once Claude is signed in, every agent's session
+shows in your Claude app. Turn it off or on per Ship:
+
+```sh
+ship-fleet set ship-01 remote_control=off    # or remote_control=on
+```
+
+- "off" also stops resumed sessions from reconnecting (`disableRemoteControl`).
+  `blocked` is an older name for the same setting.
+- A change reaches running sessions only when they restart: a reboot restarts
+  them all (`ssh` in and `sudo systemctl reboot`, never a forced reset).
+- The Claude app can take a few minutes to show or drop sessions.
+- Sessions are named `<session prefix>-<agent name>` (the prefix defaults to the
+  Ship's name), from `claude --name` when the agent starts. Sessions you start
+  some other way can be named with `/rename`; the prefix setting is only a
+  fallback for unnamed sessions.
+
 ## Sign out
 
 ```sh

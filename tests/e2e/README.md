@@ -1,8 +1,10 @@
 # tests/e2e
 
 End-to-end tests (W11) on a real Proxmox pool, using this checkout's `ship/` and
-`fleetledger/` together. They need hypervisor access, so `scripts/check` and CI
-skip them.
+`fleetledger/` together. They need hypervisor access, so they are skipped unless
+`SHIPSHAPE_E2E` names a config with `[drivers.proxmox]`; CI never sets it. Set it
+only for the command that runs them (as below): with it exported, `scripts/check`
+would run them too.
 
 You need a `ships.toml`-format file with the `[drivers.proxmox]` section from
 `docs/runbooks/proxmox-setup.md`; its `vmid_range` limits which VMIDs the tests
@@ -51,9 +53,11 @@ creates a Ship, signs it in, and checks:
 - a bypass agent whose autostart entry has no prompt is still recorded in its
   mode (ship-ctl sends a default first prompt);
 - all of them come back after a reboot with nobody attached, each in its mode;
-- with Remote Control off, they no longer show;
+- with Remote Control off, they drop out of the app after a reboot (the app can
+  take a few minutes);
 - a bypass-default Ship starts new agents in bypass without a prompt;
-- no code or token is in any log or shell history, on the Ship or locally.
+- no token (nor a Google sign-in code; the other codes are too plain to search
+  for) is in any log or shell history, on the Ship or locally.
 
 It then signs the Ship out and destroys it (unless `--keep`). It takes about 30
 to 45 minutes; you are needed for the sign-ins and two looks at the app.
