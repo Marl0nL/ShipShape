@@ -1,0 +1,12 @@
+# An npm-based tool that needs the GitHub sign-in before setup finishes.
+schema = 1
+id = "example-cli"
+description = "An example command-line tool for agents"
+kind = "npm"
+package = "example-cli"
+version = "1.2.3"
+needs = ["github"]
+after = ["example-cli setup hooks"]
+check = "example-cli --version"
+default = true
+bake = true

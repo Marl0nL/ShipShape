@@ -1,110 +1,44 @@
 <h1 align="center">ShipShape</h1>
 
-<p align="center"><em>Run autonomous coding agents in a locked-down container — with a one-window control plane.</em></p>
+<p align="center"><em>Virtual machines for coding agents ("Ships"), and a tool to run a fleet of them ("FleetLedger").</em></p>
 
-ShipShape boots a coding agent (Claude Code / [firstmate](https://github.com/Marl0nL/firstmate))
-inside a Docker sandbox that has **no route to the internet** except through a
-default-deny egress proxy you control. A host-side TUI/CLI (`shipshape`) is the
-bridge: you approve the domains the agent may reach, hand it short-lived
-credentials, review the commands it wants run, and watch everything happen from
-one dashboard.
+> **Status: rebuild in progress.** The repo is moving from a locked-down Docker
+> sandbox to VM-based Ships. This commit lays down the layout, the contracts both
+> halves build against, and the checks. The previous design is in `legacy/` and
+> `docs/archive/`.
 
-The agent gets a capable workspace; you keep the keys.
+## What it is
 
----
+- **Ships** are Ubuntu VMs, created from Ubuntu's own cloud image plus a small
+  seed. They boot herdr, resume their Claude Code agents on their own after a
+  reboot, and can make every Claude session available through Remote Control.
+- **FleetLedger** (`ship-fleet`) runs on your computer. It creates Ships, shows
+  their state, and signs them in to Claude Code, gcloud and GitHub by relaying
+  each tool's no-browser sign-in, so tokens never leave the Ship.
 
-## How it's isolated
+See `docs/architecture.md`.
 
-```
-                 ┌─────────────────────────────────────────────┐
-                 │  host (you)                                  │
-                 │                                              │
-                 │   shipshape  ──approve/deny──┐               │
-                 │   (TUI/CLI, runs as you)     │ file spool    │
-                 │        │                     ▼               │
-   ┌─────────────┼────────┼──────────────┐  ┌───────────────┐  │
-   │ isolated_agent_net (internal: true) │  │ control-plane │  │
-   │        │                            │  │ (broker; no   │  │
-   │  ┌───────────────┐    ┌──────────┐  │  │ creds/host)   │  │
-   │  │ agent-sandbox │───▶│  egress- │──┼──┼──▶ internet    │  │
-   │  │ (firstmate,   │    │  proxy   │  │  │  (allow-list)  │  │
-   │  │  claude, …)   │    │ (Squid)  │  │  └───────────────┘  │
-   │  └───────────────┘    └──────────┘  │                     │
-   │      no direct internet             │                     │
-   └─────────────────────────────────────┘                     │
-                 └─────────────────────────────────────────────┘
-```
+## Layout
 
-- **agent-sandbox** lives only on an `internal: true` network — its sole path out
-  is the Squid **egress-proxy**, which enforces a default-deny domain allow-list.
-  A tool that ignores the proxy env vars simply cannot reach the network
-  (fail-closed).
-- **control-plane** is a powerless in-container broker: the agent can only drop
-  request files into a shared spool that the host `shipshape` process approves.
-- Credentials are **file-based and rotatable** (`auth/`, mounted read-only) so they
-  refresh without a rebuild. Nothing mounts the Docker socket.
-
-## Requirements
-
-- Docker + Docker Compose, Python 3.11+, `pipx`
-- Optional per-feature: `gcloud` (GCP key rotation), `gh` (GitHub), a terminal
-  emulator for the pop-out shells (`gnome-terminal`/`konsole`/… or set
-  `$SHIPSHAPE_TERMINAL`).
-
-## Quick start
-
-```bash
-./install.sh                 # installs the `shipshape` TUI/CLI via pipx
-shipshape                    # first launch runs a one-time setup wizard, then the TUI
-```
-
-The **first-launch wizard** sets your firstmate source repo, egress bandwidth cap,
-and baseline allow-list. After that, from the **Dashboard**:
-
-- **Boot (u)** brings the stack up (first run builds the agent image).
-- **Quick-start firstmate (f)** boots the stack, wires Claude auth, and opens the
-  firstmate primary inside a [herdr](https://herdr.dev) workspace — already kicked
-  off so the agent starts orienting itself immediately.
-
-Then just talk to firstmate. When it asks to reach a new domain or run a host
-command, the request surfaces in the Dashboard's **Actionables** for you to
-approve, edit, or decline.
-
-## The TUI
-
-- **Dashboard** (default) — service status dots, quick Shell/Shutdown, an
-  **Actionables** queue (pending network requests, credential issues, agent
-  commands), and a live event feed from the proxy + spool. New requests ping and
-  flash the window (mute with `m`).
-- **Stack** — boot / shut down / firstmate quick-start / user + root shells.
-- **Settings** — firstmate repo, egress bandwidth, and the **Allow-list** and
-  **Provision** (dev-stack installer) sub-sections.
-- **Images** — snapshot / use / rename / delete / rebuild the agent image.
-- **Credentials** — GCP key rotation, remote-refresh passphrase, and the
-  persistent Claude token.
-
-Everything is scriptable too — `shipshape <command>` (see `shipshape --help`).
-
-## Credentials
-
-| Consumer | Mechanism |
+| Path | What it is |
 |---|---|
-| **Claude Code** | `auth/claude-token` from `claude setup-token` (long-lived). Injected as `CLAUDE_CODE_OAUTH_TOKEN` and synthesized into a credentials file on login. Set/rotate from the Credentials tab or `shipshape claude-token`. |
-| **Google Cloud** | One dedicated, scope-limited SA key minted on demand (`shipshape refresh-gcp`), serving both `gcloud` and client libraries from `/auth/gcp-sa.json`. |
-| **GitHub** | A fine-grained PAT in `auth/gh-token`, read live by a `gh` wrapper + git credential helper. |
+| `ship/` | everything that runs on a Ship |
+| `fleetledger/` | the `ship-fleet` manager (Python) |
+| `contracts/` | schemas, examples and docs both halves build against |
+| `versions.toml` | pinned versions, checksums and signing keys |
+| `scripts/check` | lint, tests and the public-repo hygiene check (what CI runs) |
+| `docs/` | architecture, build tracks, hygiene, archived design notes |
+| `legacy/` | the previous container stack (frozen, to be removed) |
 
-Real secrets live only under `auth/` (git-ignored) — never in the image build.
+## Development
 
-## Egress allow-list
+```sh
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+scripts/check
+```
 
-One domain per line in `egress/allowed_domains.txt` (a leading dot matches
-subdomains). The control plane edits it atomically and hot-reloads Squid
-(`squid -k reconfigure`) on every change, rolling back if Squid rejects the rules.
-A disabled domain is kept in place as `#SS-OFF# <domain>` rather than deleted.
+`scripts/check` needs `shellcheck` on your PATH. It is exactly what CI runs.
 
-## Docs
-
-- [`docs/DESIGN.md`](docs/DESIGN.md) — full architecture, the phase-by-phase build
-  log, the security model, and known limitations.
-- [`control-plane/README.md`](control-plane/README.md) — control-plane specifics.
-- [`auth/README.md`](auth/README.md) — the credential drop.
+Before contributing, read `docs/tracks.md` (who owns which directory) and
+`docs/hygiene.md` (nothing personal may be committed: this is a public repo).

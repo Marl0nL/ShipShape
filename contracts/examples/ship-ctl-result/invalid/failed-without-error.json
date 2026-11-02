@@ -1,0 +1,8 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "converge",
+  "ok": false,
+  "changed": [],
+  "messages": [],
+  "error": null
+}

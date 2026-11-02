@@ -1,0 +1,31 @@
+# A Ship that allows bypass, with one auto agent and one bypass agent.
+schema = 1
+
+[ship]
+name = "ship-02"
+id = "2f1b8a54-3c6e-4d1f-9a2b-5e8c7d6f4a31"
+tags = ["personal"]
+
+[claude]
+remote_control = "blocked"
+default_mode = "bypassPermissions"
+allow_bypass = true
+update_channel = "stable"
+session_prefix = "lab"
+
+[agent]
+sudo = true
+
+[network]
+lan_guard = true
+lan_guard_allow = ["192.0.2.10", "198.51.100.0/24"]
+
+[[autostart]]
+name = "planner"
+cwd = "~/work/app"
+mode = "auto"
+
+[[autostart]]
+name = "builder"
+cwd = "/srv/app"
+mode = "bypassPermissions"

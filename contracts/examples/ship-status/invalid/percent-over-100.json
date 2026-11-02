@@ -1,0 +1,105 @@
+{
+  "schema": "shipshape.ship-status/1",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "ship": {
+    "name": "ship-01",
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "tags": [
+      "work"
+    ],
+    "tooling": "0.1.0",
+    "bundle_commit": "0123456789ab"
+  },
+  "state": "running",
+  "attention": [
+    {
+      "code": "agent-waiting",
+      "message": "Agent 'main' is waiting for you.",
+      "subject": "main"
+    }
+  ],
+  "host": {
+    "uptime_s": 86400,
+    "load1": 0.4,
+    "cpus": 4,
+    "mem_total_mb": 7951,
+    "mem_used_pct": 120,
+    "disk_total_gb": 38.6,
+    "disk_used_pct": 22.0,
+    "reboot_required": false,
+    "updates_pending": 3
+  },
+  "provision": {
+    "cloud_init": "done",
+    "last_run": "2026-01-01T00:00:00Z",
+    "result": "ok"
+  },
+  "herdr": {
+    "version": "0.9.5",
+    "server": "running",
+    "agents": [
+      {
+        "name": "main",
+        "kind": "claude",
+        "state": "blocked",
+        "mode": "auto",
+        "pane": "w1:p2",
+        "workspace": "w1",
+        "cwd": "/home/agent/work/main"
+      },
+      {
+        "name": "builder",
+        "kind": "claude",
+        "state": "working",
+        "mode": "bypassPermissions",
+        "pane": "w2:p1",
+        "workspace": "w2"
+      }
+    ],
+    "last_resume": {
+      "at": "2026-01-01T00:00:00Z",
+      "method": "hidden-client",
+      "resumed": 2,
+      "failed": 0
+    }
+  },
+  "claude": {
+    "version": "2.1.300",
+    "channel": "latest",
+    "remote_control": "on",
+    "default_mode": "auto",
+    "allow_bypass": false
+  },
+  "auth": {
+    "claude": {
+      "state": "ok",
+      "account": "work@example.com",
+      "detail": "max",
+      "expires_at": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "gcloud": {
+      "state": "ok",
+      "account": "work@example.com",
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "gcloud_adc": {
+      "state": "missing",
+      "account": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "github": {
+      "state": "ok",
+      "account": "example-work",
+      "checked_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  "tools": {
+    "example-cli": {
+      "state": "ok",
+      "version": "1.2.3"
+    }
+  },
+  "net": null,
+  "errors": []
+}

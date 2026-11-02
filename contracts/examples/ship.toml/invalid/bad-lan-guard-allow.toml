@@ -1,0 +1,8 @@
+# lan_guard_allow takes addresses or CIDRs, not names.
+schema = 1
+[ship]
+name = "ship-01"
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+[network]
+lan_guard = true
+lan_guard_allow = ["gateway.example.com"]

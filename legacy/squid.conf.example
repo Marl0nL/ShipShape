@@ -76,7 +76,7 @@ delay_access 1 allow localnet
 # Squid resolves names itself. For VPN-only INTERNAL hostnames (Option A),
 # point Squid at your internal resolver so those names resolve while the host
 # VPN is up. Either uncomment here, or set `dns:` on the proxy in compose.
-# dns_nameservers 10.0.0.53 1.1.1.1
+# dns_nameservers 192.0.2.53 1.1.1.1
 
 # Standard proxy port
 http_port 3128

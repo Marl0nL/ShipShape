@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/ship.toml.schema.json",
+  "title": "ship.toml: one Ship's settings (/etc/shipshape/ship.toml)",
+  "description": "Written by FleetLedger into the seed (W3) and by `ship-ctl set`; read by ship-provision and ship-ctl (W4, W5). TOML on disk; validated as the equivalent JSON value. See contracts/settings.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ship"],
+  "properties": {
+    "schema": { "const": 1, "description": "Contract version. Bump only for breaking changes." },
+    "ship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "id"],
+      "properties": {
+        "name": { "$ref": "#/$defs/shipName", "description": "Also the hostname." },
+        "id": { "$ref": "#/$defs/uuid", "description": "Random, fixed for the Ship's life." },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tag" },
+          "uniqueItems": true,
+          "default": []
+        }
+      }
+    },
+    "claude": { "$ref": "#/$defs/claudeSettings" },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sudo": {
+          "type": "boolean",
+          "default": false,
+          "description": "Passwordless sudo for the agent user. Off by default."
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lan_guard": {
+          "type": "boolean",
+          "default": false,
+          "description": "Block new connections to private address ranges (phase 2)."
+        },
+        "lan_guard_allow": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-fA-F:.]+(/[0-9]{1,3})?$" },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Extra addresses or CIDRs the guard lets through (gateway, DNS and the FleetLedger host are always allowed)."
+        }
+      }
+    },
+    "autostart": {
+      "type": "array",
+      "description": "Agents ship-ctl autostart starts when they are not already running. Names must be unique (checked by ship-ctl).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "cwd"],
+        "properties": {
+          "name": { "$ref": "#/$defs/agentName" },
+          "kind": { "const": "claude", "default": "claude" },
+          "cwd": {
+            "type": "string",
+            "pattern": "^(~/|/)",
+            "description": "Working folder; ~/ means the agent user's home."
+          },
+          "mode": {
+            "$ref": "#/$defs/permissionMode",
+            "description": "Omitted: the Ship's claude.default_mode."
+          },
+          "prompt": { "type": "string", "maxLength": 4000 }
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolId" },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Recipe ids from ship/tools/<id>.toml."
+        },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/profileId" },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Profile ids from ship/profiles/<id>.toml."
+        }
+      }
+    },
+    "profile_options": {
+      "type": "object",
+      "description": "Per-profile option values, e.g. a repo URL. Keys are profile ids; values are string maps.",
+      "propertyNames": { "$ref": "#/$defs/profileId" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+        "additionalProperties": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["claude"],
+        "properties": {
+          "claude": {
+            "required": ["default_mode"],
+            "properties": { "default_mode": { "const": "bypassPermissions" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "claude": {
+            "required": ["allow_bypass"],
+            "properties": { "allow_bypass": { "const": true } }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["autostart"],
+        "properties": {
+          "autostart": {
+            "contains": {
+              "required": ["mode"],
+              "properties": { "mode": { "const": "bypassPermissions" } }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["claude"],
+        "properties": {
+          "claude": {
+            "required": ["allow_bypass"],
+            "properties": { "allow_bypass": { "const": true } }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "shipName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "tag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "agentName": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "profileId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "permissionMode": {
+      "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
+      "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
+    },
+    "remoteControl": { "enum": ["on", "off", "blocked"] },
+    "updateChannel": { "enum": ["latest", "stable"] },
+    "claudeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remote_control": {
+          "$ref": "#/$defs/remoteControl",
+          "default": "on",
+          "description": "on: remoteControlAtStartup true; off: false; blocked: also disableRemoteControl."
+        },
+        "default_mode": { "$ref": "#/$defs/permissionMode", "default": "auto" },
+        "allow_bypass": {
+          "type": "boolean",
+          "default": false,
+          "description": "false writes permissions.disableBypassPermissionsMode = \"disable\" to managed settings."
+        },
+        "update_channel": { "$ref": "#/$defs/updateChannel", "default": "latest" },
+        "session_prefix": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$",
+          "description": "Remote Control session-name prefix. Default: the Ship's name."
+        }
+      }
+    }
+  }
+}

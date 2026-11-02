@@ -1,0 +1,25 @@
+# A typical Ship: auto mode, Remote Control on, default tools.
+schema = 1
+
+[ship]
+name = "ship-01"
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+tags = ["work"]
+
+[claude]
+remote_control = "on"
+default_mode = "auto"
+allow_bypass = false
+update_channel = "latest"
+
+[tools]
+install = ["example-cli"]
+profiles = ["orchestrator"]
+
+[profile_options.orchestrator]
+repo_url = "https://github.com/example/orchestrator.git"
+
+[[autostart]]
+name = "main"
+cwd = "~/work/main"
+prompt = "Get oriented and ready to work."

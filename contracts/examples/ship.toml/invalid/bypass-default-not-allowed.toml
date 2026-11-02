@@ -1,0 +1,8 @@
+# default_mode bypassPermissions needs allow_bypass = true.
+schema = 1
+[ship]
+name = "ship-01"
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+[claude]
+default_mode = "bypassPermissions"
+allow_bypass = false

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Run every check CI runs, in the same order:
+#   1. shellcheck on shell scripts
+#   2. ruff on Python
+#   3. pytest (contracts, scripts, ship/tests, fleetledger/tests)
+#   4. npm test in any package under ship/ or fleetledger/ that has one
+#   5. the public-repo hygiene check (generic rules + your private deny-list)
+#
+# legacy/ is frozen and skipped by steps 1-4.
+#
+# Environment:
+#   PYTHON                       interpreter with requirements-dev.txt installed
+#                                (default: python3)
+#   SHIPSHAPE_HYGIENE_BASE       also scan commit messages in BASE..HEAD
+#   SHIPSHAPE_HYGIENE_DENYLIST   private deny-list path (see docs/hygiene.md)
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+PYTHON="${PYTHON:-python3}"
+failed=()
+
+step() { printf '\n==> %s\n' "$1"; }
+run() {
+  local name="$1"; shift
+  if ! "$@"; then failed+=("$name"); fi
+}
+need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "check: '$1' not found. $2" >&2
+    exit 2
+  fi
+}
+
+# Shell scripts: *.sh files, plus extension-less files with a sh/bash shebang.
+shell_files() {
+  git ls-files --cached --others --exclude-standard -z |
+    while IFS= read -r -d '' f; do
+      case "$f" in legacy/*|*/node_modules/*) continue ;; esac
+      [ -f "$f" ] || continue
+      case "$f" in
+        *.sh) printf '%s\0' "$f" ;;
+        *.*) ;;
+        *) head -n1 "$f" 2>/dev/null | grep -Eq '^#!.*\b(ba)?sh\b' && printf '%s\0' "$f" ;;
+      esac
+    done
+}
+
+step "shellcheck"
+need shellcheck "Install it (apt install shellcheck)."
+mapfile -d '' scripts < <(shell_files)
+if [ "${#scripts[@]}" -gt 0 ]; then
+  run shellcheck shellcheck --severity=style "${scripts[@]}"
+else
+  echo "no shell scripts"
+fi
+
+step "ruff"
+run ruff "$PYTHON" -m ruff check .
+
+step "pytest"
+run pytest "$PYTHON" -m pytest -q
+
+step "npm test"
+mapfile -t packages < <(git ls-files 'ship/**/package.json' 'fleetledger/**/package.json' |
+  grep -v node_modules || true)
+if [ "${#packages[@]}" -eq 0 ]; then
+  echo "no npm packages yet"
+else
+  need npm "Install Node.js $(sed -n 's/^major = //p' versions.toml | head -n1) or newer."
+  for pkg in "${packages[@]}"; do
+    dir="$(dirname "$pkg")"
+    echo "-- $dir"
+    run "npm test ($dir)" bash -c "cd '$dir' && npm ci --ignore-scripts --no-audit --no-fund && npm test"
+  done
+fi
+
+step "hygiene"
+hygiene_args=(--tree)
+if [ -n "${SHIPSHAPE_HYGIENE_BASE:-}" ]; then
+  hygiene_args+=(--commits "${SHIPSHAPE_HYGIENE_BASE}..HEAD")
+fi
+run hygiene "$PYTHON" scripts/hygiene.py "${hygiene_args[@]}"
+
+echo
+if [ "${#failed[@]}" -gt 0 ]; then
+  echo "check: FAILED: ${failed[*]}" >&2
+  exit 1
+fi
+echo "check: all passed"

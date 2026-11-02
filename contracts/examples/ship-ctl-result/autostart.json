@@ -1,0 +1,21 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "autostart",
+  "ok": true,
+  "changed": [
+    "main"
+  ],
+  "messages": [],
+  "data": {
+    "started": [
+      "main"
+    ],
+    "skipped": [
+      {
+        "name": "builder",
+        "reason": "running"
+      }
+    ]
+  },
+  "error": null
+}

@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/ships.toml.schema.json",
+  "title": "ships.toml: FleetLedger's inventory (~/.config/fleetledger/ships.toml)",
+  "description": "Local and git-ignored: it holds your accounts, names and paths. Read and written by FleetLedger only (W3, W8, W9, W10). The repo ships contracts/examples/ships.toml/ with generic values. See contracts/settings.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "fleet"],
+  "properties": {
+    "schema": { "const": 1 },
+    "fleet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admin_key", "agent_keys"],
+      "properties": {
+        "admin_key": {
+          "$ref": "#/$defs/path",
+          "description": "Private key FleetLedger uses to log in as the fleet user. Its .pub goes into every seed."
+        },
+        "agent_keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/path" },
+          "description": "Public key files placed in the agent user's authorized_keys (your keys for attaching)."
+        },
+        "known_hosts": {
+          "$ref": "#/$defs/path",
+          "default": "~/.config/fleetledger/known_hosts",
+          "description": "FleetLedger's own known-hosts file; never your ~/.ssh/known_hosts."
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Applied to new Ships unless the ship-fleet new command overrides them.",
+      "properties": {
+        "driver": { "$ref": "#/$defs/driverId", "default": "manual" },
+        "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" }, "uniqueItems": true },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/toolId" }, "uniqueItems": true },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/profileId" },
+          "uniqueItems": true
+        },
+        "claude": { "$ref": "#/$defs/claudeSettings" },
+        "size": { "$ref": "#/$defs/size" }
+      }
+    },
+    "tag": {
+      "type": "object",
+      "description": "Expected accounts per tag. After every sign-in, and on every status poll, the signed-in account is compared with these.",
+      "propertyNames": { "$ref": "#/$defs/tag" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "claude": { "type": "string", "minLength": 1 },
+          "gcloud": { "type": "string", "minLength": 1 },
+          "github": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "profile_options": {
+      "type": "object",
+      "description": "Default option values per profile (e.g. a repo URL), copied into each Ship's ship.toml.",
+      "propertyNames": { "$ref": "#/$defs/profileId" },
+      "additionalProperties": {
+        "type": "object",
+        "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "drivers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "manual": { "type": "object", "additionalProperties": false, "properties": {} },
+        "proxmox": { "$ref": "#/$defs/proxmox" }
+      }
+    },
+    "ship": {
+      "type": "object",
+      "description": "One entry per Ship, keyed by Ship name.",
+      "propertyNames": { "$ref": "#/$defs/shipName" },
+      "additionalProperties": { "$ref": "#/$defs/shipEntry" }
+    }
+  },
+  "$defs": {
+    "shipName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "tag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "profileId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "permissionMode": {
+      "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
+      "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
+    },
+    "remoteControl": { "enum": ["on", "off", "blocked"] },
+    "updateChannel": { "enum": ["latest", "stable"] },
+    "claudeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remote_control": {
+          "$ref": "#/$defs/remoteControl",
+          "default": "on",
+          "description": "on: remoteControlAtStartup true; off: false; blocked: also disableRemoteControl."
+        },
+        "default_mode": { "$ref": "#/$defs/permissionMode", "default": "auto" },
+        "allow_bypass": {
+          "type": "boolean",
+          "default": false,
+          "description": "false writes permissions.disableBypassPermissionsMode = \"disable\" to managed settings."
+        },
+        "update_channel": { "$ref": "#/$defs/updateChannel", "default": "latest" },
+        "session_prefix": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$",
+          "description": "Remote Control session-name prefix. Default: the Ship's name."
+        }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A local file path; ~/ is expanded."
+    },
+    "driverId": { "enum": ["manual", "proxmox"] },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cores": { "type": "integer", "minimum": 1, "maximum": 64, "default": 4 },
+        "memory_mb": { "type": "integer", "minimum": 4096, "maximum": 262144, "default": 8192 },
+        "disk_gb": { "type": "integer", "minimum": 20, "maximum": 4096, "default": 40 }
+      }
+    },
+    "proxmox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_url",
+        "node",
+        "pool",
+        "template_vmid",
+        "seed_storage",
+        "disk_storage",
+        "bridge",
+        "token_id",
+        "token_file",
+        "tls_fingerprint"
+      ],
+      "properties": {
+        "api_url": {
+          "type": "string",
+          "pattern": "^https://[^/]+(:[0-9]+)?/api2/json/?$",
+          "description": "e.g. https://pve.example.com:8006/api2/json"
+        },
+        "node": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$" },
+        "pool": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$" },
+        "template_vmid": { "type": "integer", "minimum": 100, "maximum": 999999999 },
+        "seed_storage": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ISO-capable storage used only for seed ISOs."
+        },
+        "disk_storage": { "type": "string", "minLength": 1 },
+        "bridge": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,32}$" },
+        "token_id": {
+          "type": "string",
+          "pattern": "^[^@!\\s]+@[^!\\s]+![A-Za-z][A-Za-z0-9_.-]*$",
+          "description": "user@realm!tokenname"
+        },
+        "token_file": {
+          "$ref": "#/$defs/path",
+          "description": "File holding only the token secret, mode 0600."
+        },
+        "tls_fingerprint": {
+          "type": "string",
+          "pattern": "^([0-9A-F]{2}:){31}[0-9A-F]{2}$",
+          "description": "SHA-256 fingerprint of the API's TLS certificate, colon-separated upper-case hex."
+        },
+        "vmid_range": {
+          "type": "array",
+          "prefixItems": [
+            { "type": "integer", "minimum": 100 },
+            { "type": "integer", "minimum": 100 }
+          ],
+          "items": false,
+          "minItems": 2,
+          "description": "Optional [first, last] VMIDs FleetLedger may allocate."
+        }
+      }
+    },
+    "shipEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "driver", "names", "host_key"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" }, "uniqueItems": true },
+        "driver": { "$ref": "#/$defs/driverId" },
+        "driver_ref": {
+          "type": "object",
+          "description": "Driver-specific handle, e.g. { vmid = 101 } for proxmox.",
+          "additionalProperties": { "type": ["string", "integer"] }
+        },
+        "names": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$" },
+          "description": "Hostnames to try in order (LAN name first, overlay name later). Never bare IPs in shared examples."
+        },
+        "host_key": {
+          "type": "string",
+          "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( .*)?$",
+          "description": "The Ship's ed25519 host public key, pinned before first boot."
+        },
+        "created": { "$ref": "#/$defs/timestamp" },
+        "size": { "$ref": "#/$defs/size" },
+        "claude": { "$ref": "#/$defs/claudeSettings" },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/toolId" }, "uniqueItems": true },
+        "profiles": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/profileId" },
+          "uniqueItems": true
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

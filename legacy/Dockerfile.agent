@@ -81,7 +81,7 @@ RUN curl -fsSL https://antigravity.google/cli/install.sh | bash || echo "WARN: a
 
 # 6. firstmate — cloned from the CONFIGURED fork (Settings/wizard sets FIRSTMATE_REPO;
 #    default: the user's), defaulted to the herdr backend + claude harness.
-ARG FIRSTMATE_REPO=https://github.com/Marl0nL/firstmate.git
+ARG FIRSTMATE_REPO=https://github.com/example/firstmate.git
 RUN git clone --depth 1 "$FIRSTMATE_REPO" /home/agentdev/firstmate && \
     mkdir -p /home/agentdev/firstmate/config && \
     printf 'herdr\n' > /home/agentdev/firstmate/config/backend && \

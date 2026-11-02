@@ -1,0 +1,9 @@
+# Every Ship needs its pinned host key.
+schema = 1
+[fleet]
+admin_key = "~/.ssh/fleet"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+[ship.ship-01]
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+driver = "manual"
+names = ["ship-01.local"]

@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/ship-status.schema.json",
+  "title": "Ship status document (ship-ctl status --json, version 1)",
+  "description": "Produced by ship-ctl on the Ship (W5); consumed by FleetLedger (W8, W10) and ship-axi (W7, via /run/shipshape/status.json). Holds state and account names, never tokens. See contracts/ship-ctl.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "generated_at",
+    "ship",
+    "state",
+    "attention",
+    "host",
+    "provision",
+    "herdr",
+    "claude",
+    "auth",
+    "tools",
+    "errors"
+  ],
+  "properties": {
+    "schema": { "const": "shipshape.ship-status/1" },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "ship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "id", "tags", "tooling"],
+      "properties": {
+        "name": { "$ref": "#/$defs/shipName" },
+        "id": { "$ref": "#/$defs/uuid" },
+        "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" }, "uniqueItems": true },
+        "tooling": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$",
+          "description": "Version of the installed Ship tooling bundle (bundle.json tooling_version)."
+        },
+        "bundle_commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$" }
+      }
+    },
+    "state": {
+      "enum": ["provisioning", "needs-sign-in", "ready", "running", "unknown"],
+      "description": "provisioning: cloud-init or ship-provision not finished. needs-sign-in: Claude not signed in. ready: signed in, herdr up, no agents. running: one or more agents."
+    },
+    "attention": {
+      "type": "array",
+      "description": "Things a person should look at. Empty when all is well.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, provision-failed, tool-waiting, tool-failed. FleetLedger adds its own (signin-wrong-account, behind-tooling) when it displays a Ship. Consumers show unknown codes as-is."
+          },
+          "message": { "type": "string", "maxLength": 500 },
+          "subject": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "What it is about: an agent name, service id, unit or tool id."
+          }
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uptime_s",
+        "load1",
+        "cpus",
+        "mem_total_mb",
+        "mem_used_pct",
+        "disk_total_gb",
+        "disk_used_pct",
+        "reboot_required"
+      ],
+      "properties": {
+        "uptime_s": { "type": "integer", "minimum": 0 },
+        "load1": { "type": "number", "minimum": 0 },
+        "cpus": { "type": "integer", "minimum": 1 },
+        "mem_total_mb": { "type": "integer", "minimum": 0 },
+        "mem_used_pct": { "$ref": "#/$defs/percent" },
+        "disk_total_gb": { "type": "number", "minimum": 0 },
+        "disk_used_pct": { "$ref": "#/$defs/percent" },
+        "reboot_required": { "type": "boolean" },
+        "updates_pending": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "provision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cloud_init", "last_run", "result"],
+      "properties": {
+        "cloud_init": { "enum": ["done", "running", "error", "disabled", "unknown"] },
+        "last_run": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "result": { "enum": ["ok", "failed", "running", "never"] }
+      }
+    },
+    "herdr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "server", "agents", "last_resume"],
+      "properties": {
+        "version": { "type": ["string", "null"] },
+        "server": { "enum": ["running", "stopped", "unknown"] },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "state", "mode"],
+            "properties": {
+              "name": { "type": ["string", "null"], "description": "herdr agent name, if it has one." },
+              "kind": { "type": "string", "description": "herdr agent kind, e.g. claude." },
+              "state": { "enum": ["idle", "working", "blocked", "done", "unknown"] },
+              "mode": {
+                "oneOf": [{ "$ref": "#/$defs/permissionMode" }, { "type": "null" }],
+                "description": "Claude permission mode from the mode ledger; null if unknown or not Claude."
+              },
+              "pane": { "type": "string", "description": "herdr pane id, e.g. w1:p2." },
+              "workspace": { "type": "string" },
+              "cwd": { "type": "string" }
+            }
+          }
+        },
+        "last_resume": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["at", "method", "resumed"],
+              "properties": {
+                "at": { "$ref": "#/$defs/timestamp" },
+                "method": { "enum": ["hidden-client", "api-fallback"] },
+                "resumed": { "type": "integer", "minimum": 0 },
+                "failed": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "claude": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "channel", "remote_control", "default_mode", "allow_bypass"],
+      "properties": {
+        "version": { "type": ["string", "null"] },
+        "channel": { "$ref": "#/$defs/updateChannel" },
+        "remote_control": { "$ref": "#/$defs/remoteControl" },
+        "default_mode": { "$ref": "#/$defs/permissionMode" },
+        "allow_bypass": { "type": "boolean" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "description": "One entry per sign-in service. Known ids: claude, gcloud, gcloud_adc, github. More may appear.",
+      "required": ["claude", "gcloud", "gcloud_adc", "github"],
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+      "additionalProperties": { "$ref": "#/$defs/authEntry" }
+    },
+    "tools": {
+      "type": "object",
+      "description": "Installed catalogue recipes, keyed by recipe id.",
+      "propertyNames": { "$ref": "#/$defs/toolId" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state"],
+        "properties": {
+          "state": { "enum": ["ok", "waiting", "failed", "missing"] },
+          "version": { "type": ["string", "null"] },
+          "waiting_for": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+            "description": "Sign-in services the tool needs before setup can finish."
+          }
+        }
+      }
+    },
+    "net": {
+      "description": "Network visibility summary (phase 3); null until the collector exists.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["window_h", "rx_mb", "tx_mb", "new_destinations"],
+          "properties": {
+            "window_h": { "type": "integer", "minimum": 1 },
+            "rx_mb": { "type": "number", "minimum": 0 },
+            "tx_mb": { "type": "number", "minimum": 0 },
+            "new_destinations": {
+              "type": "array",
+              "items": { "type": "string", "maxLength": 253 }
+            }
+          }
+        }
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "description": "Probes that failed while building this document (non-fatal).",
+      "items": { "type": "string", "maxLength": 500 }
+    }
+  },
+  "$defs": {
+    "shipName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "tag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "permissionMode": {
+      "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
+      "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
+    },
+    "remoteControl": { "enum": ["on", "off", "blocked"] },
+    "updateChannel": { "enum": ["latest", "stable"] },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    },
+    "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "authEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "account", "checked_at"],
+      "properties": {
+        "state": {
+          "enum": ["ok", "missing", "expiring", "expired", "error", "unknown"],
+          "description": "expiring: the tool warns that the sign-in ends soon."
+        },
+        "account": {
+          "type": ["string", "null"],
+          "maxLength": 254,
+          "description": "Signed-in account name or email as the tool reports it. FleetLedger compares it with the Ship's tag."
+        },
+        "detail": {
+          "type": ["string", "null"],
+          "maxLength": 200,
+          "description": "e.g. plan type or method. Never a token."
+        },
+        "expires_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "checked_at": { "$ref": "#/$defs/timestamp" }
+      }
+    }
+  }
+}

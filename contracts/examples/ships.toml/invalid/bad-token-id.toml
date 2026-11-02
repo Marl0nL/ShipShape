@@ -1,0 +1,16 @@
+# Proxmox token ids look like user@realm!name.
+schema = 1
+[fleet]
+admin_key = "~/.ssh/fleet"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+[drivers.proxmox]
+api_url = "https://pve.example.com:8006/api2/json"
+node = "pve"
+pool = "shipshape"
+template_vmid = 9000
+seed_storage = "shipshape-seeds"
+disk_storage = "local-lvm"
+bridge = "vmbr0"
+token_id = "shipshape-build"
+token_file = "~/.config/fleetledger/proxmox-token"
+tls_fingerprint = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
