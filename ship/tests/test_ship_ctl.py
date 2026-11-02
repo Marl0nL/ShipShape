@@ -459,3 +459,11 @@ def test_adc_probe_never_captures_the_token():
     assert probe_adc(Ctx())[0]["state"] == "ok"
     assert seen["discard"] is True
     assert seen["argv"][-1] == "print-access-token"
+    # gcloud copies command output into its log files: the token must not land there.
+    assert seen["env"] == {"CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "1"}
+
+    from shipctl.status import probe_gcloud_auth
+
+    seen.clear()
+    probe_gcloud_auth(Ctx())
+    assert seen["env"] == {"CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "1"}

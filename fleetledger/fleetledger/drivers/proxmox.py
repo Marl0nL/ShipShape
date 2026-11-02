@@ -125,7 +125,7 @@ class ProxmoxDriver(Driver):
         except BaseException:
             # Leave nothing behind from a half-made Ship.
             if cloned:
-                self._destroy_vm(vmid)
+                self._destroy_vm(vmid, ship.name)
             if uploaded:
                 self._delete_volume(volume)
             raise
@@ -135,22 +135,29 @@ class ProxmoxDriver(Driver):
             driver_ref={"vmid": vmid, "seed": seed.instance_id},
         )
 
+    def _checked_vm(self, ship: Ship) -> str:
+        """The API path of the Ship's VM, after checking it is that Ship."""
+        vmid = self._vmid(ship)
+        if not self.check_name(vmid, ship.name):
+            raise FleetError(f"VM {vmid} ({ship.name}) no longer exists.")
+        return self._vm(vmid)
+
     def start(self, ship: Ship) -> Outcome:
-        self._task(self.api.post(self._vm(self._vmid(ship)) + "/status/start"))
+        self._task(self.api.post(self._checked_vm(ship) + "/status/start"))
         return Outcome(done=True, messages=[f"Started {ship.name}."])
 
     def stop(self, ship: Ship) -> Outcome:
         # ACPI shutdown, so herdr can save its state (logind inhibitor).
-        self._task(self.api.post(self._vm(self._vmid(ship)) + "/status/shutdown", timeout=180))
+        self._task(self.api.post(self._checked_vm(ship) + "/status/shutdown", timeout=180))
         return Outcome(done=True, messages=[f"Shut down {ship.name}."])
 
     def reboot(self, ship: Ship) -> Outcome:
-        self._task(self.api.post(self._vm(self._vmid(ship)) + "/status/reboot"))
+        self._task(self.api.post(self._checked_vm(ship) + "/status/reboot"))
         return Outcome(done=True, messages=[f"Rebooted {ship.name}."])
 
     def destroy(self, ship: Ship) -> Outcome:
         vmid = self._vmid(ship)
-        self._destroy_vm(vmid)
+        self._destroy_vm(vmid, ship.name)
         messages = [f"Destroyed VM {vmid}."]
         if "seed" in ship.driver_ref:
             self._delete_volume(self._ship_seed(ship))
@@ -179,6 +186,8 @@ class ProxmoxDriver(Driver):
 
     def finish_enrolment(self, ship: Ship) -> Outcome:
         vmid = self._vmid(ship)
+        if not self.check_name(vmid, ship.name):
+            raise FleetError(f"VM {vmid} ({ship.name}) no longer exists.")
         # Eject the media: applied at once on a running VM (removing an IDE
         # drive would only be a pending change until the next power cycle).
         self._task(self.api.post(self._vm(vmid) + "/config", **{SEED_DRIVE: "none,media=cdrom"}))
@@ -192,7 +201,43 @@ class ProxmoxDriver(Driver):
     def _ship_seed(self, ship: Ship) -> str:
         return seed_volume(self.config["seed_storage"], str(ship.driver_ref["seed"]))
 
-    def _destroy_vm(self, vmid: int) -> None:
+    def check_name(self, vmid: int, name: str) -> bool:
+        """True if VM vmid is the Ship called name; False if it is already gone.
+
+        VMIDs are reused once freed, so a VMID recorded earlier may now belong
+        to another VM. Anything that changes or removes a VM checks its name
+        first, and refuses a VM with another name or one the token cannot see.
+        """
+        try:
+            actual = self.api.get(self._vm(vmid) + "/config").get("name")
+        except ProxmoxError as exc:
+            if is_gone(exc):
+                return False
+            if exc.status != 403:
+                raise
+            # The token sees VMs only through the pool, and a destroyed VM leaves
+            # it, so a VMID that is simply free also answers 403. Ask whether the
+            # number is free (open to every user); taken means hidden, not ours.
+            try:
+                self.api.get("/cluster/nextid", vmid=vmid)
+            except ProxmoxError as taken:
+                if taken.status == 400:
+                    raise FleetError(
+                        f"VM {vmid} is not visible to the token (not in the pool?); "
+                        f"not touching it as {name}."
+                    ) from exc
+                raise
+            return False
+        if actual != name:
+            raise FleetError(
+                f"VM {vmid} is now '{actual}', not {name} (its VMID was reused); "
+                "not touching it."
+            )
+        return True
+
+    def _destroy_vm(self, vmid: int, name: str) -> None:
+        if not self.check_name(vmid, name):
+            return
         vm = self._vm(vmid)
         try:
             if self.api.get(vm + "/status/current").get("status") == "running":

@@ -402,6 +402,20 @@ home_npmrc() { # npm globals live in the agent's home (contracts/ship-runtime.md
     mv -fT "$tmp" "$file"' _ "$file" "$line"
 }
 
+# gcloud copies each command's output into its log files, so a token a command
+# printed (print-access-token) can sit there. ship-ctl's probes write no gcloud
+# logs any more; this removes any left from before, as the agent like every
+# step in its home (a planted link can only reach the agent's own files).
+home_gcloud_logs() {
+  local real=$ROOT$AGENT_HOME/.config/gcloud/logs
+  if ! as_owner test -e "$real" && ! as_owner test -L "$real"; then
+    return 0
+  fi
+  changed "$AGENT_HOME/.config/gcloud/logs removed (gcloud logs can hold tokens)"
+  [ "$DRY" = 1 ] && return 0
+  as_owner rm -rf -- "$real"
+}
+
 step_agent_home() {
   if [ "$SANDBOX" = 0 ] && ! id "$AGENT" >/dev/null 2>&1; then
     die "user $AGENT does not exist (the seed creates it)"
@@ -416,6 +430,7 @@ step_agent_home() {
   home_dir "$AGENT_HOME/.local/state" 0700
   home_dir "$AGENT_HOME/.local/state/shipshape" 0700
   home_npmrc
+  home_gcloud_logs
   if [ ! -e "$ROOT/var/lib/systemd/linger/$AGENT" ]; then
     sys_change "lingering for $AGENT" loginctl enable-linger "$AGENT"
   fi

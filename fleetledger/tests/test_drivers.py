@@ -39,7 +39,8 @@ SEED = SeedFile(path=None, instance_id="ship-03-0a1b2c3d")
 class FakeAPI:
     """Records calls; every mutating call returns a task id that finishes OK."""
 
-    def __init__(self, used=(), fail_on=None, vm_status="running"):
+    def __init__(self, used=(), fail_on=None, vm_status="running", vm_name="ship-03"):
+        self.vm_name = vm_name
         self.calls = []
         self.used = set(used)
         self.fail_on = fail_on
@@ -59,6 +60,13 @@ class FakeAPI:
             if params.get("vmid") in self.used:
                 raise ProxmoxError("in use", status=400)
             return params.get("vmid", 100)
+        if path.endswith("/config"):
+            if self.vm_name is None:
+                raise ProxmoxError("Configuration file 'qemu-server/x.conf' does not exist",
+                                   status=500)
+            if self.vm_name == "403":
+                raise ProxmoxError("Permission check failed (VM.Audit)", status=403)
+            return {"name": self.vm_name}
         if path.endswith("/status/current"):
             return {"status": self.vm_status}
         if path.endswith("/agent/network-get-interfaces"):
@@ -260,3 +268,50 @@ def test_already_gone_is_fine():
     api = FailingAPI("Proxmox DELETE failed: 500 volume 'shipshape-seeds:iso/x.iso' "
                      "does not exist")
     assert ProxmoxDriver(PX, api=api).finish_enrolment(ship(vmid=9101, seed="x")).done
+
+
+@pytest.mark.parametrize("other", ["someone-else", "ship-03-old", "ship-030", "ship-0"])
+def test_destroy_refuses_a_reused_vmid(other):
+    """A VMID recorded earlier may now belong to another VM: never destroy by number alone."""
+    api = FakeAPI(vm_name=other)
+    with pytest.raises(FleetError, match=f"now '{other}', not ship-03"):
+        ProxmoxDriver(PX, api=api).destroy(ship(vmid=9101))
+    for action in ("start", "stop", "reboot"):
+        with pytest.raises(FleetError, match="not ship-03"):
+            getattr(ProxmoxDriver(PX, api=api), action)(ship(vmid=9101))
+    with pytest.raises(FleetError, match="not ship-03"):
+        ProxmoxDriver(PX, api=api).finish_enrolment(ship(vmid=9101, seed="ship-03-0a1b2c3d"))
+    assert mutating(api) == []
+
+
+def test_destroy_refuses_a_vm_the_token_cannot_see():
+    api = FakeAPI(vm_name="403", used={9101})  # 403, and the number is taken: hidden
+    with pytest.raises(FleetError, match="not visible to the token"):
+        ProxmoxDriver(PX, api=api).destroy(ship(vmid=9101))
+    assert mutating(api) == []
+
+
+def test_destroy_of_a_vm_already_gone():
+    api = FakeAPI(vm_name=None)
+    assert ProxmoxDriver(PX, api=api).destroy(ship(vmid=9101)).done
+    assert [c for c in mutating(api) if "/qemu/" in c[1]] == []
+
+
+def test_freed_vmid_counts_as_gone():
+    """Outside the pool a freed VMID answers 403 too; /cluster/nextid says it is free."""
+    api = FakeAPI(vm_name="403")  # 9101 not in use
+    driver = ProxmoxDriver(PX, api=api)
+    assert driver.destroy(ship(vmid=9101)).done
+    assert ("GET", "/cluster/nextid", {"vmid": 9101}) in api.calls
+    assert [c for c in mutating(api) if "/qemu/" in c[1]] == []
+    with pytest.raises(FleetError, match="no longer exists"):
+        driver.start(ship(vmid=9101))
+
+
+def test_power_actions_check_the_name_first():
+    api = FakeAPI()
+    driver = ProxmoxDriver(PX, api=api)
+    driver.stop(ship(vmid=9101))
+    gets = [c[1] for c in api.calls if c[0] == "GET"]
+    assert gets[0] == "/nodes/pve/qemu/9101/config"
+    assert mutating(api)[-1][:2] == ("POST", "/nodes/pve/qemu/9101/status/shutdown")

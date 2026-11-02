@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "fleetledger"))
 
 from fleetledger.drivers.proxmox import ProxmoxDriver, seed_volume  # noqa: E402
+from fleetledger.drivers.proxmox_api import ProxmoxError  # noqa: E402
 from fleetledger.inventory import Ship  # noqa: E402
 from fleetledger.ssh import SSH  # noqa: E402
 from fleetledger.store import TomlFileStore, new_inventory  # noqa: E402
@@ -191,11 +193,27 @@ class Fleet:
         for member in members:
             if member.get("vmid") not in vmids_before and member.get("name") in self.attempted:
                 log(f"destroying orphan VM {member['vmid']} ({member['name']})")
-                self.driver._destroy_vm(int(member["vmid"]))
+                self.driver._destroy_vm(int(member["vmid"]), member["name"])
         for volume in self.seed_volumes() - seeds_before:
             if any(volume.split("/", 1)[-1].startswith(f"{n}-") for n in self.attempted):
                 log(f"deleting orphan seed {volume}")
                 self.driver._delete_volume(volume)
+
+    def fresh_vmid(self) -> int:
+        """A free VMID picked at random from vmid_range, so consecutive runs do
+        not reuse the number a previous run's VM just gave up."""
+        first, last = self.proxmox.get("vmid_range", [9100, 9199])
+        candidates = list(range(first, last + 1))
+        random.shuffle(candidates)
+        for vmid in candidates:
+            try:
+                self.driver.api.get("/cluster/nextid", vmid=vmid)
+            except ProxmoxError as exc:
+                if exc.status == 400:  # in use
+                    continue
+                raise
+            return vmid
+        raise AssertionError(f"no free VMID in {first}-{last}")
 
     def pool_vmids(self) -> set[int]:
         members = self.driver.api.get(f"/pools/{self.proxmox['pool']}").get("members", [])
