@@ -29,3 +29,7 @@ mode = "auto"
 name = "builder"
 cwd = "/srv/app"
 mode = "bypassPermissions"
+
+[updates]
+auto_reboot = true
+reboot_time = "03:30"
