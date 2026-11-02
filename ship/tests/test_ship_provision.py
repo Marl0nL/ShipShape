@@ -87,6 +87,34 @@ def test_apt_sources_from_versions(tmp_path):
     assert "Suites: nodistro\n" in node and "Architectures" not in node
 
 
+def test_old_gcloud_logs_are_removed(tmp_path):
+    """gcloud logs can hold tokens a command printed: converge removes them."""
+    assert provision("--converge", "--root", str(tmp_path)).returncode == 0
+    logs = tmp_path / "home/agent/.config/gcloud/logs/2026.01.01"
+    logs.mkdir(parents=True)
+    (logs / "12.00.00.000000.log").write_text("INFO ___FILE_ONLY___ ya29.example\n")
+    (tmp_path / "home/agent/.config/gcloud/credentials.db").write_text("kept")
+    r = provision("--converge", "--root", str(tmp_path))
+    assert "changed: /home/agent/.config/gcloud/logs removed" in r.stdout, r.stdout
+    assert not (tmp_path / "home/agent/.config/gcloud/logs").exists()
+    assert (tmp_path / "home/agent/.config/gcloud/credentials.db").read_text() == "kept"
+    again = provision("--converge", "--root", str(tmp_path))
+    assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
+
+
+def test_gcloud_logs_link_is_removed_not_followed(tmp_path):
+    assert provision("--converge", "--root", str(tmp_path)).returncode == 0
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "keep.txt").write_text("kept")
+    gcloud = tmp_path / "home/agent/.config/gcloud"
+    gcloud.mkdir(parents=True)
+    (gcloud / "logs").symlink_to(elsewhere)
+    assert provision("--converge", "--root", str(tmp_path)).returncode == 0
+    assert not (gcloud / "logs").is_symlink() and not (gcloud / "logs").exists()
+    assert (elsewhere / "keep.txt").read_text() == "kept"
+
+
 def test_dry_run_writes_nothing(tmp_path):
     r = provision("--first-boot", "--dry-run", "--root", str(tmp_path))
     assert r.returncode == 0
