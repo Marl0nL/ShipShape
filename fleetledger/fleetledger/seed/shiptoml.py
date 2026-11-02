@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import re
+import zoneinfo
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +15,43 @@ import tomlkit
 from fleetledger import schemas
 from fleetledger.catalogue import Catalogue
 from fleetledger.inventory import Inventory, Ship
+
+# ship.timezone (contracts/ship.toml.schema.json): an IANA zone name, never a path.
+TIMEZONE_RE = re.compile(r"^[A-Z][A-Za-z0-9_+-]{0,40}(/[A-Za-z0-9_+-]{1,40}){0,2}$")
+
+
+def local_timezone(env: Mapping[str, str] | None = None,
+                   localtime: Path = Path("/etc/localtime"),
+                   timezone_file: Path = Path("/etc/timezone"),
+                   known: set[str] | None = None) -> str:
+    """This computer's IANA time zone, for a new Ship's ship.timezone.
+
+    TZ, else the zone /etc/localtime links to, else /etc/timezone, else UTC.
+    Anything that is not a plain zone name is skipped, and so is a name this
+    computer's tzdata does not know (a POSIX TZ string such as EST+5, say).
+    """
+    env = os.environ if env is None else env
+    known = zoneinfo.available_timezones() if known is None else known
+    candidates = []
+    tz = env.get("TZ", "").lstrip(":")
+    candidates.append(tz.split("zoneinfo/", 1)[-1])
+    try:
+        candidates.append(os.readlink(localtime).split("zoneinfo/", 1)[-1])
+    except OSError:
+        pass
+    try:
+        candidates.append(timezone_file.read_text(encoding="utf-8").strip())
+    except (OSError, UnicodeDecodeError):
+        pass
+    return next((c for c in candidates
+                 if TIMEZONE_RE.match(c) and (not known or c in known)), "UTC")
+
+
+def known_timezone(name: str) -> bool:
+    """Does this computer's tzdata have `name`? True when it has no tzdata at all
+    (the Ship checks again before using it)."""
+    known = zoneinfo.available_timezones()
+    return not known or name in known
 
 
 @dataclass(frozen=True)
@@ -30,6 +70,7 @@ class SeedOptions:
     agent_sudo: bool | None = None
     lan_guard: bool | None = None
     lan_guard_allow: Sequence[str] = field(default_factory=tuple)
+    timezone: str | None = None
 
 
 def tools_for(inventory: Inventory, ship: Ship, catalogue: Catalogue) -> list[str]:
@@ -62,6 +103,8 @@ def build(
         "id": ship.id,
         "tags": list(inventory.effective_tags(ship)),
     }
+    if options.timezone:
+        doc["ship"]["timezone"] = options.timezone
 
     claude = inventory.effective_claude(ship)
     claude.setdefault("session_prefix", ship.name)

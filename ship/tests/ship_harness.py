@@ -35,7 +35,11 @@ FAKE_COMMANDS = [
     "visudo",
     "sshd",
     "vnstat",
+    "nft",
+    "ip",
+    "timedatectl",
 ]
+ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the sandbox
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
 
 BASIC_TOML = """\
@@ -156,6 +160,10 @@ def ship(tmp_path: Path) -> Ship:
         )
     )
     (root / "etc/shipshape/ship.toml").write_text(BASIC_TOML)
+    for zone in ZONES:
+        zone_file = root / "usr/share/zoneinfo" / zone
+        zone_file.parent.mkdir(parents=True, exist_ok=True)
+        zone_file.write_bytes(b"TZif2")
     (root / "proc/uptime").write_text("4000.5 100.0\n")
     (root / "proc/loadavg").write_text("0.40 0.30 0.20 1/100 999\n")
     (root / "proc/meminfo").write_text("MemTotal: 8000000 kB\nMemAvailable: 4000000 kB\n")

@@ -98,7 +98,8 @@ FleetLedger over SSH).
 | `ship-status.timer`, `ship-status.service` | system | Refresh `/run/shipshape/status.json` every 30 seconds, and react to sign-ins: run tools waiting on a newly signed-in service, and `ship-ctl autostart` once Claude becomes signed in (`ship-ctl.md`). |
 | `ship-netwatch.service` | system | Network visibility collector (phase 3): records outbound connections and the DNS names they came from into `/var/lib/shipshape/net/`. Root, with `ProtectHome=yes`, so it cannot read or write any home folder. Observes only; blocks nothing. |
 | `vnstat.service` | system | Ubuntu's vnstat daemon: per-interface byte counters for the totals. |
-| `ship-lan-guard.service` | system | One-shot at boot: loads the LAN guard rules (`settings.md`, "LAN guard"). Enabled only while `network.lan_guard` is on. |
+| `ship-lan-guard-early.service` | system | One-shot before `network-pre.target`: loads the stored LAN guard rules, so no interface is up without them (`settings.md`, "LAN guard"). Enabled only while `network.lan_guard` is on. |
+| `ship-lan-guard.service` | system | One-shot once the network is online: `ship-ctl lan-guard` finds the gateways and DNS servers again and reloads the rules. Enabled only while `network.lan_guard` is on. |
 
 Also present: `/etc/systemd/logind.conf.d/50-shipshape.conf`
 (`InhibitDelayMaxSec=30`, so herdr can save on shutdown) and

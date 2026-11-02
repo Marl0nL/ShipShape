@@ -30,6 +30,7 @@ from fleetledger import status as status_mod
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
 from fleetledger.seed import bundle as bundle_mod
+from fleetledger.seed.shiptoml import TIMEZONE_RE
 from fleetledger.shipctl import ShipCtl
 from fleetledger.ssh import Unreachable
 
@@ -57,6 +58,7 @@ SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "auto_reboot": ("updates.auto_reboot", ("true", "false")),
     "reboot_time": ("updates.reboot_time", None),
     "tags": ("ship.tags", None),
+    "timezone": ("ship.timezone", None),
 }
 
 # Severity of each attention code, for sorting the Needs attention list.
@@ -573,6 +575,8 @@ def parse_assignments(values: Iterable[str]) -> list[str]:
                              f"'{val}'.")
         if full == "updates.reboot_time" and not TIME_RE.match(val):
             raise FleetError(f"reboot_time is HH:MM on a 24-hour clock, not '{val}'.")
+        if full == "ship.timezone" and not TIMEZONE_RE.match(val):
+            raise FleetError(f"timezone is an IANA zone name such as Europe/Berlin, not '{val}'.")
         if full == "claude.session_prefix" and not PREFIX_RE.match(val):
             raise FleetError(f"Invalid session_prefix '{val}'.")
         out[full] = val

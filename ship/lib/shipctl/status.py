@@ -242,6 +242,42 @@ def probe_herdr(ctx: Context) -> tuple[dict, list[str]]:
     }, errors
 
 
+HERDR_BIN = "/usr/local/bin/herdr"
+
+
+def herdr_restart_pending(ctx: Context) -> bool:
+    """True when a running `herdr server` is not the installed herdr binary.
+
+    A converge replaces /usr/local/bin/herdr with a new file; the running server
+    keeps the old one (its /proc/<pid>/exe points at the replaced inode) until
+    the next reboot. Only the agent's processes are looked at, and only stat()
+    and cmdline are read, so nothing an agent controls is opened or followed for
+    writing; at worst an agent could make this report a needless reboot.
+    """
+    try:
+        installed = os.stat(ctx.paths.p(HERDR_BIN))
+    except OSError:
+        return False
+    owner = ctx.agent_owner
+    try:
+        entries = [e for e in ctx.paths.proc.iterdir() if e.name.isdigit()]
+    except OSError:
+        return False
+    for entry in entries:
+        try:
+            if owner is not None and entry.stat().st_uid != owner[0]:
+                continue
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+            if Path(argv[0].decode("utf-8", "replace")).name != "herdr" or argv[1:2] != [b"server"]:
+                continue
+            running = os.stat(entry / "exe")
+        except OSError:
+            continue
+        if (running.st_dev, running.st_ino) != (installed.st_dev, installed.st_ino):
+            return True
+    return False
+
+
 # --- sign-ins ---------------------------------------------------------------
 def _auth(state: str, account: str | None = None, detail: str | None = None) -> dict:
     out: dict = {"state": state, "account": account[:254] if account else None}
@@ -406,7 +442,7 @@ def bundle_info(ctx: Context) -> tuple[str, str | None, list[str]]:
 
 
 # --- the document -----------------------------------------------------------
-def attention_for(doc: dict, failed_units: list[str]) -> list[dict]:
+def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = False) -> list[dict]:
     items: list[dict] = []
 
     def add(code: str, message: str, subject: str | None = None) -> None:
@@ -442,6 +478,12 @@ def attention_for(doc: dict, failed_units: list[str]) -> list[dict]:
         add(code, message)
     if doc["host"]["reboot_required"]:
         add("reboot-required", "A reboot is needed to finish updates.")
+    if herdr_pending:
+        add(
+            "herdr-restart-pending",
+            "herdr was updated; the running server is the old version until the next reboot.",
+            "herdr",
+        )
     for tid, tool in doc["tools"].items():
         if tool["state"] == "waiting":
             needs = ", ".join(SERVICE_LABELS.get(s, s) for s in tool.get("waiting_for", []))
@@ -476,6 +518,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_units = pool.submit(probe_failed_units, ctx)
         f_ssh = pool.submit(ssh_state, ctx)
         f_net = pool.submit(net_section, ctx)
+        f_pending = pool.submit(herdr_restart_pending, ctx)
         f_auth = {svc: pool.submit(AUTH_PROBES[svc], ctx) for svc in AUTH_SERVICES}
         host, e = f_host.result()
         errors += e
@@ -532,7 +575,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         "errors": [],
     }
     doc["state"] = derive_state(doc)
-    doc["attention"] = attention_for(doc, failed_units)
+    doc["attention"] = attention_for(doc, failed_units, f_pending.result())
     elapsed = time.monotonic() - started
     if elapsed > 12:
         errors.append(f"status took {elapsed:.0f}s")

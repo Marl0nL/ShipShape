@@ -76,5 +76,12 @@ or let Ships do it themselves at a quiet hour:
 ship-fleet set --tag work auto_reboot=true reboot_time=04:00
 ```
 
+`reboot_time` is the Ship's local time. Ships made with `ship-fleet new` take
+this computer's time zone; older Ships run on UTC until you set theirs:
+
+```sh
+ship-fleet set all timezone=Europe/Berlin
+```
+
 Automatic reboots are clean too, so agents resume in their modes as after any
 reboot.

@@ -67,9 +67,10 @@ integration and agents edit these files too):
 | ship.toml | Effect |
 |---|---|
 | `ship.name`, `ship.id` | `/etc/avahi/services/shipshape.service`: the LAN announcement (`ship-runtime.md`) |
+| `ship.timezone` | the system time zone (`timedatectl set-timezone`), so `updates.reboot_time`, logs and agents see the same local time |
 | `ship.name`, `ship.tags` | `/etc/ssh/shipshape/principals/agent`: which user certificates may log in as `agent` (`agent:all`, `agent:tag:<tag>`, `agent:ship:<name>`; `ship-ctl.md`) |
 | `agent.sudo` | `/etc/sudoers.d/91-shipshape-agent` present (`NOPASSWD: ALL`) or absent |
-| `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent, loaded at boot by `ship-lan-guard.service` (see "LAN guard") |
+| `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent, loaded at boot by `ship-lan-guard-early.service` and refreshed by `ship-lan-guard.service` (see "LAN guard") |
 | `updates.auto_reboot`, `updates.reboot_time` | `/etc/apt/apt.conf.d/52shipshape-unattended-upgrades`: `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-Time` (see "OS updates") |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
 | `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
@@ -90,8 +91,15 @@ rules load), and every entry in `lan_guard_allow`. Internet traffic is untouched
 Refused connections get an immediate reject, not a silent drop.
 
 The rules live only in the table `inet shipshape_lan_guard`; nothing else in the
-Ship's firewall is touched. `ship-ctl apply` loads or removes the table and
-enables or disables `ship-lan-guard.service`, which reloads it at every boot.
+Ship's firewall is touched. `ship-ctl apply` loads or removes the table, keeps a
+copy in `/etc/shipshape/lan-guard.nft`, and enables or disables two boot units:
+
+- `ship-lan-guard-early.service` loads that copy before `network-pre.target`, so
+  the guard is in place before any interface comes up and before herdr resumes
+  agents;
+- `ship-lan-guard.service` runs once the network is online, finds the gateways
+  and DNS servers again and reloads the table (a Ship that moved networks has
+  the old gateway and DNS allowed only until then).
 
 ## OS updates
 
@@ -104,6 +112,11 @@ Unattended-Upgrade::Automatic-Reboot "<updates.auto_reboot>";
 Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
 Unattended-Upgrade::Automatic-Reboot-Time "<updates.reboot_time>";
 ```
+
+`reboot_time` is the Ship's own local time: `ship.timezone` sets the Ship's
+zone (UTC when absent), and `ship-fleet new` fills it in from the FleetLedger
+computer's zone, so `04:00` means four in the morning where you are. Change it
+with `ship-fleet set SHIP timezone=Europe/Berlin`.
 
 With `auto_reboot = false` (the default) a needed reboot shows as
 `reboot-required` attention, and `ship-fleet reboot` does it when you choose.
@@ -143,6 +156,7 @@ the seed:
 | `ship.name` | the `[ship.<name>]` key |
 | `ship.id` | `ship.<name>.id` (a new random UUID when the Ship is created) |
 | `ship.tags` | `ship.<name>.tags`, else `defaults.tags` |
+| `ship.timezone` | `ship-fleet new --timezone`, else the FleetLedger computer's zone (`TZ`, else `/etc/localtime`), else `UTC` |
 | `claude` | `defaults.claude` overlaid with `ship.<name>.claude`; `session_prefix` defaults to the name |
 | `tools.install` | `ship.<name>.tools`, else `defaults.tools` |
 | `tools.profiles` | `ship.<name>.profiles`, else `defaults.profiles` |

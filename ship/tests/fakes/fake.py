@@ -249,6 +249,18 @@ def systemctl(s: dict, a: list[str]) -> int:
         state = s.get("active", {}).get(a[-1], "inactive")
         out(state)
         return 0 if state == "active" else 3
+    words = [w for w in a if not w.startswith("-")]
+    if words[:1] in (["enable"], ["disable"], ["is-enabled"]):
+        enabled = s.setdefault("enabled_units", [])
+        unit = words[1]
+        if words[0] == "is-enabled":
+            return 0 if unit in enabled else 1
+        if words[0] == "enable" and unit not in enabled:
+            enabled.append(unit)
+        if words[0] == "disable" and unit in enabled:
+            enabled.remove(unit)
+        save(s)
+        return 0
     units = s.get("failed_user" if "--user" in a else "failed_units", [])
     out("\n".join(f"{u} loaded failed failed X" for u in units))
     return 0
@@ -284,6 +296,60 @@ def journalctl(s: dict, a: list[str]) -> int:
     return 0
 
 
+def nft(s: dict, a: list[str]) -> int:
+    """nftables: remembers which tables are loaded and the last rules file."""
+    n = s.setdefault("nft", {"tables": []})
+    if n.get("fail"):
+        print("Error: syntax error", file=sys.stderr)
+        return 1
+    if a[:2] == ["list", "table"]:
+        return 0 if " ".join(a[2:4]) in n["tables"] else 1
+    if a[:2] == ["delete", "table"]:
+        table = " ".join(a[2:4])
+        if table not in n["tables"]:
+            return 1
+        n["tables"].remove(table)
+        save(s)
+        return 0
+    if a[:2] == ["-c", "-f"]:
+        return 0
+    if a[:1] == ["-f"]:
+        text = Path(a[1]).read_text()
+        n["loaded"] = text
+        n["loads"] = n.get("loads", 0) + 1
+        for line in text.splitlines():
+            if line.startswith("table ") and line.endswith("{"):
+                table = " ".join(line.split()[1:3])
+                if table not in n["tables"]:
+                    n["tables"].append(table)
+        save(s)
+        return 0
+    return 2
+
+
+def timedatectl(s: dict, a: list[str]) -> int:
+    """`timedatectl show --property=Timezone --value` and `set-timezone ZONE`.
+    The cloud image starts on Etc/UTC; `timedatectl_fail` makes both fail."""
+    if s.get("timedatectl_fail"):
+        print("Failed to connect to bus: No such file or directory", file=sys.stderr)
+        return 1
+    if a[:1] == ["show"]:
+        print(s.get("timezone", "Etc/UTC"))
+        return 0
+    if a[:1] == ["set-timezone"]:
+        s["timezone"] = a[1]
+        save(s)
+        return 0
+    return 2
+
+
+def ip(s: dict, a: list[str]) -> int:
+    """`ip -4|-6 -j route show default`."""
+    routes = s.get("routes", {"-4": [{"dst": "default", "gateway": "192.0.2.1"}], "-6": []})
+    out(routes.get(a[0], []))
+    return 0
+
+
 HANDLERS = {
     "herdr": herdr,
     "claude": claude,
@@ -298,6 +364,9 @@ HANDLERS = {
     "visudo": lambda s, a: 0,
     "sshd": sshd,
     "vnstat": vnstat,
+    "nft": nft,
+    "ip": ip,
+    "timedatectl": timedatectl,
 }
 
 

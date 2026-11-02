@@ -20,6 +20,12 @@
           "items": { "$ref": "#/$defs/tag" },
           "uniqueItems": true,
           "default": []
+        },
+        "timezone": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9_+-]{0,40}(/[A-Za-z0-9_+-]{1,40}){0,2}$",
+          "default": "UTC",
+          "description": "IANA time zone for the Ship's clock, for example Europe/Berlin. `ship-fleet new` sets it from the FleetLedger computer's zone. updates.reboot_time is in this zone."
         }
       }
     },
@@ -66,7 +72,7 @@
           "type": "string",
           "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
           "default": "04:00",
-          "description": "Local time (HH:MM, 24 hours) for automatic reboots."
+          "description": "Time of day for automatic reboots (HH:MM, 24 hours), in the Ship's own time zone (ship.timezone)."
         }
       }
     },

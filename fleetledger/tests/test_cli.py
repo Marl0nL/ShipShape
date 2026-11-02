@@ -323,12 +323,31 @@ def test_new_failure_leaves_nothing(env, home):
     assert not list((home / "data" / "seeds").glob("*.iso"))
 
 
+def _seed_ship_toml(home, name):
+    seed = next((home / "data" / "seeds").glob(f"{name}-*.iso"))
+    _, files = iso.read(seed.read_bytes())
+    return tomllib.loads(yaml.safe_load(files["user-data"])["write_files"][0]["content"])
+
+
+def test_new_takes_this_computers_timezone(env, home, monkeypatch):
+    """So updates.reboot_time means the owner's local time on the Ship."""
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    assert env.run("new", "ship-08")[0] == 0
+    assert _seed_ship_toml(home, "ship-08")["ship"]["timezone"] == "Europe/Berlin"
+    assert env.run("new", "ship-09", "--timezone", "America/New_York")[0] == 0
+    assert _seed_ship_toml(home, "ship-09")["ship"]["timezone"] == "America/New_York"
+
+
 def test_new_rejects_bad_input(env):
     assert env.run("new", "Ship_5")[0] == 1
     code, _, err = env.run("new", "ship-05", "--autostart", "main")
     assert code == 1 and "NAME:CWD" in err
     code, _, err = env.run("new", "ship-05", "--tools", "nope")
     assert code == 2 and "Unknown tools: nope" in err
+    for zone in ("../../etc/shadow", "Mars/Olympus_Mons"):
+        code, _, err = env.run("new", "ship-05", "--timezone", zone)
+        assert code == 1 and "IANA zone name" in err
+    assert not env.store.load().has_ship("ship-05")
 
 
 # --- adopt and scan ----------------------------------------------------------

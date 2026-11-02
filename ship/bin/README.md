@@ -10,9 +10,10 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 
 | Module | What it does |
 |---|---|
-| `cli.py` | argument parsing, the JSON envelope, exit codes, `set`, `version`, `refresh` |
+| `cli.py` | argument parsing, the JSON envelope, exit codes, `set`, `version`, `refresh`, `lan-guard` |
 | `status.py` | the status document: parallel probes, each with a 5 s timeout |
-| `apply.py` | ship.toml -> managed settings, agent settings, herdr config, sudoers, avahi |
+| `apply.py` | ship.toml -> managed settings, agent settings, herdr config, sudoers, avahi, the unattended-upgrades reboot policy |
+| `languard.py` | the LAN guard: renders, checks (`nft -c`) and loads the `inet shipshape_lan_guard` table, enables its boot unit |
 | `autostart.py` | starts `[[autostart]]` agents that are not running |
 | `naming.py` | the Claude session name for each agent (`<prefix>-<agent>`): the one place to change how it is applied |
 | `tools.py` | the catalogue runner (`contracts/tools.md`) |
@@ -28,6 +29,17 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
   waiting on a service that just became `ok` are finished, and Claude becoming
   `ok` runs `autostart` once. Previous states live in `/run/shipshape/`, so the
   first refresh after a boot compares against "not signed in".
+- `ship-ctl lan-guard` (internal): run by `ship-lan-guard.service` once the
+  network is online (`ship-lan-guard-early.service` has already loaded the
+  stored rules before the network came up). It
+  finds the default gateways (`ip -j route`) and DNS servers
+  (`/run/systemd/resolve/resolv.conf`) again and reloads the table, or removes
+  it when the guard is off. Every address is parsed and printed back by Python's
+  `ipaddress` before it is written into the rules, so nothing else reaches nft.
+  A DHCP change of gateway during a boot is picked up at the next boot or apply.
+- `herdr-restart-pending`: status compares the inode of each running
+  `herdr server` (agent's processes only, `/proc/<pid>/exe`) with
+  `/usr/local/bin/herdr`.
 - After a reboot autostart waits until `ship-resume` has recorded this boot (or
   10 minutes of uptime), so it never races herdr's own resume. It recognises an
   agent herdr resumed by its name, or by the Claude session or pane it recorded,

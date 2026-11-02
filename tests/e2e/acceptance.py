@@ -23,7 +23,9 @@ It creates one Ship, signs it in (you approve each sign-in), checks the
 accounts against the tag, lets the autostart agents start (one auto, one
 bypass), asks you to look at the Claude app, adds a bypass agent with no
 prompt of its own, reboots and checks all three came back in their modes,
-switches Remote Control off, checks a bypass-default
+rolls a new herdr out with `ship-fleet update` and checks they resume in their
+modes again, checks a waiting agent shows in `ship-fleet attention` within a
+minute, switches Remote Control off, checks a bypass-default
 Ship starts new agents in bypass without a prompt, looks for leaked tokens,
 signs out, and destroys the Ship. About 30 to 45 minutes; you are needed for
 the sign-ins (a few minutes) and two looks at the Claude app.
@@ -370,6 +372,8 @@ def run(fleet: Fleet, name: str) -> None:
     step("Remote Control reconnects after the reboot",
          ask(f"In the Claude app, are the '{name}' sessions connected again (three now)?"))
 
+    run_phase2(fleet, name, trio)
+
     fleet.cli("set", name, "remote_control=off")
     fleet.reboot(name)
     fleet.wait_for("agents back", lambda: trio <= set(agents(fleet.status(name))), timeout=600)
@@ -418,6 +422,46 @@ def run(fleet: Fleet, name: str) -> None:
     step("Signing out clears every sign-in",
          all(auth[s]["state"] != "ok" for s in ("claude", "gcloud", "github")),
          json.dumps({k: v["state"] for k, v in auth.items()}))
+
+
+def run_phase2(fleet: Fleet, name: str, trio: set[str]) -> None:
+    """Phase 2 checks that need signed-in agents: a herdr change rolled out by
+    `ship-fleet update` with every agent back in its mode, a clean fleet reboot,
+    and a waiting agent showing in Needs attention within a minute."""
+    log("phase 2: a new herdr binary under the running server (stands in for a pin change)")
+    fleet.ssh(name, "bash", "-c",
+              "sudo -n cp -p /usr/local/bin/herdr /usr/local/bin/.herdr.acc && "
+              "sudo -n mv /usr/local/bin/.herdr.acc /usr/local/bin/herdr")
+    proc = fleet.cli("update", name, "--json", timeout=3600, check=False)
+    result = (json.loads(proc.stdout) or [{}])[0] if proc.stdout.strip() else {}
+    after = result.get("data", {}).get("reboot", {}).get("agents_after", {})
+    step("ship-fleet update reboots for a new herdr and every agent resumes in its mode",
+         proc.returncode == 0 and result.get("ok") is True
+         and result.get("data", {}).get("rebooted") is True and trio <= set(after),
+         f"{result.get('summary')}; {result.get('details')}")
+
+    proc = fleet.cli("reboot", name, "--json", timeout=1800, check=False)
+    result = (json.loads(proc.stdout) or [{}])[0] if proc.stdout.strip() else {}
+    step("ship-fleet reboot brings every agent back in its mode",
+         proc.returncode == 0 and result.get("ok") is True, str(result.get("summary")))
+
+    # An agent in the default mode asks before writing a file: it waits for you.
+    add_autostart(fleet, name, 'name = "asker"\ncwd = "~/work/asker"\nmode = "default"\n'
+                  'prompt = "Create a file named hello.txt here containing the word hi."\n')
+    started = time.monotonic()
+    waited = None
+    while time.monotonic() - started < 180:
+        items = json.loads(fleet.cli("attention", "--json", check=False).stdout or "[]")
+        if any(i["code"] == "agent-waiting" and i["ship"] == name and i.get("subject") == "asker"
+               for i in items):
+            waited = time.monotonic() - started
+            break
+        time.sleep(10)
+    step("A waiting agent shows in ship-fleet attention within a minute",
+         waited is not None and waited <= 60,
+         f"after {waited:.0f} s" if waited is not None else "not seen in 3 minutes")
+    fleet.ssh(name, "sudo", "-n", "-iu", "agent", "--", "herdr", "agent", "stop", "asker",
+              timeout=60)
 
 
 if __name__ == "__main__":

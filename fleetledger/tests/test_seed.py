@@ -64,6 +64,39 @@ def test_ship_toml_from_inventory(store, fake_repo):
     assert schemas.is_valid("ship.toml", tomllib.loads(text))
 
 
+def test_ship_toml_has_no_timezone_unless_given(store, fake_repo):
+    inv = store.load()
+    doc = shiptoml.build(inv, inv.ship("ship-01"), Catalogue.from_repo(fake_repo))
+    assert "timezone" not in doc["ship"]  # the Ship then stays on UTC
+
+
+@pytest.mark.parametrize("env,link,file,expected", [
+    ({"TZ": "Europe/Berlin"}, "/usr/share/zoneinfo/Asia/Tokyo", None, "Europe/Berlin"),
+    ({"TZ": ":America/New_York"}, None, None, "America/New_York"),
+    ({"TZ": "/usr/share/zoneinfo/Asia/Tokyo"}, None, None, "Asia/Tokyo"),
+    ({}, "/usr/share/zoneinfo/Asia/Tokyo", "Europe/Berlin", "Asia/Tokyo"),
+    ({}, "/var/db/timezone/zoneinfo/America/Argentina/Buenos_Aires", None,
+     "America/Argentina/Buenos_Aires"),  # macOS
+    ({}, None, "Europe/Berlin\n", "Europe/Berlin"),
+    ({"TZ": "EST+5"}, "../../etc/shadow", "not a zone", "UTC"),  # nothing usable
+    ({}, None, None, "UTC"),
+])
+def test_local_timezone(tmp_path, env, link, file, expected):
+    localtime = tmp_path / "localtime"
+    if link:
+        localtime.symlink_to(link)
+    timezone_file = tmp_path / "timezone"
+    if file:
+        timezone_file.write_text(file)
+    known = {"Europe/Berlin", "America/New_York", "Asia/Tokyo", "America/Argentina/Buenos_Aires"}
+    assert shiptoml.local_timezone(env, localtime, timezone_file, known) == expected
+
+
+def test_local_timezone_without_tzdata_trusts_the_name_pattern(tmp_path):
+    assert shiptoml.local_timezone({"TZ": "Europe/Berlin"}, tmp_path / "x", tmp_path / "y",
+                                   known=set()) == "Europe/Berlin"
+
+
 def test_ship_toml_options_and_overrides(store, fake_repo):
     with store.edit() as ed:
         ed.set_field("ship-02", "tools", ["tasks-axi"])
@@ -76,9 +109,12 @@ def test_ship_toml_options_and_overrides(store, fake_repo):
         agent_sudo=True,
         lan_guard=False,
         lan_guard_allow=["192.0.2.10/32"],
+        timezone="America/New_York",
     )
     doc = shiptoml.build(inv, inv.ship("ship-02"), Catalogue.from_repo(fake_repo), opts)
     assert doc["ship"]["tags"] == ["personal"]
+    assert doc["ship"]["timezone"] == "America/New_York"
+    assert 'timezone = "America/New_York"' in shiptoml.render(doc)
     assert doc["claude"]["allow_bypass"] is True
     assert doc["tools"]["install"] == ["tasks-axi"]
     assert doc["agent"] == {"sudo": True}
