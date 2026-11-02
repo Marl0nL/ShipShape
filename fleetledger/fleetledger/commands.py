@@ -502,6 +502,12 @@ def cmd_status(args, app) -> int:
             + (f" at {doc['provision']['last_run']}" if doc["provision"]["last_run"] else ""))
     if doc["tools"]:
         app.say("Tools: " + ", ".join(f"{k} {v['state']}" for k, v in sorted(doc["tools"].items())))
+    ov = doc.get("overlay")
+    if ov:
+        where = f" as {ov['name']}" if ov["name"] else ""
+        logins = "the overlay only" if ov["ssh_listen"] == "overlay" else "any interface"
+        state = ov["state"] if ov["joined"] else "not joined"
+        app.say(f"Overlay: {state}{where}; SSH logins on {logins}")
     if doc.get("net"):
         n = doc["net"]
         new = n["new_destinations"]

@@ -19,6 +19,7 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 | `tools.py` | the catalogue runner (`contracts/tools.md`) |
 | `converge.py` | switches to a new tooling bundle, rolling back on failure |
 | `logs.py` | `ship-ctl logs SOURCE` |
+| `overlay.py` | `ship-ctl overlay join|leave|status` (phase 5): the auth key from stdin via a root-only file in `/run`, `tailscale up`, and the sshd listen policy (`network.ssh_listen`) |
 | `schema.py` | a small JSON Schema validator (Ships have no `jsonschema`) |
 | `tomlw.py` | TOML writing, and in-place key edits for herdr's config |
 

@@ -52,6 +52,32 @@ from the LAN to other machines or cloud VMs.
   forward your SSH agent to a Ship: FleetLedger turns forwarding off on every
   connection, and Ships use their own GitHub sign-in instead.
 
+## Off the LAN: the overlay network (phase 5)
+
+Ships can join a Tailscale tailnet (or a Headscale server) so you reach them from
+your other machines without forwarding router ports
+([runbooks/remote-access.md](runbooks/remote-access.md)).
+
+- **It adds a route, not a way in.** OpenSSH with the pinned host key and key-only
+  logins stays the only way into a Ship. Tailscale SSH is never turned on.
+- **Access rules give Ships no destinations.** The policy FleetLedger prints
+  (`ship-fleet overlay policy`) lets your devices reach `tag:ship` on port 22 and
+  allows nothing else, so a Ship cannot open a connection to your laptop or to
+  another Ship over the overlay. A policy test guards the Ship-to-Ship rule.
+- **One-off keys, after boot, over SSH.** Each join uses a single-use,
+  pre-approved, tagged key that expires in minutes, pasted (read without echo) or
+  minted by FleetLedger with an OAuth client that can only make such keys. It
+  reaches the Ship on stdin over SSH and exists there only in a root-only file
+  under `/run` while `tailscale up` runs. Keys are never in seeds, cloud
+  metadata, command lines, logs, the inventory or status, and nothing keeps a copy.
+- **Nothing runs until a Ship joins.** `tailscale` is installed (from its pinned,
+  signature-checked repo) only by `ship-ctl overlay join`, with log upload to
+  Tailscale turned off; it is stopped and disabled again on `leave`.
+- **LAN logins can be turned off** per Ship (`ssh_listen=overlay`): sshd then
+  denies every login that does not arrive on loopback or the Ship's own overlay
+  addresses. ship-ctl refuses this until the Ship has joined, and turns it back
+  off before leaving, so these commands cannot lock a Ship out.
+
 ## Least privilege
 
 - **FleetLedger holds no service tokens.** It has SSH keys, the Proxmox API token
@@ -89,6 +115,9 @@ from the LAN to other machines or cloud VMs.
 | Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet ca init` |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
 | Proxmox API token | your computer: `~/.config/fleetledger/` (0600) | made once by you |
+| Overlay OAuth client secret (optional) | your computer: `~/.config/fleetledger/` (0600) | made once by you; can only mint `tag:ship` keys |
+| Overlay join key | nowhere for long: the Ship's `/run` (tmpfs, root-only) while it joins | pasted, or minted per join; single use, minutes |
+| Ship's overlay node key | the Ship: Tailscale's state in `/var/lib/tailscale` (root) | `tailscale up` |
 | Your own key | your machines | public half put on `agent` by the seed |
 
 Never in: the base image, seeds (apart from the Ship's own host key), FleetLedger
@@ -160,4 +189,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal |
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr pinned by checksum; recipes pin versions; verified Ubuntu images |
+| Someone on your overlay network | reach a Ship from anywhere | access rules allow only your devices, only port 22; logins still need your key and the pinned host key |
+| A compromised Ship on the overlay | reach your laptop or other Ships | the access rules give Ships no destinations; with `ssh_listen=overlay` the LAN is closed too |
+| A leaked overlay key or OAuth secret | add a machine to your tailnet | join keys are single use and expire in minutes; the OAuth client can only mint `tag:ship` keys, which get no destinations; revoke it in the admin console |
 | Your Claude accounts | anyone in one can drive that account's Ships through Remote Control | strong sign-in on your Claude accounts; Remote Control off per Ship where not needed (`ship-fleet set <ship> remote_control=off`, see [runbooks/sign-in.md](runbooks/sign-in.md#remote-control)) |

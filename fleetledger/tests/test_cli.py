@@ -45,6 +45,9 @@ class FakeShip:
         self.claude_account = "work@example.com"
         self.down = set()
         self.status_override = {}
+        self.inputs = []
+        self.overlay = {}  # ship name -> overlay doc (ship-ctl overlay)
+        self.overlay_fails = False
 
     def status(self, ship):
         doc = copy.deepcopy(self.status_override.get(ship.name, RUNNING))
@@ -65,11 +68,35 @@ class FakeShip:
                 return 0, json.dumps(self.status(ship)), ""
             if verb == "logs":
                 return 0, json.dumps(result("logs", data={"lines": ["line one", "line two"]})), ""
+            if verb == "overlay":
+                return self.overlay_call(ship, command[4:])
             return 0, json.dumps(result(verb, changed=["/etc/shipshape/ship.toml"])), ""
         agent_command = command[-1]
         if "claude auth status" in agent_command:
             return 0, json.dumps({"loggedIn": True, "email": self.claude_account}), ""
         return 0, "", ""
+
+
+def _overlay_call(self, ship, args):
+    action = args[0]
+    current = self.overlay.get(ship.name)
+    if action == "join":
+        if self.overlay_fails:
+            err = {"code": "overlay-failed", "message": "tailscale up failed: [key] invalid"}
+            return 1, json.dumps(result("overlay", ok=False, error=err)), ""
+        tags = [args[i + 1] for i, a in enumerate(args) if a == "--tag"]
+        current = {"provider": "tailscale", "joined": True, "state": "running",
+                   "name": f"{ship.name}.example-tailnet.ts.net", "addresses": ["192.0.2.10"],
+                   "tags": tags, "ssh_listen": "any"}
+        self.overlay[ship.name] = current
+    elif action == "leave":
+        current = self.overlay.pop(ship.name, None)
+        current = current and {**current, "joined": False, "state": "off", "name": None,
+                               "addresses": []}
+    return 0, json.dumps(result("overlay", data={"overlay": current})), ""
+
+
+FakeShip.overlay_call = _overlay_call
 
 
 class ShipSSH(SSH):
@@ -78,6 +105,8 @@ class ShipSSH(SSH):
         self.ship_side = ship_side
 
     def run(self, ship, command, *, input=None, timeout=60):
+        if input and hasattr(self.ship_side, "inputs"):
+            self.ship_side.inputs.append((ship.name, input))
         code, out, err = self.ship_side(ship, list(command))
         return Result(code, out.encode(), err, ship.names[0])
 
@@ -770,3 +799,114 @@ def test_image_build_records_the_image(env, tmp_path):
                              "--backend", "qemu")
     assert code == 0, err
     assert env.store.load().images[IMG]["sha256"] == "cd" * 32
+
+
+# --- phase 5: the overlay ----------------------------------------------------------
+
+TS_KEY = "tskey-auth-kExample2CNTRL-SECRETSECRETSECRET0123"
+
+
+class Keys:
+    def __init__(self):
+        self.asked = []
+
+    def key(self, ship):
+        self.asked.append(ship.name)
+        return TS_KEY
+
+
+def with_overlay(env, **extra):
+    with env.store.edit() as ed:
+        ed.doc["overlay"] = {"provider": "tailscale", "tags": ["tag:ship"], **extra}
+    env.app.overlay_keys = Keys()
+
+
+def test_overlay_join_hands_the_key_over_stdin_only(env):
+    with_overlay(env)
+    code, out, err = env.run("overlay", "join", "ship-01")
+    assert code == 0, err
+    assert env.ship.inputs == [("ship-01", (TS_KEY + "\n").encode())]
+    argv = [c for name, c in env.ship.calls if "overlay" in c]
+    assert argv and all(TS_KEY not in " ".join(c) for _, c in env.ship.calls)
+    join = next(c for c in argv if "join" in c)
+    assert join[join.index("--hostname") + 1] == "ship-01" and "tag:ship" in join
+    # The overlay name goes first: it works off the LAN, and fails fast where unknown.
+    assert env.store.load().ship("ship-01").names == ("ship-01.example-tailnet.ts.net",
+                                                      "ship-01.local")
+    assert TS_KEY not in out + err
+    assert TS_KEY not in env.store.path.read_text()
+
+
+def test_overlay_join_by_tag_and_with_a_login_server(env):
+    with_overlay(env, login_server="https://hs.example.com")
+    code, out, err = env.run("overlay", "join", "--tag", "work")
+    assert code == 0, err
+    joins = [c for _, c in env.ship.calls if "join" in c]
+    assert len(joins) == 1 and "--login-server" in joins[0]  # only ship-01 is tagged work
+    assert env.app.overlay_keys.asked == ["ship-01"]
+
+
+def test_overlay_join_failure_keeps_names(env):
+    with_overlay(env)
+    env.ship.overlay_fails = True
+    code, out, err = env.run("overlay", "join", "ship-01")
+    assert code == 1 and "not joined" in out and TS_KEY not in out + err
+    assert env.store.load().ship("ship-01").names == ("ship-01.local",)
+
+
+def test_overlay_leave_drops_the_overlay_name(env):
+    with_overlay(env)
+    env.run("overlay", "join", "ship-01")
+    code, out, err = env.run("overlay", "leave", "ship-01")
+    assert code == 0, err
+    assert env.store.load().ship("ship-01").names == ("ship-01.local",)
+
+
+def test_overlay_needs_its_section(env):
+    code, out, err = env.run("overlay", "join", "ship-01")
+    assert code != 0 and "[overlay]" in err
+
+
+def test_overlay_policy_lets_your_devices_in_and_ships_nowhere(env):
+    with_overlay(env)
+    code, out, err = env.run("overlay", "policy")
+    doc = json.loads(out)
+    assert doc["acls"] == [{"action": "accept", "src": ["autogroup:member"],
+                            "dst": ["tag:ship:22"]}]
+    assert not any("tag:ship" in rule["src"] for rule in doc["acls"])  # Ships open nothing
+    assert doc["ssh"] == []  # no Tailscale SSH
+    assert doc["tests"] == [{"src": "tag:ship", "deny": ["tag:ship:22"]}]
+
+
+def test_overlay_status(env):
+    with_overlay(env)
+    env.run("overlay", "join", "ship-01")
+    code, out, err = env.run("overlay", "status")
+    assert "ship-01.example-tailnet.ts.net" in out and "running" in out
+    assert "ship-02" in out and "not joined" in out
+
+
+def test_destroy_leaves_the_overlay_first(env):
+    with_overlay(env)
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.run("overlay", "join", "ship-04")
+    env.ship.calls.clear()
+    assert env.run("destroy", "ship-04", "--yes")[0] == 0
+    leave = [i for i, (_, c) in enumerate(env.ship.calls) if "leave" in c]
+    assert leave and env.driver.destroyed == ["ship-04"]
+
+
+def test_destroy_goes_on_if_the_ship_cannot_leave(env):
+    with_overlay(env)
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.ship.down.add("ship-04")
+    code, out, err = env.run("destroy", "ship-04", "--yes")
+    assert code == 0 and "admin console" in err and env.driver.destroyed == ["ship-04"]
+
+
+def test_set_ssh_listen(env):
+    code, out, err = env.run("set", "ship-01", "ssh_listen=overlay")
+    assert code == 0, err
+    assert ["sudo", "-n", "/usr/local/bin/ship-ctl", "set", "network.ssh_listen=overlay",
+            "--json"] in [c for _, c in env.ship.calls]
+    assert env.run("set", "ship-01", "ssh_listen=lan")[0] != 0

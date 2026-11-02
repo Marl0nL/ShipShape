@@ -30,6 +30,7 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/drivers/` | W8, phase 4 | the hypervisor driver interface; `manual` (prints the steps) and `proxmox` (API: create, power, snapshots, image templates, destroy; every destructive call checks the VM's name). All hypervisor-specific code lives here. |
 | `fleetledger/images.py` | phase 4 | baked images: fetching and checking Ubuntu's image, ids and manifests, running `ship/image/bake` (`contracts/image.md`) |
 | `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `snapshot` and `image` |
+| `fleetledger/overlay.py`, `access.py` | phase 5 | the overlay network: one-off keys (pasted, or minted with a Tailscale OAuth client), `ship-fleet overlay join|leave|status|policy` |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)) |

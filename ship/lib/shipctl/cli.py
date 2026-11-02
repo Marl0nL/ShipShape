@@ -22,6 +22,7 @@ from . import (
     languard,
     logs,
     net,
+    overlay,
     shiptoml,
     sshtrust,
     status,
@@ -46,6 +47,7 @@ SET_KEYS = {
     "network.lan_guard_allow": "list",
     "updates.auto_reboot": "bool",
     "updates.reboot_time": "str",
+    "network.ssh_listen": "str",
 }
 RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart "
@@ -109,6 +111,11 @@ def build_parser() -> Parser:
     sv.add_argument("--file", required=True, metavar="-", help="read the document from stdin")
     cmd("net", "Show where this Ship connects: the 7-day network visibility summary.")
     cmd("version", "Print the tooling version and contract versions.")
+    o = cmd("overlay", "Join or leave the overlay network (the auth key comes on stdin).")
+    o.add_argument("action", choices=["join", "leave", "status"])
+    o.add_argument("--hostname", help="join: the Ship's name on the overlay")
+    o.add_argument("--tag", action="append", default=[], help="join: overlay tag (repeatable)")
+    o.add_argument("--login-server", help="join: Headscale (or other) coordination server")
     r = sub.add_parser("refresh", help="(internal) refresh the status cache and react to sign-ins")
     r.add_argument("--json", action="store_true")
     g = sub.add_parser("lan-guard", help="(internal) reload the LAN guard rules (boot unit)")
@@ -180,6 +187,7 @@ def cmd_set(ctx: Context, args) -> dict:
             ctx.paths, zone):
         raise CtlError("invalid-ship-toml",
                        f"ship.timezone: {zone!r} is not a time zone installed on this Ship", 4)
+    _check_listen(ctx, current, new)
     changed = []
     if shiptoml.save(new, ctx.paths.ship_toml):
         changed.append(ctx.paths.agent_path(ctx.paths.ship_toml))
@@ -191,6 +199,46 @@ def cmd_set(ctx: Context, args) -> dict:
     if current.claude["session_prefix"] != new_ship.claude["session_prefix"]:
         messages.append(PREFIX_CHANGE_NOTE)
     return result("set", changed=changed + applied, messages=messages)
+
+
+def _check_listen(ctx: Context, current: shiptoml.ShipToml, new: dict) -> None:
+    """ssh_listen = overlay only once the Ship is on the overlay: never a lock-out."""
+    wanted = new.get("network", {}).get("ssh_listen", "any")
+    if wanted == "overlay" and overlay.ssh_listen(current) != "overlay":
+        if not overlay.joined(ctx) or not overlay.read_state(ctx).get("addresses"):
+            raise CtlError("overlay-not-joined",
+                           "join the overlay first (ship-ctl overlay join); until then sshd "
+                           "keeps accepting logins on every interface")
+
+
+def cmd_overlay(ctx: Context, args) -> dict:
+    ship = shiptoml.load(ctx.paths)
+    if args.action == "status":
+        return result("overlay", data={"overlay": overlay.status(ctx, ship)})
+    if args.action == "join":
+        if not args.hostname or not args.tag:
+            raise CtlError("usage", "overlay join needs --hostname and at least one --tag")
+        key = overlay.read_key(sys.stdin)
+        data, changed, messages = overlay.join(ctx, ship, hostname=args.hostname,
+                                               tags=args.tag, login_server=args.login_server,
+                                               key=key)
+        return result("overlay", changed=changed, messages=messages, data={"overlay": data})
+    changed: list[str] = []
+    messages: list[str] = []
+    if overlay.ssh_listen(ship) == "overlay":
+        # Listen everywhere again first, so leaving can never lock the Ship out.
+        doc = json.loads(json.dumps(ship.doc))
+        doc["network"]["ssh_listen"] = "any"
+        if shiptoml.save(doc, ctx.paths.ship_toml):
+            changed.append(ctx.paths.agent_path(ctx.paths.ship_toml))
+        ship = shiptoml.ShipToml(doc)
+        did, _ = overlay.apply_listen(ctx, ship)
+        if did:
+            changed.append(ctx.paths.agent_path(overlay.listen_conf_path(ctx)))
+        messages.append("network.ssh_listen is back to any.")
+    left, notes = overlay.leave(ctx, ship)
+    return result("overlay", changed=changed + left, messages=notes + messages,
+                  data={"overlay": overlay.status(ctx, ship)})
 
 
 def cmd_status(ctx: Context, args) -> dict:
@@ -342,6 +390,7 @@ def cmd_lan_guard(ctx: Context, args) -> dict:
 
 
 COMMANDS = {
+    "overlay": cmd_overlay,
     "status": cmd_status,
     "apply": cmd_apply,
     "set": cmd_set,

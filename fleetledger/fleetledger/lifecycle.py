@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fleetledger import enrol, images, paths
+from fleetledger import enrol, images, overlay, paths
 from fleetledger.commands import table
 from fleetledger.drivers import NotSupported, PublishedImage
 from fleetledger.errors import FleetError
@@ -81,7 +81,9 @@ def cmd_destroy(args, app) -> int:
             raise FleetError("Not destroyed.")
     if not args.forget:
         hook = getattr(app, "before_destroy", None)
-        if hook is not None:
+        if hook is None:  # leave the overlay first, so the Ship does not linger there
+            overlay.before_destroy(app, inv, ship)
+        else:
             hook(inv, ship)
         driver = app.driver_factory(inv, ship.driver)
         outcome = driver.destroy(ship)

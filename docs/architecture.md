@@ -21,9 +21,10 @@ A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
   config, and the catalogue tools installed for agents.
 - **Interface:** `ship-ctl` reports status as one JSON document and applies
   changes (`contracts/ship-ctl.md`).
-- **Network:** there is no network control. SSH is the only way in. A
-  collector records which programs reach which domains, for review
-  ([network.md](network.md)).
+- **Network:** there is no network control. SSH is the only way in, on the LAN
+  or, once a Ship joins the overlay network (phase 5), from your other machines
+  anywhere ([runbooks/remote-access.md](runbooks/remote-access.md)). A collector
+  records which programs reach which domains, for review ([network.md](network.md)).
 
 ## FleetLedger
 
@@ -81,6 +82,7 @@ More: [security.md](security.md), and the runbooks in [runbooks/](runbooks/):
 [setting up Proxmox](runbooks/proxmox-setup.md),
 [creating a Ship](runbooks/create-ship.md),
 [baked images](runbooks/images.md),
+[access from outside the LAN](runbooks/remote-access.md),
 [signing in](runbooks/sign-in.md),
 [SSH certificates and attaching from other machines](runbooks/trust-machines.md),
 [retiring the old stack](runbooks/retire-old-stack.md).

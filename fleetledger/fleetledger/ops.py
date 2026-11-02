@@ -55,6 +55,7 @@ SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "sudo": ("agent.sudo", ("true", "false")),
     "lan_guard": ("network.lan_guard", ("true", "false")),
     "lan_guard_allow": ("network.lan_guard_allow", None),
+    "ssh_listen": ("network.ssh_listen", ("any", "overlay")),
     "auto_reboot": ("updates.auto_reboot", ("true", "false")),
     "reboot_time": ("updates.reboot_time", None),
     "tags": ("ship.tags", None),
