@@ -1,0 +1,10 @@
+# A Ship reached only over the overlay network (phase 5): sshd refuses LAN logins.
+schema = 1
+
+[ship]
+name = "ship-04"
+id = "2f1b8a54-3c6e-4d1f-9a2b-5e8c7d6f4a31"
+tags = ["personal"]
+
+[network]
+ssh_listen = "overlay"

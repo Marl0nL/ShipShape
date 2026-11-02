@@ -1,0 +1,27 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "overlay",
+  "ok": true,
+  "changed": [
+    "/etc/ssh/sshd_config.d/20-shipshape-listen.conf"
+  ],
+  "messages": [
+    "Joined the overlay as ship-01.example-tailnet.ts.net."
+  ],
+  "data": {
+    "overlay": {
+      "provider": "tailscale",
+      "joined": true,
+      "state": "running",
+      "name": "ship-01.example-tailnet.ts.net",
+      "addresses": [
+        "192.0.2.10"
+      ],
+      "tags": [
+        "tag:ship"
+      ],
+      "ssh_listen": "any"
+    }
+  },
+  "error": null
+}

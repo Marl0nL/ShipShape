@@ -109,3 +109,14 @@ components = ["main"]
 key_url = "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
 key_fingerprints = ["6F71F525282841EEDAF851B42F59B5F99B1BE0B4"]
 packages = ["nodejs"]
+
+# The overlay network (phase 5). The repo is added on every Ship; the package is
+# installed only by `ship-ctl overlay join` (or baked), and tailscaled stays
+# disabled until a Ship joins.
+[apt.tailscale]
+url = "https://pkgs.tailscale.com/stable/ubuntu"
+suite = "resolute"
+components = ["main"]
+key_url = "https://pkgs.tailscale.com/stable/ubuntu/resolute.noarmor.gpg"
+key_fingerprints = ["2596A99EAAB33821893C0A79458CA832957F5868"]
+packages = ["tailscale"]

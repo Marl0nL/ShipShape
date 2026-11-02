@@ -1,0 +1,21 @@
+{
+  "schema": "shipshape.image/1",
+  "id": "26.04-20261102-3f9a1c2e",
+  "created": "2026-11-02T10:00:00Z",
+  "ubuntu": {
+    "release": "26.04",
+    "build": "20261016",
+    "file": "ubuntu-26.04-server-cloudimg-amd64.img",
+    "sha256": "5645d0318ad21f643ebb1ac4567514620e9893380b07b0201fda163baa5b7eb5"
+  },
+  "versions_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+  "inputs_sha256": "3f9a1c2e4b5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7",
+  "tooling": "0.1.0",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "dirty": false,
+  "recipes": ["chrome-devtools-axi"],
+  "packages": ["google-chrome-stable", "gh", "google-cloud-cli", "nodejs"],
+  "format": "qcow2",
+  "sha256": "0f343b0931126a20f133d67c2b018a3b1d7e2e5c3a64d5f3e46b0b0e45c1a7d2",
+  "size_bytes": 1288490188
+}

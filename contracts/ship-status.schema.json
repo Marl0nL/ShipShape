@@ -53,7 +53,7 @@
           "code": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, provision-failed, tool-waiting, tool-failed, host-cert-expiring, host-cert-expired, net-collector-down. FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, provision-failed, tool-waiting, tool-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down. FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
           },
           "message": { "type": "string", "maxLength": 500 },
           "subject": {
@@ -181,6 +181,42 @@
           }
         }
       }
+    },
+    "overlay": {
+      "description": "The overlay network (phase 5). Absent or null on Ships whose tooling predates it.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "joined", "state", "name", "addresses", "ssh_listen"],
+          "properties": {
+            "provider": { "const": "tailscale" },
+            "joined": {
+              "type": "boolean",
+              "description": "ship-ctl overlay join has succeeded and leave has not run since."
+            },
+            "state": {
+              "enum": ["not-installed", "off", "needs-login", "needs-approval", "starting", "running", "stopped", "unknown"],
+              "description": "off: the overlay service is not running (never joined, or left)."
+            },
+            "name": {
+              "type": ["string", "null"],
+              "maxLength": 253,
+              "description": "The Ship's name on the overlay (e.g. ship-01.example-tailnet.ts.net)."
+            },
+            "addresses": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^[0-9a-fA-F:.]+$" }
+            },
+            "tags": {
+              "type": "array",
+              "items": { "type": "string", "maxLength": 64 }
+            },
+            "ssh_listen": { "enum": ["any", "overlay"] }
+          }
+        }
+      ]
     },
     "net": {
       "description": "Network visibility over the last window_h hours (phase 3); null when the Ship has no collector. The full summary is `ship-ctl net --json` (net-summary.schema.json).",

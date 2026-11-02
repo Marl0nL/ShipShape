@@ -23,7 +23,7 @@ Exit codes:
 | Code | Meaning | `error.code` |
 |---|---|---|
 | 0 | Success | (null) |
-| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `invalid-input`, `internal` |
+| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `invalid-input`, `overlay-failed`, `overlay-not-joined`, `internal` |
 | 2 | Bad arguments | `usage` |
 | 3 | Not running as root | `not-root` |
 | 4 | `ship.toml` (or the replacement given) fails the schema | `invalid-ship-toml` |
@@ -61,14 +61,16 @@ How fields are worked out:
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
 | `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
 | `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
+| `overlay` | `null` when the overlay tooling is absent; otherwise the overlay record (see `overlay` below) plus `tailscale status --json` (`BackendState`, `Self.DNSName`, `Self.TailscaleIPs`, `Self.Tags`). |
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
 `reboot-required`, `herdr-restart-pending`, `provision-failed`, `tool-waiting`,
 `tool-failed`, `host-cert-expiring` (the host certificate ends within 14 days),
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
-running). FleetLedger adds its own on top (`signin-wrong-account` from the tag
-check, `behind-tooling` from `versions.toml`, `tags-differ` from the inventory,
+running), `overlay-down` (joined, but the overlay is not `running`).
+FleetLedger adds its own on top (`signin-wrong-account` from the tag check,
+`behind-tooling` from `versions.toml`, `tags-differ` from the inventory,
 `host-cert-missing` and `ssh-trust-behind` from its certificate authority); it
 shows unknown codes as they are.
 
@@ -92,7 +94,9 @@ atomically, then runs `apply`.
   `claude.default_mode`, `claude.allow_bypass`, `claude.update_channel`,
   `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
   `network.lan_guard_allow` (comma-separated; empty clears it),
-  `updates.auto_reboot`, `updates.reboot_time`. Booleans are `true` or `false`.
+  `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`. Booleans are `true` or `false`.
+- `network.ssh_listen=overlay` is refused with `overlay-not-joined` (exit 1, no
+  change) unless the Ship has joined the overlay and knows its overlay addresses.
 - `--file -` reads a complete replacement `ship.toml` on stdin. Its `ship.name`
   and `ship.id` must match the current file. Use it for anything else (autostart
   entries, tools, profile options).
@@ -245,6 +249,32 @@ so ship-netwatch keeps only well-formed host names and replaces any other
 character in a program name with `_`. It is visibility, not control: an agent
 can still use its own DNS (DNS over HTTPS) or bare addresses, and with sudo it can
 stop the collector.
+
+### `ship-ctl overlay join|leave|status [--json]`
+
+The overlay network (phase 5): access to the Ship from your other machines off the
+LAN. Only Tailscale (or Headscale, through `--login-server`) is supported.
+
+- `join --hostname NAME --tag TAG... [--login-server URL] --json`: reads a one-off
+  auth key from **stdin** (one line, at most 512 bytes). The key never appears on a
+  command line, in a log, in the result or on disk beyond a root-only file under
+  `/run/shipshape/` that exists only while `tailscale up` runs and is removed
+  afterwards. It installs the `tailscale` package from the pinned repo if it is
+  missing, enables `tailscaled` (with log upload off), and runs `tailscale up
+  --auth-key=file:<that file> --hostname NAME --advertise-tags TAG,...
+  --ssh=false --accept-dns=false --accept-routes=false --reset`. It then records
+  the Ship as joined (internal state) and returns the overlay in `data.overlay`
+  (same shape as the status document's `overlay`). Joining again replaces the
+  node's login with the new key. Fails with `overlay-failed` if `tailscale up`
+  fails or the overlay is not `running` within 60 seconds; the key file is
+  removed either way.
+- `leave --json`: sets `network.ssh_listen` back to `any` first (so sshd answers
+  on the LAN again), runs `tailscale logout`, then stops and disables
+  `tailscaled`. Leaving a Ship that never joined changes nothing.
+- `status --json`: `data.overlay` as above.
+
+Tailscale SSH is never turned on: OpenSSH with the pinned host key stays the only
+way in, over the overlay as on the LAN.
 
 ### `ship-ctl version [--json]`
 

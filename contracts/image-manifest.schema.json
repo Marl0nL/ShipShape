@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/image-manifest.schema.json",
+  "title": "Baked image manifest (<image id>.json next to the qcow2; /etc/shipshape/image.json inside it)",
+  "description": "Written by ship/image/bake (phase 4); read by FleetLedger (`ship-fleet image`). See contracts/image.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "created", "ubuntu", "versions_sha256", "tooling", "commit", "dirty", "recipes", "packages"],
+  "properties": {
+    "schema": { "const": "shipshape.image/1" },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9]{2}\\.[0-9]{2}-[0-9]{8}-[0-9a-f]{8}$",
+      "description": "<ubuntu release>-<bake date, UTC>-<first 8 hex of inputs_sha256>."
+    },
+    "created": { "$ref": "#/$defs/timestamp" },
+    "ubuntu": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["release", "build", "file", "sha256"],
+      "properties": {
+        "release": { "type": "string", "pattern": "^[0-9]{2}\\.[0-9]{2}$" },
+        "build": { "type": "string", "pattern": "^[0-9]{8}(\\.[0-9]+)?$" },
+        "file": { "type": "string", "pattern": "^[A-Za-z0-9._-]+\\.img$" },
+        "sha256": { "$ref": "#/$defs/sha256", "description": "The verified base cloud image." }
+      }
+    },
+    "versions_sha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 of the versions.toml the bake installed from."
+    },
+    "inputs_sha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 over the base image hash, versions.toml, the baked recipes and the bundle's provision script: the same inputs give the same id suffix."
+    },
+    "tooling": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$" },
+    "commit": { "type": "string", "pattern": "^([0-9a-f]{40}|unknown)$" },
+    "dirty": { "type": "boolean" },
+    "recipes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+      "uniqueItems": true,
+      "description": "Recipes marked bake whose system parts (apt packages) are in the image."
+    },
+    "packages": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*$" },
+      "uniqueItems": true,
+      "description": "apt packages the bake installed on top of the cloud image."
+    },
+    "format": { "const": "qcow2" },
+    "sha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "SHA-256 of the finished qcow2. Only in the copy next to the file (the image cannot hold its own hash)."
+    },
+    "size_bytes": { "type": "integer", "minimum": 1 }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    }
+  }
+}
