@@ -21,6 +21,7 @@ from pathlib import Path
 from . import PERMISSION_MODES
 from .context import Context, utc_now
 from .fsutil import read_json, write_atomic
+from .net import status_section as net_section
 from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
 from .shiptoml import ShipToml
 from .sshtrust import attention as ssh_attention
@@ -430,6 +431,13 @@ def attention_for(doc: dict, failed_units: list[str]) -> list[dict]:
             add("signin-expired", f"The {label} sign-in has expired.", svc)
     for unit in failed_units:
         add("unit-failed", f"{unit} has failed.", unit)
+    if (doc.get("net") or {}).get("collector") == "stopped":
+        add(
+            "net-collector-down",
+            "Network visibility is not recording (ship-netwatch is "
+            "not running); see `ship-ctl logs system`.",
+            "ship-netwatch",
+        )
     for code, message in ssh_attention(doc.get("ssh")):
         add(code, message)
     if doc["host"]["reboot_required"]:
@@ -467,6 +475,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_claude = pool.submit(probe_claude_version, ctx)
         f_units = pool.submit(probe_failed_units, ctx)
         f_ssh = pool.submit(ssh_state, ctx)
+        f_net = pool.submit(net_section, ctx)
         f_auth = {svc: pool.submit(AUTH_PROBES[svc], ctx) for svc in AUTH_SERVICES}
         host, e = f_host.result()
         errors += e
@@ -479,6 +488,8 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         failed_units, e = f_units.result()
         errors += e
         ssh, e = f_ssh.result()
+        errors += e
+        net, e = f_net.result()
         errors += e
         auth = {}
         for svc, fut in f_auth.items():
@@ -516,7 +527,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         },
         "auth": auth,
         "tools": tools,
-        "net": None,
+        "net": net,
         "ssh": ssh,
         "errors": [],
     }

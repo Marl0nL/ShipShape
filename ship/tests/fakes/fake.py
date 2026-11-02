@@ -245,6 +245,10 @@ def cloud_init(s: dict, a: list[str]) -> int:
 
 
 def systemctl(s: dict, a: list[str]) -> int:
+    if a[:1] == ["is-active"]:
+        state = s.get("active", {}).get(a[-1], "inactive")
+        out(state)
+        return 0 if state == "active" else 3
     units = s.get("failed_user" if "--user" in a else "failed_units", [])
     out("\n".join(f"{u} loaded failed failed X" for u in units))
     return 0
@@ -267,6 +271,14 @@ def sshd(s: dict, a: list[str]) -> int:
     return 0
 
 
+def vnstat(s: dict, a: list[str]) -> int:
+    if "vnstat" not in s:
+        print("Error: Unable to open database", file=sys.stderr)
+        return 1
+    out(s["vnstat"])
+    return 0
+
+
 def journalctl(s: dict, a: list[str]) -> int:
     out("\n".join(s.get("journal", ["-- No entries --"])))
     return 0
@@ -285,6 +297,7 @@ HANDLERS = {
     "journalctl": journalctl,
     "visudo": lambda s, a: 0,
     "sshd": sshd,
+    "vnstat": vnstat,
 }
 
 

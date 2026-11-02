@@ -541,6 +541,30 @@ enable_unit() { # DESC [--global] UNIT
   fi
 }
 
+# --- network visibility (phase 3) -----------------------------------------------------
+# ship-netwatch records which programs connect where (contracts/ship-ctl.md,
+# `ship-ctl net`); vnstat counts bytes per interface. Observation only.
+NET_PACKAGES=(bpfcc-tools vnstat)
+
+step_netwatch() {
+  ensure_debs "${NET_PACKAGES[@]}"
+  local unit_changed
+  put_file "$FILES/systemd/system/ship-netwatch.service" /etc/systemd/system/ship-netwatch.service 0644
+  unit_changed=$CHANGED
+  [ "$unit_changed" = 0 ] || sys systemctl daemon-reload
+  if [ ! -L "$ROOT/etc/systemd/system/multi-user.target.wants/ship-netwatch.service" ]; then
+    enable_unit "ship-netwatch.service" ship-netwatch.service
+  fi
+  if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
+    systemctl enable --now vnstat >/dev/null 2>&1 || log "vnstat did not start"
+    # A converge brings a new release of the collector: restart it to pick that up.
+    if [ "$unit_changed" = 1 ] || [ "$MODE" = converge ] ||
+      ! systemctl is-active --quiet ship-netwatch.service; then
+      systemctl restart ship-netwatch.service || log "ship-netwatch did not start"
+    fi
+  fi
+}
+
 # --- first boot: settings, tools, herdr ----------------------------------------------
 ship_ctl() { "$BUNDLE/bin/ship-ctl" "$@"; }
 
@@ -622,6 +646,7 @@ main() {
   step_claude
   step_system_config
   step_units
+  step_netwatch
   [ "$MODE" = first-boot ] && step_first_boot
 
   FINISHED=1

@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import CONTRACTS, apply, autostart, converge, logs, shiptoml, sshtrust, status, tools
+from . import CONTRACTS, apply, autostart, converge, logs, net, shiptoml, sshtrust, status, tools
 from .context import Context
 from .errors import CtlError
 from .fsutil import read_json, write_atomic
@@ -91,6 +91,7 @@ def build_parser() -> Parser:
     lg.add_argument("--lines", type=int, default=200)
     sv = cmd("ssh-trust", "Install SSH certificates and CA keys from FleetLedger (stdin).")
     sv.add_argument("--file", required=True, metavar="-", help="read the document from stdin")
+    cmd("net", "Show where this Ship connects: the 7-day network visibility summary.")
     cmd("version", "Print the tooling version and contract versions.")
     r = sub.add_parser("refresh", help="(internal) refresh the status cache and react to sign-ins")
     r.add_argument("--json", action="store_true")
@@ -237,6 +238,17 @@ def cmd_ssh_trust(ctx: Context, args) -> dict:
     return result("ssh-trust", changed=changed, messages=messages, data=data)
 
 
+def cmd_net(ctx: Context, args) -> dict:
+    data, errors = net.summary(ctx)
+    for e in errors:
+        ctx.log(e)
+    c = data["collector"]
+    messages = [f"collector {c['state']}" + (f" ({c['source']})" if c["source"] else "")]
+    if c["note"]:
+        messages.append(c["note"])
+    return result("net", messages=messages, data=data)
+
+
 def cmd_logs(ctx: Context, args) -> dict:
     lines = logs.read(ctx, args.source, args.lines)
     return result("logs", data={"lines": lines})
@@ -306,6 +318,7 @@ COMMANDS = {
     "version": cmd_version,
     "refresh": cmd_refresh,
     "ssh-trust": cmd_ssh_trust,
+    "net": cmd_net,
 }
 
 
@@ -332,6 +345,12 @@ def _print_human(doc: dict) -> None:
     data = doc.get("data") or {}
     if doc["command"] == "logs":
         print("\n".join(data.get("lines", [])))
+    elif doc["command"] == "net" and data:
+        t = data["totals"]
+        print(f"last 24 h: {t['rx_mb_24h']} MB in, {t['tx_mb_24h']} MB out")
+        for d in data["destinations"][:30]:
+            progs = ",".join(p["name"] for p in d["programs"][:3])
+            print(f"  {d['connections_24h']:>6} {d['connections_7d']:>7}  {d['name']}  ({progs})")
     elif doc["command"] in ("tools", "autostart", "ssh-trust") and data:
         print(json.dumps(data, indent=2))
     if doc["error"]:
