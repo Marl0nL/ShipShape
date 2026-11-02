@@ -19,8 +19,8 @@
           "description": "running: recording now. stopped: installed but not running (the summary is what it last saved). unavailable: not installed."
         },
         "source": {
-          "enum": ["bcc", "ss", null],
-          "description": "bcc: eBPF tcpconnect and tcplife (every connection, with bytes). ss: polling every few seconds (short connections can be missed; no bytes)."
+          "enum": ["ebpf", "ss", null],
+          "description": "ebpf: tcpconnect and tcplife from Ubuntu's libbpf-tools (every connection, with bytes). ss: polling every few seconds (short connections can be missed; no bytes)."
         },
         "since": {
           "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
