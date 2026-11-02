@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/profile.schema.json",
+  "title": "Profile (ship/profiles/<id>.toml): a named bundle of recipes plus setup",
+  "description": "Written by the Ship track (W6). FleetLedger (W3, W10) reads profiles from the repo to validate --profile and to copy the profile's options from ships.toml into ship.toml [profile_options.<id>]. The file name must be <id>.toml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "description", "tools"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": { "$ref": "#/$defs/profileId" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "tools": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/toolId" },
+      "uniqueItems": true,
+      "description": "Recipe ids installed with the profile."
+    },
+    "options": {
+      "type": "object",
+      "description": "Values the profile needs from local config, e.g. a repo URL. Never committed with real values.",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description"],
+        "properties": {
+          "description": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean", "default": false },
+          "pattern": { "type": "string", "description": "Regex the value must match." }
+        }
+      }
+    },
+    "setup": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+$",
+      "description": "Script relative to ship/profiles/, run as the agent user after the tools; options arrive as SHIPSHAPE_OPT_<NAME> variables."
+    }
+  },
+  "$defs": {
+    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "profileId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" }
+  }
+}
