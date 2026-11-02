@@ -72,7 +72,7 @@ same id.
 - `defaults.image` pins the image new Ships are made from; absent or `"stock"`
   means the driver's own template (the plain cloud image).
 - Each Ship records the image it was made from (`ship.<name>.image`).
-- Existing Ships are never re-imaged. They are updated in place (`ship-fleet
-  update`); a new image only changes how new Ships start.
+- Existing Ships are never re-imaged. They are updated in place (phase 2's
+  `ship-fleet update`); a new image only changes how new Ships start.
 - An image is verified against its recorded sha256 before every publish, and an
   image still pinned cannot be removed.
