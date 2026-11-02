@@ -18,8 +18,8 @@ def test_autostart_starts_each_agent_in_its_mode(ship):
     assert_valid("ship-ctl-result", doc)
     assert doc["data"] == {"started": ["main", "grinder"], "skipped": []}
     assert started_args(ship) == {
-        "main": ["--permission-mode", "auto"],
-        "grinder": ["--dangerously-skip-permissions"],
+        "main": ["--permission-mode", "auto", "--name", "ship-01-main"],
+        "grinder": ["--dangerously-skip-permissions", "--name", "ship-01-grinder"],
     }
     workspaces = ship.scenario()["herdr"]["workspaces"]
     assert workspaces[0]["args"] == [
@@ -156,3 +156,21 @@ def test_autostart_records_session_names(ship):
 
     toml = shiptoml.load(Paths(ship.root, ship.bundle))
     assert naming.session_name(toml, "main") == "lab-main"
+
+
+def test_autostart_without_name_flag(ship):
+    ship.set(claude={"logged_in": True, "email": "work@example.com", "name_flag": False})
+    ship.ctl("autostart", "--json")
+    assert started_args(ship)["main"] == ["--permission-mode", "auto"]
+
+
+def test_non_claude_agent_in_recorded_pane_is_not_the_autostart_agent(ship):
+    """herdr reused the recorded pane for another kind of agent: start the agent again."""
+    ship.ctl("autostart", "--json")
+    agents = ship.scenario()["herdr"]["agents"]
+    main = next(a for a in agents if a["name"] == "main")
+    main.update(agent="pi", name=None, agent_session=None)
+    ship.set(herdr={"server": True, "agents": agents, "next_ws": 3})
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert rc == 0
+    assert doc["data"]["started"] == ["main"]

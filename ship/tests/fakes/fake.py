@@ -116,6 +116,23 @@ def claude(s: dict, a: list[str]) -> int:
     if a == ["--version"]:
         out(f"{c.get('version', '2.1.316')} (Claude Code)")
         return 0
+    if a == ["--help"]:
+        out(
+            "Usage: claude [options]\n  -c, --continue  Continue\n"
+            + (
+                "  -n, --name <name>  Set a display name for this session\n"
+                if c.get("name_flag", True)
+                else ""
+            )
+        )
+        return 0
+    if c.get("auth_garbage") and a[:2] == ["auth", "status"]:
+        out("not json")
+        return 0
+    if c.get("hang") and a[:2] == ["auth", "status"]:
+        import time
+
+        time.sleep(30)
     if a[:2] == ["auth", "status"]:
         if c.get("logged_in"):
             out(

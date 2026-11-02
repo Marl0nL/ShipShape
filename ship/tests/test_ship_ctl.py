@@ -94,6 +94,7 @@ def test_status_never_contains_a_token(ship):
         ({"claude": {"logged_in": False}}, "needs-sign-in"),
         ({"cloud_init": "running"}, "provisioning"),
         ({"herdr": {"server": False}}, "unknown"),
+        ({"claude": {"auth_garbage": True}}, "needs-sign-in"),
         ({}, "ready"),
     ],
 )
@@ -362,10 +363,58 @@ def test_logs(ship):
         "short-iso",
         "-n",
         "200",
-        "--user-unit",
-        "herdr.service",
+        "_SYSTEMD_USER_UNIT=herdr.service",  # plus _UID=<agent uid> on a Ship
     ] in ship.calls("journalctl")
 
 
 def test_boot_id_fixture_matches(ship):
     assert ship.p("/proc/sys/kernel/random/boot_id").read_text().strip() == BOOT_ID
+
+
+def test_unreadable_claude_status_is_an_error(ship):
+    ship.set(claude={"auth_garbage": True})
+    _, doc, _ = ship.ctl("status", "--json")
+    assert doc["auth"]["claude"]["state"] == "error"
+    assert "claude auth status: exit 0, unreadable output" in doc["errors"]
+
+
+def test_timed_out_probe(ship):
+    ship.set(claude={"hang": True})
+    ship.env["SHIPSHAPE_PROBE_TIMEOUT"] = "1"
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert rc == 0
+    assert_valid("ship-status", doc)
+    assert doc["auth"]["claude"]["state"] == "unknown"
+    assert "claude auth status: timed out" in doc["errors"]
+
+
+def test_apply_fixes_a_mode_only_change(ship):
+    ship.ctl("apply", "--json")
+    ship.p("/etc/claude-code/managed-settings.json").chmod(0o600)
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert doc["changed"] == ["/etc/claude-code/managed-settings.json"]
+    assert oct(ship.p("/etc/claude-code/managed-settings.json").stat().st_mode & 0o777) == "0o644"
+
+
+def test_adc_probe_never_captures_the_token():
+    """The ADC check's output is an access token: it must go to /dev/null."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+    from shipctl.runner import Result
+    from shipctl.status import probe_adc
+
+    seen = {}
+
+    class Runner:
+        def run(self, argv, **kwargs):
+            seen.update(argv=argv, **kwargs)
+            return Result(0)
+
+    class Ctx:
+        runner = Runner()
+
+    assert probe_adc(Ctx())[0]["state"] == "ok"
+    assert seen["discard"] is True
+    assert seen["argv"][-1] == "print-access-token"

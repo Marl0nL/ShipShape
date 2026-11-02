@@ -33,7 +33,7 @@ def mode_args(mode: str) -> list[str]:
 
 
 def resume_pending(ctx: Context) -> bool:
-    rec = read_json(ctx.paths.last_resume, {})
+    rec = ctx.read_home_json(ctx.paths.last_resume, {})
     if isinstance(rec, dict) and rec.get("boot_id") == boot_id(ctx):
         return False
     try:
@@ -125,6 +125,7 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
     default_mode = ship.claude["default_mode"]
     agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
     failures = 0
+    named = None  # whether claude takes --name; asked once, only if something starts
 
     for entry in entries:
         name = entry["name"]
@@ -152,7 +153,9 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
         session = naming.session_name(ship, name)
         argv = ["agent", "start", name, "--kind", "claude", "--pane", pane]
         argv += ["--timeout", str(START_TIMEOUT_MS), "--", *mode_args(mode)]
-        argv += naming.launch_args(session)
+        if named is None:
+            named = naming.name_flag_supported(ctx)
+        argv += naming.launch_args(session, named)
         out, why = _herdr_json(ctx, argv, START_TIMEOUT_MS / 1000 + 15)
         if out is None:
             failures += 1

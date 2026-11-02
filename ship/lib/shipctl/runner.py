@@ -16,6 +16,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .homefs import HomeFS, UnsafePath
 from .paths import AGENT, Paths
 
 
@@ -34,12 +35,16 @@ TIMEOUT_RC = 124
 NOT_FOUND_RC = 127
 
 
-def read_env_file(path: Path) -> dict[str, str]:
-    """Parse the KEY='value' lines ship-ctl writes (see tools.write_env_file)."""
+def read_env_file(home: Path, rel: str) -> dict[str, str]:
+    """Parse the KEY='value' lines ship-ctl writes (see tools.write_env_file).
+
+    The file is in the agent's home, so it is read without following symlinks.
+    """
     env: dict[str, str] = {}
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+        raw = HomeFS(home).read(rel)
+        lines = raw.decode("utf-8").splitlines() if raw else []
+    except (OSError, UnsafePath, UnicodeDecodeError):
         return env
     for line in lines:
         line = line.strip()
@@ -87,7 +92,9 @@ class Runner:
             if ids:
                 env["XDG_RUNTIME_DIR"] = f"/run/user/{ids[0]}"
         env["npm_config_prefix"] = f"{env['HOME']}/.local"
-        env.update(read_env_file(self.paths.agent_env_file))
+        env.update(
+            read_env_file(self.paths.agent_home, self.paths.home_rel(self.paths.agent_env_file))
+        )
         return env
 
     # --- running -------------------------------------------------------------

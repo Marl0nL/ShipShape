@@ -127,6 +127,10 @@ class Paths:
         fake = self.p("/proc")
         return fake if self.sandbox and fake.is_dir() else Path("/proc")
 
+    def home_rel(self, path: Path) -> str:
+        """`path` relative to the agent's home, for HomeFS."""
+        return str(path.relative_to(self.agent_home))
+
     def agent_path(self, path: Path) -> str:
         """The path as the agent sees it on the Ship (strip the sandbox root)."""
         if not self.sandbox:

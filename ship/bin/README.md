@@ -38,6 +38,29 @@ Internal state (not a contract; may change): `/var/lib/shipshape/provision.json`
 `~/.local/state/shipshape/last-resume.json` (written by ship-resume) and the mode
 ledger.
 
+## Files in the agent's home
+
+ship-ctl runs as root but edits files the `agent` user owns, and the agent can
+put a symlink anywhere in its home. Everything ship-ctl reads or writes there goes
+through `homefs.py`: paths are opened one folder at a time with `O_NOFOLLOW`, a
+symlink anywhere on the way is refused (and reported in `messages`), and writes
+replace the file by `renameat`. Inside a folder ship-ctl owns outright (a skill
+copied by `tools`), stray symlinks are removed rather than followed.
+`ship/tests/test_symlinks.py` plants links for each case.
+
+## Check on a real Ship (W11)
+
+The tests use fakes, so these need a live Ship:
+
+- `ship-ctl logs herdr` and `logs resume` return lines (journal fields
+  `_SYSTEMD_USER_UNIT=` plus `_UID=<agent uid>`, read as root).
+- `herdr agent list` JSON matches what `status.py` reads (`name`, `agent`,
+  `agent_status`, `pane_id`, `agent_session.value`), including after a reboot.
+- `claude auth status --json` signed in gives `email` and `subscriptionType`;
+  `gh auth status` wording still yields the login.
+- Autostart sessions show `<prefix>-<agent>` names in the Claude app
+  (`claude --name`), and whether the name survives `claude --resume`.
+
 ## Testing without a Ship
 
 `SHIPSHAPE_ROOT=/some/dir` makes ship-ctl treat that folder as `/`: no root check,

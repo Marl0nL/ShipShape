@@ -45,6 +45,7 @@ key types exist, so the key FleetLedger pinned is the only one a client can see.
 | `/usr/local/bin/ship-ctl` | symlink | `-> /opt/shipshape/current/bin/ship-ctl` |
 | `/usr/local/bin/ship-axi` | symlink or wrapper | The ship-axi command (W7). |
 | `/opt/shipshape/shim/claude` | root, 0755 | Resume shim; first on herdr's PATH (`settings.md`). |
+| `/opt/shipshape/hooks/mode-ledger` | root, 0755 | Mode-ledger Claude hook (`settings.md`). |
 | `/usr/local/bin/herdr` | root, 0755 | Pinned herdr from `versions.toml`. |
 | `/var/lib/shipshape/` | root, 0755 | Ship state. Contents are internal, except the reserved names below. |
 | `/var/lib/shipshape/bundle.tar.gz` | root, 0600 | The last bundle applied. |
@@ -75,7 +76,7 @@ FleetLedger over SSH), and `/var/lib/shipshape/net/` (network visibility, phase 
 | Unit | Scope | Purpose |
 |---|---|---|
 | `herdr.service` | agent user | `herdr server`, restarted on failure. Its PATH starts with `/opt/shipshape/shim`, then `~/.local/bin`. |
-| `ship-resume.service` | agent user | One-shot after herdr: attaches a hidden client so herdr resumes agents, detaches, then runs `ship-ctl autostart`. |
+| `ship-resume.service` | agent user | One-shot after herdr: attaches a hidden client so herdr resumes agents, detaches, and records that this boot's resume is done. `agent` cannot run ship-ctl, so autostart follows from `ship-status` below, which waits for that record. |
 | `ship-status.timer`, `ship-status.service` | system | Refresh `/run/shipshape/status.json` every 30 seconds, and react to sign-ins: run tools waiting on a newly signed-in service, and `ship-ctl autostart` once Claude becomes signed in (`ship-ctl.md`). |
 
 Also present: `/etc/systemd/logind.conf.d/50-shipshape.conf`

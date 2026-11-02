@@ -17,7 +17,8 @@ from xml.sax.saxutils import escape
 from . import tomlw
 from .context import Context
 from .errors import CtlError
-from .fsutil import ensure_dir, read_bytes, remove, write_atomic
+from .fsutil import remove, write_atomic
+from .homefs import UnsafePath
 from .paths import Paths
 from .shiptoml import ShipToml
 
@@ -112,24 +113,16 @@ def expand_cwd(cwd: str, agent_home: str = "/home/agent") -> str:
     return agent_home + cwd[1:] if cwd.startswith("~/") else cwd
 
 
-def _load_json_obj(path: Path) -> dict:
-    raw = read_bytes(path)
+def _json_obj(raw: bytes | None, label: str) -> dict:
     if raw is None:
         return {}
     try:
         doc = json.loads(raw)
     except ValueError as exc:
-        raise CtlError("internal", f"{path} is not valid JSON; not touching it") from exc
+        raise CtlError("internal", f"{label} is not valid JSON; not touching it") from exc
     if not isinstance(doc, dict):
-        raise CtlError("internal", f"{path} is not a JSON object; not touching it")
+        raise CtlError("internal", f"{label} is not a JSON object; not touching it")
     return doc
-
-
-def _mode(path: Path, default: int) -> int:
-    try:
-        return path.stat().st_mode & 0o7777
-    except FileNotFoundError:
-        return default
 
 
 def _check_sudoers(ctx: Context, text: str) -> None:
@@ -148,7 +141,6 @@ def _check_sudoers(ctx: Context, text: str) -> None:
 def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str], list[str]]:
     """Returns (changed paths, messages)."""
     paths: Paths = ctx.paths
-    owner = ctx.agent_owner
     changed: list[str] = []
     messages: list[str] = []
 
@@ -180,51 +172,45 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
     if ship.lan_guard:
         messages.append("network.lan_guard is not built yet (phase 2); no rules were written.")
 
-    # Agent-owned files: merge only our keys.
+    # Agent-owned files: merge only our keys. The agent controls this folder, so
+    # everything goes through HomeFS, which never follows a symlink (homefs.py).
     home = paths.agent_home
     if not home.is_dir():
         messages.append(f"{paths.agent_path(home)} does not exist; agent files skipped.")
         return changed, messages
-    if not dry_run:
-        for d in (home / ".claude", home / ".config/herdr"):
-            ensure_dir(d, 0o755 if d.name == "herdr" else 0o700, owner)
-
-    settings_path = home / ".claude/settings.json"
-    settings = merge_user_settings(
-        _load_json_obj(settings_path), ship.claude["allow_bypass"], Paths.LEDGER_HOOK
-    )
-    note(
-        settings_path,
-        write_atomic(
-            settings_path,
-            json.dumps(settings, indent=2) + "\n",
-            _mode(settings_path, 0o644),
-            owner,
-            dry_run,
-        ),
-    )
-
-    claude_json_path = home / ".claude.json"
+    fs = ctx.home
     agent_home = paths.agent_path(home)
     trusted = [expand_cwd(a["cwd"], agent_home) for a in ship.autostart]
-    claude_json = merge_claude_json(_load_json_obj(claude_json_path), trusted)
-    note(
-        claude_json_path,
-        write_atomic(
-            claude_json_path,
-            json.dumps(claude_json, indent=2) + "\n",
-            _mode(claude_json_path, 0o600),
-            owner,
-            dry_run,
-        ),
-    )
 
-    herdr_path = home / ".config/herdr/config.toml"
-    raw = read_bytes(herdr_path)
-    try:
-        herdr = tomlw.set_keys(raw.decode("utf-8") if raw else "", HERDR_KEYS)
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise CtlError("internal", f"cannot update {herdr_path}: {exc}") from exc
-    note(herdr_path, write_atomic(herdr_path, herdr, _mode(herdr_path, 0o644), owner, dry_run))
+    def settings(text: bytes | None) -> str:
+        doc = merge_user_settings(
+            _json_obj(text, "~/.claude/settings.json"),
+            ship.claude["allow_bypass"],
+            Paths.LEDGER_HOOK,
+        )
+        return json.dumps(doc, indent=2) + "\n"
+
+    def claude_json(text: bytes | None) -> str:
+        doc = merge_claude_json(_json_obj(text, "~/.claude.json"), trusted)
+        return json.dumps(doc, indent=2) + "\n"
+
+    def herdr_config(text: bytes | None) -> str:
+        try:
+            return tomlw.set_keys(text.decode("utf-8") if text else "", HERDR_KEYS)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise CtlError("internal", f"cannot update ~/.config/herdr/config.toml: {exc}") from exc
+
+    for rel, render, mode, dir_mode in (
+        (".claude/settings.json", settings, 0o644, 0o700),
+        (".claude.json", claude_json, 0o600, 0o700),
+        (".config/herdr/config.toml", herdr_config, 0o644, 0o755),
+    ):
+        try:
+            text = render(fs.read(rel))
+            did = fs.write(rel, text, mode, dry_run=dry_run, dir_mode=dir_mode, keep_mode=True)
+        except UnsafePath as exc:
+            messages.append(str(exc))
+            continue
+        note(home / rel, did)
 
     return changed, messages

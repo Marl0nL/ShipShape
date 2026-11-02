@@ -30,9 +30,13 @@ def read(ctx: Context, source: str, lines: int) -> list[str]:
     if source == "tools":
         return _tail(ctx.paths.logs / "tools.log", lines)
     base = ["journalctl", "--no-pager", "-o", "short-iso", "-n", str(lines)]
+    # As root, --user-unit would match root's own user units (it adds _UID of the
+    # caller), so the agent's units are selected by explicit journal fields.
+    ids = ctx.runner.agent_ids()
+    agent = [f"_UID={ids[0]}"] if ids else []
     selector = {
-        "herdr": ["--user-unit", "herdr.service"],
-        "resume": ["--user-unit", "ship-resume.service"],
+        "herdr": ["_SYSTEMD_USER_UNIT=herdr.service", *agent],
+        "resume": ["_SYSTEMD_USER_UNIT=ship-resume.service", *agent],
         "status": ["-u", "ship-status.service"],
         "system": [],
     }[source]

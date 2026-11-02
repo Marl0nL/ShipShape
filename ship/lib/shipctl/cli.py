@@ -12,7 +12,6 @@ import argparse
 import json
 import os
 import sys
-import tomllib
 from pathlib import Path
 
 from . import CONTRACTS, apply, autostart, converge, logs, shiptoml, status, tools
@@ -338,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
             error={"code": exc.code, "message": exc.message},
         )
         code = exc.exit_code
-    except (OSError, ValueError, KeyError, tomllib.TOMLDecodeError) as exc:
+    except Exception as exc:  # anything else still ends in exactly one JSON document
         ctx.log(f"internal error: {type(exc).__name__}: {exc}")
         doc = result(
             "status" if command == "refresh" else command,

@@ -93,9 +93,10 @@ Starts every `[[autostart]]` agent that is not running, in its own mode, with
 `herdr agent start <name> --kind claude`, then sends its prompt. It does nothing
 while the Ship is `provisioning` or `needs-sign-in`.
 
-The Ship runs it on its own: at boot (`ship-resume.service`) and once whenever
-Claude becomes signed in (see "Reacting to sign-ins" below). FleetLedger never
-needs to call it; calling it anyway is harmless.
+The Ship runs it on its own: at boot (the first status refresh after
+`ship-resume.service` has finished) and once whenever Claude becomes signed in
+(see "Reacting to sign-ins" below). FleetLedger never needs to call it; calling
+it anyway is harmless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cached_property
 
+from .homefs import HomeFS
 from .paths import Paths
 from .runner import Runner
 
@@ -45,3 +46,20 @@ class Context:
     @property
     def agent_owner(self) -> tuple[int, int] | None:
         return self.runner.agent_ids()
+
+    @property
+    def home(self) -> HomeFS:
+        """The agent's home, safe against symlinks the agent planted (homefs.py)."""
+        return HomeFS(self.paths.agent_home, self.agent_owner)
+
+    def read_home_json(self, path, default=None):
+        """A JSON file under the agent's home; `default` if missing, unsafe or invalid."""
+        import json
+
+        from .homefs import UnsafePath
+
+        try:
+            raw = self.home.read(self.paths.home_rel(path))
+            return default if raw is None else json.loads(raw)
+        except (UnsafePath, OSError, ValueError):
+            return default

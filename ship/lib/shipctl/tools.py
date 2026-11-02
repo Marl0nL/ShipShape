@@ -11,12 +11,10 @@ it per recipe. Command output goes to /var/log/shipshape/tools.log.
 
 from __future__ import annotations
 
-import filecmp
 import hashlib
 import json
 import os
 import re
-import shutil
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +23,7 @@ from . import schema
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
+from .homefs import UnsafePath
 from .runner import Result
 from .shiptoml import ShipToml
 from .status import probe_auth, requested_tools
@@ -176,7 +175,11 @@ class Installer:
         return self.ctx.paths.p("/usr/local")
 
     def npm_installed(self, prefix: Path, name: str) -> str | None:
-        doc = read_json(prefix / "lib/node_modules" / name / "package.json", {})
+        package = prefix / "lib/node_modules" / name / "package.json"
+        if package.is_relative_to(self.ctx.paths.agent_home):
+            doc = self.ctx.read_home_json(package, {})
+        else:
+            doc = read_json(package, {})
         return doc.get("version") if isinstance(doc, dict) else None
 
     def npm(self, rid: str, specs: list[str], run_as: str) -> bool:
@@ -201,31 +204,10 @@ class Installer:
         src = (self.ctx.paths.bundle / recipe.skill_dir).resolve()
         if not src.is_dir() or self.ctx.paths.bundle.resolve() not in src.parents:
             raise CtlError("tool-failed", f"{recipe.id}: skill folder {recipe.skill_dir} missing")
-        dest = self.ctx.paths.agent_home / ".claude/skills" / recipe.id
-        owner = self.ctx.agent_owner
-        changed = False
-        ensure_dir(dest, 0o755, owner)
-        wanted = set()
-        for path in sorted(src.rglob("*")):
-            rel = path.relative_to(src)
-            wanted.add(rel)
-            target = dest / rel
-            if path.is_dir():
-                ensure_dir(target, 0o755, owner)
-            elif not target.is_file() or not filecmp.cmp(path, target, shallow=False):
-                ensure_dir(target.parent, 0o755, owner)
-                shutil.copyfile(path, target)
-                os.chmod(target, 0o644)
-                if owner:
-                    os.chown(target, *owner)
-                changed = True
-        for path in sorted(dest.rglob("*"), reverse=True):
-            if path.relative_to(dest) not in wanted:
-                if path.is_dir() and not path.is_symlink():
-                    shutil.rmtree(path)
-                else:
-                    path.unlink()
-                changed = True
+        try:  # never follows a symlink the agent put in the way (homefs.py)
+            changed = self.ctx.home.sync_dir(src, f".claude/skills/{recipe.id}")
+        except UnsafePath as exc:
+            raise CtlError("tool-failed", f"{recipe.id}: {exc}") from exc
         if changed:
             self.log.step(recipe.id, f"copied {recipe.skill_dir} to ~/.claude/skills/{recipe.id}")
         return changed
@@ -321,11 +303,13 @@ def write_env_file(ctx: Context, recipes: list[Recipe]) -> bool:
             env[key] = value
     lines = ["# Written by ship-ctl from the catalogue recipes. Do not edit."]
     lines += [f"{k}='{v}'" for k, v in sorted(env.items())]
-    owner = ctx.agent_owner
     if not ctx.paths.agent_home.is_dir():
         return False
-    ensure_dir(ctx.paths.agent_env_file.parent, 0o755, owner)
-    return write_atomic(ctx.paths.agent_env_file, "\n".join(lines) + "\n", 0o644, owner)
+    rel = ctx.paths.home_rel(ctx.paths.agent_env_file)
+    try:
+        return ctx.home.write(rel, "\n".join(lines) + "\n", 0o644)
+    except UnsafePath as exc:
+        raise CtlError("tool-failed", str(exc)) from exc
 
 
 def check(inst: Installer, recipe: Recipe) -> tuple[bool, str | None]:

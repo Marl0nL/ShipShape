@@ -25,7 +25,9 @@ from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
 from .shiptoml import ShipToml
 
 SCHEMA = "shipshape.ship-status/1"
-PROBE_TIMEOUT = 5
+PROBE_TIMEOUT = 5.0
+if os.environ.get("SHIPSHAPE_ROOT") and os.environ.get("SHIPSHAPE_PROBE_TIMEOUT"):
+    PROBE_TIMEOUT = float(os.environ["SHIPSHAPE_PROBE_TIMEOUT"])  # tests only
 AUTH_SERVICES = ("claude", "gcloud", "gcloud_adc", "github")
 AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$")
@@ -154,7 +156,7 @@ def probe_cloud_init(ctx: Context) -> tuple[str, list[str]]:
 
 # --- herdr ------------------------------------------------------------------
 def read_ledger(ctx: Context) -> dict[str, str]:
-    doc = read_json(ctx.paths.mode_ledger, {})
+    doc = ctx.read_home_json(ctx.paths.mode_ledger, {})
     sessions = doc.get("sessions", {}) if isinstance(doc, dict) else {}
     out = {}
     if isinstance(sessions, dict):
@@ -200,7 +202,7 @@ def agent_entry(raw: dict, ledger: dict[str, str]) -> dict:
 
 
 def last_resume(ctx: Context) -> dict | None:
-    rec = read_json(ctx.paths.last_resume, None)
+    rec = ctx.read_home_json(ctx.paths.last_resume, None)
     if not isinstance(rec, dict):
         return None
     at, method = rec.get("at"), rec.get("method")
