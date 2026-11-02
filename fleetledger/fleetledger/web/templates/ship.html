@@ -137,7 +137,6 @@
   {% endif %}
   <section class="ops">
     {% for op in ("update", "reboot") %}
-    {% if operation_available(op) %}
     <form method="post" action="/operations" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="operation" value="{{ op }}">
@@ -145,7 +144,6 @@
       <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
       <button type="submit" class="ghost">{{ op|capitalize }} {{ ship.name }}</button>
     </form>
-    {% endif %}
     {% endfor %}
   </section>
   {% elif view.cloud_init %}
@@ -164,6 +162,11 @@
           <option value="">(unchanged{% if doc and key in doc.claude %}: {{ doc.claude[key] | string | lower }}{% endif %})</option>
           {% for value in allowed %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
         </select>
+      </label>
+      {% endfor %}
+      {% for key, label in SETTINGS_TEXT.items() %}
+      <label>{{ label }}
+        <input type="text" name="{{ key }}" maxlength="400" autocomplete="off" spellcheck="false" placeholder="(unchanged)">
       </label>
       {% endfor %}
       <button type="submit">Apply</button>

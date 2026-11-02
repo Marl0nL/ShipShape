@@ -28,7 +28,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import commands
+from fleetledger import commands, ops
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -52,6 +52,12 @@ SETTINGS = {
     "update_channel": ("update_channel", ("latest", "stable"), "Claude update channel"),
     "sudo": ("sudo", ("true", "false"), "Agent sudo"),
     "lan_guard": ("lan_guard", ("true", "false"), "LAN guard"),
+    "auto_reboot": ("auto_reboot", ("true", "false"), "Reboot for OS updates on its own"),
+}
+# Free-text settings: fleetledger.ops checks their format.
+SETTINGS_TEXT = {
+    "reboot_time": "Reboot time for OS updates (HH:MM)",
+    "lan_guard_allow": "LAN guard also allows (addresses or CIDRs, comma-separated)",
 }
 TABS = ("overview", "settings", "logs", "network")
 
@@ -64,6 +70,7 @@ class UI:
     gate: Gate
     fleet: Fleet
     concierge: Concierge
+    operations: actions.Operations
     env: Environment
     flashes: dict[str, list[tuple[str, str]]] = dataclasses.field(default_factory=dict)
 
@@ -110,7 +117,7 @@ def make_env() -> Environment:
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
         SETTINGS=SETTINGS,
-        operation_available=actions.available,
+        SETTINGS_TEXT=SETTINGS_TEXT,
     )
     env.filters["pill"] = _pill
     return env
@@ -195,7 +202,7 @@ def not_found(request: Request, what: str) -> Response:
 
 
 def _fleet_version(ui: UI) -> str:
-    return f"{ui.fleet.version}.{ui.concierge.version}"
+    return f"{ui.fleet.version}.{ui.concierge.version}.{ui.operations.version}"
 
 
 def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
@@ -207,6 +214,7 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
         "views": views,
         "items": items,
         "flows_waiting": [f for f in ui.concierge.active() if f.needs_you],
+        "operations": ui.operations.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
     }
@@ -312,6 +320,10 @@ async def ship_settings(request: Request) -> Response:
             ui.flash(session_of(request), "bad", f"{key}: not an allowed value.")
             return back(f"/ships/{name}/settings")
         assignments.append(f"{set_key}={value}")
+    for key in SETTINGS_TEXT:
+        value = one(fields, key)
+        if value:
+            assignments.append(f"{key}={value}")
     session = session_of(request)
     if not assignments:
         ui.flash(session, "muted", "Nothing to change.")
@@ -365,8 +377,8 @@ async def fleet_operation(request: Request) -> Response:
     operation = one(fields, "operation")
     name, tag = one(fields, "ship"), one(fields, "tag")
     where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
-    if operation not in ("update", "reboot") or not actions.available(operation):
-        ui.flash(session, "bad", "That operation is not available yet.")
+    if operation not in ("update", "reboot"):
+        ui.flash(session, "bad", "Unknown operation.")
         return back(where)
     if one(fields, "confirm") != "yes":
         ui.flash(session, "bad", "Tick the box to confirm.")
@@ -376,15 +388,14 @@ async def fleet_operation(request: Request) -> Response:
         return back(where)
     try:
         inv = ui.app.store_factory().load()
-        ships = [s.name for s in inv.select([name] if name else [], tag or None)]
+        chosen = ops.select(inv, [name] if name else [], tag or None, everything=not (name or tag))
+        ui.operations.start(operation, [s.name for s in chosen])
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(where)
-    run = actions.update if operation == "update" else actions.reboot
-    for outcome in await run_in_threadpool(run, ui.app, ships):
-        _flash_outcome(ui, session, outcome)
-    await run_in_threadpool(ui.fleet.poll, ships)
-    return back(where, tag=tag if where == "/" else "")
+    ui.flash(session, "ok", f"{operation.capitalize()} started; its progress is on the "
+             "Fleet page.")
+    return back("/", tag=tag)
 
 
 # --- sign-ins (the concierge) ---------------------------------------------------------
@@ -594,5 +605,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)
-    web.state.ui = UI(app=app, gate=gate, fleet=fleet, concierge=concierge_, env=make_env())
+    operations = actions.Operations(app, on_finished=fleet.poll)
+    web.state.ui = UI(app=app, gate=gate, fleet=fleet, concierge=concierge_,
+                      operations=operations, env=make_env())
     return GateMiddleware(web, gate)

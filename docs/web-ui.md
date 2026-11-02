@@ -10,28 +10,31 @@ ship-fleet ui --no-browser    # prints the link instead
 ship-fleet ui --port 8765     # a fixed port (default: any free one)
 ```
 
-The link works once, for 15 minutes. Press Enter in the terminal running
-`ship-fleet ui` for a new one (for a second browser, or after a restart of the
+The link works once, for 15 minutes. It is printed in the terminal running
+`ship-fleet ui`, and the browser is opened on it. If the browser shows a blank
+or "not found" page (sandboxed browsers, such as snaps, cannot read the private
+file FleetLedger opens them on), open the printed link instead. Press Enter in
+that terminal for a new link (for a second browser, or after restarting the
 browser). Stopping the UI ends every session and cancels any sign-in still open.
 
 ## What it shows
 
 | Page | What is on it |
 |---|---|
-| **Fleet** (`/`) | Needs attention, then one row per Ship: state, agents, each sign-in, CPU · memory · disk, notes. Filter by tag. Batch actions for every Ship (or every Ship with the selected tag): sign in to a service; update and reboot once `ship-fleet update` and `reboot` exist. |
+| **Fleet** (`/`) | Needs attention, then one row per Ship: state, agents, each sign-in, CPU · memory · disk, notes. Filter by tag. Batch actions for every Ship (or every Ship with the selected tag): sign in to a service, update, reboot. Updates and reboots run in the background, with their progress and outcome (including whether each Ship's agents came back in their modes) on this page. |
 | **Ship** (`/ships/<name>`) | Status, Needs attention, sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, herdr's last resume, Claude Code, host and tooling. |
-| Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard (`ship-ctl set`, like `ship-fleet set`), and tags. |
+| Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`), and tags. Update or reboot this Ship from its Overview. |
 | Ship **Logs** | `ship-ctl logs` for one source. |
 | Ship **Network** | Phase 3's visibility summary (traffic totals and first-seen destinations) from the status document's `net` field. Until a Ship's collector reports, it says "not available". |
 | **Sign-ins** (`/signin`) | The concierge: start a sign-in for one Ship, or for every Ship with a tag; each sign-in's link, code box and countdown; results. |
 | **Audit log** (`/audit`) | Who, what and when for every sign-in and sign-out. |
 
-**Needs attention** lists, most urgent first: a Ship presenting the wrong host
-key or claiming another identity; wrong-account sign-ins; waiting agents;
-missing or expired sign-ins; failed provisioning, units or tools; unreachable
-Ships; expiring sign-ins; tag mismatches; pending reboots; Ships behind on
-tooling; tools waiting for a sign-in; and any sign-in in the browser that is
-waiting for you. Sign-in items have a one-click **Sign in** button. Unknown
+**Needs attention** is `ship-fleet attention`'s list, ranked the same way
+(high, medium, low): a Ship presenting the wrong host key or claiming another
+identity, unreachable Ships, wrong-account or expired sign-ins, failures, waiting
+agents, missing or expiring sign-ins, pending reboots and herdr restarts, Ships
+behind on tooling, tools waiting for a sign-in. Above it come any sign-ins in the
+browser that are waiting for you. Sign-in items have a one-click **Sign in** button. Unknown
 attention codes from newer Ships are shown as they are.
 
 The status of every Ship is checked over SSH every 30 seconds (`--interval`)
@@ -78,9 +81,10 @@ Following Jupyter's model, adapted to "one person, one computer":
   SHA-256, and puts it in the link. The first visit swaps it for a session
   cookie (`HttpOnly`, `SameSite=Strict`, named after the port) and refreshes to
   `/`, dropping the token from the address bar. A token works once and expires
-  after 15 minutes. To open the browser, FleetLedger writes a private (0600)
-  local page that refreshes to the link, because a browser's command line is
-  visible to every process on the computer; the page is deleted on exit.
+  after 15 minutes. It is printed only to the terminal running `ship-fleet ui`.
+  To open the browser, FleetLedger writes a private (0600) local page that
+  refreshes to the link, because a browser's command line is visible to every
+  process on the computer; the page is deleted on exit.
 - **DNS rebinding.** Every request must carry `Host: 127.0.0.1:<port>` or
   `localhost:<port>`; anything else gets 400.
 - **CSRF.** Every change (any method but GET and HEAD) needs the session's CSRF
@@ -120,9 +124,9 @@ and htmx for polling; no front-end build.
 | `security.py` | the gate: Host, link token, sessions, CSRF, Origin, headers |
 | `server.py` | `ship-fleet ui`: binding, the link, uvicorn (access log off) |
 | `app.py` | routes and pages |
-| `fleet.py` | the background poller and the Needs attention ranking |
+| `fleet.py` | the background poller; Needs attention from `ops.attention` |
 | `flows.py` | the concierge's browser prompter, the live-terminal bridge, batches |
-| `actions.py` | settings, tags, sign-out, logs, update, reboot: through the shared operations module when installed, else the `ship-fleet` command functions |
+| `actions.py` | settings, tags, logs, update and reboot through the shared day-2 operations (`fleetledger/ops.py`), sign-out through `ship-fleet logout`; update and reboot run in the background |
 | `network.py` | the Network tab's reading of the status `net` field |
 
 Tests: `fleetledger/tests/test_web.py` (the gate's every check, pages, actions,

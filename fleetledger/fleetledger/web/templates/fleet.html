@@ -27,7 +27,6 @@
       <button type="submit">Start sign-ins</button>
     </form>
     {% for op in ("update", "reboot") %}
-    {% if operation_available(op) %}
     <form method="post" action="/operations" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="operation" value="{{ op }}">
@@ -35,7 +34,6 @@
       <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
       <button type="submit" class="ghost">{{ op|capitalize }} {% if tag %}every {{ tag }} Ship{% else %}every Ship{% endif %}</button>
     </form>
-    {% endif %}
     {% endfor %}
   </div>
   <p class="hint">Each sign-in needs its own approval in your browser; they run one after another on the Sign-ins page.</p>

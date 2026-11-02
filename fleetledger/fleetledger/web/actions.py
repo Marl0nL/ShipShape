@@ -1,23 +1,32 @@
 """What the web UI can change on a Ship, in one place.
 
-The UI never reimplements an operation: each function here calls the shared
-operations module (fleetledger.ops, day-2 operations) when it is installed, and
-until then the same `ship-fleet` command function the CLI runs, with its output
-captured. Either way the CLI and the UI do exactly the same thing.
+The UI never reimplements an operation: settings, tags, logs, update and
+reboot are the shared day-2 operations (fleetledger.ops) that `ship-fleet` runs
+too; sign-out is the `ship-fleet logout` command itself. So the CLI and the UI
+always do exactly the same thing.
 
-Every function returns an Outcome: ok, and a short summary safe to show.
+Update and reboot take minutes, so they run in the background (Operations):
+the page that starts one returns at once, and the fleet page shows each one's
+progress and outcome.
 """
 
 from __future__ import annotations
 
 import argparse
 import dataclasses
-import importlib
 import io
+import itertools
+import threading
+import time
+from collections import deque
+from collections.abc import Callable
 from typing import Any
 
-from fleetledger import commands
+from fleetledger import commands, ops
 from fleetledger.errors import FleetError
+
+KEEP_OPERATIONS = 10
+MAX_EVENTS = 200
 
 
 @dataclasses.dataclass(frozen=True)
@@ -27,119 +36,139 @@ class Outcome:
     summary: str
     details: tuple[str, ...] = ()
 
+    @classmethod
+    def of(cls, outcome: ops.Outcome) -> Outcome:
+        return cls(outcome.ship, outcome.ok, outcome.summary, tuple(outcome.details))
 
-def _ops() -> Any | None:
+
+def _fleet(app: Any) -> ops.Fleet:
+    return ops.Fleet.from_app(app)
+
+
+def _guard(ship: str, call: Callable[[], list[ops.Outcome]]) -> Outcome:
+    """One Ship's outcome; a refusal before any Ship was touched becomes a failure."""
     try:
-        return importlib.import_module("fleetledger.ops")
-    except ImportError:
-        return None
-
-
-def available(name: str) -> bool:
-    """Whether an operation exists yet (update and reboot arrive with fleetledger.ops)."""
-    ops = _ops()
-    if ops is not None and hasattr(ops, name):
-        return True
-    return hasattr(commands, f"cmd_{name}")
-
-
-def run_command(app: Any, ship: str, command: str, **kwargs: Any) -> Outcome:
-    """Run a ship-fleet command function with its output captured."""
-    buf = io.StringIO()
-    sub = dataclasses.replace(app, out=buf, err=buf)
-    handler = getattr(commands, f"cmd_{command}")
-    try:
-        code = handler(argparse.Namespace(**kwargs), sub) or 0
+        results = call()
     except FleetError as exc:
         return Outcome(ship, False, exc.message + (f" {exc.hint}" if exc.hint else ""))
-    lines = [line for line in buf.getvalue().splitlines() if line.strip()]
-    summary = lines[0] if lines else ("Done." if code == 0 else "Failed.")
-    return Outcome(ship, code == 0, summary, tuple(lines[1:]))
-
-
-def _from_ops(result: Any, ship: str) -> Outcome:
-    """fleetledger.ops Outcome (ship, ok, summary, details, data) -> ours."""
-    details = getattr(result, "details", ()) or ()
-    if isinstance(details, str):
-        details = tuple(details.splitlines())
-    return Outcome(
-        getattr(result, "ship", ship),
-        bool(getattr(result, "ok", False)),
-        str(getattr(result, "summary", "") or ("Done." if getattr(result, "ok", False)
-                                                 else "Failed.")),
-        tuple(str(d) for d in details),
-    )
-
-
-def _first(results: Any, ship: str) -> Outcome:
-    if isinstance(results, list | tuple):
-        return _from_ops(results[0], ship) if results else Outcome(ship, True, "No change.")
-    return _from_ops(results, ship)
-
-
-def _guard(ship: str, call) -> Outcome:
-    try:
-        return call()
-    except FleetError as exc:
-        return Outcome(ship, False, exc.message + (f" {exc.hint}" if exc.hint else ""))
+    return Outcome.of(results[0]) if results else Outcome(ship, True, "No change.")
 
 
 def set_settings(app: Any, ship: str, assignments: list[str]) -> Outcome:
-    ops = _ops()
-    if ops is not None and hasattr(ops, "set_settings"):
-        return _guard(ship, lambda: _first(
-            ops.set_settings(app, [_ship(app, ship)], assignments), ship))
-    return run_command(app, ship, "set", name=ship, assignments=assignments)
+    fleet = _fleet(app)
+    return _guard(ship, lambda: ops.set_settings(fleet, [fleet.inventory.ship(ship)],
+                                                 assignments))
 
 
 def set_tags(app: Any, ship: str, tags: list[str]) -> Outcome:
     changes = ["none", *(f"+{t}" for t in dict.fromkeys(tags))]
-    ops = _ops()
-    if ops is not None and hasattr(ops, "set_tags"):
-        return _guard(ship, lambda: _first(ops.set_tags(app, _ship(app, ship), changes), ship))
-    return run_command(app, ship, "tag", name=ship, changes=changes, local=False)
-
-
-def logout(app: Any, ship: str, service: str) -> Outcome:
-    return run_command(app, ship, "logout", name=ship, service=service)
+    fleet = _fleet(app)
+    return _guard(ship, lambda: ops.set_tags(fleet, [fleet.inventory.ship(ship)], changes))
 
 
 def logs(app: Any, ship: str, source: str, lines: int = 300) -> tuple[bool, list[str]]:
-    ops = _ops()
-    if ops is not None and hasattr(ops, "logs"):
+    fleet = _fleet(app)
+    try:
+        return True, ops.logs(fleet, fleet.inventory.ship(ship), source, lines)
+    except FleetError as exc:
+        return False, [exc.message]
+
+
+def logout(app: Any, ship: str, service: str) -> Outcome:
+    """`ship-fleet logout` with its output captured."""
+    buf = io.StringIO()
+    sub = dataclasses.replace(app, out=buf, err=buf)
+    try:
+        code = commands.cmd_logout(argparse.Namespace(name=ship, service=service), sub) or 0
+    except FleetError as exc:
+        return Outcome(ship, False, exc.message + (f" {exc.hint}" if exc.hint else ""))
+    lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+    return Outcome(ship, code == 0, lines[0] if lines else "Done.", tuple(lines[1:]))
+
+
+# --- update and reboot, in the background ---------------------------------------
+
+
+@dataclasses.dataclass
+class Operation:
+    id: int
+    kind: str  # update | reboot
+    ships: list[str]
+    started: float = dataclasses.field(default_factory=time.time)
+    events: deque[str] = dataclasses.field(default_factory=lambda: deque(maxlen=MAX_EVENTS))
+    outcomes: list[Outcome] = dataclasses.field(default_factory=list)
+    done: bool = False
+    error: str | None = None
+    version: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.done and self.error is None and all(o.ok for o in self.outcomes)
+
+
+class Operations:
+    """Update and reboot runs started from the browser."""
+
+    def __init__(self, app: Any, on_finished: Callable[[list[str]], None] | None = None):
+        self.app = app
+        self.on_finished = on_finished or (lambda ships: None)
+        self._lock = threading.Lock()
+        self._ops: list[Operation] = []
+        self._ids = itertools.count(1)
+
+    @property
+    def version(self) -> int:
+        with self._lock:
+            return sum(o.version for o in self._ops) + len(self._ops)
+
+    def recent(self) -> list[Operation]:
+        with self._lock:
+            return list(reversed(self._ops))
+
+    def busy(self, ships: list[str]) -> bool:
+        with self._lock:
+            return any(not o.done and set(o.ships) & set(ships) for o in self._ops)
+
+    def start(self, kind: str, ships: list[str]) -> Operation:
+        if kind not in ("update", "reboot"):
+            raise FleetError(f"Unknown operation '{kind}'.")
+        if self.busy(ships):
+            raise FleetError("An update or reboot is already running on one of those Ships.")
+        op = Operation(next(self._ids), kind, list(ships))
+        with self._lock:
+            self._ops.append(op)
+            finished = [o for o in self._ops if o.done]
+            for old in finished[: max(0, len(finished) - KEEP_OPERATIONS)]:
+                self._ops.remove(old)
+        threading.Thread(target=self._run, args=(op,), name=f"{kind}-{op.id}",
+                         daemon=True).start()
+        return op
+
+    def _run(self, op: Operation) -> None:
+        def event(ship: str, text: str) -> None:
+            op.events.append(text if ship == "*" else f"{ship}: {text}")
+            op.version += 1
+
         try:
-            return True, [str(x) for x in ops.logs(app, _ship(app, ship), source, lines)]
+            fleet = _fleet(self.app)
+            inv = fleet.inventory
+            ships = [inv.ship(name) for name in op.ships]
+            # In the background, so wait: the outcome then says whether each
+            # Ship came back with its agents in their modes, as the CLI does.
+            if op.kind == "update":
+                results = ops.update(fleet, ships, reboot_policy="auto", wait=True,
+                                     on_event=event)
+            else:
+                results = ops.reboot(fleet, ships, wait=True, on_event=event)
+            op.outcomes = [Outcome.of(r) for r in results]
         except FleetError as exc:
-            return False, [exc.message]
-    out = run_command(app, ship, "logs", name=ship, source=source, lines=lines)
-    return out.ok, [out.summary, *out.details] if out.ok else [out.summary]
-
-
-def update(app: Any, ships: list[str], reboot: str = "auto") -> list[Outcome]:
-    """ship-fleet update (fleetledger.ops). Not available until that lands."""
-    ops = _ops()
-    if ops is None or not hasattr(ops, "update"):
-        return [Outcome(s, False, "Updating from the UI arrives with ship-fleet update.")
-                for s in ships]
-    try:
-        results = ops.update(app, [_ship(app, s) for s in ships], reboot=reboot)
-    except FleetError as exc:
-        return [Outcome(s, False, exc.message) for s in ships]
-    return [_from_ops(r, "?") for r in results]
-
-
-def reboot(app: Any, ships: list[str]) -> list[Outcome]:
-    """ship-fleet reboot (fleetledger.ops). Not available until that lands."""
-    ops = _ops()
-    if ops is None or not hasattr(ops, "reboot"):
-        return [Outcome(s, False, "Rebooting from the UI arrives with ship-fleet reboot.")
-                for s in ships]
-    try:
-        results = ops.reboot(app, [_ship(app, s) for s in ships], wait=False)
-    except FleetError as exc:
-        return [Outcome(s, False, exc.message) for s in ships]
-    return [_from_ops(r, "?") for r in results]
-
-
-def _ship(app: Any, name: str):
-    return app.store_factory().load().ship(name)
+            op.error = exc.message
+        except Exception as exc:  # noqa: BLE001 - shown on the page, never raised in a thread
+            op.error = f"Internal error ({type(exc).__name__})."
+        finally:
+            op.done = True
+            op.version += 1
+        try:
+            self.on_finished(op.ships)
+        except Exception:  # noqa: BLE001 - a status refresh must not hide the outcome
+            pass

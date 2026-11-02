@@ -11,13 +11,13 @@ import json
 import logging
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 from fleetledger.concierge import audit, engine
 from fleetledger.web import app as webapp
-from fleetledger.web import fleet as webfleet
 from fleetledger.web import flows, network, security, server
 from fleetledger.web.fleet import Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow, WebPrompter
@@ -26,7 +26,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from test_cli import CLAUDE_CODE, RUNNING, FakeShip, ShipSSH
 
-from fleetledger import cli, status
+from fleetledger import cli, ops, status
 
 HERE = Path(__file__).resolve().parent
 FAKE = HERE / "fake_cli.py"
@@ -81,6 +81,7 @@ def web(store, fake_repo, monkeypatch, tmp_path):
     env.clock, env.fixture, env.argvs, env.store = clock, fixture, argvs, store
     env.typed = tmp_path / "typed.log"
     env.client = TestClient(asgi, base_url=BASE, follow_redirects=False)
+    env.app_ui = asgi.app.state.ui
 
     def sign_in(client=None):
         client = client or env.client
@@ -336,7 +337,8 @@ def test_browser_gets_a_private_file_not_the_token(store, monkeypatch, home):
     assert opened and opened[0].startswith("file://") and "token" not in opened[0]
     assert seen_file["mode"] == 0o600
     assert "/login?token=" in seen_file["text"]
-    assert "token=" not in out.getvalue()  # opened, so not printed
+    # Printed too (this terminal only), for browsers that cannot read the file.
+    assert "/login?token=" in out.getvalue() and "snap" in out.getvalue()
     assert not Path(opened[0][len("file://"):]).exists()  # removed on exit
 
 
@@ -361,7 +363,7 @@ def view(ship_name="ship-01", problem=None, attention=()):
     return v
 
 
-def test_attention_ranks_and_offers_sign_ins():
+def test_attention_uses_the_shared_ranking_and_offers_sign_ins():
     views = [
         view("ship-01", attention=[
             {"code": "reboot-required", "message": "Reboot."},
@@ -374,15 +376,16 @@ def test_attention_ranks_and_offers_sign_ins():
             {"code": "signin-wrong-account", "subject": "claude", "message": "Wrong."}]),
     ]
     items = attention_items(views)
-    assert [(i.ship, i.code) for i in items] == [
-        ("ship-02", "host-key"), ("ship-03", "signin-wrong-account"),
-        ("ship-01", "agent-waiting"), ("ship-01", "signin-missing"),
-        ("ship-01", "brand-new-code"), ("ship-01", "reboot-required"),
-    ]
+    # Exactly ops.attention's order and severities (what `ship-fleet attention` shows).
+    shared = ops.attention(views)
+    assert [(i.ship, i.code, i.level) for i in items] == [
+        (i.ship, i.code, i.severity) for i in shared]
+    assert [i.code for i in items[:2]] == ["host-key", "signin-wrong-account"]
     by_code = {i.code: i for i in items}
     assert by_code["signin-missing"].signin == "gcloud-adc"
     assert by_code["signin-wrong-account"].signin == "claude"
     assert by_code["agent-waiting"].signin is None
+    assert by_code["brand-new-code"].level == "medium"
     assert by_code["agent-waiting"].key == "ship-01/agent-waiting/main"
 
 
@@ -553,15 +556,57 @@ def test_logs_tab(web):
     assert web.client.get("/ships/ship-01/logs?source=../etc").status_code == 200
 
 
-def test_update_and_reboot_wait_for_day_2_operations(web):
-    web.sign_in()
-    from fleetledger.web import actions
+def test_update_and_reboot_run_the_shared_operations_in_the_background(web, monkeypatch):
+    calls = []
+    release = threading.Event()
 
-    if actions.available("update"):
-        pytest.skip("fleetledger.ops is installed")
-    assert "Update every Ship" not in web.client.get("/").text
-    web.post("/operations", {"operation": "update", "ship": "ship-01", "confirm": "yes"})
-    assert "not available yet" in web.client.get("/ships/ship-01").text
+    def fake_update(fleet, ships, **kw):
+        calls.append(("update", [s.name for s in ships], kw))
+        kw["on_event"](ships[0].name, "converging to 0.2.0")
+        release.wait(10)
+        return [ops.Outcome(s.name, True, "updated to 0.2.0") for s in ships]
+
+    def fake_reboot(fleet, ships, **kw):
+        calls.append(("reboot", [s.name for s in ships], kw))
+        return [ops.Outcome(ships[0].name, False, "did not come back",
+                            ["agent main did not come back"])]
+
+    monkeypatch.setattr(ops, "update", fake_update)
+    monkeypatch.setattr(ops, "reboot", fake_reboot)
+    web.sign_in()
+    # Confirmation first.
+    web.post("/operations", {"operation": "update", "tag": "work"})
+    assert not calls
+    response = web.post("/operations", {"operation": "update", "tag": "work", "confirm": "yes"})
+    assert response.status_code == 303  # returns at once; the update runs on
+    wait_for(lambda: calls)
+    assert calls[0][:2] == ("update", ["ship-01"])
+    assert calls[0][2]["reboot_policy"] == "auto" and calls[0][2]["wait"] is True
+    page = web.client.get("/partials/fleet").text
+    assert "Updates and reboots" in page and "converging to 0.2.0" in page
+    # One at a time per Ship.
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
+    assert "already running" in web.client.get("/").text
+    release.set()
+    wait_for(lambda: all(op.done for op in web.app_ui.operations.recent()))
+    assert "updated to 0.2.0" in web.client.get("/partials/fleet").text
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
+    wait_for(lambda: len(calls) == 2 and web.app_ui.operations.recent()[0].done)
+    assert calls[1][:2] == ("reboot", ["ship-01"]) and calls[1][2]["wait"] is True
+    page = web.client.get("/partials/fleet").text
+    assert "did not come back" in page and "agent main did not come back" in page
+    web.post("/operations", {"operation": "rm", "ship": "ship-01", "confirm": "yes"})
+    assert len(calls) == 2
+
+
+def test_free_text_settings_are_checked_by_ops(web):
+    web.sign_in()
+    web.post("/ships/ship-01/settings", {"reboot_time": "25:99"})
+    assert not [c for _, c in web.ship.calls if c[3:4] == ["set"]]
+    assert "reboot_time is HH:MM" in web.client.get("/ships/ship-01/settings").text
+    web.post("/ships/ship-01/settings", {"reboot_time": "03:30", "auto_reboot": "true"})
+    sets = [c for _, c in web.ship.calls if c[3:4] == ["set"]]
+    assert sets[-1][4:-1] == ["updates.auto_reboot=true", "updates.reboot_time=03:30"]
 
 
 # --- the concierge in the browser ---------------------------------------------------------
@@ -743,8 +788,3 @@ def test_audit_page(web):
     web.sign_in()
     page = web.client.get("/audit").text
     assert "work@example.com" in page and "login" in page
-
-
-def test_severity_labels_cover_every_known_code():
-    for code in webfleet.CODE_SEVERITY:
-        assert webfleet.CODE_SEVERITY[code] in webfleet.SEVERITY_LABEL

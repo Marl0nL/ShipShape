@@ -18,39 +18,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from fleetledger import status
+from fleetledger import ops, status
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory
 
 POLL_INTERVAL = 30.0
 IDLE_AFTER = 120.0
 
-# Needs attention: lower sorts first.
-CRITICAL, HIGH, MEDIUM, LOW = 0, 1, 2, 3
-SEVERITY_LABEL = {CRITICAL: "critical", HIGH: "high", MEDIUM: "medium", LOW: "low"}
-
-CODE_SEVERITY = {
-    "signin-wrong-account": CRITICAL,
-    "agent-waiting": HIGH,
-    "signin-missing": HIGH,
-    "signin-expired": HIGH,
-    "provision-failed": HIGH,
-    "unit-failed": HIGH,
-    "tool-failed": HIGH,
-    "signin-expiring": MEDIUM,
-    "tags-differ": MEDIUM,
-    "reboot-required": LOW,
-    "behind-tooling": LOW,
-    "tool-waiting": LOW,
-}
-PROBLEM_SEVERITY = {
-    "host-key": CRITICAL,
-    "identity": CRITICAL,
-    "unreachable": HIGH,
-    "invalid": HIGH,
-    "error": HIGH,
-    "unknown": MEDIUM,
-}
 # Status auth service -> concierge provider that signs it in.
 SERVICE_PROVIDER = {
     "claude": "claude",
@@ -63,12 +37,12 @@ SIGNIN_CODES = ("signin-missing", "signin-expired", "signin-expiring", "signin-w
 
 @dataclass(frozen=True)
 class Item:
-    """One line in Needs attention."""
+    """One line in Needs attention: ops.attention's item plus a sign-in offer."""
 
     ship: str
     code: str
     message: str
-    severity: int
+    level: str  # high | medium | low (ops.SEVERITY)
     subject: str | None = None
     signin: str | None = None  # provider id to offer a one-click (re-)sign-in for
 
@@ -77,68 +51,16 @@ class Item:
         """Stable identity, for browser notifications ("is this new?")."""
         return f"{self.ship}/{self.code}/{self.subject or ''}"
 
-    @property
-    def level(self) -> str:
-        return SEVERITY_LABEL[self.severity]
-
 
 def attention_items(views: list[status.ShipView]) -> list[Item]:
-    """Everything that needs a person, most urgent first.
-
-    Uses the shared fleetledger.ops.attention when it is installed (the CLI
-    and the UI then rank the same way), else the built-in ranking below.
-    """
-    try:
-        from fleetledger import ops  # noqa: PLC0415 - optional until day-2 operations land
-    except ImportError:
-        ops = None
-    if ops is not None and hasattr(ops, "attention"):
-        return [_from_ops(item) for item in ops.attention(views)]
-    return builtin_attention(views)
-
-
-def _from_ops(item) -> Item:
-    code = getattr(item, "code", "unknown")
-    subject = getattr(item, "subject", None)
-    severity = getattr(item, "severity", MEDIUM)
-    if isinstance(severity, str):
-        severity = {v: k for k, v in SEVERITY_LABEL.items()}.get(severity.lower(), MEDIUM)
-    signin = SERVICE_PROVIDER.get(subject) if code in SIGNIN_CODES else None
-    return Item(getattr(item, "ship", "?"), code, getattr(item, "message", code),
-                int(severity) if severity in SEVERITY_LABEL else MEDIUM, subject, signin)
-
-
-def builtin_attention(views: list[status.ShipView]) -> list[Item]:
-    items: list[Item] = []
-    for view in views:
-        name = view.ship.name
-        if view.problem:
-            items.append(
-                Item(
-                    name,
-                    view.problem,
-                    view.message or view.problem,
-                    PROBLEM_SEVERITY.get(view.problem, MEDIUM),
-                )
-            )
-            continue
-        for entry in view.attention:
-            code = entry.get("code", "unknown")
-            subject = entry.get("subject")
-            signin = None
-            if code in SIGNIN_CODES and subject in SERVICE_PROVIDER:
-                signin = SERVICE_PROVIDER[subject]
-            items.append(
-                Item(
-                    name,
-                    code,
-                    entry.get("message", code),
-                    CODE_SEVERITY.get(code, MEDIUM),
-                    subject,
-                    signin,
-                )
-            )
-    items.sort(key=lambda i: (i.severity, i.ship, i.code, i.subject or ""))
+    """Needs attention, ranked by the shared ops.attention (as `ship-fleet attention`)."""
+    items = []
+    for entry in ops.attention(views):
+        signin = None
+        if entry.code in SIGNIN_CODES and entry.subject in SERVICE_PROVIDER:
+            signin = SERVICE_PROVIDER[entry.subject]
+        items.append(Item(entry.ship, entry.code, entry.message, entry.severity,
+                          entry.subject, signin))
     return items
 
 

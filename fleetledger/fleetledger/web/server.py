@@ -3,7 +3,8 @@
 - Binds 127.0.0.1 only; there is deliberately no option to listen elsewhere.
 - Prints a one-time sign-in link and, unless --no-browser, opens it. The
   browser is opened on a private (0600) local file that refreshes to the link,
-  so the token never appears in any process's command line.
+  so the token never appears in any process's command line. The link is always
+  printed too, for browsers that cannot read that file (snap-confined ones).
 - Press Enter in the terminal for a new link (each works once, for 15 minutes).
 - Request logging is off: no paths, queries, tokens or form bodies are logged.
 """
@@ -89,14 +90,16 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     link = gate.link(gate.new_token())
     opened = None
     app.say(f"FleetLedger is running on {gate.base_url} (this computer only).")
+    # The link goes to this terminal only (your own screen, not a command line
+    # or a log). The browser gets a private page that refreshes to it, so the
+    # token never appears in the browser's command line.
+    app.say(f"Sign-in link (works once, for 15 minutes):\n  {link}")
     if open_browser:
         opened = open_file(link, port)
-        if not webbrowser.open(opened.as_uri()):
-            open_browser = False
-    if not open_browser:
-        app.say(f"Open this link (it works once, for 15 minutes):\n  {link}")
-    else:
-        app.say("Opened it in your browser.")
+        if webbrowser.open(opened.as_uri()):
+            app.say("Opened it in your browser. If the page is blank or not found (a "
+                    "sandboxed browser, such as a snap, may not read that file), open the "
+                    "link above instead.")
     if sys.stdin.isatty():
         app.say("Press Enter for a new sign-in link; Ctrl-C to stop.")
 
