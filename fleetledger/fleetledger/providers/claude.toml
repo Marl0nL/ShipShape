@@ -1,0 +1,22 @@
+# Claude Code: `claude auth login` prints a sign-in link; the browser shows a
+# code that is pasted back into the terminal.
+id = "claude"
+label = "Claude Code"
+mode = "paste-back"
+run = "claude auth login"
+timeout = 600
+
+[match]
+url = 'https://(?:claude\.ai|claude\.com|platform\.claude\.com|console\.anthropic\.com)/\S*oauth\S*'
+prompt = '(?i)paste (?:the |your )?code'
+success = '(?i)(?:login successful|logged in successfully|successfully logged in|signed in as)'
+failure = '(?i)(?:invalid (?:code|state)|login failed|authentication failed|oauth error)'
+
+[[check]]
+service = "claude"
+run = "claude auth status --json"
+ok_json = "loggedIn"
+account = "json:email"
+
+[logout]
+run = "claude auth logout"

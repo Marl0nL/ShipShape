@@ -1,0 +1,5 @@
+> If the browser didn't open, visit:
+> https://claude.com/cai/oauth/authorize?code=true&state=example-state
+>> Paste code here if prompted > 
+? EXAMPLE-CODE-0123456789abcdef#example-state
+! 0

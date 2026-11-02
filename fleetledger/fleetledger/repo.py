@@ -1,9 +1,9 @@
 """The ShipShape checkout FleetLedger runs from.
 
 FleetLedger reads the contracts, versions.toml and the Ship catalogue from the
-repo, and packs ship/ into tooling bundles (contracts/seed.md). It is
-installed editable (`pip install -e fleetledger`), so the package always sits
-inside its checkout. Set SHIPSHAPE_REPO to point at another checkout.
+repo, and packs ship/ into tooling bundles (contracts/seed.md). install.sh
+installs it editable, so the package always sits inside its checkout. Set
+SHIPSHAPE_REPO to point at another checkout.
 """
 
 from __future__ import annotations
@@ -35,8 +35,7 @@ def find_root(start: Path | None = None) -> Path:
             return candidate
     raise ConfigError(
         "Cannot find the ShipShape checkout (contracts/ and versions.toml).",
-        hint="Install FleetLedger editable from a checkout (pip install -e fleetledger), "
-        "or set SHIPSHAPE_REPO.",
+        hint="Install with fleetledger/install.sh from a checkout, or set SHIPSHAPE_REPO.",
     )
 
 

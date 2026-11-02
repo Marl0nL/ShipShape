@@ -1,13 +1,21 @@
 # fleetledger/: the manager (`ship-fleet`)
 
+```sh
+fleetledger/install.sh        # pipx install --editable; rerun after dependency changes
+ship-fleet init               # fleet admin key + empty ~/.config/fleetledger/ships.toml
+ship-fleet new ship-01 --tag work
+ship-fleet status ship-01 --wait
+ship-fleet login ship-01 all
+ship-fleet ls
+```
+
 Owned by the **Fleet track** (W3, W8, W9, W10). A Python package installed with
 pipx; the command is `ship-fleet`. It runs on your own computer and reaches Ships
 only over SSH, as `contracts/ship-runtime.md` describes.
 
 ## Modules
 
-Everything above `concierge/` is built; the concierge and the CLI land in a
-follow-up PR.
+All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 
 | Module | Work item | Purpose |
 |---|---|---|
@@ -19,8 +27,8 @@ follow-up PR.
 | `fleetledger/status.py`, `shipctl.py` | W8 | polling `ship-ctl status --json` (`contracts/ship-status.schema.json`) and calling the other ship-ctl commands |
 | `fleetledger/drivers/` | W8 | the hypervisor driver interface; `manual`, and `proxmox` as a test helper (finished in phase 4) |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
-| `fleetledger/concierge/` | W9 | sign-in engine and `providers/*.toml` |
-| `fleetledger/cli.py` | W10 | the `ship-fleet` commands |
+| `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
+| `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
 use throwaway keys, a temporary FleetLedger home and a small fake checkout; they
@@ -35,6 +43,8 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.config/fleetledger/ships.toml` | the inventory: Ships, pinned host keys, tags, expected accounts (mode 0600) |
 | `~/.config/fleetledger/known_hosts` | FleetLedger's own known-hosts file, written from the inventory |
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
+| `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
+| `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
 
 `FLEETLEDGER_CONFIG_DIR`, `FLEETLEDGER_DATA_DIR` and `FLEETLEDGER_RUNTIME_DIR`
 override these (the XDG variables are honoured too). `SHIPSHAPE_REPO` points
@@ -200,3 +210,74 @@ FLEETLEDGER_LIVE_PROXMOX=~/.config/fleetledger/ships.toml \
 The real-sshd tests in `tests/test_ssh.py` need an `sshd` binary. They use
 `sshd` from `PATH`, `/usr/sbin/sshd`, or `FLEETLEDGER_TEST_SSHD`, and are skipped
 if none is found.
+
+## The login concierge (W9)
+
+`ship-fleet login ship-01 claude` (or `gcloud`, `gcloud-adc`, `github`, `all`;
+or `--tag work` for every Ship with a tag):
+
+1. **Preflight.** A plain SSH call checks the pinned host key and opens the
+   shared connection that the sign-in terminal reuses.
+2. **The tool's own sign-in, in a terminal.** `ssh -tt fleet@<ship> sudo -n -iu
+   agent -- bash -c '<command>'` in a pseudo-terminal 4096 columns wide, so
+   links never wrap.
+3. **Matching.** The engine reads the output itself and strips escape sequences
+   (colours, OSC 8 hyperlinks); a sequence split across two reads waits for its
+   other half. It matches the provider's patterns, and accepts a link or code
+   only once more output follows it, so a link is never cut short. A provider
+   can answer fixed prompts (`[match.send]`), each once. gh runs with
+   `GH_PROMPT_DISABLED=1`: its interactive prompts wait for a real terminal's
+   cursor report.
+4. **You.** FleetLedger shows the link and how long it stays valid, plus the
+   code for device flows. Paste-back flows read your code with `getpass`, so it
+   is not echoed, and type it into the Ship's terminal. It is never on a command
+   line, in `ps`, or in shell history. A code pasted after the sign-in window
+   has closed is not typed. Once a code is typed, the engine waits for the
+   tool's verdict even if the window closes meanwhile. Device flows show a
+   countdown until gh finishes.
+5. **Checks.** Each provider's `[[check]]` commands run as agent (for example
+   `claude auth status --json`, or `gcloud auth list` plus an ADC token test
+   sent to `/dev/null`). The accounts are compared with the Ship's tags, so
+   signing a work Ship in to your personal account is reported as
+   **WRONG ACCOUNT**, with the `logout` command to undo it.
+6. **Audit.** One line per login or logout: time, Ship, service, outcome and the
+   account. Nothing else: no codes, links or terminal output.
+
+If a pattern misses (a tool changed its wording), you are offered the live
+terminal to finish by hand; the checks still run afterwards. No transcript is
+kept: the output buffer lives in memory for the flow only. What is shown on
+failure is a few redacted lines (typed codes, URL query strings and long
+token-like strings removed).
+
+Providers are one TOML file each in `fleetledger/providers/`: the command, mode
+(`paste-back` or `device-code`), timeout, `[match]` patterns (`url`, `code`,
+`prompt`, `success`, `failure`, `send`), `[[check]]` entries, `after` commands
+and `[logout]`. Adding a service is one file.
+
+The pattern tests replay sessions in a real pseudo-terminal from
+`tests/fixtures/concierge/`. The claude, gcloud and github sessions follow the
+wording recorded from the real tools in phase 0 spike S5 (example values
+only); the rest are variants for the engine's edge cases (see that folder's
+README).
+
+## The CLI (W10)
+
+`ship-fleet --help` lists every command; each has its own `--help`.
+
+| Command | What it does |
+|---|---|
+| `init` | makes the fleet admin key (with a passphrase unless `--no-passphrase`) and an empty inventory |
+| `new NAME` | pins a new host key, writes the seed, records the Ship, and has the driver create it. Options: `--tag`, `--mode` (bypass implies `allow_bypass`), `--tools`, `--profile`, `--autostart NAME:CWD[:MODE]`, `--agent-sudo`, size, `--driver manual\|proxmox`. With proxmox it waits and enrols. If the driver fails, the inventory entry and seed are removed. |
+| `adopt NAME` | for a Ship FleetLedger did not create (or to re-pin one with `--replace`): fetches its host key and shows the fingerprint for you to compare with the VM console (or checks `--fingerprint`). It then asks the Ship who it is over a connection pinned to that key, and records it. |
+| `scan` | lists `_shipshape._tcp` announcements and whether each is in the inventory (hints only) |
+| `ls` | one row per Ship: state, agents, the four sign-ins (OK / Missing / Wrong account ...), cpu · memory · disk, and the first note. `--tag`, `--json`, `--offline`. |
+| `status NAME` | the detail for one Ship. `--wait` waits for provisioning and finishes enrolment. |
+| `login`, `logout` | the concierge, above |
+| `set NAME KEY=VALUE...` | `ship-ctl set` with short keys (`remote_control=off`, `default_mode=...`). The inventory is kept in step. `default_mode=bypassPermissions` also sets `allow_bypass=true`. |
+| `tag NAME +work -personal` | changes tags in the inventory and on the Ship (`--local` for the inventory only); `none` clears them |
+| `tools ls`, `tools add/remove NAME ID...` | the catalogue, and `ship-ctl tools add/remove` |
+| `ssh NAME [--as fleet] [-- CMD]` | a shell as agent with your own keys, or as fleet with the admin key; pinned host key either way |
+| `logs NAME SOURCE` | `ship-ctl logs` (provision, herdr, resume, tools, status, system) |
+
+Every command is tested in `tests/test_cli.py` against a fake Ship behind a real
+`SSH` object, so the command lines are real but nothing leaves the machine.
