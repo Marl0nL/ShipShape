@@ -91,6 +91,7 @@ class SimShip:
         self.converge_error = None
         self.report_commit = None  # lie about the bundle after converge
         self.accounts = {}  # service -> account reported in auth
+        self.forgotten = 0  # shared SSH connections closed by FleetLedger
         self.calls = []
         self.converged = []
         self.reboots = []
@@ -186,6 +187,9 @@ class SimSSH:
     def __init__(self, sims):
         self.sims = sims
 
+    def forget(self, ship):
+        self.sims[ship.name].forgotten += 1
+
     def run(self, ship, command, *, input=None, timeout=60):
         sim = self.sims[ship.name]
         code, out, err = sim(ship, list(command), input)
@@ -254,6 +258,7 @@ def test_reboot_waits_and_checks_agents_resumed_in_their_modes(world):
     assert "2/2 agents resumed in their modes" in outcome.summary
     assert outcome.data["agents_after"] == {"main": "auto", "builder": "bypassPermissions"}
     assert world.sims["ship-01"].reboots == [["ship-01.local"]]
+    assert world.sims["ship-01"].forgotten == 1  # no polling over a dead connection
     assert ("ship-01", "rebooting") in seen
 
 

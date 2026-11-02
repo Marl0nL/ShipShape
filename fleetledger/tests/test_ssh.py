@@ -101,6 +101,19 @@ def test_run_tries_each_name(store):
     assert len(runner.calls) == 2
 
 
+def test_forget_closes_shared_connections_for_every_name(store):
+    inv = store.load()
+    runner = FakeRunner({"ship-02.local": (255, b"", "no master"),
+                         "ship-02.example.net": (0, b"", "")})
+    SSH(inv, runner=runner).forget(inv.ship("ship-02"))
+    assert [c[c.index("--") - 2:c.index("--")] for c in runner.calls] == [["-O", "exit"]] * 2
+    assert [c[c.index("--") + 1] for c in runner.calls] == ["ship-02.local",
+                                                          "ship-02.example.net"]
+    # Same options as a real call, so it addresses the same control socket.
+    assert opt(runner.calls[0], "ControlPath") == opt(
+        SSH(inv).argv(inv.ship("ship-02"), "ship-02.local"), "ControlPath")
+
+
 def test_run_refuses_wrong_host_key_without_trying_other_names(store):
     inv = store.load()
     runner = FakeRunner(

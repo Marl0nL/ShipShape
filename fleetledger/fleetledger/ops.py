@@ -256,11 +256,15 @@ def _issue_reboot(fleet: Fleet, inventory: Inventory, ship: Ship, host: str | No
     """`sudo -n systemctl reboot` (contracts/ship-runtime.md), over one name only,
     so a dropped connection is never retried on another name."""
     target = dataclasses.replace(ship, names=(host,)) if host else ship
+    ssh = fleet.ssh(inventory)
     try:
-        result = fleet.ssh(inventory).run(target, ["sudo", "-n", "systemctl", "reboot"],
-                                          timeout=60)
+        result = ssh.run(target, ["sudo", "-n", "systemctl", "reboot"], timeout=60)
     except Unreachable:
         return  # the Ship closed the connection while going down: expected
+    finally:
+        forget = getattr(ssh, "forget", None)
+        if forget is not None:
+            forget(ship)
     if result.returncode not in (0, 255):
         detail = result.stderr.strip().splitlines()[-1:] or ["no output"]
         raise FleetError(f"{ship.name}: the reboot command failed: {detail[0]}")
