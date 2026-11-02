@@ -30,6 +30,7 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/drivers/` | W8 | the hypervisor driver interface; `manual`, and `proxmox` as a test helper (finished in phase 4) |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
+| `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)) |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
 | `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
 | `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |

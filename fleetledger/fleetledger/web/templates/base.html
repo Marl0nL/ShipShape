@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"allowEval": false, "allowScriptTags": false, "includeIndicatorStyles": false, "selfRequestsOnly": true, "historyCacheSize": 0}'>
+<meta name="csrf-token" content="{{ csrf }}">
+<title>{% block title %}FleetLedger{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">FleetLedger</a>
+  <nav>
+    <a href="/">Fleet</a>
+    <a href="/signin">Sign-ins{% if waiting_count %} <span class="badge warn">{{ waiting_count }}</span>{% endif %}</a>
+    <a href="/network">Network</a>
+    <a href="/audit">Audit log</a>
+  </nav>
+  <span class="local" title="Listens on 127.0.0.1 only">this computer only</span>
+</header>
+<main>
+{% for kind, text in flashes %}
+  <p class="flash {{ kind }}">{{ text }}</p>
+{% endfor %}
+{% block body %}{% endblock %}
+</main>
+</body>
+</html>

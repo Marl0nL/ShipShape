@@ -1,0 +1,80 @@
+<div id="fleet" hx-get="/partials/fleet?{% if tag %}tag={{ tag }}&amp;{% endif %}v={{ version }}" hx-trigger="every 5s" hx-swap="outerHTML">
+<section class="attention">
+  <h2>Needs attention {% if items or flows_waiting %}<span class="count">{{ items|length + flows_waiting|length }}</span>{% endif %}</h2>
+  {% if not items and not flows_waiting %}
+  <p class="quiet">Nothing needs you.</p>
+  {% else %}
+  <ul class="items">
+    {% for f in flows_waiting %}
+    <li class="item high" data-key="signin/{{ f.id }}">
+      <span class="sev high">sign-in</span>
+      <a href="/ships/{{ f.ship }}" class="ship">{{ f.ship }}</a>
+      <span class="msg">{{ f.label }} sign-in is waiting for you.</span>
+      <a class="button" href="/signin?batch={{ f.batch }}">Open</a>
+    </li>
+    {% endfor %}
+    {% for i in items %}
+    <li class="item {{ i.level }}" data-key="{{ i.key }}"{% if i.code == "agent-waiting" %} data-waiting="{{ i.ship }}: {{ i.message }}"{% endif %}>
+      <span class="sev {{ i.level }}">{{ i.code }}</span>
+      <a href="/ships/{{ i.ship }}" class="ship">{{ i.ship }}</a>
+      <span class="msg">{{ i.message }}</span>
+      {% if i.signin %}
+      <form method="post" action="/signin" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="ship" value="{{ i.ship }}">
+        <input type="hidden" name="service" value="{{ i.signin }}">
+        <button type="submit">Sign in</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% if operations %}
+<section class="operations">
+  <h2>Updates and reboots</h2>
+  {% for op in operations %}
+  <article class="flow">
+    <header><strong>{{ op.kind|capitalize }}</strong> · {{ op.ships|join(", ") }}
+      <span class="pill {{ (("ok" if op.ok else "failed") if op.done else "working")|pill }}">{{ ("done" if op.ok else "failed") if op.done else "running" }}</span>
+      <span class="when">started {{ clock(op.started) }}</span></header>
+    {% if op.error %}<p class="flash bad">{{ op.error }}</p>{% endif %}
+    {% for o in op.outcomes %}
+    <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
+    {% endfor %}
+    {% if not op.done and op.events %}<pre class="log">{{ op.events|list|join("\n") }}</pre>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="ships">
+  <h2>Ships <span class="when">{% if snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status; checking now…{% endif %}</span></h2>
+  {% if snap.error %}<p class="flash bad">{{ snap.error }}</p>{% endif %}
+  {% if not views %}
+  <p class="quiet">No Ships{% if tag %} with tag {{ tag }}{% endif %} yet. Create one with <code>ship-fleet new</code>.</p>
+  {% else %}
+  <table class="fleet">
+    <thead><tr><th>Ship</th><th>Tags</th><th>State</th><th>Agents</th><th>Claude</th><th>gcloud</th><th>ADC</th><th>GitHub</th><th>CPU · mem · disk</th><th>Notes</th></tr></thead>
+    <tbody>
+    {% for v in views %}
+    <tr>
+      <td><a href="/ships/{{ v.ship.name }}">{{ v.ship.name }}</a></td>
+      <td>{{ snap.effective_tags(v)|join(", ") or "-" }}</td>
+      <td><span class="pill {{ v.state|pill }}">{{ v.state }}</span></td>
+      <td>{{ agents_cell(v) }}</td>
+      {% for service in AUTH_ORDER %}
+      {% set cell = auth_cell(v, service) %}
+      <td><span class="pill {{ cell|pill }}">{{ cell }}</span></td>
+      {% endfor %}
+      <td class="num">{{ usage_cell(v) }}</td>
+      <td class="notes">{{ notes_cell(v) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+</div>

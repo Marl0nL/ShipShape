@@ -1,0 +1,64 @@
+<article class="flow {{ flow.state }}{% if flow.outcome %} {{ flow.outcome }}{% endif %}" id="flow-{{ flow.id }}"
+  {% if not flow.done %}hx-get="/flows/{{ flow.id }}/card?v={{ flow.version }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <header>
+    <strong>{{ flow.ship }}</strong> · {{ flow.label }}
+    <span class="pill {{ (flow.outcome or flow.state)|pill }}">{{ flow.outcome or flow.state }}</span>
+  </header>
+  {% if flow.state == "queued" %}
+    <p class="quiet">Waiting for the sign-ins before it.</p>
+  {% elif flow.state == "starting" %}
+    <p class="quiet">Reaching the Ship and starting the sign-in…</p>
+  {% elif flow.state in ("link", "code") %}
+    <ol>
+      <li>Open
+        {% if flow.url %}<a href="{{ flow.url }}" target="_blank" rel="noopener noreferrer" class="signin-link">the {{ flow.label }} sign-in page</a>
+        {% else %}the sign-in page. <span class="flash bad">The Ship printed a link that is not a plain https address, so it is not shown as a link.</span>{% endif %}
+      </li>
+      {% if flow.mode == "device-code" %}
+      <li>Enter the code <code class="device-code">{{ flow.device_code }}</code>
+        <button type="button" class="ghost copy" data-copy="{{ flow.device_code }}">Copy</button> and approve.
+        The Ship finishes on its own.</li>
+      {% else %}
+      <li>Approve, then paste the code the page shows:
+        <form method="post" action="/flows/{{ flow.id }}/code" class="inline code-form">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="password" name="code" autocomplete="off" autocapitalize="off" spellcheck="false" required maxlength="2048" placeholder="code">
+          <button type="submit">Send to the Ship</button>
+        </form>
+      </li>
+      {% endif %}
+    </ol>
+    {% if flow.deadline %}<p class="hint">Valid for <span data-deadline="{{ flow.deadline|int }}">…</span>.</p>{% endif %}
+  {% elif flow.state == "checking" %}
+    <p class="quiet">Waiting for the tool's verdict, then checking the account…</p>
+  {% elif flow.state == "live-offered" %}
+    <p>{{ flow.reason }} The sign-in tool may have changed its wording.</p>
+    {% if flow.seen %}<pre class="log">{{ flow.seen }}</pre>{% endif %}
+    <form method="post" action="/flows/{{ flow.id }}/live" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" name="take_over" value="yes">Take over the Ship's terminal</button>
+      <button type="submit" name="take_over" value="no" class="ghost">Give up</button>
+    </form>
+  {% elif flow.state == "live" %}
+    <p><a class="button" href="/flows/{{ flow.id }}/terminal">Open the live terminal</a></p>
+  {% elif flow.state == "done" %}
+    {% if flow.outcome == "ok" %}
+      <p>Signed in{% for c in flow.checks if c.account %}{% if loop.first %}:{% endif %} {{ c.service }} {{ c.account }}{% if not loop.last %},{% endif %}{% endfor %}.</p>
+    {% elif flow.outcome == "wrong-account" %}
+      {% for c in flow.checks if c.matches is false %}
+      <p class="flash bad">Wrong account: {{ c.service }} is {{ c.account }}, but the Ship's tags expect {{ c.expected|join(" or ") }}.</p>
+      {% endfor %}
+      <p class="hint">Sign it out on <a href="/ships/{{ flow.ship }}">the Ship's page</a>, then sign in with the right account.</p>
+    {% else %}
+      <p>{{ flow.detail or flow.outcome }}</p>
+      {% for c in flow.checks if not c.signed_in %}<p class="quiet">{{ c.service }}: not signed in</p>{% endfor %}
+    {% endif %}
+    {% for n in flow.notes %}<p class="quiet">note: {{ n }}</p>{% endfor %}
+  {% endif %}
+  {% if not flow.done %}
+  <form method="post" action="/flows/{{ flow.id }}/cancel" class="inline cancel">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="ghost">Cancel</button>
+  </form>
+  {% endif %}
+</article>

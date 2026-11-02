@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Network · FleetLedger{% endblock %}
+{% block body %}
+<h1>Network</h1>
+<p class="hint">Where Ships connect, from each Ship's collector. Visibility only: nothing is blocked. Domains, not URLs.</p>
+<section class="toolbar">
+  <div class="filter">
+    <span>Filter</span>
+    <a href="/network" class="chip{% if not tag %} on{% endif %}">all</a>
+    {% for t in tags %}<a href="/network?tag={{ t }}" class="chip{% if tag == t %} on{% endif %}">{{ t }}</a>{% endfor %}
+  </div>
+  <form method="post" action="/network/refresh" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+    <button type="submit" class="ghost">Fetch the latest summaries</button>
+  </form>
+</section>
+
+<section>
+  <h2>Who talked to…</h2>
+  <form method="get" action="/network" class="inline">
+    {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+    <input type="text" name="who" value="{{ who }}" maxlength="253" placeholder="example.com" autocomplete="off" spellcheck="false">
+    <button type="submit">Search</button>
+  </form>
+  {% if who_error %}<p class="flash bad">{{ who_error }}</p>{% endif %}
+  {% if found is not none %}
+    {% if found %}
+    <table>
+      <thead><tr><th>Ship</th><th>Destination</th><th>First seen</th><th>Last seen</th><th>24 h</th><th>7 d</th><th>Programs</th></tr></thead>
+      <tbody>{% for r in found %}<tr><td><a href="/ships/{{ r.ship }}/network">{{ r.ship }}</a></td><td>{{ r.name }}</td><td class="quiet">{{ since(r.first_seen) }}</td><td class="quiet">{{ since(r.last_seen) }}</td><td class="num">{{ r.connections_24h }}</td><td class="num">{{ r.connections_7d }}</td><td>{{ r.programs|join(", ") }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p class="quiet">No Ship reached {{ who }} (or a subdomain) in the last 7 days.</p>{% endif %}
+  {% endif %}
+</section>
+
+<section>
+  <h2>First seen in the last 24 hours</h2>
+  {% if new %}
+  <table>
+    <thead><tr><th>Ship</th><th>Destination</th><th>Scope</th><th>First seen</th><th>24 h</th><th>Programs</th></tr></thead>
+    <tbody>{% for r in new %}<tr><td><a href="/ships/{{ r.ship }}/network">{{ r.ship }}</a></td><td>{% if r.new_to_fleet %}<span class="pill warn">new to the fleet</span> {% endif %}{{ r.name }}</td><td>{{ r.scope }}</td><td class="quiet">{{ since(r.first_seen) }}</td><td class="num">{{ r.connections_24h }}</td><td>{{ r.programs|join(", ") }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="quiet">Nothing new{% if tag %} on {{ tag }} Ships{% endif %}, or no summaries fetched yet.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Ships</h2>
+  <table>
+    <thead><tr><th>Ship</th><th>Collector</th><th>In 24 h</th><th>Out 24 h</th><th>Destinations 24 h</th><th>New</th></tr></thead>
+    <tbody>
+    {% for v in views %}
+    <tr><td><a href="/ships/{{ v.ship }}/network">{{ v.ship }}</a></td>
+      {% if v.collector %}
+      <td><span class="pill {{ ("ok" if v.collector.state == "running" else "missing")|pill }}">{{ v.collector.state }}</span></td>
+      <td class="num">{{ "%.1f"|format(v.totals.rx_mb_24h) }} MB</td><td class="num">{{ "%.1f"|format(v.totals.tx_mb_24h) }} MB</td>
+      <td class="num">{{ v.top_24h|length }}</td><td class="num">{{ v.new|length }}</td>
+      {% else %}<td colspan="5" class="quiet">no summary yet</td>{% endif %}
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

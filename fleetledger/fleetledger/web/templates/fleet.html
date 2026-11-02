@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="toolbar">
+  <div class="filter">
+    <span>Filter</span>
+    <a href="/" class="chip{% if not tag %} on{% endif %}">all</a>
+    {% for t in tags %}
+    <a href="/?tag={{ t }}" class="chip{% if tag == t %} on{% endif %}">{{ t }}</a>
+    {% endfor %}
+  </div>
+  <button type="button" class="ghost" id="notify-toggle" hidden>Notify me when an agent waits</button>
+</section>
+
+{% include "_fleet.html" %}
+
+<section class="batch">
+  <h2>{% if tag %}Every {{ tag }} Ship{% else %}Every Ship{% endif %}</h2>
+  <div class="batch-row">
+    <form method="post" action="/signin" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+      <label>Sign in to
+        <select name="service">
+          {% for s in SERVICES %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Start sign-ins</button>
+    </form>
+    {% for op in ("update", "reboot") %}
+    <form method="post" action="/operations" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="{{ op }}">
+      {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
+      <button type="submit" class="ghost">{{ op|capitalize }} {% if tag %}every {{ tag }} Ship{% else %}every Ship{% endif %}</button>
+    </form>
+    {% endfor %}
+  </div>
+  <p class="hint">Each sign-in needs its own approval in your browser; they run one after another on the Sign-ins page.</p>
+</section>
+{% endblock %}

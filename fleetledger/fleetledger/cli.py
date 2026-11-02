@@ -22,7 +22,7 @@ from fleetledger.errors import FleetError
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "set", "tag", "tools", "update", "reboot", "attention", "ssh", "logs", "ca", "trust",
-    "untrust", "net",
+    "untrust", "net", "ui",
 )  # fmt: skip
 
 
@@ -334,6 +334,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--week", action="store_true", help="rank by the last 7 days, not 24 hours")
     p.add_argument("--offline", action="store_true", help="use the last fetched summaries")
     p.add_argument("--json", action="store_true", help="print JSON")
+
+    p = _add(sub, "ui", "open the local web UI: dashboard and sign-ins in your browser",
+             "Serve the web UI on 127.0.0.1 (this computer only) and open it with a\n"
+             "one-time link. Press Enter in this terminal for a new link.\n"
+             "See docs/web-ui.md.")
+    p.add_argument("--port", type=int, default=0,
+                   help="port on 127.0.0.1 (default: any free port)")
+    p.add_argument("--no-browser", action="store_true",
+                   help="print the link instead of opening a browser")
+    p.add_argument("--interval", type=float, default=30.0,
+                   help="seconds between status checks while the UI is open (default 30)")
     return parser
 
 

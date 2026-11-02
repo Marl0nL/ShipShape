@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Terminal · {{ flow.ship }} · FleetLedger{% endblock %}
+{% block body %}
+<h1>{{ flow.ship }} · {{ flow.label }} sign-in, by hand</h1>
+<p class="hint">This is the Ship's terminal, running the sign-in as agent. Nothing is recorded.
+  Finish the sign-in, then leave; FleetLedger checks the account afterwards.</p>
+<pre id="terminal" class="terminal" data-flow="{{ flow.id }}" tabindex="0"></pre>
+<form id="terminal-input" class="inline">
+  <input type="text" id="terminal-line" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="4000" placeholder="type, then Enter">
+  <button type="submit">Send ⏎</button>
+  <button type="button" class="ghost" data-key="&#13;">Enter</button>
+  <button type="button" class="ghost" data-key="&#27;[A">↑</button>
+  <button type="button" class="ghost" data-key="&#27;[B">↓</button>
+  <button type="button" class="ghost" data-key="&#3;">Ctrl-C</button>
+  <button type="button" class="ghost" id="terminal-leave">Leave</button>
+</form>
+<p id="terminal-state" class="quiet">Connecting…</p>
+<p><a href="/signin?batch={{ flow.batch }}">Back to the sign-in</a></p>
+{% endblock %}
