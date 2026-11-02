@@ -9,14 +9,19 @@ not URLs; there is no TLS inspection.
 ## On each Ship
 
 `ship-netwatch.service` runs as root and only observes. It is installed by
-`ship-provision`, together with Ubuntu's `bpfcc-tools` and `vnstat`.
+`ship-provision`, together with Ubuntu's `libbpf-tools` and `vnstat`.
 
 | Source | What it gives |
 |---|---|
-| `tcpconnect-bpfcc` (eBPF) | every new outbound TCP connection, with the program (process name) that made it |
-| `tcplife-bpfcc` (eBPF) | bytes sent and received per connection, when it closes |
+| `tcpconnect-libbpf` (eBPF) | every new outbound TCP connection, with the program (process name) that made it |
+| `tcplife-libbpf` (eBPF) | bytes sent and received per connection, when it closes |
 | `resolvectl monitor --json=short` | DNS answers, so each connection is shown by the name it was looked up by, not just an address |
 | `vnstat` | bytes per network interface, from kernel counters (everything, including traffic nothing else can attribute) |
+
+These are Ubuntu's precompiled (CO-RE) builds of the BCC project's tools; they
+need the kernel's BTF, which Ubuntu kernels have, and compile nothing on the
+Ship. The plan named the Python `bpfcc-tools`. On Ubuntu 26.04 those cannot
+compile their programs against kernel 7.0's headers, so they are not used.
 
 If the eBPF tools cannot run, the collector falls back to polling `ss` every 5
 seconds. Short connections can then be missed, and there are no byte counts.

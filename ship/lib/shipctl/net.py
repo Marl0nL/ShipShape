@@ -231,7 +231,7 @@ def summary(ctx: Context, now: datetime | None = None) -> tuple[dict, list[str]]
     note = store.get("note") if isinstance(store.get("note"), str) else None
     if state == "unavailable":
         note = "ship-netwatch is not installed on this Ship."
-    source = store.get("source") if store.get("source") in ("bcc", "ss") else None
+    source = store.get("source") if store.get("source") in ("ebpf", "ss") else None
     doc = {
         "schema": SCHEMA,
         "generated_at": _utc(now),

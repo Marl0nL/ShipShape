@@ -544,7 +544,7 @@ enable_unit() { # DESC [--global] UNIT
 # --- network visibility (phase 3) -----------------------------------------------------
 # ship-netwatch records which programs connect where (contracts/ship-ctl.md,
 # `ship-ctl net`); vnstat counts bytes per interface. Observation only.
-NET_PACKAGES=(bpfcc-tools vnstat)
+NET_PACKAGES=(libbpf-tools vnstat)
 
 step_netwatch() {
   ensure_debs "${NET_PACKAGES[@]}"

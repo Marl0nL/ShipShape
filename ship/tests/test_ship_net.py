@@ -41,6 +41,12 @@ def collector(store=None):
     return c, logged
 
 
+def settle(c):
+    """Let connections that waited for a DNS name be recorded as addresses."""
+    c.clock.when += nw.Collector.NAME_WAIT
+    c.flush()
+
+
 def dns_line(name, *answers, cname=None):
     rrs = []
     if cname:
@@ -66,6 +72,9 @@ def dns_line(name, *answers, cname=None):
 
 # --- parsers -----------------------------------------------------------------------
 def test_parse_tcpconnect():
+    # As tcpconnect-libbpf -t prints it on Ubuntu 26.04 (trailing spaces included).
+    real = "5.955    8824   HTTP Client      6  2001:db8::5 2001:db8::10    443  "
+    assert nw.parse_tcpconnect(real) == (8824, "HTTP_Client", "2001:db8::10", 443)
     assert nw.parse_tcpconnect("TIME(s)  PID     COMM         IP SADDR    DADDR   DPORT") is None
     assert nw.parse_tcpconnect("0.000    4021    curl         4  192.0.2.5  198.51.100.7  443") == (
         4021,
@@ -152,6 +161,7 @@ def test_connections_are_named_by_dns_and_new_ones_logged_once():
     c.on_tcpconnect("0.1 4022 curl 4 192.0.2.5 198.51.100.7 443")
     c.on_tcpconnect("0.2 4023 node 4 192.0.2.5 203.0.113.9 8443")
     c.on_tcpconnect("0.3 4024 node 4 127.0.0.1 127.0.0.1 8080")  # loopback: ignored
+    settle(c)
     d = c.store.destinations
     assert set(d) == {"api.example.com", "203.0.113.9"}
     api = d["api.example.com"]
@@ -159,18 +169,38 @@ def test_connections_are_named_by_dns_and_new_ones_logged_once():
     assert api["hours"]["2026-01-08T12"]["c"] == 2
     assert api["hours"]["2026-01-08T12"]["p"] == {"curl": 2}
     assert d["203.0.113.9"]["kind"] == "address"
+    assert d["203.0.113.9"]["hours"]["2026-01-08T12"]["c"] == 1
     assert logged == [
         "new destination: api.example.com (198.51.100.7 port 443, curl)",
         "new destination: 203.0.113.9 (203.0.113.9 port 8443, node)",
     ]
 
 
+def test_a_dns_answer_arriving_after_the_connection_still_names_it():
+    """The two tools race: curl's connect can be printed before resolvectl's answer."""
+    c, _ = collector()
+    c.on_tcpconnect("0.0 8794 curl 6 2001:db8::5 2001:db8::10 443")
+    c.on_tcplife("8794 curl 2001:db8::5 47988 2001:db8::10 443 1.88 6.31 59.51")
+    assert c.store.destinations == {}  # waiting for a name
+    c.on_dns(json.dumps({"question": [{"class": 1, "type": 28, "name": "example.com"}],
+                         "answer": [{"rr": {"key": {"class": 1, "type": 28, "name": "example.com"},
+                                            "address": list(bytes.fromhex(
+                                                "20010db8000000000000000000000010"))},
+                                     "raw": "AAAA", "ifindex": 2}]}))
+    dest = c.store.destinations["example.com"]
+    bucket = dest["hours"]["2026-01-08T12"]
+    assert (bucket["c"], bucket["tx"], bucket["rx"]) == (1, 1925, 6461)
+    settle(c)
+    assert set(c.store.destinations) == {"example.com"}
+
+
 def test_bytes_go_only_to_connections_the_ship_opened():
     c, _ = collector()
     c.on_tcpconnect("0.0 4021 curl 4 192.0.2.5 198.51.100.7 443")
-    c.on_tcplife("4021 curl 192.0.2.5 51122 198.51.100.7 443 2 30 85.2")
+    c.on_tcplife("4021 curl 192.0.2.5 51122 198.51.100.7 443 2.00 30.00 85.2")
     # An SSH session into the Ship: its remote port is the client's.
-    c.on_tcplife("900 sshd 192.0.2.5 22 192.0.2.99 60001 500 9000 120000.0")
+    c.on_tcplife("900 sshd 192.0.2.5 22 192.0.2.99 60001 500.00 9000.00 120000.0")
+    settle(c)
     bucket = c.store.destinations["198.51.100.7"]["hours"]["2026-01-08T12"]
     assert (bucket["tx"], bucket["rx"]) == (2048, 30 * 1024)
     assert "192.0.2.99" not in c.store.destinations
@@ -214,6 +244,7 @@ def test_ss_poller_counts_each_new_outbound_connection_once():
     poller = nw.SSPoller(c, lambda argv: out[" ".join(argv)])
     poller.poll()
     poller.poll()
+    settle(c)
     assert set(c.store.destinations) == {"198.51.100.7"}
     assert c.store.destinations["198.51.100.7"]["hours"]["2026-01-08T12"]["c"] == 1
 
@@ -235,7 +266,7 @@ def install_unit(ship, active=True):  # noqa: F811
 def recorded_store():
     now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     s = nw.Store(now=now - timedelta(days=3))
-    s.source = "bcc"
+    s.source = "ebpf"
     s.record_connect("api.example.com", "198.51.100.7", 443, "claude", now - timedelta(days=3))
     s.record_connect("api.example.com", "198.51.100.7", 443, "claude", now)
     s.record_bytes("api.example.com", 1000, 50000, now)
@@ -268,7 +299,7 @@ def test_net_summary(ship):  # noqa: F811
     assert_valid("ship-ctl-result", doc)
     data = doc["data"]
     assert_valid("net-summary", data)
-    assert data["collector"]["state"] == "running" and data["collector"]["source"] == "bcc"
+    assert data["collector"]["state"] == "running" and data["collector"]["source"] == "ebpf"
     by_name = {d["name"]: d for d in data["destinations"]}
     api = by_name["api.example.com"]
     assert api["connections_7d"] == 2 and api["connections_24h"] == 1

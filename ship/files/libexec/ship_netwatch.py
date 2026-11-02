@@ -6,9 +6,10 @@ nothing sits in the traffic path. It folds three streams into a rolling store,
 /var/lib/shipshape/net/state.json, which `ship-ctl net` summarises:
 
 - new outbound TCP connections, with the program that made them:
-  `tcpconnect-bpfcc -t` (eBPF). If eBPF tools cannot run, `ss` is polled every
-  5 seconds instead (short connections can then be missed);
-- bytes per connection when it closes: `tcplife-bpfcc` (eBPF only);
+  `tcpconnect-libbpf -t` (eBPF, from Ubuntu's libbpf-tools: precompiled, so
+  nothing is compiled on the Ship). If it cannot run, `ss` is polled every 5
+  seconds instead (short connections can then be missed);
+- bytes per connection when it closes: `tcplife-libbpf -w` (eBPF only);
 - DNS answers: `resolvectl monitor --json=short`, so each connection's address
   is shown as the name it was looked up by.
 
@@ -322,7 +323,7 @@ def parse_dns_event(line: str) -> list[tuple[str, str]]:
 
 # --- connection sources ----------------------------------------------------------
 def parse_tcpconnect(line: str) -> tuple[int, str, str, int] | None:
-    """(pid, program, address, port) from `tcpconnect-bpfcc -t` output.
+    """(pid, program, address, port) from `tcpconnect-libbpf -t` output.
 
     Columns: TIME(s) PID COMM IP SADDR DADDR DPORT. COMM may contain spaces, so
     the line is read from both ends.
@@ -344,22 +345,24 @@ def parse_tcpconnect(line: str) -> tuple[int, str, str, int] | None:
 def parse_tcplife(line: str) -> tuple[int, str, str, int, str, int, int, int] | None:
     """(pid, program, laddr, lport, raddr, rport, tx_bytes, rx_bytes) from tcplife.
 
-    Columns: PID COMM LADDR LPORT RADDR RPORT TX_KB RX_KB MS.
+    Columns of `tcplife-libbpf -w`: PID COMM LADDR LPORT RADDR RPORT TX_KB RX_KB MS,
+    with TX_KB and RX_KB as decimals (1.88).
     """
     parts = line.split()
     if len(parts) < 9 or not parts[0].isdigit():
         return None
     try:
-        tx_kb, rx_kb = int(parts[-3]), int(parts[-2])
+        tx_kb, rx_kb = float(parts[-3]), float(parts[-2])
         lport, rport = int(parts[-6]), int(parts[-4])
         float(parts[-1])
     except ValueError:
         return None
     laddr, raddr = clean_address(parts[-7]), clean_address(parts[-5])
-    if laddr is None or raddr is None:
+    if laddr is None or raddr is None or tx_kb < 0 or rx_kb < 0:
         return None
     program = clean_program(" ".join(parts[1:-7]))
-    return int(parts[0]), program, laddr, lport, raddr, rport, tx_kb * 1024, rx_kb * 1024
+    return (int(parts[0]), program, laddr, lport, raddr, rport, round(tx_kb * 1024),
+            round(rx_kb * 1024))
 
 
 SS_USERS = re.compile(r'\("((?:[^"\\]|\\.)*)",pid=(\d+)')
@@ -402,38 +405,74 @@ Clock = Callable[[], datetime]
 
 
 class Collector:
-    def __init__(
-        self,
-        store: Store,
-        names: Names,
-        *,
-        clock: Clock | None = None,
-        log: Callable[[str], None] | None = None,
-    ) -> None:
+    """Turns tool output into store records.
+
+    The DNS answer for a connection can reach us a moment after the connection
+    itself (they come from different tools), so a connection whose address has
+    no name yet waits up to NAME_WAIT for one before it is recorded as a bare
+    address. Bytes that arrive while it waits are kept with it.
+    """
+
+    NAME_WAIT = timedelta(seconds=3)
+
+    def __init__(self, store: Store, names: Names, *, clock: Clock | None = None,
+                 log: Callable[[str], None] | None = None) -> None:
         self.store = store
         self.names = names
         self.clock = clock or (lambda: datetime.now(UTC))
         self.log = log or (lambda m: print(m, flush=True))
+        self.lock = threading.Lock()
         # (address, port) -> destination name, for attributing tcplife bytes
         self.recent: dict[tuple[str, int], tuple[str, datetime]] = {}
+        # connections waiting for a name: [seen, address, port, program, tx, rx]
+        self.pending: list[list] = []
 
     def on_dns(self, line: str) -> None:
         now = self.clock()
+        named = set()
         for address, name in parse_dns_event(line):
             self.names.add(address, name, now)
+            named.add(address)
+        if named:
+            with self.lock:
+                ready = [p for p in self.pending if p[1] in named]
+                self.pending = [p for p in self.pending if p[1] not in named]
+            for p in ready:
+                self._record(*p[1:], now=now)
+
+    def _record(self, address: str, port: int, program: str, tx: int = 0, rx: int = 0,
+                *, now: datetime) -> None:
+        name = self.names.lookup(address, now)
+        dest = name or address
+        if self.store.record_connect(name, address, port, program, now):
+            self.log(f"new destination: {dest} ({address} port {port}, {program})")
+        if tx or rx:
+            self.store.record_bytes(dest, tx, rx, now)
+        with self.lock:
+            self.recent[(address, port)] = (dest, now)
+            if len(self.recent) > 4 * MAX_DESTINATIONS:
+                cutoff = now - timedelta(hours=1)
+                self.recent = {k: v for k, v in self.recent.items() if v[1] > cutoff}
 
     def on_connect(self, address: str, port: int, program: str) -> None:
         if scope_of(address) == "local":
             return
         now = self.clock()
-        name = self.names.lookup(address, now)
-        dest = name or address
-        if self.store.record_connect(name, address, port, program, now):
-            self.log(f"new destination: {dest} ({address} port {port}, {program})")
-        self.recent[(address, port)] = (dest, now)
-        if len(self.recent) > 4 * MAX_DESTINATIONS:
-            cutoff = now - timedelta(hours=1)
-            self.recent = {k: v for k, v in self.recent.items() if v[1] > cutoff}
+        if self.names.lookup(address, now) is None:
+            with self.lock:
+                if len(self.pending) < 10000:
+                    self.pending.append([now, address, port, program, 0, 0])
+                    return
+        self._record(address, port, program, now=now)
+
+    def flush(self) -> None:
+        """Record connections that waited long enough for a name, as addresses."""
+        now = self.clock()
+        with self.lock:
+            due = [p for p in self.pending if now - p[0] >= self.NAME_WAIT]
+            self.pending = [p for p in self.pending if now - p[0] < self.NAME_WAIT]
+        for p in due:
+            self._record(*p[1:], now=now)
 
     def on_tcpconnect(self, line: str) -> None:
         parsed = parse_tcpconnect(line)
@@ -448,7 +487,14 @@ class Collector:
         _, _, _, _, raddr, rport, tx, rx = parsed
         # Only connections this Ship opened: their (address, port) was seen by
         # tcpconnect. Sessions into the Ship (SSH) have the client's port there.
-        hit = self.recent.get((raddr, rport))
+        with self.lock:
+            hit = self.recent.get((raddr, rport))
+            if hit is None:
+                for p in self.pending:
+                    if p[1] == raddr and p[2] == rport:
+                        p[4] += tx
+                        p[5] += rx
+                        return
         if hit:
             self.store.record_bytes(hit[0], tx, rx, self.clock())
 
@@ -477,9 +523,10 @@ class SSPoller:
 
 
 # --- running ---------------------------------------------------------------------------
-BCC_TOOLS = {
-    "tcpconnect": ["tcpconnect-bpfcc", "-t"],
-    "tcplife": ["tcplife-bpfcc"],
+# C programs: stdbuf makes them write each line as it happens into the pipe.
+EBPF_TOOLS = {
+    "tcpconnect": ["stdbuf", "-oL", "tcpconnect-libbpf", "-t"],
+    "tcplife": ["stdbuf", "-oL", "tcplife-libbpf", "-w"],
 }
 DNS_MONITOR = ["resolvectl", "monitor", "--json=short"]
 
@@ -541,17 +588,17 @@ def main() -> int:
         procs.append(dns)
 
     # eBPF first. tcpconnect prints a header line once it is attached; if it has
-    # not within 60 s (compiling can be slow on a busy Ship) or exits, poll ss.
+    # not within 30 s, or exits, poll ss instead.
     ready = threading.Event()
-    tcpconnect = _stream(BCC_TOOLS["tcpconnect"], collector.on_tcpconnect, stop, ready)
+    tcpconnect = _stream(EBPF_TOOLS["tcpconnect"], collector.on_tcpconnect, stop, ready)
     poller = None
-    if tcpconnect is not None and (ready.wait(60) and tcpconnect.poll() is None):
+    if tcpconnect is not None and (ready.wait(30) and tcpconnect.poll() is None):
         procs.append(tcpconnect)
-        life = _stream(BCC_TOOLS["tcplife"], collector.on_tcplife, stop)
+        life = _stream(EBPF_TOOLS["tcplife"], collector.on_tcplife, stop)
         if life is not None:
             procs.append(life)
-        store.source, store.note = "bcc", None
-        print("recording with eBPF (tcpconnect, tcplife)", flush=True)
+        store.source, store.note = "ebpf", None
+        print("recording with eBPF (tcpconnect-libbpf, tcplife-libbpf)", flush=True)
     else:
         if tcpconnect is not None and tcpconnect.poll() is None:
             tcpconnect.terminate()
@@ -568,6 +615,7 @@ def main() -> int:
         while not stop.is_set():
             if poller is not None:
                 poller.poll()
+            collector.flush()
             for proc in procs:
                 if proc.poll() is not None:
                     print(
@@ -585,11 +633,13 @@ def main() -> int:
                 if line:
                     print(line, flush=True)
                 last_digest = now
-            stop.wait(POLL_EVERY)
+            stop.wait(1.0 if poller is None else POLL_EVERY)
     finally:
         for proc in procs:
             if proc.poll() is None:
                 proc.terminate()
+        collector.clock = lambda: datetime.now(UTC) + Collector.NAME_WAIT
+        collector.flush()
         store.save()
     # A child that died makes the service restart (Restart=on-failure).
     return 1 if any(p.returncode not in (None, 0, -15) for p in procs) else 0
