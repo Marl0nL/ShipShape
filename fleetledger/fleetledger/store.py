@@ -168,7 +168,11 @@ def _item(value: Any) -> Any:
             inline[k] = v
         return inline
     if isinstance(value, tuple):
-        return list(value)
+        value = list(value)
+    if isinstance(value, list) and value and all(isinstance(v, Mapping) for v in value):
+        array = tomlkit.array()
+        array.extend(_item(v) for v in value)
+        return array.multiline(True)
     return value
 
 

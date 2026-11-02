@@ -244,11 +244,12 @@ class SSH:
             "ControlMaster": "no",
             "ControlPath": "none",
         }
+        dropped = {*overrides, "ControlPersist"}
         base = self.options(ship)
         prefix = [self.ssh_bin]
         i = 0
         while i < len(base):
-            if base[i] == "-o" and base[i + 1].split("=", 1)[0] in overrides:
+            if base[i] == "-o" and base[i + 1].split("=", 1)[0] in dropped:
                 i += 2
                 continue
             prefix.append(base[i])

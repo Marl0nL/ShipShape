@@ -247,17 +247,17 @@ def cmd_trust(args, app) -> int:
             raise FleetError(f"{name} is trusted with a different key.",
                              hint=f"`ship-fleet untrust {name}`, then trust the new key under a "
                              "new name.")
-        if args.scope:
-            for s in args.scope:
-                ca.principal_for(s)
-            with store.edit() as ed:
-                ed.set_machine_field(name, "scope", args.scope)
-            inv = store.load()
+        if args.scope and list(dict.fromkeys(args.scope)) != list(existing.scope):
+            # With --print-cert, stdout is the certificate alone.
+            say = app.note if args.print_cert else app.say
+            inv = _change_scope(app, store, inv, existing, list(dict.fromkeys(args.scope)),
+                                say=say)
     m = ca.machine(inv, name)
     cert, serial, until = ca.sign_user(_signer(app), cfg, m, hours=args.hours)
     with store.edit() as ed:
         ed.set_machine_field(name, "last_serial", serial)
         ed.set_machine_field(name, "last_valid_before", ca.stamp(until))
+        ed.set_machine_field(name, "issued", ca.issued_record(m, cfg, serial, until))
     ships = [s for s in inv.ships() if m.reaches(inv, s)]
     if args.print_cert:
         app.say(cert)
@@ -282,6 +282,55 @@ def cmd_trust(args, app) -> int:
     return 0
 
 
+def _change_scope(app, store, inv: Inventory, m: ca.Machine, scope: list[str], *,
+                  say) -> Inventory:
+    """Set a new scope; certificates wider than it go into the revocation list.
+
+    A certificate names its principals, so after narrowing, the old one would
+    still open the Ships the machine no longer reaches until it lapsed. Its
+    serial is revoked instead, and the list is pushed to every Ship now.
+    """
+    for s in scope:
+        ca.principal_for(s)
+    cfg = ca.require(inv)
+    issued = ca.unlapsed(m.issued)
+    if not issued and m.last_serial and m.last_valid_before:
+        # Issued before certificates were recorded: the last one had the old scope.
+        issued = ca.unlapsed([{"serial": m.last_serial, "valid_before": m.last_valid_before,
+                               "principals": m.principals,
+                               "ca": ca.fingerprint(cfg.user_public)}])
+    before = ca.revoked_serials(inv)
+    with store.edit() as ed:
+        ed.set_machine_field(m.name, "scope", scope)
+        ed.set_machine_field(m.name, "issued", issued or None)
+    inv = store.load()
+    outlived = ca.machine(inv, m.name).outlived()
+    if outlived:
+        say(f"{m.name}'s scope is now {', '.join(scope)}; {len(outlived)} certificate(s) "
+                "issued for its wider scope are now in the revocation list.")
+    if ca.revoked_serials(inv) != before:
+        failed = _push_to_ships(app, inv, say)
+        if failed:
+            app.note(f"Not updated yet: {', '.join(failed)}. Until they are, {m.name}'s "
+                     "older certificates still work there for the scope it had. "
+                     "Run `ship-fleet ca sign` when they are back.")
+    return inv
+
+
+def _push_to_ships(app, inv: Inventory, say=None) -> list[str]:
+    """Send every Ship the current trust document; returns those not updated."""
+    say = say or app.say
+    failed = []
+    for ship in inv.ships():
+        try:
+            for message in certify(app, inv, ship):
+                say(message)
+        except FleetError as exc:
+            failed.append(ship.name)
+            app.note(f"ship-fleet: {exc.message}")
+    return failed
+
+
 def _has_cert(ship: Ship) -> bool:
     doc = status.read_cache(ship.name)
     return bool(doc and (doc.get("ssh") or {}).get("host_certificate"))
@@ -299,14 +348,7 @@ def cmd_untrust(args, app) -> int:
             ed.set_machine_field(m.name, "revoked", now_timestamp())
         inv = store.load()
         app.say(f"{m.name} is untrusted; its key is now in the revocation list.")
-    failed = []
-    for ship in inv.ships():
-        try:
-            for message in certify(app, inv, ship):
-                app.say(message)
-        except FleetError as exc:
-            failed.append(ship.name)
-            app.note(f"ship-fleet: {exc.message}")
+    failed = _push_to_ships(app, inv)
     if failed:
         app.note(f"Not updated yet: {', '.join(failed)}. Until they are, {m.name}'s current "
                  f"certificate still works there (until {m.last_valid_before or 'it expires'}). "

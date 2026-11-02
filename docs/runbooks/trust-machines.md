@@ -130,6 +130,16 @@ ship-fleet trust laptop --print-cert | ssh laptop 'cat > ~/.ssh/shipshape/laptop
 Re-run `install.sh` after adding Ships, so the new Ships get `Host` blocks and
 herdr entries.
 
+To change a machine's scope, run `ship-fleet trust laptop --scope <new scope>`.
+A certificate names the Ships it opens, so narrowing the scope (for example
+from `all` to `tag:work`) would otherwise leave the old certificate opening
+every Ship until it lapsed. FleetLedger records each certificate it issues
+(`issued` in `ships.toml`) and puts the serials of any that are wider than the
+new scope into the revocation list, which it sends to every Ship straight away.
+A Ship it cannot reach gets the list at the next `ship-fleet ca sign`; until
+then the old certificate still works there. Install the new certificate on the
+machine afterwards (the bundle or `--print-cert`).
+
 ## 5. Revoke
 
 ```sh

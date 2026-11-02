@@ -42,7 +42,8 @@ from the LAN to other machines or cloud VMs.
   `agent` only: only agent has an `AuthorizedPrincipalsFile`, so no certificate
   can log in as `fleet`. A certificate allows a terminal and nothing else (no
   forwarding). `ship-fleet untrust` revokes a machine on every Ship through a
-  key revocation list. The Ship refuses any list that would revoke fleet's own
+  key revocation list. Narrowing a machine's scope revokes, by serial, the
+  certificates it was given for the wider scope. The Ship refuses any list that would revoke fleet's own
   key, so FleetLedger cannot lock itself out. Every change on the Ship is
   checked with `sshd -t` and rolled back if sshd would refuse it.
   See [runbooks/trust-machines.md](runbooks/trust-machines.md).

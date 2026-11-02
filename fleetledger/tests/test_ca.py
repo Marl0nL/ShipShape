@@ -21,7 +21,7 @@ from conftest import keygen
 from fleetledger.inventory import Ship
 from test_cli import RUNNING, env, result  # noqa: F401  (env is a fixture)
 
-from fleetledger import ca
+from fleetledger import ca, schemas
 
 pytestmark = pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="needs ssh-keygen")
 
@@ -423,6 +423,73 @@ def test_trust_untrust_cycle(caenv, tmp_path):
     assert code == 1 and "stays untrusted" in err
 
 
+def _pushed_krl(caenv, ship="ship-02"):
+    return __import__("base64").b64decode(dict(caenv.trusted)[ship]["revoked_keys"])
+
+
+def test_narrowing_a_scope_revokes_the_wider_certificates(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    pub = tmp_path / "laptop.pub"
+    code, _, err = caenv.run("trust", "laptop", "--key", str(pub), "--scope", "all",
+                             "--out", str(tmp_path / "b1"))
+    assert code == 0, err
+    wide = (tmp_path / "b1" / "laptop-cert.pub").read_text()
+    code, renewed, _ = caenv.run("trust", "laptop", "--print-cert")  # same scope: no push
+    assert code == 0 and caenv.trusted == []
+    _no_ssh_section(caenv)
+    code, out, err = caenv.run("trust", "laptop", "--scope", "tag:work",
+                               "--out", str(tmp_path / "b2"))
+    assert code == 0, err
+    assert "2 certificate(s)" in out
+    narrow = (tmp_path / "b2" / "laptop-cert.pub").read_text()
+    assert {name for name, _ in caenv.trusted} == {"ship-01", "ship-02"}
+    krl = _pushed_krl(caenv)
+    assert ca.krl_revokes(krl, wide) and ca.krl_revokes(krl, renewed)
+    assert not ca.krl_revokes(krl, narrow)
+    assert not ca.krl_revokes(krl, pub.read_text())  # the machine itself stays trusted
+    inv = caenv.store.load()
+    assert ca.krl_revokes(ca.build_krl(inv), wide)
+    assert schemas.errors("ships.toml", inv.doc) == []
+    # Widening again lets the old certificates back in (they ask for no more than all).
+    caenv.trusted.clear()
+    code, _, err = caenv.run("trust", "laptop", "--scope", "all", "--print-cert")
+    assert code == 0, err
+    assert not ca.krl_revokes(_pushed_krl(caenv), wide)
+
+
+def test_narrowing_revokes_a_certificate_issued_before_they_were_recorded(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    pub = tmp_path / "laptop.pub"
+    code, _, err = caenv.run("trust", "laptop", "--key", str(pub), "--scope", "all",
+                             "--out", str(tmp_path / "b1"))
+    assert code == 0, err
+    wide = (tmp_path / "b1" / "laptop-cert.pub").read_text()
+    with caenv.store.edit() as ed:
+        ed.set_machine_field("laptop", "issued", None)  # as written by an older ship-fleet
+    _no_ssh_section(caenv)
+    code, out, err = caenv.run("trust", "laptop", "--scope", "ship:ship-01", "--print-cert")
+    assert code == 0, err
+    assert ca.krl_revokes(_pushed_krl(caenv), wide)
+    assert out.count("\n") == 1 and out.startswith(ca.CERT_TYPE)  # only the certificate
+    assert "revocation list" in err
+
+
+def test_lapsed_certificates_are_forgotten(cakeys):
+    m = ca.Machine("laptop", "ssh-ed25519 AAAA laptop", "2026-01-01T00:00:00Z", ("tag:work",),
+                   issued=(
+                       {"serial": 1, "valid_before": "2026-01-01T00:00:00Z",
+                        "principals": ["agent:tag:work"], "ca": "SHA256:x"},
+                       {"serial": 2, "valid_before": "2026-01-01T00:00:00Z",
+                        "principals": ["agent:all"], "ca": "SHA256:x"},
+                   ))
+    now = ca.parse_stamp("2026-02-01T00:00:00Z")
+    record = ca.issued_record(m, cakeys, 3, now + timedelta(hours=1), now=now)
+    # Lapsed and within scope: dropped. Lapsed but still in the revocation list: kept until
+    # a scope change pushes a new list (dropping it here would change the list unpushed).
+    assert [r["serial"] for r in record] == [2, 3]
+    assert ca.unlapsed(record, now=now) == [record[1]]
+
+
 def test_trust_refuses_private_keys_ca_keys_and_bad_scopes(caenv, tmp_path):
     keygen(tmp_path / "laptop", "laptop")
     code, _, err = caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop"))
@@ -433,6 +500,11 @@ def test_trust_refuses_private_keys_ca_keys_and_bad_scopes(caenv, tmp_path):
                              "--scope", "everything")
     assert code == 1 and "Unknown scope" in err
     assert ca.machine(caenv.store.load(), "laptop") is None
+    code, _, err = caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+                             "--print-cert")
+    assert code == 0, err
+    code, _, err = caenv.run("trust", "desk", "--key", str(tmp_path / "laptop.pub"))
+    assert code == 1 and "already trusted under another name" in err
 
 
 def test_status_flags_missing_certificate(caenv):

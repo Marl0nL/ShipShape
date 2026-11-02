@@ -12,7 +12,8 @@ Two CA keys, both on your computer and passphrase-protected (ships.toml [ca]):
 
 Ships get what they need through `ship-ctl ssh-trust` (contracts/ship-ctl.md):
 the host certificate, the user CA public keys and a revocation list (KRL) of
-untrusted machines. Machines get a bundle (`ship-fleet trust`): their
+untrusted machines' keys, plus the serials of certificates whose machine's
+scope has since been narrowed. Machines get a bundle (`ship-fleet trust`): their
 certificate, an SSH config block per Ship, one @cert-authority line, and herdr
 saved machines.
 
@@ -148,6 +149,7 @@ class Machine:
     last_serial: int | None = None
     last_valid_before: str | None = None
     revoked: str | None = None
+    issued: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def from_entry(cls, name: str, entry: dict[str, Any]) -> Machine:
@@ -160,11 +162,17 @@ class Machine:
             last_serial=entry.get("last_serial"),
             last_valid_before=entry.get("last_valid_before"),
             revoked=entry.get("revoked"),
+            issued=tuple(dict(i) for i in entry.get("issued", ())),
         )
 
     @property
     def principals(self) -> list[str]:
         return [principal_for(s) for s in self.scope]
+
+    def outlived(self) -> list[dict[str, Any]]:
+        """Certificates issued for a wider scope than the machine has now."""
+        now = set(self.principals)
+        return [i for i in self.issued if not set(i["principals"]) <= now]
 
     def reaches(self, inventory: Inventory, ship: Ship) -> bool:
         tags = inventory.effective_tags(ship)
@@ -353,9 +361,75 @@ def sign_user(
     return line, serial, until
 
 
+def issued_record(m: Machine, ca: CAConfig, serial: int, until: datetime, *,
+                  now: datetime | None = None) -> list[dict[str, Any]]:
+    """The machine's `issued` list with a new certificate added.
+
+    Every certificate is recorded until it lapses, so a narrower scope later can
+    revoke the wider ones still out there. Lapsed entries are dropped here only
+    if they are not in the revocation list (dropping one that is would change the
+    list without pushing it); scope changes drop the rest.
+    """
+    now = now or utc_now()
+    current = set(m.principals)
+    keep = [i for i in m.issued
+            if not (_lapsed(i, now) and set(i["principals"]) <= current)]
+    return [*keep, {"serial": serial, "valid_before": stamp(until),
+                    "principals": list(m.principals), "ca": fingerprint(ca.user_public)}]
+
+
+def _lapsed(entry: dict[str, Any], now: datetime) -> bool:
+    until = parse_stamp(entry.get("valid_before"))
+    return until is None or until <= now
+
+
+def unlapsed(issued: Iterable[dict[str, Any]], *, now: datetime | None = None
+             ) -> list[dict[str, Any]]:
+    now = now or utc_now()
+    return [i for i in issued if not _lapsed(i, now)]
+
+
 # --- revocation list ----------------------------------------------------------------
 def revoked_keys(inventory: Inventory) -> list[str]:
     return sorted(" ".join(m.public_key.split()[:2]) for m in machines(inventory) if m.revoked)
+
+
+def revoked_serials(inventory: Inventory) -> dict[str, list[int]]:
+    """{user CA key line: serials} of certificates wider than their machine's scope.
+
+    Untrusted machines are left out: their key is revoked, which covers every
+    certificate they hold. Serials from a CA no longer trusted are left out too.
+    """
+    cfg = config(inventory)
+    if cfg is None:
+        return {}
+    by_fp = {fingerprint(k): " ".join(k.split()[:2]) for k in cfg.user_ca_keys()}
+    out: dict[str, set[int]] = {}
+    for m in machines(inventory):
+        if m.revoked:
+            continue
+        for entry in m.outlived():
+            key = by_fp.get(entry.get("ca", ""))
+            if key:
+                out.setdefault(key, set()).add(int(entry["serial"]))
+    return {k: sorted(v) for k, v in sorted(out.items())}
+
+
+def _krl_specs(inventory: Inventory) -> list[tuple[str | None, str]]:
+    """[(CA key line or None, spec text)]: keys first, then one spec per CA."""
+    serials = revoked_serials(inventory)
+    keys = "".join(f"key: {k}\n" for k in revoked_keys(inventory))
+    specs: list[tuple[str | None, str]] = []
+    for n, (ca_key, numbers) in enumerate(serials.items()):
+        text = "".join(f"serial: {s}\n" for s in numbers)
+        specs.append((ca_key, (keys if n == 0 else "") + text))
+    return specs or [(None, keys)]
+
+
+def _krl_spec_hash(specs: list[tuple[str | None, str]]) -> str:
+    if specs[0][0] is None:  # keys only: the same hash as before serials existed
+        return hashlib.sha256(specs[0][1].encode()).hexdigest()
+    return hashlib.sha256(json.dumps(specs).encode()).hexdigest()
 
 
 def krl_dir() -> Path:
@@ -364,13 +438,15 @@ def krl_dir() -> Path:
 
 def build_krl(inventory: Inventory, runner: Runner = subprocess.run,
               keygen: str = "ssh-keygen") -> bytes:
-    """The KRL of untrusted machines' keys, cached until the list changes.
+    """The KRL of untrusted machines' keys and outlived certificates' serials.
 
-    ssh-keygen stamps each KRL with the time, so the cache keeps the same bytes
-    (and the same hash in Ships' status) while nothing has been revoked.
+    ssh-keygen stamps each KRL with the time, so it is cached and keeps the same
+    bytes (and the same hash in Ships' status) while nothing has been revoked.
+    Serials are per CA: the CA's public key goes on the command line (-s), and
+    a second CA's serials are added to the same list (-u).
     """
-    spec = "".join(f"key: {k}\n" for k in revoked_keys(inventory))
-    spec_hash = hashlib.sha256(spec.encode()).hexdigest()
+    specs = _krl_specs(inventory)
+    spec_hash = _krl_spec_hash(specs)
     folder = paths.private_dir(krl_dir())
     cached, marker = folder / "revoked-keys.krl", folder / "revoked-keys.spec-sha256"
     try:
@@ -379,13 +455,18 @@ def build_krl(inventory: Inventory, runner: Runner = subprocess.run,
     except OSError:
         pass
     with tempfile.TemporaryDirectory(prefix="fleetledger-krl-") as tmp:
-        spec_file = Path(tmp) / "spec"
-        spec_file.write_text(spec, encoding="utf-8")
         out = Path(tmp) / "krl"
-        proc = runner([keygen, "-q", "-k", "-f", str(out), str(spec_file)],
-                      capture_output=True, text=True)
-        if proc.returncode != 0 or not out.exists():
-            raise FleetError("ssh-keygen could not build the revocation list.")
+        for n, (ca_key, spec) in enumerate(specs):
+            spec_file = Path(tmp) / f"spec{n}"
+            spec_file.write_text(spec, encoding="utf-8")
+            argv = [keygen, "-q", "-k"] + (["-u"] if n else []) + ["-f", str(out)]
+            if ca_key:
+                ca_file = Path(tmp) / f"ca{n}.pub"
+                ca_file.write_text(ca_key + "\n", encoding="utf-8")
+                argv += ["-s", str(ca_file)]
+            proc = runner([*argv, str(spec_file)], capture_output=True, text=True)
+            if proc.returncode != 0 or not out.exists():
+                raise FleetError("ssh-keygen could not build the revocation list.")
         data = out.read_bytes()
     paths.write_private(cached, data)
     paths.write_private(marker, (spec_hash + "\n").encode())
@@ -394,11 +475,10 @@ def build_krl(inventory: Inventory, runner: Runner = subprocess.run,
 
 def cached_krl(inventory: Inventory) -> bytes | None:
     """The cached KRL if it matches today's revocations, without running ssh-keygen."""
-    spec = "".join(f"key: {k}\n" for k in revoked_keys(inventory))
     folder = krl_dir()
     try:
         marker = (folder / "revoked-keys.spec-sha256").read_text().strip()
-        if marker == hashlib.sha256(spec.encode()).hexdigest():
+        if marker == _krl_spec_hash(_krl_specs(inventory)):
             return (folder / "revoked-keys.krl").read_bytes()
     except OSError:
         pass
