@@ -6,8 +6,8 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 
 ## Modules
 
-The seed generator, inventory and catalogue reader are built; the rows from
-`ssh.py` down land in follow-up PRs.
+Everything above `concierge/` is built; the concierge and the CLI land in a
+follow-up PR.
 
 | Module | Work item | Purpose |
 |---|---|---|
@@ -16,8 +16,9 @@ The seed generator, inventory and catalogue reader are built; the rows from
 | `fleetledger/catalogue.py` | W3, W10 | reads recipes and profiles from `ship/tools/` and `ship/profiles/` (`contracts/tools.md`) |
 | `fleetledger/repo.py`, `schemas.py`, `paths.py` | all | the checkout FleetLedger runs from, contract validation, local folders |
 | `fleetledger/ssh.py` | W8 | system OpenSSH, FleetLedger's own known-hosts file, connection reuse |
-| `fleetledger/status.py` | W8 | polling `ship-ctl status --json` (`contracts/ship-status.schema.json`) |
+| `fleetledger/status.py`, `shipctl.py` | W8 | polling `ship-ctl status --json` (`contracts/ship-status.schema.json`) and calling the other ship-ctl commands |
 | `fleetledger/drivers/` | W8 | the hypervisor driver interface; `manual`, and `proxmox` as a test helper (finished in phase 4) |
+| `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/` | W9 | sign-in engine and `providers/*.toml` |
 | `fleetledger/cli.py` | W10 | the `ship-fleet` commands |
 
@@ -94,3 +95,99 @@ until you fix the tags.
 The tests check each step against the contract text itself (the bootstrap script
 and `network-config` are compared with `contracts/seed.md`), run that bootstrap
 script on a real bundle in a temporary folder, and read the ISO back.
+
+## Reaching Ships (W8)
+
+`ssh.py` runs the system's `ssh`, so your SSH config and agent apply. FleetLedger
+adds only options that make each connection safe and quick:
+
+- **Pinned host keys, never learned.** `known_hosts` is rewritten from
+  `ships.toml` (one line per Ship, keyed by Ship name), and every connection uses
+  `HostKeyAlias=<ship name>`, `StrictHostKeyChecking=yes` and
+  `HostKeyAlgorithms=ssh-ed25519`. Whichever of the Ship's names is dialled, its
+  key must be the pinned one. A different key raises `HostKeyMismatch` straight
+  away; FleetLedger does not try the Ship's other names, because that is a
+  security event, not a network one.
+- **One key per user.** The fleet admin key (`IdentitiesOnly`) logs in as
+  `fleet`. Agent, X11 and port forwarding are always off.
+- **Names in order.** Names that cannot be reached are skipped; the first one
+  that answers is used.
+- **Shared connections.** `ControlMaster` sockets live in the runtime folder and
+  persist for 60 seconds. If that folder's path is too long for a Unix socket,
+  sharing is turned off rather than failing.
+
+Remote commands follow `contracts/ship-runtime.md`: `sudo -n
+/usr/local/bin/ship-ctl ... --json` for ship-ctl, and `sudo -n -iu agent -- bash
+-c '<command>'` for anything that must run as the agent.
+
+## Status (W8)
+
+`status.fetch` asks one Ship for `ship-ctl status --json`; `status.poll` asks
+many in parallel (8 at a time). FleetLedger only trusts a status document if
+three things hold: it validates against the contract, it is a status document
+(not a failed result), and its `ship.name` and `ship.id` match the inventory.
+Otherwise the Ship is shown with a problem (`unreachable`, `host-key`,
+`identity`, `invalid`, `error`) instead of its claims. Before `ship-ctl` is
+installed (first boot), `cloud-init status --format json` stands in.
+
+On top of the Ship's own attention items, FleetLedger adds:
+
+| Code | When |
+|---|---|
+| `signin-wrong-account` | a signed-in service's account is not the one the Ship's tags expect |
+| `behind-tooling` | the Ship's tooling is older than `versions.toml` `[shipshape].tooling` |
+| `tags-differ` | the Ship's own tags differ from the inventory's |
+
+The last good document per Ship is cached at
+`~/.local/share/fleetledger/status/<ship>.json` (0600).
+
+`shipctl.ShipCtl` runs every other ship-ctl command and checks the result
+against `ship-ctl-result.schema.json`. Before its first call to a Ship it runs
+`ship-ctl version` and refuses any contract major version it does not know.
+
+## Hypervisor drivers (W8)
+
+`drivers/base.py` is the interface: `create`, `start`, `stop`, `reboot`,
+`destroy`, `status`, `finish_enrolment`, and optionally
+`host_key_fingerprints` and `snapshot`. Every call returns an `Outcome`, which
+is either done or a list of instructions for you, so the CLI treats both drivers
+alike.
+
+- **manual** prints the steps. With a `[drivers.proxmox]` section in
+  `ships.toml` they are exact `qm` and `pvesm` commands for that server;
+  otherwise they are generic and work for any hypervisor.
+- **proxmox** is the phase 1 test helper; phase 4 finishes it. It uses only the
+  scoped API token: it uploads the seed ISO (Proxmox checks a SHA-256 the
+  client sends with it), full-clones the template into the pool, attaches the
+  seed on `ide2`, sets cores, memory and bridge, grows `scsi0`, starts the VM,
+  and waits for every Proxmox task. It reads addresses from the guest agent and
+  destroys the VM again. If creation fails part-way, it removes what it made.
+  The client pins the SHA-256 fingerprint of the API's TLS certificate and
+  checks it before the token is sent. The token is read from its file (which
+  must be 0600) for each request and never appears in errors.
+
+## Enrolment (W8)
+
+`enrol.enrol` waits for `provision.result` to be `ok` (retrying while the Ship is
+still booting, and stopping at once on a wrong host key). It then has the driver
+detach the seed CD-ROM and delete the uploaded ISO, deletes FleetLedger's own
+copy of the seed, and records `ship.<name>.enrolled`. With the manual driver the
+detach-and-delete steps are printed, and the seed's name stays in `driver_ref`
+so `destroy` can remind you of it.
+
+## Live test against Proxmox
+
+`tests/test_live_proxmox.py` runs only when `FLEETLEDGER_LIVE_PROXMOX` names a
+`ships.toml` with a `[drivers.proxmox]` section. It creates a Ship from a seed
+with a stub `ship-provision`, reaches it over SSH with the pinned key, enrols it,
+checks that an impostor key is refused, destroys it, and checks that nothing of
+its own is left in the pool. It never runs in CI.
+
+```sh
+FLEETLEDGER_LIVE_PROXMOX=~/.config/fleetledger/ships.toml \
+  python -m pytest fleetledger/tests/test_live_proxmox.py -v
+```
+
+The real-sshd tests in `tests/test_ssh.py` need an `sshd` binary. They use
+`sshd` from `PATH`, `/usr/sbin/sshd`, or `FLEETLEDGER_TEST_SSHD`, and are skipped
+if none is found.

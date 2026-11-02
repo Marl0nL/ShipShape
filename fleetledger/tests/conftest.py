@@ -168,3 +168,28 @@ def fake_repo(tmp_path):
         """,
     )
     return Repo(root)
+
+
+class FakeSSH:
+    """Stands in for fleetledger.ssh.SSH: answers each remote command from a handler.
+
+    handler(ship, command, input) returns (returncode, stdout, stderr) or raises.
+    """
+
+    def __init__(self, handler):
+        self.handler = handler
+        self.calls = []
+
+    def run(self, ship, command, *, input=None, timeout=60):
+        from fleetledger.ssh import Result
+
+        self.calls.append((ship.name, list(command), input))
+        code, out, err = self.handler(ship, list(command), input)
+        if isinstance(out, str):
+            out = out.encode()
+        return Result(code, out, err, ship.names[0])
+
+
+@pytest.fixture
+def fake_ssh():
+    return FakeSSH
