@@ -4,7 +4,8 @@
 
 > **Status: phase 1.** Ships boot, provision themselves and resume their agents;
 > FleetLedger creates, enrols, shows and signs them in. The previous Docker-based
-> design's code is kept by the tag `container-stack-final`; its notes are in
+> design's code is kept by the tag `container-stack-final`, and its last state
+> in this repo (the `legacy/` folder) by commit `cdeecd7`; its notes are in
 > `docs/archive/`.
 
 ## What it is

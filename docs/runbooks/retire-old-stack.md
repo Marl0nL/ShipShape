@@ -6,7 +6,11 @@ the tag `container-stack-final` keeps it (`git checkout container-stack-final`).
 Retire a running stack once its work has moved to Ships.
 
 1. **Check the tag.** The last commit of the old design is tagged
-   `container-stack-final`; nothing else needs keeping in the repo.
+   `container-stack-final`; nothing else needs keeping in the repo. The tag is
+   from before the stack moved into `legacy/`. The folder's final state (with
+   its `LEGACY.md` note and two scrubbed example lines) is at commit `cdeecd7`,
+   the last change to `legacy/` before it was deleted:
+   `git checkout cdeecd7 -- legacy` brings it back.
 2. **Copy what is worth keeping onto a Ship,** for example an instance's data
    folder:
 
