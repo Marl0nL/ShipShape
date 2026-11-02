@@ -226,7 +226,8 @@ except `/var/lib/shipshape/net/`):
   (source `ss`: short connections can be missed and there are no byte counts);
 - names from `resolvectl monitor --json=short`: each connection's address is
   matched to the DNS answer it came from, else the address itself is the
-  destination (`kind: address`);
+  destination (`kind: address`), written canonically (an IPv4-mapped IPv6
+  address as plain IPv4, no zone index such as `%eth0`);
 - totals from `vnstat --json`.
 
 Names and program names come from the Ship and could have been chosen by an agent,

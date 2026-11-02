@@ -104,8 +104,8 @@
           "name": {
             "type": "string",
             "maxLength": 253,
-            "pattern": "^([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?)(\\.([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?))*\\.?$|^[0-9.]{7,15}$|^[0-9a-f:]{2,39}$",
-            "description": "A domain name from the Ship's DNS answers, or the address itself when no name is known (kind address)."
+            "pattern": "^([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?)(\\.([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?))*\\.?$|^[0-9.]{7,15}$|^[0-9a-f:.]{2,45}$",
+            "description": "A domain name from the Ship's DNS answers, or the address itself when no name is known (kind address). Producers write addresses in canonical form: an IPv4-mapped IPv6 address as plain IPv4, and no zone index (%eth0). The IPv6 alternative also admits the mapped form (::ffff:192.0.2.1) so a producer that misses it still validates."
           },
           "kind": { "enum": ["domain", "address"] },
           "scope": {
@@ -131,7 +131,11 @@
           "addresses": {
             "type": "array",
             "maxItems": 16,
-            "items": { "type": "string", "pattern": "^[0-9.]{7,15}$|^[0-9a-f:]{2,39}$" }
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9.]{7,15}$|^[0-9a-f:.]{2,45}$",
+              "description": "Canonical form, as for name: mapped addresses as plain IPv4, no zone index."
+            }
           },
           "programs": {
             "type": "array",
