@@ -126,6 +126,7 @@ Ship. FleetLedger compares them with the `account` values in each status documen
 | `ca.user_key` (its `.pub`), plus `ca.previous_user_keys` | `/etc/ssh/shipshape/user-ca.pub` |
 | `machine.<m>.public_key` of every machine with `revoked` | in the KRL, `/etc/ssh/shipshape/revoked-keys` |
 | `machine.<m>.scope` | not sent: it becomes the principals of that machine's certificates (`all` → `agent:all`, `tag:work` → `agent:tag:work`, `ship:ship-01` → `agent:ship:ship-01`) |
+| `machine.<m>.issued` entries whose principals the current `scope` no longer covers | their serials, in the same KRL (narrowing a scope revokes the wider certificates still out there) |
 | `ca.revoked_host_keys` | not sent: trusted machines get it as their `RevokedHostKeys` list |
 
 Trusted machines get, from `ship-fleet trust <machine>`: their certificate, one

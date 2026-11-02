@@ -150,6 +150,33 @@
           },
           "last_serial": { "type": "integer", "minimum": 0 },
           "last_valid_before": { "$ref": "#/$defs/timestamp" },
+          "issued": {
+            "type": "array",
+            "maxItems": 1000,
+            "description": "Certificates issued to this machine that may not have lapsed yet, kept so a narrower scope can revoke the wider ones. Any whose principals the current scope no longer covers are revoked by serial in the list every Ship gets. Written by ship-fleet; lapsed entries are dropped.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["serial", "valid_before", "principals", "ca"],
+              "properties": {
+                "serial": { "type": "integer", "minimum": 1 },
+                "valid_before": { "$ref": "#/$defs/timestamp" },
+                "principals": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^agent:(all|tag:[a-z0-9][a-z0-9-]{0,30}|ship:[a-z0-9][a-z0-9-]{0,30})$"
+                  }
+                },
+                "ca": {
+                  "type": "string",
+                  "pattern": "^SHA256:[A-Za-z0-9+/]{43}$",
+                  "description": "Fingerprint of the user CA key that signed it."
+                }
+              }
+            }
+          },
           "revoked": {
             "$ref": "#/$defs/timestamp",
             "description": "When `ship-fleet untrust` revoked it. Its key is in the revocation list every Ship gets, and it is never certified again."
