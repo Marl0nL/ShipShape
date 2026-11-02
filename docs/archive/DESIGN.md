@@ -221,7 +221,7 @@ internet. Toggle: `docker compose --profile adb up -d adb-relay` / `stop`.
 - **Image bake (`Dockerfile.agent`)**: tmux, jq, node, gh, gcloud + the **Claude Code
   CLI** (honors HTTP(S)_PROXY), **herdr** (firstmate's backend), the **Antigravity CLI**
   (`agy`, best-effort), and a clone of the user's firstmate fork
-  (`github.com/Marl0nL/firstmate`) at `~/firstmate` (defaulted to `backend=herdr` /
+  (`github.com/example/firstmate`) at `~/firstmate` (defaulted to `backend=herdr` /
   `crew-harness=claude`), plus firstmate's bootstrap toolchain (treehouse,
   no-mistakes, *-axi). Peripheral installers are tolerant (`|| WARN`) so one flaky
   upstream can't fail the build. Project dev stacks (Flutter/adb) stay runtime-installed.

@@ -2,7 +2,7 @@
 
 <p align="center"><em>Run autonomous coding agents in a locked-down container — with a one-window control plane.</em></p>
 
-ShipShape boots a coding agent (Claude Code / [firstmate](https://github.com/Marl0nL/firstmate))
+ShipShape boots a coding agent (Claude Code / [firstmate](https://github.com/example/firstmate))
 inside a Docker sandbox that has **no route to the internet** except through a
 default-deny egress proxy you control. A host-side TUI/CLI (`shipshape`) is the
 bridge: you approve the domains the agent may reach, hand it short-lived

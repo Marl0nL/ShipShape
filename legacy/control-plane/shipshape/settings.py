@@ -15,12 +15,12 @@ from .config import Paths
 
 # Curated firstmate source repos offered by the wizard (plus "type your own").
 FIRSTMATE_REPOS: dict[str, str] = {
-    "Marl0nL/firstmate": "https://github.com/Marl0nL/firstmate.git",
+    "example/firstmate": "https://github.com/example/firstmate.git",
     "kunchenguid/firstmate": "https://github.com/kunchenguid/firstmate.git",
 }
 
 DEFAULTS: dict = {
-    "firstmate_repo": FIRSTMATE_REPOS["Marl0nL/firstmate"],
+    "firstmate_repo": FIRSTMATE_REPOS["example/firstmate"],
     "bandwidth_mbps": 20,
     "first_run_done": False,
     "muted": False,

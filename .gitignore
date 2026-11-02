@@ -1,33 +1,39 @@
-# Credentials — NEVER commit
+# --- Local config: personal, never committed (see docs/hygiene.md) -----------
+# FleetLedger inventory and any local overrides. The repo ships only generic
+# *.example files under contracts/examples/.
+ships.toml
+*.local.toml
 .env
 .env.*
 !.env.example
-auth/*
-!auth/README.md
 
-# Control-plane runtime state and IPC spool
-control-plane/spool/
-control-plane/state/
+# Seeds contain a Ship's private host key.
+seeds/
+*.seed.iso
 
-# Persistent agent working data
-firstmate-data/
-
-# Local config — personal, must NOT be inherited by other installs. Seeded on first
-# run from the tracked *.example templates; edit the live files locally.
-/shipshape.toml
-egress/allowed_domains.txt
-
-# Control-plane backups
-egress/*.bak
-
-# Python
+# --- Python / Node / tooling ---------------------------------------------------
 __pycache__/
 *.pyc
-control-plane/.venv/
-control-plane/*.egg-info/
-control-plane/build/
-control-plane/dist/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+node_modules/
 
-# Multi-instance: all per-instance data is local
+# --- Old container stack: local data left in existing checkouts ---------------
+# These paths held secrets and runtime state for the stack now in legacy/.
+# Keep ignoring them so leftovers in an existing checkout are never committed.
+/auth/
 /instances/
+/firstmate-data/
+/control-plane/state/
+/control-plane/spool/
+/shipshape.toml
 /squid.conf
+/egress/allowed_domains.txt
+/egress/*.bak
+legacy/auth/*
+!legacy/auth/README.md
