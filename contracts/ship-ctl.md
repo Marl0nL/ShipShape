@@ -64,13 +64,18 @@ How fields are worked out:
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
-`reboot-required`, `provision-failed`, `tool-waiting`, `tool-failed`,
-`host-cert-expiring` (the host certificate ends within 14 days),
+`reboot-required`, `herdr-restart-pending`, `provision-failed`, `tool-waiting`,
+`tool-failed`, `host-cert-expiring` (the host certificate ends within 14 days),
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
 running). FleetLedger adds its own on top (`signin-wrong-account` from the tag
-check, `behind-tooling` from `versions.toml`, `host-cert-missing` and
-`ssh-trust-behind` from its certificate authority); it shows unknown codes as
-they are.
+check, `behind-tooling` from `versions.toml`, `tags-differ` from the inventory,
+`host-cert-missing` and `ssh-trust-behind` from its certificate authority); it
+shows unknown codes as they are.
+
+`herdr-restart-pending`: the running herdr server is not the installed
+`/usr/local/bin/herdr` (a converge replaced the binary; the server keeps running
+the old one). A reboot switches to the new one and resumes every agent in its
+mode; `ship-fleet update` does that for you unless told not to.
 
 ### `ship-ctl apply [--dry-run] [--json]`
 
@@ -85,8 +90,9 @@ atomically, then runs `apply`.
 
 - `KEY=VALUE` keys: `ship.tags` (comma-separated), `claude.remote_control`,
   `claude.default_mode`, `claude.allow_bypass`, `claude.update_channel`,
-  `claude.session_prefix`, `agent.sudo`, `network.lan_guard`. Booleans are `true`
-  or `false`.
+  `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
+  `network.lan_guard_allow` (comma-separated; empty clears it),
+  `updates.auto_reboot`, `updates.reboot_time`. Booleans are `true` or `false`.
 - `--file -` reads a complete replacement `ship.toml` on stdin. Its `ship.name`
   and `ship.id` must match the current file. Use it for anything else (autostart
   entries, tools, profile options).
@@ -135,6 +141,10 @@ Applies a tooling bundle:
 
 If any step fails, `current` goes back to the previous release and the command
 exits 1. `data`: `{ "from": release, "to": release }`.
+
+Converge never restarts herdr or reboots: agents keep running. When it replaced
+the herdr binary, the status document reports `herdr-restart-pending` until the
+next reboot.
 
 ### `ship-ctl tools list|run|add|remove [ID...] [--json]`
 

@@ -69,9 +69,46 @@ integration and agents edit these files too):
 | `ship.name`, `ship.id` | `/etc/avahi/services/shipshape.service`: the LAN announcement (`ship-runtime.md`) |
 | `ship.name`, `ship.tags` | `/etc/ssh/shipshape/principals/agent`: which user certificates may log in as `agent` (`agent:all`, `agent:tag:<tag>`, `agent:ship:<name>`; `ship-ctl.md`) |
 | `agent.sudo` | `/etc/sudoers.d/91-shipshape-agent` present (`NOPASSWD: ALL`) or absent |
-| `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent (phase 2) |
+| `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent, loaded at boot by `ship-lan-guard.service` (see "LAN guard") |
+| `updates.auto_reboot`, `updates.reboot_time` | `/etc/apt/apt.conf.d/52shipshape-unattended-upgrades`: `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-Time` (see "OS updates") |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
 | `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
+
+## LAN guard
+
+When `network.lan_guard = true`, the Ship refuses **new outgoing** connections
+to private and local address ranges:
+
+- IPv4: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`
+  (shared address space, also used by overlay networks), `169.254.0.0/16`;
+- IPv6: `fc00::/7`, `fe80::/10`.
+
+Always let through: loopback, replies to connections the Ship accepted (so
+FleetLedger's SSH and attaching with herdr are never affected), DHCP, ICMPv6,
+the default gateways and DNS servers the Ship uses (found again each time the
+rules load), and every entry in `lan_guard_allow`. Internet traffic is untouched.
+Refused connections get an immediate reject, not a silent drop.
+
+The rules live only in the table `inet shipshape_lan_guard`; nothing else in the
+Ship's firewall is touched. `ship-ctl apply` loads or removes the table and
+enables or disables `ship-lan-guard.service`, which reloads it at every boot.
+
+## OS updates
+
+Ubuntu's unattended-upgrades stays on (security updates every day, as Ubuntu
+ships it). `ship-ctl apply` writes
+`/etc/apt/apt.conf.d/52shipshape-unattended-upgrades` in full:
+
+```
+Unattended-Upgrade::Automatic-Reboot "<updates.auto_reboot>";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "<updates.reboot_time>";
+```
+
+With `auto_reboot = false` (the default) a needed reboot shows as
+`reboot-required` attention, and `ship-fleet reboot` does it when you choose.
+An automatic reboot is a clean `shutdown -r`, so herdr saves its state and
+resumes every agent in its mode, as after any reboot.
 
 ## Permission modes across reboots
 

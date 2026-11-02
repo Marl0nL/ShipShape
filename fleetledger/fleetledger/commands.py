@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
-from fleetledger import concierge, enrol, paths, schemas, status
+from fleetledger import concierge, enrol, ops, paths, schemas, status
 from fleetledger.catalogue import Catalogue
 from fleetledger.concierge import providers
 from fleetledger.drivers import SeedFile
@@ -16,27 +16,18 @@ from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, new_ship_id, now_timestamp
 from fleetledger.seed import Autostart, SeedOptions, cloudinit, hostkey, make_seed
 from fleetledger.seed.shiptoml import tools_for
-from fleetledger.shipctl import STATUS_SCHEMA, ShipCtl
+from fleetledger.shipctl import STATUS_SCHEMA
 from fleetledger.ssh import ship_ctl
 from fleetledger.store import new_inventory, ship_entry
 from fleetledger.trustcmd import after_enrol, cmd_ca, cmd_trust, cmd_untrust  # noqa: F401
 
-MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
-LOG_SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
-TAG_RE = NAME_RE
-
-# `ship-fleet set` short keys -> ship-ctl set keys, with allowed values.
-SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
-    "remote_control": ("claude.remote_control", ("on", "off", "blocked")),
-    "default_mode": ("claude.default_mode", MODES),
-    "allow_bypass": ("claude.allow_bypass", ("true", "false")),
-    "update_channel": ("claude.update_channel", ("latest", "stable")),
-    "session_prefix": ("claude.session_prefix", None),
-    "sudo": ("agent.sudo", ("true", "false")),
-    "lan_guard": ("network.lan_guard", ("true", "false")),
-    "tags": ("ship.tags", None),
-}
+# Kept here for older imports; the definitions live in ops.py.
+MODES = ops.MODES
+LOG_SOURCES = ops.LOG_SOURCES
+NAME_RE = ops.NAME_RE
+TAG_RE = ops.TAG_RE
+SET_KEYS = ops.SET_KEYS
+parse_assignments = ops.parse_assignments
 
 
 # --- shared helpers --------------------------------------------------------
@@ -483,11 +474,23 @@ def cmd_status(args, app) -> int:
     if not doc["herdr"]["agents"]:
         app.say("  none")
     host = doc["host"]
+    pending = host.get("updates_pending")
     app.say(f"Host: {usage_cell(view)} (cpu · memory · disk), up {host['uptime_s'] // 3600} h"
-            + (", reboot required" if host["reboot_required"] else ""))
+            + (", reboot required" if host["reboot_required"] else "")
+            + (f", {pending} OS updates pending" if pending else ""))
     app.say(f"Claude {doc['claude']['version'] or '?'} ({doc['claude']['channel']}), "
             f"default mode {doc['claude']['default_mode']}, "
-            f"Remote Control {doc['claude']['remote_control']}; tooling {doc['ship']['tooling']}")
+            f"Remote Control {doc['claude']['remote_control']}")
+    herdr = doc["herdr"]
+    resume = herdr["last_resume"]
+    resumed = (f"; last resume {resume['at']} ({resume['resumed']} resumed"
+               + (f", {resume['failed']} failed" if resume.get("failed") else "") + ")"
+               if resume else "")
+    app.say(f"herdr {herdr['version'] or '?'} ({herdr['server']}){resumed}")
+    commit = doc["ship"].get("bundle_commit")
+    app.say(f"Tooling {doc['ship']['tooling']}" + (f" ({commit})" if commit else "")
+            + f"; provisioned {doc['provision']['result']}"
+            + (f" at {doc['provision']['last_run']}" if doc["provision"]["last_run"] else ""))
     if doc["tools"]:
         app.say("Tools: " + ", ".join(f"{k} {v['state']}" for k, v in sorted(doc["tools"].items())))
     return 0
@@ -552,90 +555,84 @@ def cmd_logout(args, app) -> int:
     return 1 if failed else 0
 
 
+# --- batch helpers -------------------------------------------------------------
+
+
+def _fleet(app) -> ops.Fleet:
+    return ops.Fleet.from_app(app)
+
+
+def _progress(app) -> ops.Event:
+    def event(ship: str, text: str) -> None:
+        app.note(f"{ship}: {text}" if ship != "*" else text)
+    return event
+
+
+def _report(app, outcomes: list[ops.Outcome], as_json: bool = False) -> int:
+    if as_json:
+        app.say(json.dumps([o.as_dict() for o in outcomes], indent=2))
+    else:
+        for outcome in outcomes:
+            mark = "" if outcome.ok else "FAILED: "
+            app.say(f"{outcome.ship}: {mark}{outcome.summary}")
+            for detail in outcome.details:
+                app.say(f"  {detail}")
+        failed = [o.ship for o in outcomes if not o.ok]
+        if len(outcomes) > 1:
+            app.say(f"{len(outcomes) - len(failed)} of {len(outcomes)} Ships OK"
+                    + (f"; failed: {', '.join(failed)}." if failed else "."))
+    return 1 if any(not o.ok for o in outcomes) else 0
+
+
+def _confirm_many(app, ships: list[Ship], what: str, yes: bool) -> None:
+    """Ask before a disruptive action on more than one Ship."""
+    if len(ships) < 2 or yes:
+        return
+    names = ", ".join(s.name for s in ships)
+    if not app.stdin_isatty():
+        raise FleetError(f"This would {what} {len(ships)} Ships ({names}); add --yes to go ahead.")
+    answer = app.confirm(f"{what.capitalize()} {len(ships)} Ships ({names})? Type yes: ")
+    if answer.strip().lower() != "yes":
+        raise FleetError("Nothing done.")
+
+
+def _split_names(values: list[str]) -> tuple[list[str], list[str]]:
+    """Positional words before the first KEY=VALUE are Ship names."""
+    names = [v for v in values if "=" not in v]
+    pairs = [v for v in values if "=" in v]
+    return names, pairs
+
+
 # --- set, tag, tools ----------------------------------------------------------
 
 
-def parse_assignments(values: list[str]) -> list[str]:
-    """`ship-fleet set` arguments as ship-ctl set KEY=VALUE pairs."""
-    out: dict[str, str] = {}
-    full_names = {full: (full, allowed) for full, allowed in SET_KEYS.values()}
-    for value in values:
-        key, sep, val = value.partition("=")
-        if not sep:
-            raise FleetError(f"'{value}' is not KEY=VALUE.")
-        full, allowed = SET_KEYS.get(key) or full_names.get(key) or (None, None)
-        if full is None:
-            keys = ", ".join(SET_KEYS)
-            raise FleetError(f"Unknown setting '{key}' (settings: {keys}).")
-        if allowed and val not in allowed:
-            raise FleetError(f"{key} must be one of: {', '.join(allowed)}.")
-        if full == "ship.tags" and not all(TAG_RE.match(t) for t in val.split(",") if t):
-            raise FleetError(f"Invalid tags '{val}'.")
-        out[full] = val
-    if out.get("claude.default_mode") == "bypassPermissions":
-        out.setdefault("claude.allow_bypass", "true")
-    return [f"{k}={v}" for k, v in out.items()]
-
-
 def cmd_set(args, app) -> int:
-    store = app.store_factory()
-    inv = store.load()
-    ship = inv.ship(args.name)
-    pairs = parse_assignments(args.assignments)
-    result = ShipCtl(_ssh(app, inv), ship).set(pairs)
-    # Keep the inventory in step, so a later seed for this Ship matches.
-    with store.edit() as ed:
-        for pair in pairs:
-            key, _, value = pair.partition("=")
-            section, _, field_name = key.partition(".")
-            if section == "claude":
-                parsed: Any = {"true": True, "false": False}.get(value, value)
-                ed.set_nested(ship.name, "claude", field_name, parsed)
-            elif key == "ship.tags":
-                ed.set_tags(ship.name, [t for t in value.split(",") if t])
-    app.say(f"{ship.name}: " + (", ".join(result.changed) or "no change") + ".")
-    for message in result.messages:
-        app.say(f"  {message}")
-    return 0
+    names, pairs = _split_names(args.args)
+    if not pairs:
+        raise FleetError("Give at least one KEY=VALUE.")
+    ops.parse_assignments(pairs)  # reject a bad setting before touching any Ship
+    fleet = _fleet(app)
+    ships = ops.select(fleet.inventory, names, args.tag)
+    outcomes = ops.set_settings(fleet, ships, pairs)
+    return _report(app, outcomes)
 
 
 def cmd_tag(args, app) -> int:
-    store = app.store_factory()
-    inv = store.load()
-    ship = inv.ship(args.name)
+    fleet = _fleet(app)
+    ship = fleet.inventory.ship(args.name)
     if not args.changes:
-        app.say(" ".join(inv.effective_tags(ship)) or "(no tags)")
+        app.say(" ".join(fleet.inventory.effective_tags(ship)) or "(no tags)")
         return 0
-    tags = list(inv.effective_tags(ship))
-    for change in args.changes:
-        if change == "none":
-            tags = []
-            continue
-        op, tag = (change[0], change[1:]) if change[:1] in "+-" else ("+", change)
-        if not TAG_RE.match(tag):
-            raise FleetError(f"'{tag}' is not a valid tag.")
-        if op == "+" and tag not in tags:
-            tags.append(tag)
-        elif op == "-" and tag in tags:
-            tags.remove(tag)
-    with store.edit() as ed:
-        ed.set_tags(ship.name, tags)
-    app.say(f"{ship.name}: tags {' '.join(sorted(tags)) or '(none)'}.")
-    if args.local:
-        return 0
-    try:
-        ShipCtl(_ssh(app, store.load()), ship).set([f"ship.tags={','.join(sorted(tags))}"])
-    except FleetError as exc:
-        app.note(f"The inventory is updated, but the Ship was not: {exc.message}")
-        return 1
-    return 0
+    outcome = ops.set_tags(fleet, [ship], args.changes, local=args.local)[0]
+    app.say(f"{ship.name}: {outcome.summary}." if outcome.ok else outcome.summary)
+    return 0 if outcome.ok else 1
 
 
 def cmd_tools(args, app) -> int:
-    catalogue = Catalogue.from_repo(app.repo_factory())
     if args.action == "ls":
-        if args.rest:
+        if args.rest or args.tag:
             raise FleetError("tools ls takes no arguments.")
+        catalogue = Catalogue.from_repo(app.repo_factory())
         rows = [[r.id, r.kind, "yes" if r.default else "", ",".join(r.needs) or "-",
                  r.description] for r in catalogue.recipes.values()]
         app.say(table(rows, ["TOOL", "KIND", "DEFAULT", "NEEDS", "DESCRIPTION"])
@@ -646,25 +643,69 @@ def cmd_tools(args, app) -> int:
                            for p in catalogue.profiles.values()],
                           ["PROFILE", "TOOLS", "DESCRIPTION"]))
         return 0
-    if len(args.rest) < 2:
-        raise FleetError(f"Usage: ship-fleet tools {args.action} SHIP ID...")
-    name, *ids = args.rest
-    catalogue.check_tools(ids)
-    store = app.store_factory()
-    inv = store.load()
-    ship = inv.ship(name)
-    result = ShipCtl(_ssh(app, inv), ship).tools(args.action, ids)
-    current = tools_for(inv, ship, catalogue)
-    if args.action == "add":
-        updated = list(dict.fromkeys([*current, *ids]))
+    if args.tag:
+        names, ids = [], list(args.rest)
     else:
-        updated = [t for t in current if t not in ids]
-    with store.edit() as ed:
-        ed.set_field(ship.name, "tools", updated)
-    app.say(f"{ship.name}: tools {', '.join(updated) or '(none)'}.")
-    for message in result.messages:
-        app.say(f"  {message}")
-    return 0
+        names, ids = args.rest[:1], args.rest[1:]
+    if not ids or (not names and not args.tag):
+        raise FleetError(f"Usage: ship-fleet tools {args.action} SHIP|all ID... "
+                         f"(or --tag TAG ID...)")
+    fleet = _fleet(app)
+    ships = ops.select(fleet.inventory, names, args.tag)
+    outcomes = ops.change_tools(fleet, ships, args.action, ids)
+    return _report(app, outcomes)
+
+
+# --- update, reboot, attention ---------------------------------------------------
+
+
+def cmd_update(args, app) -> int:
+    fleet = _fleet(app)
+    ships = ops.select(fleet.inventory, args.names, args.tag)
+    if args.reboot != "never":
+        _confirm_many(app, ships, "update (and reboot if needed)", args.yes)
+    outcomes = ops.update(fleet, ships, reboot_policy=args.reboot, wait=not args.no_wait,
+                          force=args.force, on_event=_progress(app))
+    return _report(app, outcomes, args.json)
+
+
+def cmd_reboot(args, app) -> int:
+    fleet = _fleet(app)
+    ships = ops.select(fleet.inventory, args.names, args.tag)
+    _confirm_many(app, ships, "reboot", args.yes)
+    outcomes = ops.reboot(fleet, ships, wait=not args.no_wait, on_event=_progress(app))
+    return _report(app, outcomes, args.json)
+
+
+def _attention_rows(items: list[ops.AttentionItem]) -> str:
+    rows = [[i.severity, i.ship, i.code, i.message] for i in items]
+    return table(rows, ["", "SHIP", "WHAT", "DETAIL"])
+
+
+def cmd_attention(args, app) -> int:
+    inv = app.store_factory().load()
+    ships = inv.ships(args.tag)
+    if not ships:
+        app.say("No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
+        return 0
+    seen: set[tuple[str, str, str | None]] = set()
+    while True:
+        items = ops.attention(_views(app, inv, ships, offline=False))
+        if args.json:
+            app.say(json.dumps([i.as_dict() for i in items], indent=2))
+        elif args.watch is None:
+            app.say(_attention_rows(items) if items else "Nothing needs attention.")
+        else:
+            fresh = [i for i in items if (i.ship, i.code, i.subject) not in seen]
+            stamp = time.strftime("%H:%M:%S")
+            for item in fresh:
+                app.say(f"{stamp}  {item.severity:<6} {item.ship}: {item.message}")
+            seen = {(i.ship, i.code, i.subject) for i in items}
+        if args.watch is None:
+            return 0
+        app.sleep(args.watch)
+        inv = app.store_factory().load()
+        ships = inv.ships(args.tag)
 
 
 # --- ssh and logs --------------------------------------------------------------
@@ -680,9 +721,21 @@ def cmd_ssh(args, app) -> int:
 
 
 def cmd_logs(args, app) -> int:
-    inv = app.store_factory().load()
-    ship = inv.ship(args.name)
-    for line in ShipCtl(_ssh(app, inv), ship).logs(args.source, args.lines):
-        app.say(line)
-    return 0
-
+    *names, source = args.args
+    if source not in ops.LOG_SOURCES:
+        raise FleetError(f"Unknown log source '{source}' "
+                         f"(sources: {', '.join(ops.LOG_SOURCES)}).")
+    fleet = _fleet(app)
+    ships = ops.select(fleet.inventory, names, args.tag)
+    if len(ships) == 1:
+        for line in ops.logs(fleet, ships[0], source, args.lines):
+            app.say(line)
+        return 0
+    outcomes = ops.fleet_logs(fleet, ships, source, args.lines)
+    for outcome in outcomes:
+        if not outcome.ok:
+            app.say(f"{outcome.ship}: FAILED: {outcome.summary}")
+            continue
+        for line in outcome.data["lines"]:
+            app.say(f"{outcome.ship}: {line}")
+    return 1 if any(not o.ok for o in outcomes) else 0

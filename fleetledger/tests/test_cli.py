@@ -439,6 +439,9 @@ def test_status(env):
     assert code == 0
     assert "Sign-ins:" in out and "tag expects work@example.com" in out
     assert "builder" in out and "bypassPermissions" in out
+    assert "herdr 0.9.5 (running); last resume 2026-01-01T00:00:00Z (2 resumed)" in out
+    assert "Tooling 0.1.0 (0123456789ab); provisioned ok" in out
+    assert "3 OS updates pending" in out
     env.ship.down.add("ship-01")
     code, out, _ = env.run("status", "ship-01")
     assert code == 1 and "unreachable" in out

@@ -272,6 +272,16 @@ class SSH:
             failures.append(f"{host}: {why}")
         return "; ".join(failures) or "no names to try"
 
+    def forget(self, ship: Ship) -> None:
+        """Close shared connections to the Ship (after a reboot, say), so the next
+        command makes a fresh connection instead of riding a dead one."""
+        for host in ship.names:
+            argv = [self.ssh_bin, *self.options(ship), "-O", "exit", "--", host]
+            try:
+                self.runner(argv, input=b"", capture_output=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
     def exec_interactive(self, ship: Ship, *, user: str, command: Sequence[str] = ()) -> None:
         """Replace this process with an interactive ssh session (ship-fleet ssh)."""
         argv = self.argv(ship, ship.names[0], command or None, user=user, tty=True, batch=False)
