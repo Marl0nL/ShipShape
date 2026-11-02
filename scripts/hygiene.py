@@ -5,7 +5,9 @@ ShipShape is a public repository. Nothing committed may point at a specific
 person, employer, machine or network. This script enforces that in two layers:
 
 1. Generic rules, committed here, that catch the common leaks: private IPv4
-   addresses, home-directory paths and real-looking email addresses.
+   addresses, home-directory paths and real-looking email addresses. The
+   home-path and email rules skip frozen folders (legacy/, docs/archive/);
+   private IPs are checked everywhere. Findings never repeat the matched value.
 2. A private deny-list of exact terms (names, hostnames, project ids...). The
    list lives OUTSIDE the repo, so the terms themselves are never committed, and
    a match is reported by entry number only, never by the matched text.
@@ -45,8 +47,10 @@ from pathlib import Path
 ALLOW_MARKER = "hygiene: allow"
 MAX_BYTES = 2 * 1024 * 1024
 
-# Generic rules skip these prefixes (frozen material that predates the rule).
-GENERIC_SKIP_PREFIXES = ("legacy/", "docs/archive/")
+# Frozen material that predates the rule. The home-path and email rules skip it
+# (it uses a container user's home and old placeholders); the private-IP rule and
+# the deny-list still apply there.
+FROZEN_PREFIXES = ("legacy/", "docs/archive/")
 
 # Users that may appear in paths: the Ship's own accounts and common placeholders.
 ALLOWED_HOME_USERS = {
@@ -68,7 +72,7 @@ ALLOWED_EMAIL_DOMAINS = ("example.com", "example.org", "example.net")
 # ".local" covers generic mDNS names such as fleet@ship-01.local in ssh examples.
 ALLOWED_EMAIL_SUFFIXES = (".example", ".invalid", ".test", ".localhost", ".local")
 
-IPV4_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d|\.\d)")
+IPV4_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?:/(\d{1,2}))?(?!\d|\.\d)")
 HOME_RE = re.compile(
     r"(?:/home/|/Users/|[Cc]:\\Users\\)([A-Za-z0-9_.$<>{}-]+)", re.IGNORECASE
 )
@@ -76,10 +80,10 @@ EMAIL_RE = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z
 
 # Ranges that identify a private network. Documentation ranges (192.0.2.0/24,
 # 198.51.100.0/24, 203.0.113.0/24), loopback and 0.0.0.0 are fine.
-PRIVATE_NETS = [
-    ipaddress.ip_network(n)
-    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")  # hygiene: allow
-]
+CANONICAL_BLOCKS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
+PRIVATE_NETS = [ipaddress.ip_network(n) for n in CANONICAL_BLOCKS]
+# A whole block written out (e.g. in a firewall rule) names no one's network, so it
+# passes; any narrower subnet or single address inside a block is flagged.
 
 
 @dataclass(frozen=True)
@@ -134,25 +138,31 @@ def load_denylist(path: Path, root: Path | None) -> list[DenyEntry]:
     return entries
 
 
-def _private_ipv4(text: str) -> str | None:
+def _is_private(address: str, prefix: str | None) -> bool:
     try:
-        addr = ipaddress.ip_address(text)
+        addr = ipaddress.ip_address(address)
     except ValueError:
-        return None
-    if any(addr in net for net in PRIVATE_NETS):
-        return text
-    return None
+        return False
+    if not any(addr in net for net in PRIVATE_NETS):
+        return False
+    return prefix is None or f"{address}/{prefix}" not in CANONICAL_BLOCKS
 
 
-def check_generic(line: str) -> list[tuple[str, str]]:
-    """Return (rule, detail) pairs for generic-rule violations in one line."""
+def check_generic(line: str, frozen: bool = False) -> list[tuple[str, str]]:
+    """Return (rule, detail) pairs for generic-rule violations in one line.
+
+    Details name the rule and the fix, never the matched value: findings end up in
+    public CI logs. `frozen` lines (legacy/, docs/archive/) get the private-IP rule
+    only.
+    """
     if ALLOW_MARKER in line:
         return []
     found: list[tuple[str, str]] = []
     for match in IPV4_RE.finditer(line):
-        ip = _private_ipv4(match.group(1))
-        if ip:
-            found.append(("private-ip", f"private address {ip}; use 192.0.2.x instead"))
+        if _is_private(match.group(1), match.group(2)):
+            found.append(("private-ip", "private IPv4 address; use 192.0.2.x instead"))
+    if frozen:
+        return found
     for match in HOME_RE.finditer(line):
         user = match.group(1).rstrip("/\\").lower()
         if user not in ALLOWED_HOME_USERS:
@@ -163,7 +173,7 @@ def check_generic(line: str) -> list[tuple[str, str]]:
             continue  # name@1.2.3 is a package version, not an address
         if domain in ALLOWED_EMAIL_DOMAINS or domain.endswith(ALLOWED_EMAIL_SUFFIXES):
             continue
-        found.append(("email", f"email address at {domain}; use example.com instead"))
+        found.append(("email", "email address outside the example domains; use example.com"))
     return found
 
 
@@ -176,14 +186,18 @@ def check_denylist(line: str, entries: list[DenyEntry]) -> list[tuple[str, str]]
 
 
 def scan_text(
-    text: str, where: str, entries: list[DenyEntry], generic: bool = True
+    text: str,
+    where: str,
+    entries: list[DenyEntry],
+    generic: bool = True,
+    frozen: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
         loc = f"{where}:{lineno}"
         hits = check_denylist(line, entries)
         if generic:
-            hits += check_generic(line)
+            hits += check_generic(line, frozen=frozen)
         findings.extend(Finding(loc, rule, detail) for rule, detail in hits)
     return findings
 
@@ -219,8 +233,8 @@ def scan_tree(root: Path, entries: list[DenyEntry]) -> list[Finding]:
         text = read_text(path)
         if text is None:
             continue
-        generic = not rel.startswith(GENERIC_SKIP_PREFIXES)
-        findings.extend(scan_text(text, rel, entries, generic=generic))
+        frozen = rel.startswith(FROZEN_PREFIXES)
+        findings.extend(scan_text(text, rel, entries, frozen=frozen))
     return findings
 
 

@@ -8,7 +8,7 @@
 !.env.example
 
 # Seeds contain a Ship's private host key.
-seeds/
+/seeds/
 *.seed.iso
 
 # --- Python / Node / tooling ---------------------------------------------------

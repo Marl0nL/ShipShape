@@ -29,10 +29,17 @@ names, the token file) lives only in local, git-ignored config such as
 
 `scripts/check` runs `scripts/hygiene.py`, which has two layers:
 
-1. **Generic rules** in the repo: private IPv4 addresses (`10/8`, `172.16/12`,
-   `192.168/16`, `100.64/10`), home-directory paths that name a user, and email
-   addresses outside the reserved example domains. They skip `legacy/` and
-   `docs/archive/`, which predate the rule.
+1. **Generic rules** in the repo:
+   - private IPv4 addresses and subnets (inside `10/8`, `172.16/12`, `192.168/16`,
+     `100.64/10`). The four whole blocks written out, as in a firewall rule, name
+     no one's network and pass. This rule covers every file, `legacy/` and
+     `docs/archive/` included.
+   - home-directory paths that name a user, and email addresses outside the
+     reserved example domains. These skip `legacy/` and `docs/archive/`, which
+     predate the rule.
+
+   Findings name the rule and the location, never the matched value, because
+   they end up in public CI logs.
 2. **Your private deny-list**, kept outside the repo, of exact terms that must
    never appear: names, employer, hostnames, project ids and so on. A match is
    reported by entry number, never by the term itself, so CI logs and terminal

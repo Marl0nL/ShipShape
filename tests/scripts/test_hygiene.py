@@ -122,8 +122,36 @@ def test_missing_denylist_means_generic_only(tmp_path):
     assert hygiene.load_denylist(tmp_path / "absent", root=None) == []
 
 
-def test_frozen_folders_are_skipped_by_generic_rules_only():
-    assert hygiene.GENERIC_SKIP_PREFIXES == ("legacy/", "docs/archive/")
+def test_frozen_folders_are_listed():
+    assert hygiene.FROZEN_PREFIXES == ("legacy/", "docs/archive/")
+
+
+def test_frozen_lines_still_get_the_private_ip_rule():
+    home_line = "workdir " + HOME + "olduser" + "/app"
+    ip_line = "resolver " + "10." + "0.0.53"
+    assert hygiene.check_generic(home_line, frozen=True) == []
+    assert [r for r, _ in hygiene.check_generic(ip_line, frozen=True)] == ["private-ip"]
+
+
+@pytest.mark.parametrize("block", hygiene.CANONICAL_BLOCKS)
+def test_whole_private_blocks_pass(block):
+    assert rules("acl localnet src " + block) == []
+
+
+NARROW_SUBNETS = ["10." + "0.0.0/24", "192." + "168.50.0/24", "172." + "16.0.0/16"]
+
+
+@pytest.mark.parametrize("subnet", NARROW_SUBNETS)
+def test_narrower_private_subnets_are_flagged(subnet):
+    assert rules("my lan is " + subnet) == ["private-ip"]
+
+
+def test_generic_findings_never_echo_the_value():
+    ip = "10." + "20.30.40"
+    domain = "corp-mail" + ".io"
+    findings = hygiene.scan_text(f"host {ip} mail alice{AT}{domain}", "f", [])
+    assert [f.rule for f in findings] == ["private-ip", "email"]
+    assert all(ip not in str(f) and domain not in str(f) for f in findings)
 
 
 def test_package_versions_are_not_emails():
@@ -151,3 +179,52 @@ def test_repository_tree_is_clean_under_generic_rules():
 def test_requires_something_to_scan():
     with pytest.raises(SystemExit):
         hygiene.main([])
+
+
+def _git(repo, *args):
+    subprocess.run(
+        ["git", "-c", "user.name=Example", "-c", "user.email=dev" + AT + "example.com", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_scan_commits_reads_messages(tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    _git(tmp_path, "add", "a.txt")
+    _git(tmp_path, "commit", "-q", "-m", "first")
+    (tmp_path / "a.txt").write_text("hello again\n", encoding="utf-8")
+    _git(tmp_path, "commit", "-q", "-am", "point at " + "10." + "1.1.1")
+    findings = hygiene.scan_commits(tmp_path, "HEAD~1..HEAD", [])
+    assert [f.rule for f in findings] == ["private-ip"]
+    assert findings[0].where.startswith("commit ")
+
+
+def test_scan_tree_checks_file_paths_against_the_denylist(tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "notes-for-acme.md").write_text("nothing here\n", encoding="utf-8")
+    entries = [hygiene.DenyEntry(1, hygiene.re.compile("acme", hygiene.re.IGNORECASE))]
+    findings = hygiene.scan_tree(tmp_path, entries)
+    assert [(f.rule, f.where) for f in findings] == [("denylist", "notes-for-acme.md (path):1")]
+
+
+def test_scan_tree_applies_private_ip_rule_in_frozen_folders(tmp_path):
+    _git(tmp_path, "init", "-q")
+    (tmp_path / "legacy").mkdir()
+    (tmp_path / "legacy" / "old.conf").write_text(
+        "dns " + "10." + "0.0.53\nhome " + HOME + "olduser" + "/x\n", encoding="utf-8"
+    )
+    findings = hygiene.scan_tree(tmp_path, [])
+    assert [(f.rule, f.where) for f in findings] == [("private-ip", "legacy/old.conf:1")]
+
+
+def test_binary_and_oversize_files_are_skipped(tmp_path, monkeypatch):
+    binary = tmp_path / "blob.bin"
+    binary.write_bytes(b"\0" + ("10." + "1.2.3").encode())
+    assert hygiene.read_text(binary) is None
+    big = tmp_path / "big.txt"
+    big.write_text("x" * 64, encoding="utf-8")
+    monkeypatch.setattr(hygiene, "MAX_BYTES", 32)
+    assert hygiene.read_text(big) is None

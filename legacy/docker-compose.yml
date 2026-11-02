@@ -112,7 +112,7 @@ services:
     # For VPN-only *hostnames*, point Squid at your internal resolver so those
     # names resolve while the VPN is up:
     # dns:
-    #   - 10.0.0.53
+    #   - 192.0.2.53
     #   - 1.1.1.1
 
   # In-container broker: the agent's only reachable control-plane endpoint. It is
