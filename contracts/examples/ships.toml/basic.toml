@@ -47,6 +47,7 @@ driver_ref = { vmid = 9101 }
 names = ["ship-01.local"]
 host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZXlleGFt ship-01"
 created = "2026-01-01T00:00:00Z"
+enrolled = "2026-01-01T00:05:00Z"
 profiles = ["orchestrator"]
 
 [ship.ship-02]

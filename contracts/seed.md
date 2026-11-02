@@ -55,8 +55,7 @@ hostname: ship-01
 preserve_hostname: false
 ssh_pwauth: false
 disable_root: true
-ssh_deletekeys: true
-ssh_genkeytypes: []            # no other host key types: only the pinned ed25519 key exists
+ssh_deletekeys: true           # remove the image's host keys; only the pinned ed25519 key exists
 ssh_keys:
   ed25519_private: |
     -----BEGIN OPENSSH PRIVATE KEY-----
@@ -100,6 +99,10 @@ runcmd:
 
 `ssh_authorized_keys` hold public keys only. `ship.toml` must validate against
 `ship.toml.schema.json`; the seed generator validates it before writing the ISO.
+
+There is no `ssh_genkeytypes`: cloud-init generates no host keys when `ssh_keys`
+is given, and its schema rejects an empty list (a schema warning would leave
+`cloud-init status` degraded).
 
 ### Bootstrap (the runcmd)
 
@@ -153,4 +156,4 @@ records that commit; a bundle packed from a dirty tree sets `"dirty": true`.
 2. It polls `ship-ctl status --json` until `provision.result` is `ok` (or `failed`).
    Until ship-ctl exists, `cloud-init status --format json` stands in.
 3. It then detaches the seed CD-ROM, deletes the uploaded ISO through the driver,
-   and records the Ship as enrolled in `ships.toml`.
+   and records the Ship as enrolled in `ships.toml` (`ship.<name>.enrolled`, a timestamp).
