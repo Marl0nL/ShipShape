@@ -35,6 +35,10 @@ RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart "
     "(a reboot restarts them); the Claude app can take a few minutes to show or drop them."
 )
+PREFIX_CHANGE_NOTE = (
+    "Running sessions keep their names; send /rename <name> or restart them. "
+    "New autostart sessions use the new prefix."
+)
 
 
 def result(command, ok=True, changed=(), messages=(), data=None, error=None) -> dict:
@@ -158,6 +162,8 @@ def cmd_set(ctx: Context, args) -> dict:
     messages = messages or ["Saved and applied."]
     if (current.claude["remote_control"] == "on") != (new_ship.claude["remote_control"] == "on"):
         messages.append(RC_CHANGE_NOTE)
+    if current.claude["session_prefix"] != new_ship.claude["session_prefix"]:
+        messages.append(PREFIX_CHANGE_NOTE)
     return result("set", changed=changed + applied, messages=messages)
 
 

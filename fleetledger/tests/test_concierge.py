@@ -287,6 +287,8 @@ def test_redact_scrubs_accounts_and_ids_after_escapes_are_gone():
            "Logged in as \x1b[1muser@example.com\x1b[0m, org "
            "00000000-0000-0000-0000-000000000000\r\n")
     assert tail(clean(raw)) == "Logged in as [email], org [redacted]"
+    for email in ("first.last+tag@mail.corp.example", "x@a.b.test", "u_1@ship-01.mail.invalid"):
+        assert redact(f"as {email}.") == "as [email]."
 
 
 # --- login(): checks against the tag, audit ---------------------------------

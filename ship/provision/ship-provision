@@ -224,8 +224,7 @@ ensure_debs() {
 # from it: start it as soon as it is installed, not after the slow steps. (Installing
 # the package does not start it.)
 start_guest_agent() {
-  [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ] || return 0
-  systemctl start qemu-guest-agent >/dev/null 2>&1 || true
+  sys systemctl start qemu-guest-agent || true
 }
 
 # The primary keys in a keyring file, one fingerprint per line.

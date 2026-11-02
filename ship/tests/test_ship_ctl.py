@@ -298,6 +298,18 @@ def test_remote_control_off_to_blocked_is_no_change(ship):
     assert not any("restart" in m for m in doc["messages"])
 
 
+def test_session_prefix_change_says_running_sessions_keep_names(ship):
+    rc, doc, _ = ship.ctl("set", "claude.session_prefix=lab", "--json")
+    assert rc == 0, doc
+    assert any("/rename" in m for m in doc["messages"])
+    managed = ship.json("/etc/claude-code/managed-settings.json")
+    assert managed["env"]["CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX"] == "lab"
+    rc, doc, _ = ship.ctl("set", "claude.session_prefix=lab", "--json")
+    assert rc == 0 and not any("/rename" in m for m in doc["messages"])
+    rc, doc, _ = ship.ctl("set", "agent.sudo=true", "--json")
+    assert not any("/rename" in m for m in doc["messages"])
+
+
 def test_set_disallowing_bypass(ship):
     ship.write_toml(
         'schema = 1\n[ship]\nname = "ship-01"\nid = "7c9e6679-7425-40de-944b-e07fc1f90ae7"\n'

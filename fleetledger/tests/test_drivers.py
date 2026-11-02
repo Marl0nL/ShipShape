@@ -153,6 +153,9 @@ class AgentStartingAPI(FakeAPI):
     {"result": None},
     {"result": [{"name": "eth0"}]},
     {"result": [{"name": "eth0", "ip-addresses": None}]},
+    {"result": {"unexpected": 1}},
+    {"result": 5},
+    {"result": [{"name": "eth0", "ip-addresses": [{"ip-address-type": "ipv4"}]}]},
 ])
 def test_proxmox_status_guest_agent_not_ready_is_pending(answer):
     power = ProxmoxDriver(PX, api=AgentStartingAPI(answer)).status(ship(vmid=9101))

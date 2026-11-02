@@ -31,6 +31,14 @@ def mode(path: Path) -> str:
     return oct(stat.S_IMODE(path.lstat().st_mode))
 
 
+def test_guest_agent_starts_right_after_base_packages(tmp_path):
+    """The hypervisor reads the address from the guest agent: start it before the slow steps."""
+    lines = provision("--first-boot", "--root", str(tmp_path)).stdout.splitlines()
+    start = lines.index("ship-provision: skipped (--root): systemctl start qemu-guest-agent")
+    assert "apt packages" in lines[start - 1] and "qemu-guest-agent" in lines[start - 1]
+    assert "keyrings" in lines[start + 1]  # before the apt repos, herdr, claude, tools
+
+
 def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     first = provision("--first-boot", "--root", str(tmp_path))
     assert first.returncode == 0, first.stdout + first.stderr
