@@ -746,3 +746,12 @@ def cmd_logs(args, app) -> int:
         for line in outcome.data["lines"]:
             app.say(f"{outcome.ship}: {line}")
     return 1 if any(not o.ok for o in outcomes) else 0
+
+
+# --- ui ---------------------------------------------------------------------------
+
+
+def cmd_ui(args, app) -> int:
+    from fleetledger.web.server import cmd_ui as serve_ui  # web dependencies load only here
+
+    return serve_ui(args, app)

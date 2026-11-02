@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ ship.name }} · FleetLedger{% endblock %}
+{% block body %}
+<section class="ship-head">
+  <h1>{{ ship.name }} <span class="pill {{ view.state|pill }}">{{ view.state }}</span></h1>
+  <p class="meta">
+    {% for t in tags %}<a class="chip" href="/?tag={{ t }}">{{ t }}</a>{% else %}<span class="quiet">no tags</span>{% endfor %}
+    · {{ ship.names|join(", ") }}{% if view.host %} (answered at {{ view.host }}){% endif %}
+    · driver {{ ship.driver }}
+    · {% if snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status{% endif %}
+  </p>
+  <form method="post" action="/ships/{{ ship.name }}/refresh" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="ghost">Check now</button>
+  </form>
+</section>
+<nav class="tabs">
+  {% for t, label in (("overview", "Overview"), ("settings", "Settings"), ("logs", "Logs"), ("network", "Network")) %}
+  <a href="/ships/{{ ship.name }}{% if t != "overview" %}/{{ t }}{% endif %}" class="{% if tab == t %}on{% endif %}">{{ label }}</a>
+  {% endfor %}
+</nav>
+
+{% if tab == "overview" %}
+  {% if view.problem %}<p class="flash bad">{{ view.message }}</p>{% endif %}
+  {% if items %}
+  <section>
+    <h2>Needs attention</h2>
+    <ul class="items">
+    {% for i in items %}
+      <li class="item {{ i.level }}"><span class="sev {{ i.level }}">{{ i.code }}</span><span class="msg">{{ i.message }}</span></li>
+    {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Sign-ins</h2>
+    <table>
+      <thead><tr><th>Service</th><th>State</th><th>Account</th><th>Tags expect</th><th>Checked</th><th></th></tr></thead>
+      <tbody>
+      {% for service in AUTH_ORDER %}
+      {% set entry = view.auth(service) %}
+      {% set cell = auth_cell(view, service) %}
+      <tr>
+        <td>{{ service }}</td>
+        <td><span class="pill {{ cell|pill }}">{{ cell }}</span></td>
+        <td>{{ (entry.account if entry else None) or "-" }}{% if entry and entry.detail %} <span class="quiet">({{ entry.detail }})</span>{% endif %}</td>
+        <td>{{ expected[service]|join(" or ") or "-" }}</td>
+        <td class="quiet">{{ entry.checked_at if entry else "-" }}{% if entry and entry.expires_at %}; expires {{ entry.expires_at }}{% endif %}</td>
+        <td class="actions">
+          <form method="post" action="/signin" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="ship" value="{{ ship.name }}">
+            <input type="hidden" name="service" value="{{ SERVICE_PROVIDER[service] }}">
+            <button type="submit">{% if entry and entry.state in ("ok", "expiring") %}Re-sign{% else %}Sign in{% endif %}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/ships/{{ ship.name }}/logout" class="inline signout">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Sign out of
+        <select name="service">{% for s in SERVICES %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+      </label>
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
+      <button type="submit" class="ghost danger">Sign out</button>
+    </form>
+    {% if flows %}
+    <p class="hint">Recent sign-ins: {% for f in flows[:5] %}<a href="/signin?batch={{ f.batch }}">{{ f.label }} {{ f.outcome or f.state }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+  </section>
+
+  {% if doc %}
+  <section>
+    <h2>Agents</h2>
+    {% if not workspaces %}
+    <p class="quiet">No agents running.</p>
+    {% else %}
+    <table>
+      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>Pane</th><th>Folder</th></tr></thead>
+      <tbody>
+      {% for ws, agents in workspaces.items() %}
+      {% for a in agents %}
+      <tr>
+        <td>{{ ws if loop.first else "" }}</td>
+        <td>{{ a.name or "-" }}</td>
+        <td>{{ a.kind }}</td>
+        <td><span class="pill {{ ("waiting" if a.state == "blocked" else a.state)|pill }}">{{ "waiting" if a.state == "blocked" else a.state }}</span></td>
+        <td>{{ a.mode or "-" }}{% if a.mode == "bypassPermissions" %} <span class="pill warn">bypass</span>{% endif %}</td>
+        <td class="quiet">{{ a.pane or "" }}</td>
+        <td class="quiet">{{ a.cwd or "" }}</td>
+      </tr>
+      {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    <p class="hint">
+      herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
+      {% if doc.herdr.last_resume %}Last resume {{ doc.herdr.last_resume.at }} ({{ doc.herdr.last_resume.method }}): {{ doc.herdr.last_resume.resumed }} resumed{% if doc.herdr.last_resume.failed %}, {{ doc.herdr.last_resume.failed }} failed{% endif %}.{% endif %}
+      Attach with <code>herdr --remote agent@{{ ship.names[0] }}</code> or <code>ship-fleet ssh {{ ship.name }}</code>.
+    </p>
+  </section>
+
+  <section class="grid">
+    <div>
+      <h2>Claude Code</h2>
+      <dl>
+        <dt>Version</dt><dd>{{ doc.claude.version or "?" }} ({{ doc.claude.channel }})</dd>
+        <dt>Remote Control</dt><dd>{{ doc.claude.remote_control }}</dd>
+        <dt>Default mode</dt><dd>{{ doc.claude.default_mode }}</dd>
+        <dt>Bypass allowed</dt><dd>{{ "yes" if doc.claude.allow_bypass else "no" }}</dd>
+      </dl>
+    </div>
+    <div>
+      <h2>Host</h2>
+      <dl>
+        <dt>CPU · mem · disk</dt><dd>{{ usage_cell(view) }}</dd>
+        <dt>Size</dt><dd>{{ doc.host.cpus }} CPUs, {{ doc.host.mem_total_mb }} MB, {{ doc.host.disk_total_gb }} GB</dd>
+        <dt>Up</dt><dd>{{ doc.host.uptime_s // 3600 }} h{% if doc.host.reboot_required %}, <span class="pill warn">reboot required</span>{% endif %}</dd>
+        <dt>Updates pending</dt><dd>{{ doc.host.updates_pending if doc.host.updates_pending is not none else "?" }}</dd>
+      </dl>
+    </div>
+    <div>
+      <h2>Tooling</h2>
+      <dl>
+        <dt>Version</dt><dd>{{ doc.ship.tooling }}{% if doc.ship.bundle_commit %} ({{ doc.ship.bundle_commit[:12] }}){% endif %}</dd>
+        <dt>Provisioning</dt><dd>{{ doc.provision.result }}{% if doc.provision.last_run %}, {{ doc.provision.last_run }}{% endif %}</dd>
+        <dt>Tools</dt><dd>{% for id, t in doc.tools|dictsort %}<span class="pill {{ t.state|pill }}">{{ id }} {{ t.state }}</span> {% else %}none{% endfor %}</dd>
+      </dl>
+    </div>
+  </section>
+  {% if doc.errors %}
+  <section><h2>Probe errors</h2><ul>{% for e in doc.errors %}<li class="quiet">{{ e }}</li>{% endfor %}</ul></section>
+  {% endif %}
+  <section class="ops">
+    {% for op in ("update", "reboot") %}
+    {% if operation_available(op) %}
+    <form method="post" action="/operations" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="{{ op }}">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
+      <button type="submit" class="ghost">{{ op|capitalize }} {{ ship.name }}</button>
+    </form>
+    {% endif %}
+    {% endfor %}
+  </section>
+  {% elif view.cloud_init %}
+  <p>First boot: cloud-init is {{ view.cloud_init.get("status", "unknown") }}.</p>
+  {% endif %}
+
+{% elif tab == "settings" %}
+  <section>
+    <h2>Settings</h2>
+    <p class="hint">Applied on the Ship with <code>ship-ctl set</code>, and kept in your inventory. Leave a field unchanged to keep it.</p>
+    <form method="post" action="/ships/{{ ship.name }}/settings" class="settings">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for key, (set_key, allowed, label) in SETTINGS.items() %}
+      <label>{{ label }}
+        <select name="{{ key }}">
+          <option value="">(unchanged{% if doc and key in doc.claude %}: {{ doc.claude[key] | string | lower }}{% endif %})</option>
+          {% for value in allowed %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
+        </select>
+      </label>
+      {% endfor %}
+      <button type="submit">Apply</button>
+    </form>
+  </section>
+  <section>
+    <h2>Tags</h2>
+    <form method="post" action="/ships/{{ ship.name }}/tags" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="text" name="tags" value="{{ tags|join(", ") }}" maxlength="300" autocomplete="off" spellcheck="false">
+      <button type="submit">Save tags</button>
+    </form>
+    <p class="hint">Tags choose the accounts this Ship must sign in with.</p>
+  </section>
+
+{% elif tab == "logs" %}
+  <section>
+    <h2>Logs</h2>
+    <form method="get" action="/ships/{{ ship.name }}/logs" class="inline">
+      <select name="source">{% for s in sources %}<option value="{{ s }}"{% if s == source %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+      <button type="submit">Show</button>
+    </form>
+    {% if log is not none %}
+    <pre class="log{% if not log_ok %} bad{% endif %}">{{ log }}</pre>
+    {% endif %}
+  </section>
+
+{% elif tab == "network" %}
+  <section>
+    <h2>Network</h2>
+    {% if net is none %}
+    <p class="quiet">Network visibility is not available for this Ship yet. It arrives with the visibility collector (phase 3); nothing is blocked either way.</p>
+    {% else %}
+    <dl>
+      <dt>Window</dt><dd>last {{ net.window_h }} h</dd>
+      <dt>Received</dt><dd>{{ "%.1f"|format(net.rx_mb) }} MB</dd>
+      <dt>Sent</dt><dd>{{ "%.1f"|format(net.tx_mb) }} MB</dd>
+    </dl>
+    <h3>New destinations</h3>
+    {% if net.new_destinations %}
+    <ul class="dests">{% for d in net.new_destinations %}<li><span class="pill warn">new</span> {{ d }}</li>{% endfor %}</ul>
+    {% else %}<p class="quiet">None in this window.</p>{% endif %}
+    {% if net.top %}
+    <h3>Top domains</h3>
+    <table>
+      <thead><tr>{% for k in net.top[0].keys() %}<th>{{ k }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in net.top %}<tr>{% for v in row.values() %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}
