@@ -60,7 +60,7 @@ def build(
     doc["ship"] = {
         "name": ship.name,
         "id": ship.id,
-        "tags": list(ship.tags) if ship.tags else list(inventory.defaults.get("tags", [])),
+        "tags": list(inventory.effective_tags(ship)),
     }
 
     claude = inventory.effective_claude(ship)

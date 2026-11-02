@@ -21,7 +21,6 @@ from fleetledger.seed.shiptoml import Autostart, SeedOptions
 
 __all__ = ["Autostart", "Seed", "SeedOptions", "make_seed"]
 
-
 @dataclass(frozen=True)
 class Seed:
     path: Path
@@ -39,13 +38,12 @@ def make_seed(
     repo: Repo,
     options: SeedOptions | None = None,
     *,
-    host_key: hostkey.HostKey | None = None,
     out_dir: Path | None = None,
 ) -> Seed:
-    """Build and write a seed ISO for a Ship.
+    """Build and write a seed ISO for a Ship, with a new host key.
 
-    Pass host_key only to re-seed with a key you already hold; normally a new
-    one is generated, and the caller pins its public half in ships.toml.
+    The caller pins the returned public half in ships.toml; the private half
+    exists only inside the ISO.
     """
     catalogue = Catalogue.from_repo(repo)
     doc = shiptoml.build(inventory, ship, catalogue, options, repo.contracts)
@@ -59,7 +57,7 @@ def make_seed(
         agent_keys += cloudinit.read_public_keys(path, "an agent key")
 
     tooling = bundle_mod.pack(repo)
-    key = host_key or hostkey.generate(ship.name)
+    key = hostkey.generate(ship.name)
     instance_id = cloudinit.new_instance_id(ship.name)
     files = {
         "user-data": cloudinit.user_data(

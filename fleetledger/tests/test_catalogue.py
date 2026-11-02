@@ -48,3 +48,10 @@ def test_invalid_recipe(fake_repo):
 def test_empty_catalogue(tmp_path):
     cat = Catalogue(tmp_path / "tools", tmp_path / "profiles")
     assert cat.recipes == {} and cat.default_tools() == []
+
+
+def test_profile_with_unknown_tool(fake_repo):
+    path = fake_repo.profiles_dir / "orchestrator.toml"
+    path.write_text(path.read_text().replace('tools = ["tasks-axi"]', 'tools = ["nope"]'))
+    with pytest.raises(ConfigError, match="unknown tools: nope"):
+        Catalogue.from_repo(fake_repo)

@@ -28,6 +28,7 @@ def test_tags_and_selection(store):
     assert [s.name for s in inv.ships("work")] == ["ship-01"]
     assert [s.name for s in inv.select(tag="personal")] == ["ship-02"]
     assert [s.name for s in inv.select(["ship-02", "ship-01"])] == ["ship-02", "ship-01"]
+    assert [s.name for s in inv.select(["ship-02", "ship-01"], tag="work")] == ["ship-01"]
     assert inv.all_tags() == ["personal", "work"]
     with pytest.raises(NotFound, match="ship-09"):
         inv.ship("ship-09")
@@ -49,6 +50,18 @@ def test_expected_accounts(store):
     assert exp.matches("Work@Example.com ") is True
     assert exp.matches("you@example.com") is False
     assert exp.matches(None) is None
+
+
+def test_absent_tags_mean_defaults(store):
+    with store.edit() as ed:
+        ed.set_field("ship-01", "tags", None)
+        ed.set_field("ship-02", "tags", [])
+    inv = store.load()
+    assert inv.ship("ship-01").tags is None
+    assert inv.effective_tags(inv.ship("ship-01")) == ("work",)
+    assert inv.effective_tags(inv.ship("ship-02")) == ()
+    assert [s.name for s in inv.ships("work")] == ["ship-01"]
+    assert inv.expected_account(inv.ship("ship-01"), "claude").accounts == {"work@example.com"}
 
 
 def test_conflicting_tags_never_match():
@@ -121,6 +134,12 @@ def test_duplicate_names_and_keys_rejected(store):
     with pytest.raises(ConfigError, match="also used by"):
         with store.edit() as ed:
             ed.set_field("ship-02", "names", ["ship-01.local"])
+    with pytest.raises(ConfigError, match="also used by"):
+        with store.edit() as ed:
+            ed.set_field("ship-02", "names", ["SHIP-01.local"])  # names ignore case
+    with pytest.raises(ConfigError, match="same id"):
+        with store.edit() as ed:
+            ed.set_field("ship-02", "id", store.load().ship("ship-01").id)
     key = store.load().ship("ship-01").host_key
     with pytest.raises(ConfigError, match="same host key"):
         with store.edit() as ed:

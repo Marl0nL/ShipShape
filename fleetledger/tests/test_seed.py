@@ -93,6 +93,31 @@ def test_ship_toml_options_and_overrides(store, fake_repo):
     assert parsed == doc
 
 
+def test_ship_toml_tags_and_profiles_fall_back_to_defaults(store, fake_repo):
+    with store.edit() as ed:
+        ed.set_field("ship-01", "tags", None)
+        ed.set_field("ship-01", "profiles", None)
+        ed.doc["defaults"]["tags"] = ["work"]
+        ed.doc["defaults"]["profiles"] = ["orchestrator"]
+        ed.set_field("ship-02", "tags", [])  # an explicit empty list means no tags
+    inv = store.load()
+    cat = Catalogue.from_repo(fake_repo)
+    one = shiptoml.build(inv, inv.ship("ship-01"), cat)
+    assert one["ship"]["tags"] == ["work"]
+    assert one["tools"]["profiles"] == ["orchestrator"]
+    two = shiptoml.build(inv, inv.ship("ship-02"), cat)
+    assert two["ship"]["tags"] == []
+    assert inv.expected_account(inv.ship("ship-02"), "claude").accounts == frozenset()
+
+
+def test_ship_toml_keeps_session_prefix(store, fake_repo):
+    with store.edit() as ed:
+        ed.set_nested("ship-01", "claude", "session_prefix", "work-01")
+    inv = store.load()
+    doc = shiptoml.build(inv, inv.ship("ship-01"), Catalogue.from_repo(fake_repo))
+    assert doc["claude"]["session_prefix"] == "work-01"
+
+
 def test_ship_toml_rejects_bypass_without_allow(store, fake_repo):
     inv = store.load()
     opts = SeedOptions(autostart=[Autostart("a", "~/work/a", "bypassPermissions")])
@@ -261,29 +286,32 @@ def test_user_data_shape(fake_repo):
     assert text.startswith("#cloud-config\n")
     doc = yaml.safe_load(text)
     assert tuple(doc) == cloudinit.USER_DATA_KEYS
-    expected = yaml.safe_load(contract_block("### user-data", "yaml"))
-    assert set(doc) == set(expected)
-    assert doc["ssh_deletekeys"] is True and "ssh_genkeytypes" not in doc
-    assert doc["ssh_keys"] == {"ed25519_private": key.private, "ed25519_public": key.public}
-    fleet, agent = doc["users"]
-    assert fleet["name"] == "fleet" and fleet["sudo"] == "ALL=(ALL:ALL) NOPASSWD: ALL"
-    assert fleet["ssh_authorized_keys"] == ["ssh-ed25519 AAAAadmin fleet-admin"]
-    assert agent["name"] == "agent" and "sudo" not in agent
-    assert len(agent["ssh_authorized_keys"]) == 2
-    assert [u["name"] for u in expected["users"]] == ["fleet", "agent"]
-    for ours, theirs in zip(doc["users"], expected["users"], strict=True):
-        assert set(ours) == set(theirs)
 
-    files = {f["path"]: f for f in doc["write_files"]}
-    assert [f["path"] for f in doc["write_files"]] == [
-        f["path"] for f in expected["write_files"]
+    # Every value must equal the contract's, apart from the per-Ship parts.
+    expected = yaml.safe_load(contract_block("### user-data", "yaml"))
+    expected["ssh_keys"] = {"ed25519_private": key.private, "ed25519_public": key.public}
+    expected["users"][0]["ssh_authorized_keys"] = ["ssh-ed25519 AAAAadmin fleet-admin"]
+    expected["users"][1]["ssh_authorized_keys"] = [
+        "ssh-ed25519 AAAAyou you",
+        "ssh-ed25519 AAAAlaptop laptop",
     ]
-    assert files["/etc/shipshape/ship.toml"]["content"].startswith("schema = 1")
-    tarball = files["/var/lib/shipshape/bundle.tar.gz"]
-    assert tarball["encoding"] == "b64" and tarball["permissions"] == "0600"
-    assert base64.b64decode(tarball["content"]) == b.data
-    assert files["/var/lib/shipshape/bundle.sha256"]["content"] == b.checksum_line
-    assert doc["runcmd"] == [["bash", "-c", cloudinit.BOOTSTRAP]]
+    expected["write_files"][0]["content"] = 'schema = 1\n[ship]\nname = "ship-01"\n'
+    expected["write_files"][1]["content"] = base64.b64encode(b.data).decode()
+    expected["write_files"][2]["content"] = b.checksum_line
+    expected["runcmd"] = [["bash", "-c", cloudinit.BOOTSTRAP]]
+    assert doc == expected
+
+    # Spelled out, because these are the ones that matter most.
+    assert doc["ssh_pwauth"] is False and doc["disable_root"] is True
+    assert doc["preserve_hostname"] is False and doc["hostname"] == "ship-01"
+    assert "ssh_genkeytypes" not in doc and doc["ssh_deletekeys"] is True
+    fleet, agent = doc["users"]
+    assert fleet["lock_passwd"] is True and agent["lock_passwd"] is True
+    assert fleet["sudo"] == "ALL=(ALL:ALL) NOPASSWD: ALL" and "sudo" not in agent
+    files = {f["path"]: f for f in doc["write_files"]}
+    assert files["/etc/shipshape/ship.toml"]["permissions"] == "0644"
+    assert files["/var/lib/shipshape/bundle.tar.gz"]["permissions"] == "0600"
+    assert base64.b64decode(files["/var/lib/shipshape/bundle.tar.gz"]["content"]) == b.data
 
 
 def test_public_key_files(tmp_path):

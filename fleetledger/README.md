@@ -42,12 +42,15 @@ FleetLedger at a different checkout.
 ## The inventory
 
 `ships.toml` is the single source of truth; the schema and a full example are in
-`contracts/`. FleetLedger edits it with `tomlkit`, so your comments and layout
-survive. Every change takes a lock, is validated against the schema plus a few
+`contracts/`. FleetLedger edits it with `tomlkit`, so comments and layout
+elsewhere in the file survive its edits. A nested section it changes (such as
+a Ship's `claude` settings or `driver_ref`) is rewritten as an inline table, and
+comments inside that section are lost. Every change takes a lock, is validated against the schema plus a few
 rules the schema cannot express (no two Ships share a name, id or host key), and
 is written atomically. An invalid change leaves the file untouched.
 
-Expected accounts come from the Ship's tags (`[tag.<tag>]`). `gcloud_adc`
+A Ship without a `tags` entry has `defaults.tags`; `tags = []` means no tags.
+Expected accounts come from those tags (`[tag.<tag>]`). `gcloud_adc`
 follows `gcloud`. Account names compare case-insensitively. If two of a Ship's
 tags name different accounts for one service, every account is reported as wrong
 until you fix the tags.
@@ -63,6 +66,12 @@ until you fix the tags.
    recipes; profile options are copied from `[profile_options]` and checked
    against the profile (a missing required option stops). The result is
    validated against the schema before anything is written.
+
+   Tools follow `contracts/settings.md` exactly: a list replaces, it does not
+   add. A Ship's own `tools` wins outright; without one, `defaults.tools` wins;
+   only when neither exists do the catalogue's `default = true` recipes apply.
+   So a Ship with `tools = ["tasks-axi"]` gets only `tasks-axi`; list the
+   defaults too if you want them.
 2. **The tooling bundle**: `ship/` from this checkout (tracked and untracked but
    not ignored files; never `ship/tests/`, `node_modules/`, caches or symlinks),
    plus `bundle.json` and `versions.toml`. It records the commit and whether

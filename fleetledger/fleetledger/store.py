@@ -219,7 +219,7 @@ def new_inventory(admin_key: str, agent_keys: list[str]) -> tomlkit.TOMLDocument
 def ship_entry(ship: Ship) -> dict[str, Any]:
     """The ships.toml entry for a Ship (inverse of Ship.from_entry)."""
     entry: dict[str, Any] = {"id": ship.id}
-    if ship.tags:
+    if ship.tags is not None:
         entry["tags"] = list(ship.tags)
     entry["driver"] = ship.driver
     if ship.driver_ref:

@@ -48,7 +48,7 @@ class Ship:
     driver: str
     names: tuple[str, ...]
     host_key: str
-    tags: tuple[str, ...] = ()
+    tags: tuple[str, ...] | None = None  # None: absent, so defaults.tags apply
     driver_ref: Mapping[str, str | int] = field(default_factory=dict)
     created: str | None = None
     enrolled: str | None = None
@@ -66,7 +66,7 @@ class Ship:
             driver=entry["driver"],
             names=tuple(entry["names"]),
             host_key=entry["host_key"],
-            tags=tuple(entry.get("tags", ())),
+            tags=tuple(entry["tags"]) if "tags" in entry else None,
             driver_ref=dict(entry.get("driver_ref", {})),
             created=entry.get("created"),
             enrolled=entry.get("enrolled"),
@@ -81,9 +81,6 @@ class Ship:
     def host_key_type_and_blob(self) -> str:
         """The host key without its comment: '<type> <base64>'."""
         return " ".join(self.host_key.split()[:2])
-
-    def has_tag(self, tag: str) -> bool:
-        return tag in self.tags
 
 
 @dataclass(frozen=True)
@@ -151,7 +148,7 @@ class Inventory:
     def ships(self, tag: str | None = None) -> list[Ship]:
         found = [Ship.from_entry(n, e) for n, e in sorted(self.doc.get("ship", {}).items())]
         if tag is not None:
-            found = [s for s in found if s.has_tag(tag)]
+            found = [s for s in found if tag in self.effective_tags(s)]
         return found
 
     def has_ship(self, name: str) -> bool:
@@ -170,7 +167,7 @@ class Inventory:
         if names:
             chosen = [self.ship(n) for n in names]
             if tag is not None:
-                chosen = [s for s in chosen if s.has_tag(tag)]
+                chosen = [s for s in chosen if tag in self.effective_tags(s)]
         else:
             chosen = self.ships(tag)
         if not chosen:
@@ -180,19 +177,25 @@ class Inventory:
     def all_tags(self) -> list[str]:
         tags = set(self.tag_accounts)
         for ship in self.ships():
-            tags.update(ship.tags)
+            tags.update(self.effective_tags(ship))
         return sorted(tags)
+
+    def effective_tags(self, ship: Ship) -> tuple[str, ...]:
+        """The Ship's own tags, or defaults.tags if it has no tags entry ([] means none)."""
+        if ship.tags is not None:
+            return ship.tags
+        return tuple(self.defaults.get("tags", ()))
 
     def expected_account(self, ship: Ship, service: str) -> ExpectedAccount:
         """The account the Ship's tags expect for a service (claude, gcloud, github).
 
         gcloud_adc follows gcloud. A Ship with no tags, or tags that name no
-        account for the service, has no expectation.
+        account for the service, has no expectation. Tags follow effective_tags.
         """
         key = "gcloud" if service == "gcloud_adc" else service
         accounts = {
             self.tag_accounts[t][key]
-            for t in ship.tags
+            for t in self.effective_tags(ship)
             if t in self.tag_accounts and key in self.tag_accounts[t]
         }
         return ExpectedAccount(service, frozenset(accounts))
