@@ -577,15 +577,17 @@ def test_update_many_ships_one_failing(world):
 def test_parse_assignments_new_keys():
     assert ops.parse_assignments([
         "lan_guard=true", "lan_guard_allow=192.0.2.10,198.51.100.0/24",
-        "auto_reboot=true", "reboot_time=03:30",
+        "auto_reboot=true", "reboot_time=03:30", "timezone=America/Argentina/Buenos_Aires",
     ]) == ["network.lan_guard=true", "network.lan_guard_allow=192.0.2.10,198.51.100.0/24",
-           "updates.auto_reboot=true", "updates.reboot_time=03:30"]
+           "updates.auto_reboot=true", "updates.reboot_time=03:30",
+           "ship.timezone=America/Argentina/Buenos_Aires"]
     assert ops.parse_assignments(["lan_guard_allow="]) == ["network.lan_guard_allow="]
 
 
 @pytest.mark.parametrize("bad", [
     "reboot_time=4am", "reboot_time=24:00", "lan_guard_allow=router.example.com",
     "auto_reboot=yes", "session_prefix=-bad", "nonsense=1", "lan_guard",
+    "timezone=../../etc/shadow", "timezone=europe/berlin", "timezone=", "timezone=UTC+10:00",
 ])
 def test_parse_assignments_rejects(bad):
     with pytest.raises(FleetError):

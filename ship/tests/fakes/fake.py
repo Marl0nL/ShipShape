@@ -327,6 +327,22 @@ def nft(s: dict, a: list[str]) -> int:
     return 2
 
 
+def timedatectl(s: dict, a: list[str]) -> int:
+    """`timedatectl show --property=Timezone --value` and `set-timezone ZONE`.
+    The cloud image starts on Etc/UTC; `timedatectl_fail` makes both fail."""
+    if s.get("timedatectl_fail"):
+        print("Failed to connect to bus: No such file or directory", file=sys.stderr)
+        return 1
+    if a[:1] == ["show"]:
+        print(s.get("timezone", "Etc/UTC"))
+        return 0
+    if a[:1] == ["set-timezone"]:
+        s["timezone"] = a[1]
+        save(s)
+        return 0
+    return 2
+
+
 def ip(s: dict, a: list[str]) -> int:
     """`ip -4|-6 -j route show default`."""
     routes = s.get("routes", {"-4": [{"dst": "default", "gateway": "192.0.2.1"}], "-6": []})
@@ -350,6 +366,7 @@ HANDLERS = {
     "vnstat": vnstat,
     "nft": nft,
     "ip": ip,
+    "timedatectl": timedatectl,
 }
 
 

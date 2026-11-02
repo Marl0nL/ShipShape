@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 import pytest
 from e2e_harness import Fleet, e2e_config, log
+from fleetledger.seed.shiptoml import local_timezone
 
 CONFIG, WHY_NOT = e2e_config()
 pytestmark = pytest.mark.skipif(CONFIG is None, reason=WHY_NOT)
@@ -131,6 +132,13 @@ def test_update_reboot_lan_guard(fleet):
         outcome(fleet.cli("reboot", name, "--json", timeout=1200))
         assert "shipshape_lan_guard" in ship_sh(
             fleet, name, "sudo -n nft list table inet shipshape_lan_guard")
+        # The stored rules were in place before the network came up and before
+        # the agent's session (herdr) started.
+        times = ship_sh(fleet, name, "systemctl show -P ActiveEnterTimestampMonotonic "
+                                     "ship-lan-guard-early.service systemd-networkd.service "
+                                     "\"user@$(id -u agent).service\"").split()
+        early, networkd, user = (int(t) for t in times)
+        assert 0 < early < networkd and early < user, times
         assert connect_code(fleet, name, address, port, as_agent=True) == 7
         log("   an allowed address passes")
         fleet.cli("set", name, f"lan_guard_allow={address}")
@@ -138,10 +146,16 @@ def test_update_reboot_lan_guard(fleet):
         log("   off removes it")
         fleet.cli("set", name, "lan_guard=false", "lan_guard_allow=")
         assert ship_sh(fleet, name, "sudo -n nft list tables").count("shipshape") == 0
-        assert ship_sh(fleet, name, "systemctl is-enabled ship-lan-guard.service || true"
-                       ).strip() == "disabled"
+        for unit in ("ship-lan-guard-early.service", "ship-lan-guard.service"):
+            assert ship_sh(fleet, name, f"systemctl is-enabled {unit} || true"
+                           ).strip() == "disabled"
 
-    log("4. the OS update reboot policy")
+    log("4. the time zone and the OS update reboot policy")
+    zone = ship_sh(fleet, name, "timedatectl show --property=Timezone --value").strip()
+    assert zone == local_timezone() or {zone, local_timezone()} <= {"UTC", "Etc/UTC"}
+    fleet.cli("set", name, "timezone=America/New_York")
+    assert ship_sh(fleet, name, "timedatectl show --property=Timezone --value"
+                   ).strip() == "America/New_York"
     path = "/etc/apt/apt.conf.d/52shipshape-unattended-upgrades"
     assert 'Automatic-Reboot "false"' in ship_sh(fleet, name, f"cat {path}")
     fleet.cli("set", name, "auto_reboot=true", "reboot_time=03:30")

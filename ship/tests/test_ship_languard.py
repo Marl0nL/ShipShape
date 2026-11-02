@@ -20,7 +20,7 @@ import pytest
 from ship_harness import BASIC_TOML, SHIP, assert_valid
 
 sys.path.insert(0, str(SHIP / "lib"))
-from shipctl import languard  # noqa: E402
+from shipctl import languard, status  # noqa: E402
 
 GUARD_TOML = BASIC_TOML + """
 [network]
@@ -50,13 +50,14 @@ def test_guard_on_writes_loads_and_enables(ship):
     assert "elements = { fe80::53 }" in rules  # zone id stripped
     assert RULES in doc["changed"]
     assert "ship-lan-guard.service (enabled)" in doc["changed"]
+    assert "ship-lan-guard-early.service (enabled)" in doc["changed"]
     nft = ship.calls("nft")
     check = nft.index(["nft", "-c", "-f", str(ship.p(RULES))])
     load = nft.index(["nft", "-f", str(ship.p(RULES))])
     assert check < load  # checked before it is loaded
     s = ship.scenario()
     assert s["nft"]["tables"] == ["inet shipshape_lan_guard"]
-    assert "ship-lan-guard.service" in s["enabled_units"]
+    assert s["enabled_units"] == ["ship-lan-guard-early.service", "ship-lan-guard.service"]
 
 
 def test_guard_apply_is_idempotent(ship):
@@ -87,9 +88,19 @@ def test_guard_off_removes_table_file_and_unit(ship):
     assert rc == 0
     assert not ship.p(RULES).exists()
     assert ship.scenario()["nft"]["tables"] == []
-    assert "ship-lan-guard.service" not in ship.scenario()["enabled_units"]
+    assert ship.scenario()["enabled_units"] == []
     assert {"nftables table inet shipshape_lan_guard (removed)",
+            "ship-lan-guard-early.service (disabled)",
             "ship-lan-guard.service (disabled)", RULES} <= set(doc["changed"])
+
+
+def test_guard_enables_a_missing_early_unit(ship):
+    """A Ship whose guard was turned on before the early unit existed gets it on the next apply."""
+    ship.write_toml(GUARD_TOML)
+    ship.ctl("apply", "--json")
+    ship.set(enabled_units=["ship-lan-guard.service"])
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert rc == 0 and doc["changed"] == ["ship-lan-guard-early.service (enabled)"]
 
 
 def test_guard_never_off_by_default_touches_nothing(ship):
@@ -181,6 +192,10 @@ def test_render_puts_every_accept_before_the_rejects():
                                       "delete table inet shipshape_lan_guard"]
     for private in languard.PRIVATE_V4 + languard.PRIVATE_V6:
         assert private in text
+    # Only private ranges are refused: everything else leaves as before. (The
+    # namespace test cannot tell a dropped packet from no answer.)
+    assert "type filter hook output priority filter; policy accept;" in chain
+    assert "policy drop" not in text
 
 
 def _netns_ok() -> bool:
@@ -271,6 +286,81 @@ def test_set_rejects_a_bad_reboot_time(ship):
     assert not ship.p(UPGRADES).exists()
 
 
+# --- time zone ---------------------------------------------------------------------
+
+
+def tz_calls(ship):
+    return [c for c in ship.calls("timedatectl") if c[1:2] == ["set-timezone"]]
+
+
+def test_default_timezone_is_utc_and_leaves_the_cloud_image_alone(ship):
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert rc == 0
+    assert tz_calls(ship) == []  # Etc/UTC already counts as UTC
+    assert not any("time zone" in c for c in doc["changed"])
+
+
+def test_timezone_from_ship_toml_is_set_once(ship):
+    ship.write_toml(BASIC_TOML.replace('name = "ship-01"',
+                                       'name = "ship-01"\ntimezone = "Europe/Berlin"'))
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert rc == 0
+    assert "time zone Europe/Berlin (was Etc/UTC)" in doc["changed"]
+    assert tz_calls(ship) == [["timedatectl", "set-timezone", "Europe/Berlin"]]
+    assert ship.scenario()["timezone"] == "Europe/Berlin"
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert rc == 0 and doc["changed"] == []
+    assert len(tz_calls(ship)) == 1
+
+
+def test_set_timezone_and_reboot_time_together(ship):
+    rc, doc, out = ship.ctl("set", "ship.timezone=America/New_York",
+                            "updates.auto_reboot=true", "updates.reboot_time=03:30", "--json")
+    assert rc == 0, out
+    assert ship.scenario()["timezone"] == "America/New_York"
+    assert 'Automatic-Reboot-Time "03:30";' in ship.p(UPGRADES).read_text()
+    assert 'timezone = "America/New_York"' in ship.p("/etc/shipshape/ship.toml").read_text()
+
+
+@pytest.mark.parametrize("zone", ["Mars/Olympus_Mons", "../../etc/shadow", "Europe/../../x",
+                                  "/etc/localtime", "europe/berlin"])
+def test_set_refuses_a_zone_that_is_not_installed_or_not_a_name(ship, zone):
+    before = ship.p("/etc/shipshape/ship.toml").read_text()
+    rc, doc, _ = ship.ctl("set", f"ship.timezone={zone}", "--json")
+    assert rc == 4 and doc["error"]["code"] == "invalid-ship-toml"
+    assert ship.p("/etc/shipshape/ship.toml").read_text() == before
+    assert tz_calls(ship) == []
+
+
+def test_an_uninstalled_zone_in_ship_toml_does_not_stop_apply(ship):
+    ship.write_toml(BASIC_TOML.replace('name = "ship-01"',
+                                       'name = "ship-01"\ntimezone = "Mars/Olympus_Mons"'))
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert rc == 0
+    assert "time zone Mars/Olympus_Mons is not installed on this Ship; left at Etc/UTC" \
+        in doc["messages"]
+    assert tz_calls(ship) == []
+    assert ship.p(UPGRADES).exists()  # the rest of apply still ran
+
+
+def test_timezone_unreadable_is_reported_not_fatal(ship):
+    ship.write_toml(BASIC_TOML.replace('name = "ship-01"',
+                                       'name = "ship-01"\ntimezone = "Europe/Berlin"'))
+    ship.set(timedatectl_fail=True)
+    rc, doc, _ = ship.ctl("apply", "--json")
+    assert rc == 0
+    assert any(m.startswith("time zone: cannot read it") for m in doc["messages"])
+
+
+def test_timezone_dry_run_changes_nothing(ship):
+    ship.write_toml(BASIC_TOML.replace('name = "ship-01"',
+                                       'name = "ship-01"\ntimezone = "Europe/Berlin"'))
+    rc, doc, _ = ship.ctl("apply", "--dry-run", "--json")
+    assert rc == 0
+    assert "time zone Europe/Berlin (was Etc/UTC)" in doc["changed"]
+    assert tz_calls(ship) == []
+
+
 def test_set_lan_guard_allow_list_and_clear(ship):
     rc, _, out = ship.ctl("set", "network.lan_guard=true",
                           "network.lan_guard_allow=192.0.2.10,198.51.100.0/24", "--json")
@@ -331,6 +421,47 @@ def test_only_the_herdr_server_counts(ship, tmp_path):
     fake_process(ship, 102, ["herdr-server-lookalike", "server"], other)
     rc, doc, _ = ship.ctl("status", "--json")
     assert "herdr-restart-pending" not in codes(doc)
+
+
+def _probe_ctx(ship, agent_uid):
+    """A context for calling herdr_restart_pending in-process with an agent uid:
+    the sandbox ship-ctl has no agent user, so the owner filter only runs here."""
+    from types import SimpleNamespace
+
+    paths = SimpleNamespace(p=ship.p, proc=ship.p("/proc"))
+    return SimpleNamespace(paths=paths, agent_owner=(agent_uid, agent_uid))
+
+
+def test_herdr_pending_looks_only_at_the_agents_processes(ship, tmp_path):
+    """A look-alike `herdr server` owned by someone else (root, say) never counts."""
+    install_herdr(ship)
+    old = tmp_path / "old-herdr"
+    old.write_text("old herdr")
+    fake_process(ship, 4242, ["/usr/local/bin/herdr", "server"], old)
+    me = os.getuid()
+    assert status.herdr_restart_pending(_probe_ctx(ship, me)) is True  # the agent's own
+    assert status.herdr_restart_pending(_probe_ctx(ship, me + 1)) is False  # someone else's
+
+
+def test_herdr_pending_compares_device_and_inode(ship, tmp_path, monkeypatch):
+    """Same inode number on another filesystem is a different file."""
+    installed = install_herdr(ship)
+    fake_process(ship, 4242, ["/usr/local/bin/herdr", "server"], installed)
+    exe = ship.p("/proc/4242/exe")
+    real_stat = os.stat
+
+    def other_device(path, *args, **kwargs):
+        st = real_stat(path, *args, **kwargs)
+        if Path(path) == exe:
+            fields = list(st[:10])
+            fields[2] = st.st_dev + 1  # st_dev
+            return os.stat_result(fields)
+        return st
+
+    ctx = _probe_ctx(ship, os.getuid())
+    assert status.herdr_restart_pending(ctx) is False
+    monkeypatch.setattr(status.os, "stat", other_device)
+    assert status.herdr_restart_pending(ctx) is True
 
 
 def test_no_herdr_installed_means_nothing_pending(ship, tmp_path):

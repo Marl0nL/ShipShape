@@ -16,7 +16,7 @@ from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, new_ship_id, now_timestamp
 from fleetledger.netcmd import cmd_net  # noqa: F401
 from fleetledger.seed import Autostart, SeedOptions, cloudinit, hostkey, make_seed
-from fleetledger.seed.shiptoml import tools_for
+from fleetledger.seed.shiptoml import TIMEZONE_RE, known_timezone, local_timezone, tools_for
 from fleetledger.shipctl import STATUS_SCHEMA
 from fleetledger.ssh import ship_ctl
 from fleetledger.store import new_inventory, ship_entry
@@ -215,9 +215,14 @@ def cmd_new(args, app) -> int:
         extra = [t.strip() for t in (args.tools or "").split(",") if t.strip()]
         draft = Ship(**{**draft.__dict__, "tools": tuple(dict.fromkeys([*base, *extra]))})
 
+    if args.timezone is not None and not (
+            TIMEZONE_RE.match(args.timezone) and known_timezone(args.timezone)):
+        raise FleetError(f"--timezone is an IANA zone name such as Europe/Berlin, "
+                         f"not '{args.timezone}'.")
     options = SeedOptions(
         autostart=parse_autostart(args.autostart, args.autostart_prompt),
         agent_sudo=True if args.agent_sudo else None,
+        timezone=args.timezone or local_timezone(),
     )
     seed = make_seed(inv, draft, repo, options)
     ref: dict[str, Any] = {"seed": seed.instance_id}

@@ -29,7 +29,9 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
   waiting on a service that just became `ok` are finished, and Claude becoming
   `ok` runs `autostart` once. Previous states live in `/run/shipshape/`, so the
   first refresh after a boot compares against "not signed in".
-- `ship-ctl lan-guard` (internal): run by `ship-lan-guard.service` at boot. It
+- `ship-ctl lan-guard` (internal): run by `ship-lan-guard.service` once the
+  network is online (`ship-lan-guard-early.service` has already loaded the
+  stored rules before the network came up). It
   finds the default gateways (`ip -j route`) and DNS servers
   (`/run/systemd/resolve/resolv.conf`) again and reloads the table, or removes
   it when the guard is off. Every address is parsed and printed back by Python's

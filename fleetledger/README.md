@@ -317,7 +317,7 @@ for every Ship (an unknown setting or tool) is refused before any Ship is touche
 |---|---|---|
 | `ship-fleet update SHIP...\|--tag T\|all` | `ops.update` | packs `ship/` and `versions.toml` from this checkout, copies the bundle and its `.sha256` into `/home/fleet/incoming/` (mode 0600), runs `ship-ctl converge`, then checks the Ship reports the new bundle. `--reboot auto` (default) reboots only Ships whose herdr binary changed (`herdr-restart-pending`); `always` and `never` do what they say. A Ship already on a clean bundle is skipped unless `--force`. |
 | `ship-fleet reboot SHIP...\|--tag T\|all` | `ops.reboot` | records each agent's name and mode, runs `sudo -n systemctl reboot` over the one name that answered, waits until the Ship answers from a new boot (its uptime is shorter than the wait), then until herdr has resumed. Fails the Ship if any agent is missing or came back in another mode. |
-| `ship-fleet set SHIP...\|--tag T\|all KEY=VALUE...` | `ops.set_settings` | `ship-ctl set`; new keys `lan_guard_allow`, `auto_reboot`, `reboot_time`. |
+| `ship-fleet set SHIP...\|--tag T\|all KEY=VALUE...` | `ops.set_settings` | `ship-ctl set`; new keys `lan_guard_allow`, `auto_reboot`, `reboot_time` (the Ship's local time), `timezone`. `ship-fleet new` gives each Ship this computer's zone (`--timezone` to choose). |
 | `ship-fleet tag SHIP +T -T` | `ops.set_tags` | inventory first, then the Ship (`--local`: inventory only). |
 | `ship-fleet tools add\|remove SHIP\|all ID...` or `--tag T ID...` | `ops.change_tools` | `ship-ctl tools add\|remove`. |
 | `ship-fleet logs [SHIP...\|--tag T\|all] SOURCE` | `ops.logs`, `ops.fleet_logs` | `ship-ctl logs`; with several Ships each line is prefixed by its Ship. |

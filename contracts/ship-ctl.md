@@ -88,7 +88,7 @@ writes only what changed. Idempotent. `changed` lists the files written; with
 Changes `ship.toml`, validates the whole file against the schema, writes it
 atomically, then runs `apply`.
 
-- `KEY=VALUE` keys: `ship.tags` (comma-separated), `claude.remote_control`,
+- `KEY=VALUE` keys: `ship.tags` (comma-separated), `ship.timezone`, `claude.remote_control`,
   `claude.default_mode`, `claude.allow_bypass`, `claude.update_channel`,
   `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
   `network.lan_guard_allow` (comma-separated; empty clears it),

@@ -61,6 +61,11 @@ class ShipToml:
         return list(self.doc.get("network", {}).get("lan_guard_allow", []))
 
     @property
+    def timezone(self) -> str:
+        """IANA zone for the Ship's clock (settings.md, "OS updates"); UTC when absent."""
+        return self.doc["ship"].get("timezone", "UTC")
+
+    @property
     def updates(self) -> dict:
         """OS update policy with defaults filled in (settings.md, "OS updates")."""
         out = {"auto_reboot": False, "reboot_time": "04:00"}
@@ -92,6 +97,12 @@ def check(doc: object, paths: Paths) -> list[str]:
         if dupes:
             errors.append(f"autostart: duplicate agent names: {', '.join(dupes)}")
     return errors
+
+
+def zone_installed(paths: Paths, zone: str) -> bool:
+    """Is `zone` a time zone tzdata has on this Ship? The schema pattern already
+    rules out dots and leading slashes, so this stays inside /usr/share/zoneinfo."""
+    return paths.p(f"/usr/share/zoneinfo/{zone}").is_file()
 
 
 def parse(text: str, paths: Paths) -> ShipToml:

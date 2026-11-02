@@ -35,6 +35,7 @@ RESULT_SCHEMA = "shipshape.ship-ctl-result/1"
 
 SET_KEYS = {
     "ship.tags": "tags",
+    "ship.timezone": "str",
     "claude.remote_control": "str",
     "claude.default_mode": "str",
     "claude.allow_bypass": "bool",
@@ -174,6 +175,11 @@ def cmd_set(ctx: Context, args) -> dict:
         errors = shiptoml.check(new, ctx.paths)
         if errors:
             raise CtlError("invalid-ship-toml", "; ".join(errors[:5]), 4)
+    zone = new["ship"].get("timezone")
+    if zone and zone != current.doc["ship"].get("timezone") and not shiptoml.zone_installed(
+            ctx.paths, zone):
+        raise CtlError("invalid-ship-toml",
+                       f"ship.timezone: {zone!r} is not a time zone installed on this Ship", 4)
     changed = []
     if shiptoml.save(new, ctx.paths.ship_toml):
         changed.append(ctx.paths.agent_path(ctx.paths.ship_toml))

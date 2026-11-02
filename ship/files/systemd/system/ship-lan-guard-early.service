@@ -1,0 +1,22 @@
+# The LAN guard, part one (contracts/settings.md, "LAN guard"): load the rules
+# `ship-ctl apply` stored, before any network interface comes up and so before
+# herdr resumes agents. ship-lan-guard.service then refreshes the gateway and
+# DNS servers once the network is online. Enabled and disabled together with it
+# by `ship-ctl apply` as network.lan_guard says.
+[Unit]
+Description=ShipShape LAN guard (stored rules, before the network)
+DefaultDependencies=no
+Wants=network-pre.target
+After=nftables.service
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ProtectHome=yes
+ProtectSystem=full
+ExecStart=/usr/sbin/nft -f /etc/shipshape/lan-guard.nft
+
+[Install]
+WantedBy=sysinit.target

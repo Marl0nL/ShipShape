@@ -62,9 +62,10 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     assert (root / "etc/systemd/journald.conf.d/50-shipshape.conf").exists()
     assert (root / "etc/systemd/user/herdr.service").exists()
     assert (root / "etc/systemd/system/ship-status.timer").exists()
-    # The LAN guard unit is installed, but only ship-ctl apply enables it.
-    assert (root / "etc/systemd/system/ship-lan-guard.service").exists()
-    assert not list(root.glob("etc/systemd/system/*.wants/ship-lan-guard.service"))
+    # The LAN guard units are installed, but only ship-ctl apply enables them.
+    for name in ("ship-lan-guard-early.service", "ship-lan-guard.service"):
+        assert (root / "etc/systemd/system" / name).exists()
+        assert not list(root.glob(f"etc/systemd/system/*.wants/{name}"))
     assert mode(root / "home/agent/.claude") == "0o700"
     assert mode(root / "home/agent/.local/state/shipshape") == "0o700"
     assert (root / "home/agent/.npmrc").read_text() == "prefix=/home/agent/.local\n"
@@ -252,8 +253,28 @@ def test_lan_guard_unit():
     service = unit(FILES / "systemd/system/ship-lan-guard.service")
     assert service["Service"]["ExecStart"] == "/usr/local/bin/ship-ctl lan-guard"
     assert service["Service"]["Type"] == "oneshot"
-    assert "network-online.target" in service["Unit"]["After"]
+    after = service["Unit"]["After"].split()
+    assert "network-online.target" in after and "ship-lan-guard-early.service" in after
     assert service["Install"]["WantedBy"] == "multi-user.target"
+
+
+def test_lan_guard_early_unit_loads_the_stored_rules_before_the_network():
+    """No window at boot where the Ship is on the LAN (and herdr resumes agents)
+    without the guard: the stored rules load before network-pre.target, which
+    every network interface and user session waits for."""
+    sys.path.insert(0, str(SHIP / "lib"))
+    from shipctl import languard
+
+    early = unit(FILES / "systemd/system/ship-lan-guard-early.service")
+    assert early["Unit"]["DefaultDependencies"] == "no"  # else it would wait for basic.target
+    assert "network-pre.target" in early["Unit"]["Before"].split()
+    assert "network-pre.target" in early["Unit"]["Wants"].split()
+    assert "network-pre.target" not in early["Unit"].get("After", "").split()
+    assert early["Service"]["ExecStart"] == f"/usr/sbin/nft -f {languard.RULES}"
+    assert early["Service"]["Type"] == "oneshot"
+    assert early["Install"]["WantedBy"] == "sysinit.target"
+    assert languard.EARLY_UNIT == "ship-lan-guard-early.service"
+    assert languard.UNITS == (languard.EARLY_UNIT, languard.UNIT)
 
 
 def test_nftables_is_a_base_package():

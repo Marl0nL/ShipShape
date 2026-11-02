@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import languard, sshtrust, tomlw
+from . import languard, shiptoml, sshtrust, tomlw
 from .context import Context
 from .errors import CtlError
 from .fsutil import remove, write_atomic
@@ -67,6 +67,34 @@ def unattended_upgrades(ship: ShipToml) -> str:
         'Unattended-Upgrade::Automatic-Reboot-WithUsers "true";\n'
         f'Unattended-Upgrade::Automatic-Reboot-Time "{policy["reboot_time"]}";\n'
     )
+
+
+UTC_NAMES = frozenset({"UTC", "Etc/UTC"})
+
+
+def sync_timezone(ctx: Context, ship: ShipToml, dry_run: bool = False
+                  ) -> tuple[list[str], list[str]]:
+    """Set the system time zone to ship.timezone (timedatectl). Returns (changed, messages).
+
+    A zone tzdata does not have is left alone with a message, so one bad value
+    never stops the rest of apply (`ship-ctl set` refuses it before saving).
+    """
+    want = ship.timezone
+    r = ctx.runner.run(["timedatectl", "show", "--property=Timezone", "--value"], timeout=15)
+    if not r.ok:
+        detail = (r.err.strip().splitlines() or [f"exit {r.rc}"])[-1][:200]
+        return [], [f"time zone: cannot read it ({detail}); left as it is"]
+    have = r.out.strip()
+    if have == want or {have, want} <= UTC_NAMES:
+        return [], []
+    if not shiptoml.zone_installed(ctx.paths, want):
+        return [], [f"time zone {want} is not installed on this Ship; left at {have}"]
+    if not dry_run:
+        r = ctx.runner.run(["timedatectl", "set-timezone", want], timeout=15)
+        if not r.ok:
+            detail = (r.err.strip().splitlines() or [f"exit {r.rc}"])[-1][:200]
+            raise CtlError("internal", f"time zone: setting {want} failed: {detail}")
+    return [f"time zone {want} (was {have or 'unset'})"], []
 
 
 def avahi_service(ship: ShipToml) -> str:
@@ -194,6 +222,11 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
     for path in ssh_changed:
         note(path, True)
     messages += ssh_messages
+
+    # The system time zone, which updates.reboot_time is read in.
+    tz_changed, tz_messages = sync_timezone(ctx, ship, dry_run=dry_run)
+    changed += tz_changed
+    messages += tz_messages
 
     # Root-owned: the unattended-upgrades reboot policy, written in full.
     upgrades = paths.p(UNATTENDED_CONF)

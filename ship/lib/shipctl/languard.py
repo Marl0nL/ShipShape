@@ -7,7 +7,9 @@ DHCP, ICMPv6, the default gateways and DNS servers the Ship uses right now, and
 every `network.lan_guard_allow` entry.
 
 `ship-ctl apply` writes the rules to /etc/shipshape/lan-guard.nft, loads them and
-enables ship-lan-guard.service, which runs `ship-ctl lan-guard` at every boot to
+enables two boot units: ship-lan-guard-early.service loads that file before the
+network comes up (so no agent ever runs with the LAN open), and
+ship-lan-guard.service runs `ship-ctl lan-guard` once the network is online to
 find the gateways and DNS servers again and reload the table.
 """
 
@@ -23,14 +25,17 @@ from .fsutil import remove, write_atomic
 from .shiptoml import ShipToml
 
 TABLE = "shipshape_lan_guard"
-UNIT = "ship-lan-guard.service"
+EARLY_UNIT = "ship-lan-guard-early.service"  # stored rules, before the network
+UNIT = "ship-lan-guard.service"  # fresh gateway and DNS, once online
+UNITS = (EARLY_UNIT, UNIT)
+RULES = "/etc/shipshape/lan-guard.nft"  # also named in EARLY_UNIT's ExecStart
 PRIVATE_V4 = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16")
 PRIVATE_V6 = ("fc00::/7", "fe80::/10")
 RESOLV_CONF = "/run/systemd/resolve/resolv.conf"  # the upstream servers, not the stub
 
 
 def rules_path(ctx: Context) -> Path:
-    return ctx.paths.p("/etc/shipshape/lan-guard.nft")
+    return ctx.paths.p(RULES)
 
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
@@ -136,8 +141,8 @@ def table_present(ctx: Context) -> bool:
     return ctx.runner.run(["nft", "list", "table", "inet", TABLE], timeout=10).ok
 
 
-def unit_enabled(ctx: Context) -> bool:
-    return ctx.runner.run(["systemctl", "is-enabled", "--quiet", UNIT], timeout=10).ok
+def unit_enabled(ctx: Context, unit: str) -> bool:
+    return ctx.runner.run(["systemctl", "is-enabled", "--quiet", unit], timeout=10).ok
 
 
 def _run(ctx: Context, argv: list[str], what: str) -> None:
@@ -149,7 +154,7 @@ def _run(ctx: Context, argv: list[str], what: str) -> None:
 
 def sync(ctx: Context, ship: ShipToml, dry_run: bool = False,
          reload: bool = False) -> tuple[list[str], list[str]]:
-    """Make the table, the rules file and the boot unit match ship.toml.
+    """Make the table, the rules file and the boot units match ship.toml.
 
     Returns (changed, messages). `reload` loads the rules even if nothing changed
     (the boot unit uses it, since the gateway or DNS servers may differ).
@@ -164,10 +169,11 @@ def sync(ctx: Context, ship: ShipToml, dry_run: bool = False,
             changed.append(f"nftables table inet {TABLE} (removed)")
             if not dry_run:
                 _run(ctx, ["nft", "delete", "table", "inet", TABLE], "removing the table")
-        if unit_enabled(ctx):
-            changed.append(f"{UNIT} (disabled)")
-            if not dry_run:
-                _run(ctx, ["systemctl", "disable", "--quiet", UNIT], f"disabling {UNIT}")
+        for unit in UNITS:
+            if unit_enabled(ctx, unit):
+                changed.append(f"{unit} (disabled)")
+                if not dry_run:
+                    _run(ctx, ["systemctl", "disable", "--quiet", unit], f"disabling {unit}")
         return changed, messages
 
     found, errors = gateways(ctx)
@@ -188,8 +194,9 @@ def sync(ctx: Context, ship: ShipToml, dry_run: bool = False,
         if not dry_run:
             _run(ctx, ["nft", "-c", "-f", str(path)], "checking the rules")
             _run(ctx, ["nft", "-f", str(path)], "loading the rules")
-    if not unit_enabled(ctx):
-        changed.append(f"{UNIT} (enabled)")
-        if not dry_run:
-            _run(ctx, ["systemctl", "enable", "--quiet", UNIT], f"enabling {UNIT}")
+    for unit in UNITS:
+        if not unit_enabled(ctx, unit):
+            changed.append(f"{unit} (enabled)")
+            if not dry_run:
+                _run(ctx, ["systemctl", "enable", "--quiet", unit], f"enabling {unit}")
     return changed, messages

@@ -155,6 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="first prompt for each autostart agent (default: the Ship's own, "
                    "'Get oriented and ready to work.')")
     p.add_argument("--agent-sudo", action="store_true", help="give the agent user sudo")
+    p.add_argument("--timezone", metavar="ZONE",
+                   help="the Ship's time zone, e.g. Europe/Berlin (default: this computer's)")
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for the Ship to provision and enrol")
 
@@ -201,7 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
              "Keys: remote_control (on|off; blocked = off), default_mode, allow_bypass,\n"
              "update_channel (latest|stable), session_prefix, sudo, lan_guard,\n"
              "lan_guard_allow (addresses or CIDRs, comma-separated), auto_reboot,\n"
-             "reboot_time (HH:MM), tags; or their full names (claude.remote_control, ...).\n\n"
+             "reboot_time (HH:MM, the Ship's local time), timezone (e.g. Europe/Berlin),\n"
+             "tags; or their full names (claude.remote_control, ...).\n\n"
              "  ship-fleet set ship-01 remote_control=off default_mode=bypassPermissions\n"
              "  ship-fleet set --tag work update_channel=stable\n"
              "  ship-fleet set all lan_guard=true")

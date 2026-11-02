@@ -1,10 +1,11 @@
-# The LAN guard (contracts/settings.md, "LAN guard"). Enabled and disabled by
-# `ship-ctl apply` as network.lan_guard says; at boot it finds the default
-# gateways and DNS servers again and reloads the nftables table.
+# The LAN guard, part two (contracts/settings.md, "LAN guard"): once the network
+# is online, find the default gateways and DNS servers again and reload the
+# table. Until then ship-lan-guard-early.service has the stored rules in place.
+# Enabled and disabled together by `ship-ctl apply` as network.lan_guard says.
 [Unit]
-Description=ShipShape LAN guard
+Description=ShipShape LAN guard (refresh the gateway and DNS servers)
 Wants=network-online.target
-After=network-online.target nftables.service
+After=network-online.target nftables.service ship-lan-guard-early.service
 
 [Service]
 Type=oneshot

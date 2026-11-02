@@ -74,7 +74,8 @@ from the LAN to other machines or cloud VMs.
   refuses new outgoing connections to private and overlay ranges except the
   gateway, DNS and `lan_guard_allow`. It is visibility's counterpart, not a
   sandbox: an agent with sudo can remove it, so pair it with sudo off. Incoming
-  SSH (FleetLedger, herdr attach) is never affected.
+  SSH (FleetLedger, herdr attach) is never affected. At boot the stored rules
+  load before the network comes up, so agents never start with the LAN open.
 
 ## Where each secret lives
 
