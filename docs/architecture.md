@@ -77,6 +77,7 @@ More: [security.md](security.md), and the runbooks in [runbooks/](runbooks/):
 [setting up Proxmox](runbooks/proxmox-setup.md),
 [creating a Ship](runbooks/create-ship.md),
 [signing in](runbooks/sign-in.md),
+[SSH certificates and attaching from other machines](runbooks/trust-machines.md),
 [retiring the old stack](runbooks/retire-old-stack.md).
 
 ## How the repo is organised

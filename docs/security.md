@@ -28,6 +28,24 @@ from the LAN to other machines or cloud VMs.
   from the network. `ship-fleet adopt` shows the fingerprint and records nothing
   until you confirm it matches the one cloud-init printed on the VM console (or
   you pass it with `--fingerprint`). mDNS announcements are hints only.
+- **Certificates (phase 3).** FleetLedger is a small SSH certificate authority
+  with two keys on your computer: a host CA and a user CA. The host CA signs
+  each Ship's *pinned* host key, taken from the inventory and never from the
+  network, for every name the Ship is reached by. The Ship accepts a
+  certificate only for its own key, and FleetLedger then proves the Ship
+  answers a client that trusts only the CA. So the move from pinned keys to
+  certificates never trusts an unverified key. Your other machines need one
+  `@cert-authority` line, limited to the Ships' names.
+- **Short-lived user certificates.** The user CA certifies your machines' own
+  keys (`ship-fleet trust`), for a lifetime (168 hours by default) and a scope:
+  all Ships, a tag, or one Ship. On each Ship, sshd accepts certificates for
+  `agent` only: only agent has an `AuthorizedPrincipalsFile`, so no certificate
+  can log in as `fleet`. A certificate allows a terminal and nothing else (no
+  forwarding). `ship-fleet untrust` revokes a machine on every Ship through a
+  key revocation list. The Ship refuses any list that would revoke fleet's own
+  key, so FleetLedger cannot lock itself out. Every change on the Ship is
+  checked with `sshd -t` and rolled back if sshd would refuse it.
+  See [runbooks/trust-machines.md](runbooks/trust-machines.md).
 - **Two keys, two users.** The fleet admin key logs in only as `fleet` (with
   `IdentitiesOnly`). Your own key logs in only as `agent`, for attaching. Never
   forward your SSH agent to a Ship: FleetLedger turns forwarding off on every
@@ -59,6 +77,8 @@ from the LAN to other machines or cloud VMs.
 | GitHub token | the Ship: `~agent/.config/gh/hosts.yml` (0600) | device code via the concierge |
 | Ship host private key | the Ship: `/etc/ssh`; briefly the seed ISO | generated into the seed; FleetLedger keeps only the public half |
 | Fleet admin key | your computer: `~/.ssh`, passphrase, ssh-agent | `ship-fleet init` |
+| Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet ca init` |
+| A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
 | Proxmox API token | your computer: `~/.config/fleetledger/` (0600) | made once by you |
 | Your own key | your machines | public half put on `agent` by the seed |
 
@@ -105,7 +125,8 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | A misbehaving or prompt-injected agent (more so in bypass) | use or leak that Ship's sign-ins; push to repos you can reach; probe your LAN | separate sign-ins per Ship (sign one out without touching others); no sudo; bypass only where allowed; no admin keys or agent forwarding on Ships |
 | A Ship on the wrong account | work done with personal credentials, or the reverse | expected accounts per tag, checked after every sign-in and on every poll |
 | Someone else on your LAN | fake an mDNS announcement; answer at a Ship's name; try passwords | pinned host keys; key-only SSH; announcements are hints only |
-| A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; treat snapshots as sensitive; re-seed and `adopt --replace`; sign Ships out from FleetLedger |
-| Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin key in ssh-agent; scoped Proxmox token; no service tokens to steal |
+| A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; treat snapshots as sensitive; re-seed and `adopt --replace` (which also lists the old host key as revoked for trusted machines); host certificates last 90 days; sign Ships out from FleetLedger |
+| Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal |
+| A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr pinned by checksum; recipes pin versions; verified Ubuntu images |
 | Your Claude accounts | anyone in one can drive that account's Ships through Remote Control | strong sign-in on your Claude accounts; Remote Control off per Ship where not needed (`ship-fleet set <ship> remote_control=off`, see [runbooks/sign-in.md](runbooks/sign-in.md#remote-control)) |

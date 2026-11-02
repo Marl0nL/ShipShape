@@ -31,6 +31,7 @@ ship-fleet ls
 Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [create a Ship](docs/runbooks/create-ship.md),
 [sign it in](docs/runbooks/sign-in.md),
+[attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, herdr --remote),
 [retire the old stack](docs/runbooks/retire-old-stack.md).
 
 ## Layout

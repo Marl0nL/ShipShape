@@ -120,6 +120,45 @@ class InventoryEditor:
     def mark_enrolled(self, name: str, when: str) -> None:
         self.set_field(name, "enrolled", when)
 
+    # --- certificate authority (phase 3) --------------------------------------
+    def set_ca(self, entry: Mapping[str, Any]) -> None:
+        """Create or replace the [ca] table."""
+        table = tomlkit.table()
+        for key, value in entry.items():
+            table[key] = _item(value)
+        if "ca" in self.doc:
+            self.doc["ca"] = table
+        else:
+            self.doc.add(tomlkit.nl())
+            self.doc["ca"] = table
+
+    def add_to_ca_list(self, key: str, value: str) -> None:
+        """Append to ca.<key> (previous_user_keys, revoked_host_keys) unless present."""
+        if "ca" not in self.doc:
+            raise NotFound("No [ca] in the inventory; run `ship-fleet ca init`.")
+        current = list(self.doc["ca"].get(key, []))
+        if value not in current:
+            self.doc["ca"][key] = [*current, value]
+
+    def set_machine(self, name: str, entry: Mapping[str, Any]) -> None:
+        if "machine" not in self.doc:
+            self.doc.add(tomlkit.nl())
+            self.doc["machine"] = tomlkit.table(is_super_table=True)
+        table = tomlkit.table()
+        for key, value in entry.items():
+            table[key] = _item(value)
+        self.doc["machine"][name] = table
+
+    def set_machine_field(self, name: str, key: str, value: Any) -> None:
+        machines = self.doc.get("machine")
+        if machines is None or name not in machines:
+            raise NotFound(f"No machine named '{name}' in the inventory.")
+        if value is None:
+            if key in machines[name]:
+                del machines[name][key]
+        else:
+            machines[name][key] = _item(value)
+
 
 def _item(value: Any) -> Any:
     """Small mappings become inline tables, which read best in ships.toml."""

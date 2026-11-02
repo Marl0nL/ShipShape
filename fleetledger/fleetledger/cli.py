@@ -21,7 +21,7 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "set", "tag", "tools", "ssh", "logs",
+    "set", "tag", "tools", "ssh", "logs", "ca", "trust", "untrust",
 )  # fmt: skip
 
 
@@ -214,6 +214,47 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("name")
     p.add_argument("source", choices=LOG_SOURCES)
     p.add_argument("--lines", type=int, default=200)
+
+    p = _add(sub, "ca", "the SSH certificate authority: init, sign Ships, show",
+             "FleetLedger as the fleet's SSH certificate authority.\n\n"
+             "  ship-fleet ca init          make the host and user CA keys\n"
+             "  ship-fleet ca sign [SHIP]   certify Ships' pinned host keys and install the\n"
+             "                              user CA and revocation list (renews as needed)\n"
+             "  ship-fleet ca show          CA fingerprints, certificates, trusted machines")
+    p.add_argument("action", choices=("init", "sign", "show"))
+    p.add_argument("names", nargs="*", metavar="SHIP", help="sign: these Ships (default: all)")
+    p.add_argument("--tag", help="sign: every Ship with this tag")
+    p.add_argument("--force", action="store_true",
+                   help="sign: re-issue even if current; init: replace [ca]")
+    p.add_argument("--host-key", default="~/.ssh/shipshape_host_ca_ed25519",
+                   help="init: host CA private key (made if missing)")
+    p.add_argument("--user-key", default="~/.ssh/shipshape_user_ca_ed25519",
+                   help="init: user CA private key (made if missing)")
+    p.add_argument("--no-passphrase", action="store_true",
+                   help="init: make the CA keys without a passphrase (not recommended)")
+    p.add_argument("--json", action="store_true", help="show: print JSON")
+
+    p = _add(sub, "trust", "certify one of your machines to attach to Ships (herdr --remote)",
+             "Give a machine a short-lived certificate for the agent user on the Ships its\n"
+             "scope allows, and write its bundle: certificate, SSH config, CA line and herdr\n"
+             "saved machines. Run it again to renew.\n\n"
+             "  ship-fleet trust laptop --key laptop.pub --scope tag:work\n"
+             "  ship-fleet trust laptop --print-cert     renew: just the new certificate")
+    p.add_argument("machine", help="a name for the machine (e.g. laptop)")
+    p.add_argument("--key", help="the machine's ed25519 public key (file or line); first time only")
+    p.add_argument("--scope", action="append", metavar="all|tag:TAG|ship:NAME",
+                   help="which Ships it may attach to (repeatable; default all)")
+    p.add_argument("--hours", type=int, help="certificate validity (default from [ca])")
+    p.add_argument("--identity", default="~/.ssh/shipshape/id_ed25519",
+                   help="path of the private key on that machine (default %(default)s)")
+    p.add_argument("--out", help="bundle folder (default ~/.local/share/fleetledger/trust/NAME)")
+    p.add_argument("--print-cert", action="store_true", help="print only the certificate")
+    p.add_argument("--install", action="store_true",
+                   help="also install the bundle here (this is the machine)")
+    p.add_argument("--no-herdr", action="store_true", help="install: skip herdr saved machines")
+
+    p = _add(sub, "untrust", "revoke a machine's certificates on every Ship")
+    p.add_argument("machine")
     return parser
 
 

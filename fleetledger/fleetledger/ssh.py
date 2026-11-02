@@ -230,6 +230,39 @@ class SSH:
             return Result(proc.returncode, proc.stdout, stderr, host)
         raise Unreachable(f"Cannot reach {ship.name}: " + "; ".join(failures))
 
+    def probe_certificate(self, ship: Ship, known_hosts: Path, timeout: float = 30) -> str | None:
+        """Log in as fleet trusting only a CA line (known_hosts), never the pinned key.
+
+        Proves a Ship presents a valid host certificate for its name. A fresh
+        connection (no sharing), so an open pinned connection cannot answer for
+        it. Returns None on success, else why it failed.
+        """
+        overrides = {
+            "UserKnownHostsFile": str(known_hosts),
+            "HostKeyAlgorithms": "ssh-ed25519-cert-v01@openssh.com",
+            "ControlMaster": "no",
+            "ControlPath": "none",
+        }
+        base = self.options(ship)
+        argv = [self.ssh_bin]
+        i = 0
+        while i < len(base):
+            if base[i] == "-o" and base[i + 1].split("=", 1)[0] in overrides:
+                i += 2
+                continue
+            argv.append(base[i])
+            i += 1
+        for key, value in overrides.items():
+            argv += ["-o", f"{key}={value}"]
+        argv += ["--", ship.names[0], "true"]
+        try:
+            proc = self.runner(argv, input=b"", capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return "timed out"
+        if proc.returncode == 0:
+            return None
+        return _last_line(proc.stderr.decode("utf-8", errors="replace")) or "failed"
+
     def exec_interactive(self, ship: Ship, *, user: str, command: Sequence[str] = ()) -> None:
         """Replace this process with an interactive ssh session (ship-fleet ssh)."""
         argv = self.argv(ship, ship.names[0], command or None, user=user, tty=True, batch=False)

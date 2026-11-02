@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths, schemas
+from fleetledger import ca, paths, schemas
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
 from fleetledger.shipctl import RESULT_SCHEMA, STATUS_SCHEMA, not_installed
@@ -167,6 +167,7 @@ def fetch(
         return view
     view.status = doc
     view.attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, tooling)
+    view.attention += ca.attention(ca.config(inventory), ship, doc, ca.cached_krl(inventory))
     try:
         write_cache(ship.name, doc)
     except OSError:

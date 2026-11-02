@@ -19,6 +19,7 @@ from fleetledger.seed.shiptoml import tools_for
 from fleetledger.shipctl import STATUS_SCHEMA, ShipCtl
 from fleetledger.ssh import ship_ctl
 from fleetledger.store import new_inventory, ship_entry
+from fleetledger.trustcmd import after_enrol, cmd_ca, cmd_trust, cmd_untrust  # noqa: F401
 
 MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
 LOG_SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
@@ -311,6 +312,7 @@ def _enrol(app, store, name: str, say=None) -> int:
         say("Then remove the seed (it holds the Ship's private host key):")
         for line in result.instructions:
             say(f"  {line}")
+    after_enrol(app, store, name, say)
     say(f"Next: ship-fleet login {name} all")
     return 0
 
@@ -359,6 +361,10 @@ def cmd_adopt(args, app) -> int:
     tags = args.tag or report["ship"]["tags"]
     with store.edit() as ed:
         if inv.has_ship(name):
+            old = inv.ship(name).host_key_type_and_blob
+            if inv.doc.get("ca") and old != key:
+                # Its old key may carry a certificate: trusted machines must refuse it.
+                ed.add_to_ca_list("revoked_host_keys", old)
             ed.set_field(name, "host_key", f"{key} {name}")
             ed.set_field(name, "id", report["ship"]["id"])
             if args.host:
