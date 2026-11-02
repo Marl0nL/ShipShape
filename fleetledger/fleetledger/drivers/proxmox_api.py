@@ -165,10 +165,12 @@ class ProxmoxAPI:
     def upload(self, node: str, storage: str, file_name: str, data: bytes, content: str) -> Any:
         """Upload a file to a storage (multipart), with a checksum Proxmox verifies."""
         boundary = "fleetledger-" + secrets.token_hex(12)
+        # Order matters: Proxmox rejects a checksum that arrives before its
+        # algorithm (400), and the file must come last.
         fields = {
             "content": content,
-            "checksum": hashlib.sha256(data).hexdigest(),
             "checksum-algorithm": "sha256",
+            "checksum": hashlib.sha256(data).hexdigest(),
         }
         parts = []
         for name, value in fields.items():

@@ -2,10 +2,9 @@
 
 <p align="center"><em>Virtual machines for coding agents ("Ships"), and a tool to run a fleet of them ("FleetLedger").</em></p>
 
-> **Status: rebuild in progress.** The repo is moving from a locked-down Docker
-> sandbox to VM-based Ships. This commit lays down the layout, the contracts both
-> halves build against, and the checks. The previous design is in `legacy/` and
-> `docs/archive/`.
+> **Status: phase 1.** Ships boot, provision themselves and resume their agents;
+> FleetLedger creates, enrols, shows and signs them in. The previous Docker-based
+> design is frozen in `legacy/` and `docs/archive/`.
 
 ## What it is
 
@@ -16,7 +15,23 @@
   their state, and signs them in to Claude Code, gcloud and GitHub by relaying
   each tool's no-browser sign-in, so tokens never leave the Ship.
 
-See `docs/architecture.md`.
+See `docs/architecture.md` and `docs/security.md`.
+
+## Quick start
+
+```sh
+fleetledger/install.sh                 # installs ship-fleet with pipx
+ship-fleet init                        # fleet admin key + ~/.config/fleetledger/ships.toml
+ssh-add ~/.ssh/shipshape_fleet_ed25519
+ship-fleet new ship-01 --tag work      # seed, VM, provision, enrol
+ship-fleet login ship-01 all           # Claude Code, gcloud + ADC, GitHub
+ship-fleet ls
+```
+
+Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
+[create a Ship](docs/runbooks/create-ship.md),
+[sign it in](docs/runbooks/sign-in.md),
+[retire the old stack](docs/runbooks/retire-old-stack.md).
 
 ## Layout
 
@@ -27,7 +42,8 @@ See `docs/architecture.md`.
 | `contracts/` | schemas, examples and docs both halves build against |
 | `versions.toml` | pinned versions, checksums and signing keys |
 | `scripts/check` | lint, tests and the public-repo hygiene check (what CI runs) |
-| `docs/` | architecture, build tracks, hygiene, archived design notes |
+| `docs/` | architecture, security, runbooks, build tracks, hygiene, archived design notes |
+| `tests/e2e/` | end-to-end tests on a real hypervisor pool, and the guided acceptance run |
 | `legacy/` | the previous container stack (frozen, to be removed) |
 
 ## Development

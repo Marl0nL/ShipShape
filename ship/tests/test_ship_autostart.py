@@ -30,7 +30,11 @@ def test_autostart_starts_each_agent_in_its_mode(ship):
         "--no-focus",
     ]
     assert ship.p("/home/agent/work/main").is_dir()
-    assert ship.scenario()["herdr"]["prompts"] == [["main", "Get oriented."]]
+    # grinder has no prompt of its own: it gets the default first prompt.
+    assert ship.scenario()["herdr"]["prompts"] == [
+        ["main", "Get oriented."],
+        ["grinder", "Get oriented and ready to work."],
+    ]
     # A second run starts nothing.
     rc, doc, _ = ship.ctl("autostart", "--json")
     assert doc["data"]["started"] == []

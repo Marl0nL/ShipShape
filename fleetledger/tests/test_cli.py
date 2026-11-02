@@ -115,6 +115,12 @@ class FakeDriver:
         return Outcome(done=True, messages=["Started VM 9101."],
                        driver_ref={"vmid": 9101, "seed": seed.instance_id})
 
+    def status(self, ship):
+        from fleetledger.drivers.base import PowerState
+
+        self.polls = getattr(self, "polls", 0) + 1
+        return PowerState("running", ["192.0.2.44"] if self.polls > 1 else [])
+
     def finish_enrolment(self, ship):
         self.finished.append(ship.name)
         return Outcome(done=True, messages=["Detached and deleted the seed."])
@@ -147,6 +153,8 @@ def env(store, fake_repo, monkeypatch, tmp_path):
         browse=lambda timeout: [],
         keyscan=lambda host: (_ for _ in ()).throw(AssertionError("keyscan")),
         stdin_isatty=lambda: False,
+        resolves=lambda host: False,
+        sleep=lambda s: None,
     )
 
     class Env:
@@ -244,8 +252,25 @@ def test_new_manual_bypass_ship(env, home):
     ship_toml = tomllib.loads(user["write_files"][0]["content"])
     assert ship_toml["claude"]["default_mode"] == "bypassPermissions"
     assert ship_toml["claude"]["allow_bypass"] is True
+    # No prompt given: none is written, and the Ship sends its own default.
     assert ship_toml["autostart"] == [{"name": "main", "cwd": "~/work/main", "mode": "auto"}]
     assert env.run("new", "ship-03")[0] == 1  # already there
+
+
+def test_new_autostart_prompt(env, home):
+    code, _, err = env.run("new", "ship-08", "--autostart", "a:~/work/a",
+                           "--autostart-prompt", "Run the tests.")
+    assert code == 0, err
+    seed = next((home / "data" / "seeds").glob("ship-08-*.iso"))
+    _, files = iso.read(seed.read_bytes())
+    ship_toml = tomllib.loads(yaml.safe_load(files["user-data"])["write_files"][0]["content"])
+    assert ship_toml["autostart"] == [{"name": "a", "cwd": "~/work/a", "prompt": "Run the tests."}]
+    # An empty prompt is the same as none: the Ship's default applies.
+    assert env.run("new", "ship-09", "--autostart", "b:~/work/b", "--autostart-prompt", "")[0] == 0
+    seed = next((home / "data" / "seeds").glob("ship-09-*.iso"))
+    _, files = iso.read(seed.read_bytes())
+    ship_toml = tomllib.loads(yaml.safe_load(files["user-data"])["write_files"][0]["content"])
+    assert ship_toml["autostart"] == [{"name": "b", "cwd": "~/work/b"}]
 
 
 def test_new_proxmox_waits_and_enrols(env, home):
@@ -255,9 +280,39 @@ def test_new_proxmox_waits_and_enrols(env, home):
     assert env.driver.created[0][2] == {"cores": 2, "memory_mb": 8192, "disk_gb": 40}
     ship = env.store.load().ship("ship-04")
     assert ship.enrolled and ship.driver_ref == {"vmid": 9101}
+    # ship-04.local does not resolve here: the hypervisor's address is the fallback.
+    assert ship.names == ("ship-04.local", "192.0.2.44")
     assert env.driver.finished == ["ship-04"]
     assert not list((home / "data" / "seeds").glob("*.iso"))
     assert "ship-04 is enrolled." in out and "ship-fleet login ship-04 all" in out
+
+
+def test_new_proxmox_keeps_names_that_resolve(env):
+    env.app.resolves = lambda host: host == "ship-06.local"
+    assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0
+    assert env.store.load().ship("ship-06").names == ("ship-06.local",)
+
+
+def test_new_proxmox_waits_for_a_late_mdns_name(env):
+    """The announcement can come up a little after the address: no fallback then."""
+    tries = []
+    env.app.resolves = lambda host: tries.append(host) or len(tries) >= 3
+    assert env.run("new", "ship-10", "--driver", "proxmox")[0] == 0
+    assert env.store.load().ship("ship-10").names == ("ship-10.local",)
+
+
+def test_new_proxmox_without_an_address(env):
+    from fleetledger.drivers.base import PowerState
+
+    env.driver.status = lambda ship: PowerState("running", [])
+    code, out, err = env.run("new", "ship-11", "--driver", "proxmox")
+    assert code == 0 and "reported no address" in err
+    assert env.store.load().ship("ship-11").names == ("ship-11.local",)
+
+
+def test_resolves_uses_the_system_resolver():
+    assert cli._resolves("localhost")
+    assert not cli._resolves("ship-01.invalid")
 
 
 def test_new_failure_leaves_nothing(env, home):
