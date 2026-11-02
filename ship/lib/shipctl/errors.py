@@ -12,6 +12,7 @@ EXIT_CODES = {
     "provision-failed": 1,
     "tool-failed": 1,
     "herdr-unavailable": 1,
+    "invalid-input": 1,
     "internal": 1,
 }
 

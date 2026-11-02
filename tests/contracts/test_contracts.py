@@ -159,3 +159,23 @@ def test_profiles_in_repo_validate():
         profile = load_doc(profile_path)
         assert profile_path.stem == profile["id"], f"{profile_path} must be named <id>.toml"
         assert validator("profile").is_valid(profile), f"{profile_path} fails the schema"
+
+
+@pytest.mark.parametrize(
+    ("address", "ok"),
+    [
+        ("192.0.2.10", True),
+        ("2001:db8::10", True),
+        ("::1", True),
+        ("::ffff:192.0.2.1", True),  # IPv4-mapped: producers should not, but it must not break
+        ("fe80::1%eth0", False),  # zone index: producers strip it
+        ("<b>", False),
+    ],
+)
+def test_net_summary_address_forms(address: str, ok: bool):
+    doc = load_doc(EXAMPLES / "net-summary" / "running.json")
+    dest = doc["destinations"][0]
+    dest["addresses"] = [address]
+    assert validator("net-summary").is_valid(doc) is ok
+    dest["name"], dest["kind"] = address, "address"
+    assert validator("net-summary").is_valid(doc) is ok

@@ -230,6 +230,48 @@ class SSH:
             return Result(proc.returncode, proc.stdout, stderr, host)
         raise Unreachable(f"Cannot reach {ship.name}: " + "; ".join(failures))
 
+    def probe_certificate(self, ship: Ship, known_hosts: Path, timeout: float = 30) -> str | None:
+        """Log in as fleet trusting only a CA line (known_hosts), never the pinned key.
+
+        Proves a Ship presents a valid host certificate for its name. A fresh
+        connection (no sharing), so an open pinned connection cannot answer for
+        it. Each of the Ship's names is tried in order, as for any command; a
+        host-key failure stops at once. Returns None on success, else why it failed.
+        """
+        overrides = {
+            "UserKnownHostsFile": str(known_hosts),
+            "HostKeyAlgorithms": "ssh-ed25519-cert-v01@openssh.com",
+            "ControlMaster": "no",
+            "ControlPath": "none",
+        }
+        dropped = {*overrides, "ControlPersist"}
+        base = self.options(ship)
+        prefix = [self.ssh_bin]
+        i = 0
+        while i < len(base):
+            if base[i] == "-o" and base[i + 1].split("=", 1)[0] in dropped:
+                i += 2
+                continue
+            prefix.append(base[i])
+            i += 1
+        for key, value in overrides.items():
+            prefix += ["-o", f"{key}={value}"]
+        failures = []
+        for host in ship.names:
+            try:
+                proc = self.runner([*prefix, "--", host, "true"], input=b"",
+                                   capture_output=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                failures.append(f"{host}: timed out")
+                continue
+            if proc.returncode == 0:
+                return None
+            why = _last_line(proc.stderr.decode("utf-8", errors="replace")) or "failed"
+            if any(marker in why.lower() for marker in HOST_KEY_ERRORS):
+                return f"{host}: {why}"
+            failures.append(f"{host}: {why}")
+        return "; ".join(failures) or "no names to try"
+
     def exec_interactive(self, ship: Ship, *, user: str, command: Sequence[str] = ()) -> None:
         """Replace this process with an interactive ssh session (ship-fleet ssh)."""
         argv = self.argv(ship, ship.names[0], command or None, user=user, tty=True, batch=False)

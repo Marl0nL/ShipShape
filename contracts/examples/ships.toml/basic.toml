@@ -52,6 +52,11 @@ scope = ["tag:work"]
 cert_hours = 24
 last_serial = 7
 last_valid_before = "2026-01-03T00:00:00Z"
+# Serial 6 was issued when the scope was "all": it is revoked by serial until it lapses.
+issued = [
+    {serial = 6, valid_before = "2026-01-02T12:00:00Z", principals = ["agent:all"], ca = "SHA256:htTHWnCsFcfbv3RzPOAHIsP8OL1UUh3dApqXvY8ZDow"},
+    {serial = 7, valid_before = "2026-01-03T00:00:00Z", principals = ["agent:tag:work"], ca = "SHA256:htTHWnCsFcfbv3RzPOAHIsP8OL1UUh3dApqXvY8ZDow"},
+]
 
 [machine.old-desktop]
 public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVvbGRkZXNrdG9wa2V5ZXhhbXBsZW9sZGRl old-desktop"

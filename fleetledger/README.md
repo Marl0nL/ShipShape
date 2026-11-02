@@ -29,6 +29,7 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
+| `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
 use throwaway keys, a temporary FleetLedger home and a small fake checkout; they
@@ -45,6 +46,8 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
+| `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
+| `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
 
 `FLEETLEDGER_CONFIG_DIR`, `FLEETLEDGER_DATA_DIR` and `FLEETLEDGER_RUNTIME_DIR`
 override these (the XDG variables are honoured too). `SHIPSHAPE_REPO` points
