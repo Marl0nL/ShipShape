@@ -12,8 +12,13 @@ tooling = "0.1.0"
 [ubuntu]
 release = "26.04"
 build = "20261016"
-base_url = "https://cloud-images.ubuntu.com/releases/26.04/release-20261016"
+# The codename path: releases/26.04/... only redirects here (curl needs -L for it).
+base_url = "https://cloud-images.ubuntu.com/releases/resolute/release-20261016"
 # UEC Image Automatic Signing Key; signs SHA256SUMS (SHA256SUMS.gpg) in base_url.
+# Check with gpgv against this key alone, no keyserver or dirmngr needed:
+#   gpgv --keyring ./ubuntu-cloud.gpg SHA256SUMS.gpg SHA256SUMS
+# (ubuntu-cloud.gpg: the key, dearmored, with this primary fingerprint), then
+# sha256sum against both SHA256SUMS and the sha256 pinned below.
 signing_key = "D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
 
 [ubuntu.images.amd64]

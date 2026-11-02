@@ -135,6 +135,33 @@ def test_proxmox_vmid_range_exhausted():
         driver.allocate_vmid()
 
 
+class AgentStartingAPI(FakeAPI):
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+
+    def get(self, path, **params):
+        if path.endswith("/agent/network-get-interfaces"):
+            self.calls.append(("GET", path, params))
+            return self.answer
+        return super().get(path, **params)
+
+
+@pytest.mark.parametrize("answer", [
+    None,  # `data: null` while the guest agent starts (phase 0)
+    {},
+    {"result": None},
+    {"result": [{"name": "eth0"}]},
+    {"result": [{"name": "eth0", "ip-addresses": None}]},
+    {"result": {"unexpected": 1}},
+    {"result": 5},
+    {"result": [{"name": "eth0", "ip-addresses": [{"ip-address-type": "ipv4"}]}]},
+])
+def test_proxmox_status_guest_agent_not_ready_is_pending(answer):
+    power = ProxmoxDriver(PX, api=AgentStartingAPI(answer)).status(ship(vmid=9101))
+    assert power.state == "running" and power.addresses == []
+
+
 def test_proxmox_status_and_enrolment():
     api = FakeAPI()
     driver = ProxmoxDriver(PX, api=api)

@@ -153,7 +153,8 @@ class Installer:
         if not missing:
             return False
         env = {"DEBIAN_FRONTEND": "noninteractive"}
-        argv = ["apt-get", "install", "-y", "-q", *missing]
+        # No recommends: Chrome's pull in a desktop stack, terminal emulator included.
+        argv = ["apt-get", "install", "-y", "-q", "--no-install-recommends", *missing]
         r = self.ctx.runner.run(argv, timeout=INSTALL_TIMEOUT, env=env)
         if not r.ok and not self.apt_updated:
             self.apt_updated = True

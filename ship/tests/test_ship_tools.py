@@ -106,6 +106,8 @@ def test_tools_run_installs_everything_once(catalogue):
     assert ship.p("/home/agent/profile-ran").read_text() == "https://example.com/orchestrator.git\n"
     assert ship.p("/home/agent/.claude/skills/example-skill/SKILL.md").exists()
     assert "example-browser" in ship.scenario()["apt"]["installed"]
+    installs = [c for c in ship.calls("apt-get") if c[1] == "install"]
+    assert installs and all("--no-install-recommends" in c for c in installs)
     assert ship.scenario()["claude"]["mcp"] == ["example"]
     assert ship.p("/home/agent/after.log").read_text() == "setup\n"
     env = ship.p("/home/agent/.config/shipshape/env").read_text()

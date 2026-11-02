@@ -164,14 +164,16 @@ class ProxmoxDriver(Driver):
         addresses: list[str] = []
         if state == "running":
             try:
-                ifaces = self.api.get(vm + "/agent/network-get-interfaces").get("result", [])
+                answer = self.api.get(vm + "/agent/network-get-interfaces")
             except ProxmoxError:
-                ifaces = []  # guest agent not up yet
-            for iface in ifaces:
-                if iface.get("name") == "lo":
+                answer = None  # guest agent not up yet
+            # While the guest agent starts, Proxmox answers `data: null`: not yet.
+            ifaces = answer.get("result") if isinstance(answer, dict) else None
+            for iface in ifaces if isinstance(ifaces, list) else []:
+                if not isinstance(iface, dict) or iface.get("name") == "lo":
                     continue
-                for addr in iface.get("ip-addresses", []):
-                    if addr.get("ip-address-type") == "ipv4":
+                for addr in iface.get("ip-addresses") or []:
+                    if addr.get("ip-address-type") == "ipv4" and addr.get("ip-address"):
                         addresses.append(addr["ip-address"])
         return PowerState(state if state in ("running", "stopped") else "unknown", addresses)
 

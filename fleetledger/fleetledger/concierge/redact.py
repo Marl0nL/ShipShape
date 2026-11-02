@@ -16,7 +16,8 @@ ANSI = re.compile(
     r"|\x1b[@-Z\\-_]"  # other two-byte escapes
 )
 QUERY = re.compile(r"(https?://[^\s?#]+)[?#]\S*")
-LONG_TOKEN = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")
+LONG_TOKEN = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")  # also catches UUIDs
+EMAIL = re.compile(r"[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 
 
 def clean(text: str) -> str:
@@ -40,11 +41,14 @@ def visible(raw: str) -> str:
 
 
 def redact(text: str, secrets: Iterable[str] = ()) -> str:
-    """Remove typed codes, URL query strings and long token-like strings."""
+    """Remove typed codes, URL query strings, email addresses and long token-like
+    strings (UUIDs included). Run it on clean() text: an escape sequence inside a
+    value would hide it from these patterns."""
     for secret in secrets:
         if secret:
             text = text.replace(secret, "[code]")
     text = QUERY.sub(r"\1?[…]", text)
+    text = EMAIL.sub("[email]", text)
     return LONG_TOKEN.sub("[redacted]", text)
 
 

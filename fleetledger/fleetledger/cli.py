@@ -165,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("service", help=services)
 
     p = _add(sub, "set", "change a Ship's settings (ship-ctl set)",
-             "Change settings on a Ship. Keys: remote_control (on|off|blocked),\n"
+             "Change settings on a Ship. Keys: remote_control (on|off; blocked = off),\n"
              "default_mode, allow_bypass, update_channel (latest|stable), session_prefix,\n"
              "sudo, lan_guard, tags; or their full names (claude.remote_control, ...).\n\n"
              "  ship-fleet set ship-01 remote_control=off default_mode=bypassPermissions")

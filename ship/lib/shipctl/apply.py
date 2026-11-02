@@ -33,9 +33,12 @@ HERDR_KEYS = {
 
 def managed_settings(ship: ShipToml, versions: dict) -> dict:
     c = ship.claude
-    rc = c["remote_control"]
-    doc: dict = {"remoteControlAtStartup": rc == "on"}
-    if rc == "blocked":
+    # "off" must also set disableRemoteControl: a resumed session reattaches to the
+    # Remote Control session saved in its transcript whatever remoteControlAtStartup
+    # says (phase 0). "blocked" is an older name for the same thing.
+    on = c["remote_control"] == "on"
+    doc: dict = {"remoteControlAtStartup": on}
+    if not on:
         doc["disableRemoteControl"] = True
     permissions: dict = {"defaultMode": c["default_mode"]}
     if not c["allow_bypass"]:
@@ -45,6 +48,8 @@ def managed_settings(ship: ShipToml, versions: dict) -> dict:
     minimum = versions.get("claude", {}).get("minimum_version")
     if minimum:
         doc["minimumVersion"] = minimum
+    # Only a fallback: the prefix names a session until its first message. Sessions
+    # the Ship starts get a lasting name from `claude --name` (naming.py).
     doc["env"] = {"CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": c["session_prefix"]}
     return doc
 

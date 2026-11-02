@@ -220,6 +220,13 @@ ensure_debs() {
   sys apt-get install -y -q "${missing[@]}"
 }
 
+# The cloud image has no guest agent, and the hypervisor reads the Ship's address
+# from it: start it as soon as it is installed, not after the slow steps. (Installing
+# the package does not start it.)
+start_guest_agent() {
+  sys systemctl start qemu-guest-agent || true
+}
+
 # The primary keys in a keyring file, one fingerprint per line.
 primary_keys() {
   local home
@@ -589,6 +596,7 @@ main() {
 
   export DEBIAN_FRONTEND=noninteractive
   ensure_debs "${BASE_PACKAGES[@]}"
+  start_guest_agent
   step_apt_repos
   step_core_packages
   step_herdr

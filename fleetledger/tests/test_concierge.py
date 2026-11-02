@@ -1,6 +1,7 @@
 """Login concierge (W9): pattern tests in a real terminal, account checks, audit."""
 
 import json
+import re
 import stat
 import sys
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import pytest
 from fleetledger.concierge import audit, engine, providers
 from fleetledger.concierge.engine import Flow
-from fleetledger.concierge.redact import clean, redact
+from fleetledger.concierge.redact import clean, redact, tail
 
 from fleetledger import concierge
 
@@ -78,6 +79,22 @@ def test_github_runs_without_prompts():
     """gh's prompts wait for a terminal's cursor report that never comes."""
     assert provider("github").run.startswith("GH_PROMPT_DISABLED=1 gh auth login ")
     assert provider("github").send == ()
+
+
+NO_GCLOUD_LOG = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud "
+
+
+def test_every_gcloud_command_runs_without_file_logging():
+    """gcloud's own debug log stores the sign-in code (phase 0, S5)."""
+    seen = 0
+    for p in providers.load_all().values():
+        for command in [p.run, *p.after, p.logout, *(c.run for c in p.checks)]:
+            calls = re.findall(r"(?:\S+=\S+ )*gcloud ", command)
+            seen += len(calls)
+            assert all(c.endswith(NO_GCLOUD_LOG) for c in calls), (p.id, command)
+    assert seen >= 8
+    assert provider("gcloud").run.startswith(NO_GCLOUD_LOG + "auth login ")
+    assert provider("gcloud-adc").run.startswith(NO_GCLOUD_LOG + "auth application-default login ")
 
 
 def test_providers_load():
@@ -265,6 +282,15 @@ def test_clean_and_redact():
     assert redact(text, ["ABCD"]) == "code [code] see https://x.example/p?[…] and [redacted]"
 
 
+def test_redact_scrubs_accounts_and_ids_after_escapes_are_gone():
+    raw = ("\x1b]3008;start=0000;machineid=00000000000000000000000000000000\x1b\\"
+           "Logged in as \x1b[1muser@example.com\x1b[0m, org "
+           "00000000-0000-0000-0000-000000000000\r\n")
+    assert tail(clean(raw)) == "Logged in as [email], org [redacted]"
+    for email in ("first.last+tag@mail.corp.example", "x@a.b.test", "u_1@ship-01.mail.invalid"):
+        assert redact(f"as {email}.") == "as [email]."
+
+
 # --- login(): checks against the tag, audit ---------------------------------
 
 
@@ -327,6 +353,31 @@ def test_login_ok_and_audited(store, fake_ssh, monkeypatch, tmp_path, home):
     log = home / "data" / "audit.log"
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
     assert CLAUDE_CODE not in log.read_text() and "oauth" not in log.read_text()
+
+
+def test_gcloud_login_terminal_has_file_logging_off(store, fake_ssh, monkeypatch, tmp_path):
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(ship_side({
+        "gcloud auth list": (0, b"work@example.com\n", ""),
+        "print-access-token": (0, b"", ""),
+    })), store)
+    concierge.login(ssh, inv, inv.ship("ship-01"), provider("gcloud"),
+                    Prompter(code=GCLOUD_CODE),
+                    spawner=fake_spawner("gcloud.txt", monkeypatch, tmp_path))
+    assert ssh.argvs[0][-1] == (
+        "sudo -n -iu agent -- bash -c "
+        "'CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth login --no-launch-browser --update-adc'"
+    )
+
+
+def test_account_is_read_without_terminal_escapes(store, fake_ssh):
+    """gh prints the login in bold; a login shell may add an OSC 3008 line."""
+    inv = store.load()
+    out = b"\x1b]3008;start=0000;user=agent\x1b\\\x1b[1mwork-login\x1b[0m\r\n"
+    ssh = fake_ssh(ship_side({"gh api user": (0, out, "")}))
+    check = provider("github").checks[0]
+    result = concierge.run_check(ssh, inv, inv.ship("ship-01"), check)
+    assert result.signed_in and result.account == "work-login"
 
 
 def test_login_wrong_account_is_flagged(store, fake_ssh, monkeypatch, tmp_path):
