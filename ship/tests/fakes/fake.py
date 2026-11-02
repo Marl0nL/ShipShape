@@ -250,6 +250,23 @@ def systemctl(s: dict, a: list[str]) -> int:
     return 0
 
 
+def sshd(s: dict, a: list[str]) -> int:
+    """`sshd -t`: fails when the scenario says so, or when a configured file is missing."""
+    if s.get("sshd_refuses"):
+        print(s["sshd_refuses"], file=sys.stderr)
+        return 255
+    root = os.environ.get("SHIPSHAPE_ROOT", "")
+    dropin = Path(root) / "etc/ssh/sshd_config.d/20-shipshape-ca.conf"
+    if dropin.exists():
+        for line in dropin.read_text().splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1].startswith("/") and "%u" not in parts[1]:
+                if not (Path(root) / parts[1].lstrip("/")).exists():
+                    print(f"{parts[1]}: No such file or directory", file=sys.stderr)
+                    return 255
+    return 0
+
+
 def journalctl(s: dict, a: list[str]) -> int:
     out("\n".join(s.get("journal", ["-- No entries --"])))
     return 0
@@ -267,6 +284,7 @@ HANDLERS = {
     "systemctl": systemctl,
     "journalctl": journalctl,
     "visudo": lambda s, a: 0,
+    "sshd": sshd,
 }
 
 

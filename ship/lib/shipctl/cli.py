@@ -14,7 +14,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import CONTRACTS, apply, autostart, converge, logs, shiptoml, status, tools
+from . import CONTRACTS, apply, autostart, converge, logs, shiptoml, sshtrust, status, tools
 from .context import Context
 from .errors import CtlError
 from .fsutil import read_json, write_atomic
@@ -89,6 +89,8 @@ def build_parser() -> Parser:
     lg = cmd("logs", "Show recent log lines.")
     lg.add_argument("source", choices=logs.SOURCES)
     lg.add_argument("--lines", type=int, default=200)
+    sv = cmd("ssh-trust", "Install SSH certificates and CA keys from FleetLedger (stdin).")
+    sv.add_argument("--file", required=True, metavar="-", help="read the document from stdin")
     cmd("version", "Print the tooling version and contract versions.")
     r = sub.add_parser("refresh", help="(internal) refresh the status cache and react to sign-ins")
     r.add_argument("--json", action="store_true")
@@ -226,6 +228,15 @@ def cmd_tools(ctx: Context, args) -> dict:
     )
 
 
+def cmd_ssh_trust(ctx: Context, args) -> dict:
+    if args.file != "-":
+        raise CtlError("usage", "ssh-trust reads its document from stdin: --file -")
+    ship = shiptoml.load(ctx.paths)
+    doc = sshtrust.load_document(ctx, sys.stdin.read(1 << 21))
+    data, changed, messages = sshtrust.install(ctx, ship, doc)
+    return result("ssh-trust", changed=changed, messages=messages, data=data)
+
+
 def cmd_logs(ctx: Context, args) -> dict:
     lines = logs.read(ctx, args.source, args.lines)
     return result("logs", data={"lines": lines})
@@ -294,6 +305,7 @@ COMMANDS = {
     "logs": cmd_logs,
     "version": cmd_version,
     "refresh": cmd_refresh,
+    "ssh-trust": cmd_ssh_trust,
 }
 
 
@@ -320,7 +332,7 @@ def _print_human(doc: dict) -> None:
     data = doc.get("data") or {}
     if doc["command"] == "logs":
         print("\n".join(data.get("lines", [])))
-    elif doc["command"] in ("tools", "autostart") and data:
+    elif doc["command"] in ("tools", "autostart", "ssh-trust") and data:
         print(json.dumps(data, indent=2))
     if doc["error"]:
         print(f"ship-ctl: {doc['error']['message']}", file=sys.stderr)

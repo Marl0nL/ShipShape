@@ -23,6 +23,8 @@ from .context import Context, utc_now
 from .fsutil import read_json, write_atomic
 from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
 from .shiptoml import ShipToml
+from .sshtrust import attention as ssh_attention
+from .sshtrust import state as ssh_state
 
 SCHEMA = "shipshape.ship-status/1"
 PROBE_TIMEOUT = 5.0
@@ -428,6 +430,8 @@ def attention_for(doc: dict, failed_units: list[str]) -> list[dict]:
             add("signin-expired", f"The {label} sign-in has expired.", svc)
     for unit in failed_units:
         add("unit-failed", f"{unit} has failed.", unit)
+    for code, message in ssh_attention(doc.get("ssh")):
+        add(code, message)
     if doc["host"]["reboot_required"]:
         add("reboot-required", "A reboot is needed to finish updates.")
     for tid, tool in doc["tools"].items():
@@ -462,6 +466,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_herdr = pool.submit(probe_herdr, ctx)
         f_claude = pool.submit(probe_claude_version, ctx)
         f_units = pool.submit(probe_failed_units, ctx)
+        f_ssh = pool.submit(ssh_state, ctx)
         f_auth = {svc: pool.submit(AUTH_PROBES[svc], ctx) for svc in AUTH_SERVICES}
         host, e = f_host.result()
         errors += e
@@ -472,6 +477,8 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         claude_version, e = f_claude.result()
         errors += e
         failed_units, e = f_units.result()
+        errors += e
+        ssh, e = f_ssh.result()
         errors += e
         auth = {}
         for svc, fut in f_auth.items():
@@ -510,6 +517,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         "auth": auth,
         "tools": tools,
         "net": None,
+        "ssh": ssh,
         "errors": [],
     }
     doc["state"] = derive_state(doc)

@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import tomlw
+from . import sshtrust, tomlw
 from .context import Context
 from .errors import CtlError
 from .fsutil import remove, write_atomic
@@ -173,6 +173,12 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
     # Root-owned: the LAN announcement. avahi reloads its services folder by itself.
     avahi = paths.p("/etc/avahi/services/shipshape.service")
     note(avahi, write_atomic(avahi, avahi_service(ship), 0o644, dry_run=dry_run))
+
+    # Root-owned: who may log in with a certificate, and sshd's certificate settings.
+    ssh_changed, ssh_messages = sshtrust.apply_files(ctx, ship, dry_run=dry_run)
+    for path in ssh_changed:
+        note(path, True)
+    messages += ssh_messages
 
     if ship.lan_guard:
         messages.append("network.lan_guard is not built yet (phase 2); no rules were written.")
