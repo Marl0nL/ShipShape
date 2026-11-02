@@ -70,15 +70,20 @@ SEVERITY = {
     "signin-expired": "high",
     "provision-failed": "high",
     "unit-failed": "high",
+    "host-cert-expired": "high",
     "agent-waiting": "medium",
     "signin-missing": "medium",
     "signin-expiring": "medium",
     "tool-failed": "medium",
     "reboot-required": "medium",
     "herdr-restart-pending": "medium",
+    "host-cert-expiring": "medium",
+    "host-cert-missing": "medium",
     "behind-tooling": "low",
     "tool-waiting": "low",
     "tags-differ": "low",
+    "ssh-trust-behind": "low",
+    "net-collector-down": "low",
 }
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 

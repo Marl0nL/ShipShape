@@ -14,6 +14,7 @@ import gzip
 import hashlib
 import io
 import json
+import re
 import subprocess
 import tarfile
 from datetime import UTC, datetime
@@ -260,6 +261,15 @@ def test_select_unknown_tag_or_name(store):
     with pytest.raises(FleetError):
         ops.select(store.load(), ["ship-09"])
 
+
+
+def test_every_attention_code_in_the_contract_has_a_severity():
+    """A code added to the contract without a severity would sort as medium by default."""
+    schema = json.loads((HERE.parents[1] / "contracts" / "ship-status.schema.json").read_text())
+    text = schema["properties"]["attention"]["items"]["properties"]["code"]["description"]
+    codes = set(re.findall(r"\b[a-z]+(?:-[a-z]+)+\b", text)) - {"as-is"}
+    assert "herdr-restart-pending" in codes and "tags-differ" in codes
+    assert sorted(codes - set(ops.SEVERITY)) == []
 
 # --- reboot -------------------------------------------------------------------
 
