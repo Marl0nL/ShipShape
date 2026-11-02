@@ -110,7 +110,9 @@ class Relay:
                         noted.add(msg.name)
                     continue
                 value = match.group(1)
-                msg.write_text(text.replace(value, "[used]"))
+                head = text[: len(text) - len(body)]
+                # Scrub only the matched value, not every look-alike in the message.
+                msg.write_text(head + body[: match.start(1)] + "[used]" + body[match.end(1) :])
                 handled = self.inbox / "handled"
                 handled.mkdir(exist_ok=True)
                 msg.rename(handled / msg.name)
@@ -370,19 +372,26 @@ def run(fleet: Fleet, name: str) -> None:
 
     # The patterns go in on stdin, so they never appear on a command line (sudo
     # logs command lines to the journal the sweep reads).
+    # Per source: "<count> <source>" for each source with a match. Only counts and
+    # file names come back, never the matching text.
     sweep = (
-        'p="$(mktemp)"; cat > "$p"; sudo -n bash -c "{ journalctl -o cat --no-pager; '
-        "cat /var/log/shipshape/*.log /home/*/.bash_history /root/.bash_history "
-        "/home/agent/.config/gcloud/logs/*/*.log 2>/dev/null; } | grep -cEf $p || true\"; "
+        'p="$(mktemp)"; cat > "$p"; sudo -n bash -c "'
+        "n=\\$(journalctl -o cat --no-pager | grep -cEf $p); "
+        "[ \\$n -gt 0 ] && echo \\$n journal; "
+        "grep -cEf $p /var/log/shipshape/*.log /home/*/.bash_history /root/.bash_history "
+        "/home/agent/.config/gcloud/logs/*/*.log 2>/dev/null | grep -v ':0$' "
+        "| sed -E 's/^(.*):([0-9]+)$/\\2 \\1/'; true\"; "
         'rm -f "$p"'
     )
-    leaks = fleet.ssh_input(name, TOKEN_PATTERNS + "\n", "bash", "-c", sweep,
-                            timeout=300).text.strip()
+    found = fleet.ssh_input(name, TOKEN_PATTERNS + "\n", "bash", "-c", sweep,
+                            timeout=300).text.split("\n")
+    found = [line.strip() for line in found if line.strip()]
+    leaks = sum(int(line.split()[0]) for line in found if line.split()[0].isdigit())
     local = sum(len(re.findall(TOKEN_PATTERNS, p.read_text(errors="replace")))
                 for p in (fleet.workdir / "data").rglob("*") if p.is_file())
     step("No token or Google sign-in code in any log or shell history, on either side",
-         leaks in ("0", "") and local == 0,
-         f"Ship matches {leaks or 0}, FleetLedger matches {local}")
+         leaks == 0 and local == 0,
+         f"Ship matches {leaks} ({'; '.join(found) or 'none'}), FleetLedger matches {local}")
 
     fleet.cli("logout", name, "all", check=False)
     auth = fleet.status(name)["status"]["auth"]
