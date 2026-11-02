@@ -18,7 +18,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import PERMISSION_MODES
+from . import PERMISSION_MODES, overlay
 from .context import Context, utc_now
 from .fsutil import read_json, write_atomic
 from .net import status_section as net_section
@@ -484,6 +484,10 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             "herdr was updated; the running server is the old version until the next reboot.",
             "herdr",
         )
+    ov = doc.get("overlay")
+    if ov and ov["joined"] and ov["state"] != "running":
+        add("overlay-down", f"The overlay network is {ov['state']}; the Ship cannot be reached "
+            "off the LAN.", "overlay")
     for tid, tool in doc["tools"].items():
         if tool["state"] == "waiting":
             needs = ", ".join(SERVICE_LABELS.get(s, s) for s in tool.get("waiting_for", []))
@@ -516,6 +520,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_herdr = pool.submit(probe_herdr, ctx)
         f_claude = pool.submit(probe_claude_version, ctx)
         f_units = pool.submit(probe_failed_units, ctx)
+        f_overlay = pool.submit(overlay.status, ctx, ship)
         f_ssh = pool.submit(ssh_state, ctx)
         f_net = pool.submit(net_section, ctx)
         f_pending = pool.submit(herdr_restart_pending, ctx)
@@ -534,6 +539,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         errors += e
         net, e = f_net.result()
         errors += e
+        overlay_doc = f_overlay.result()
         auth = {}
         for svc, fut in f_auth.items():
             entry, e = fut.result()
@@ -570,6 +576,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         },
         "auth": auth,
         "tools": tools,
+        "overlay": overlay_doc,
         "net": net,
         "ssh": ssh,
         "errors": [],

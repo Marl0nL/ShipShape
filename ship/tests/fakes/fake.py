@@ -245,6 +245,10 @@ def cloud_init(s: dict, a: list[str]) -> int:
 
 
 def systemctl(s: dict, a: list[str]) -> int:
+    if "tailscaled" in a and a[:1] in (["enable"], ["disable"]):
+        s.setdefault("tailscale", {})["daemon"] = a[0] == "enable"
+        save(s)
+        return 0
     if a[:1] == ["is-active"]:
         state = s.get("active", {}).get(a[-1], "inactive")
         out(state)
@@ -350,6 +354,38 @@ def ip(s: dict, a: list[str]) -> int:
     return 0
 
 
+def tailscale(s: dict, a: list[str]) -> int:
+    """The overlay (phase 5). scenario["tailscale"]: backend, name, ips, tags, up_fails."""
+    t = s.setdefault("tailscale", {})
+    if a[:1] == ["status"]:
+        if not t.get("daemon", False):
+            print("failed to connect to local tailscaled", file=sys.stderr)
+            return 1
+        out({"BackendState": t.get("backend", "NeedsLogin"),
+             "Self": {"DNSName": t.get("name", "") + ".", "TailscaleIPs": t.get("ips", []),
+                      "Tags": t.get("tags", []), "ID": "nExample"}})
+        return 0
+    if a[:1] == ["up"]:
+        key_arg = next(x for x in a if x.startswith("--auth-key="))
+        # Record what the key file held while `up` ran, so tests can check it was there.
+        t["key_seen"] = Path(key_arg.removeprefix("--auth-key=file:")).read_text().strip()
+        if t.get("up_fails"):
+            save(s)
+            print(f"backend error: invalid key: {t['key_seen']} not valid", file=sys.stderr)
+            return 1
+        t.update(backend=t.get("after_up", "Running"), daemon=True,
+                 name=t.get("name") or "ship-01.example-tailnet.ts.net",
+                 ips=t.get("ips") or ["192.0.2.10", "fd7a:115c:a1e0::a"],
+                 tags=[x.split("=", 1)[1] for x in a if x.startswith("--advertise-tags=")])
+        save(s)
+        return 0
+    if a[:1] == ["logout"]:
+        t.update(backend="NeedsLogin", name="", ips=[], tags=[])
+        save(s)
+        return 0
+    return 0
+
+
 HANDLERS = {
     "herdr": herdr,
     "claude": claude,
@@ -362,6 +398,7 @@ HANDLERS = {
     "systemctl": systemctl,
     "journalctl": journalctl,
     "visudo": lambda s, a: 0,
+    "tailscale": tailscale,
     "sshd": sshd,
     "vnstat": vnstat,
     "nft": nft,

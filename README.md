@@ -34,6 +34,7 @@ ship-fleet ui                          # the same in your browser (this computer
 Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [create a Ship](docs/runbooks/create-ship.md),
 [baked images](docs/runbooks/images.md),
+[access from outside the LAN](docs/runbooks/remote-access.md),
 [sign it in](docs/runbooks/sign-in.md),
 [attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, herdr --remote),
 [the web UI](docs/web-ui.md),

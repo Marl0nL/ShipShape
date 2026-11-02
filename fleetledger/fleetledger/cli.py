@@ -22,12 +22,12 @@ from fleetledger.errors import FleetError
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "set", "tag", "tools", "update", "reboot", "attention", "pins", "ssh", "logs", "ca",
-    "trust", "untrust", "net", "ui", "destroy", "snapshot", "image",
+    "trust", "untrust", "net", "ui", "destroy", "snapshot", "image", "overlay",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
-EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle",)
+EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access")
 
 
 @dataclass
