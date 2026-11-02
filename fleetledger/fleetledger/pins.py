@@ -10,8 +10,9 @@ changed pin out. This module does the careful part of changing one:
 - The Ubuntu cloud image: SHA256SUMS and its signature are fetched for the new
   build, the signature is checked with gpgv against the pinned signing key alone
   (fetched by fingerprint; the keyserver's answer must hold exactly that one key,
-  only it goes into gpgv's keyring, and gpgv must name it as the signer), and the
-  image hashes are taken from the verified file. The image itself is not downloaded.
+  only it goes into gpgv's keyring, and gpgv must name it as the signer of a good
+  signature, refusing a key that is expired or revoked), and the image hashes
+  are taken from the verified file. The image itself is not downloaded.
 
 versions.toml is edited in place with tomlkit, so comments and layout stay, and
 the result must still validate against contracts/versions.schema.json.
@@ -262,12 +263,20 @@ def _primary_fingerprints(colons: str) -> list[str]:
     return out
 
 
+# gpgv status words that say a signature was made by a key no longer good to trust
+# (expired or revoked), or has itself expired. Not KEYEXPIRED or KEYREVOKED: gpgv
+# prints those about any key or subkey it looks at, such as an old expired signing
+# subkey beside the live key that made the signature.
+DEAD_KEY_STATUS = frozenset({"EXPKEYSIG", "REVKEYSIG", "EXPSIG"})
+
+
 def verify_sums(sums: bytes, signature: bytes, armored_key: bytes, fingerprint: str) -> None:
     """Check SHA256SUMS against its signature with the pinned key and nothing else.
 
     The keyserver's answer must hold exactly one key, the pinned one; only that
     key is exported into the keyring gpgv uses, and gpgv must report a good
-    signature whose primary key is the pinned fingerprint.
+    signature whose primary key is the pinned fingerprint, made by a key that is
+    neither expired nor revoked.
     """
     fingerprint = fingerprint.replace(" ", "").upper()
     with tempfile.TemporaryDirectory(prefix="fleetledger-gpg-") as tmp:
@@ -303,11 +312,19 @@ def verify_sums(sums: bytes, signature: bytes, armored_key: bytes, fingerprint: 
             )
         except FileNotFoundError as exc:
             raise FleetError("gpgv is needed to check the Ubuntu image signature.") from exc
+        status = result.stdout.decode("utf-8", "replace").splitlines()
+        words = [line.split()[1] for line in status
+                 if line.startswith("[GNUPG:] ") and len(line.split()) > 1]
+        # gpgv says VALIDSIG, and exits 0, for an expired or revoked key too;
+        # GOODSIG is only for a live one (apt's gpgv wrapper requires it the same way).
+        dead = sorted(set(words) & DEAD_KEY_STATUS)
+        if dead:
+            raise FleetError("SHA256SUMS is signed by the pinned Ubuntu signing key, but gpgv "
+                             f"reports the key as {', '.join(dead)}. Not pinning it.")
         # [GNUPG:] VALIDSIG <signing key fpr> ... <primary key fpr> (the last field)
-        signed_by = [line.split()[-1].upper() for line in
-                     result.stdout.decode("utf-8", "replace").splitlines()
+        signed_by = [line.split()[-1].upper() for line in status
                      if line.startswith("[GNUPG:] VALIDSIG ")]
-        if result.returncode != 0 or signed_by != [fingerprint]:
+        if result.returncode != 0 or signed_by != [fingerprint] or words.count("GOODSIG") != 1:
             raise FleetError("SHA256SUMS does not carry a good signature from the pinned "
                              "Ubuntu signing key. Not pinning it.")
 

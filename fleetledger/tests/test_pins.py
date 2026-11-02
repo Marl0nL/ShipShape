@@ -11,6 +11,7 @@ import io
 import json
 import shutil
 import subprocess
+import time
 import tomllib
 from pathlib import Path
 
@@ -329,6 +330,87 @@ def test_verify_sums_checks_who_signed(signer, attacker, monkeypatch):
     with pytest.raises(FleetError, match="good signature"):
         pins.verify_sums(sums, attacker[0](sums), signer[1] + attacker[1], signer[2])
 
+
+
+def dead_key(home, state):
+    """(sums, signature, armored key, fpr) for a key that signed while it was good
+    and is now expired or revoked, as a keyserver would hand it out afterwards."""
+    home.mkdir(mode=0o700)
+    gpg = ["gpg", "--batch", "--homedir", str(home), "--passphrase", "",
+           "--pinentry-mode", "loopback"]
+    then = int(time.time()) - 3 * 86400
+    expiry = "1d" if state == "expired" else "never"
+    subprocess.run([*gpg, f"--faked-system-time={then}!", "--quick-gen-key",
+                    f"{state} <{state}@example.com>", "ed25519", "sign", expiry],
+                   check=True, capture_output=True)
+    listing = subprocess.run([*gpg, "--with-colons", "--list-keys"], check=True,
+                             capture_output=True, text=True).stdout
+    fpr = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+    sums = sums_text()
+    signature = subprocess.run([*gpg, f"--faked-system-time={then + 3600}!", "--detach-sign",
+                                "--armor"], input=sums, check=True, capture_output=True).stdout
+    if state == "revoked":
+        # The revocation certificate gpg leaves at key creation, with its guard colon removed.
+        cert = (home / "openpgp-revocs.d" / f"{fpr}.rev").read_text()
+        cert = cert.replace(":-----BEGIN PGP PUBLIC KEY BLOCK-----",
+                            "-----BEGIN PGP PUBLIC KEY BLOCK-----")
+        subprocess.run([*gpg, "--import"], input=cert.encode(), check=True, capture_output=True)
+    armored = subprocess.run([*gpg, "--armor", "--export", fpr], check=True,
+                             capture_output=True).stdout
+    return sums, signature, armored, fpr
+
+
+@needs_gpg
+@pytest.mark.parametrize("state,word", [("expired", "EXPKEYSIG"), ("revoked", "REVKEYSIG")])
+def test_verify_sums_refuses_an_expired_or_revoked_pinned_key(tmp_path, state, word):
+    """gpgv reports VALIDSIG and exits 0 for these; only a live key's GOODSIG counts."""
+    sums, signature, armored, fpr = dead_key(tmp_path / "gnupg", state)
+    with pytest.raises(FleetError, match=f"reports the key as .*{word}"):
+        pins.verify_sums(sums, signature, armored, fpr)
+
+
+@needs_gpg
+@pytest.mark.parametrize("state", ["expired", "revoked"])
+def test_verify_sums_needs_goodsig_even_without_the_dead_key_list(tmp_path, monkeypatch, state):
+    """Either layer alone refuses a dead key: here the status-word list is emptied."""
+    monkeypatch.setattr(pins, "DEAD_KEY_STATUS", frozenset())
+    sums, signature, armored, fpr = dead_key(tmp_path / "gnupg", state)
+    with pytest.raises(FleetError, match="good signature"):
+        pins.verify_sums(sums, signature, armored, fpr)
+
+
+@needs_gpg
+def test_verify_sums_accepts_a_live_key_with_an_old_expired_signing_subkey(tmp_path):
+    """gpgv prints KEYEXPIRED for the old subkey, but the live primary made a good
+    signature: that is not a dead key, so it must pass."""
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    gpg = ["gpg", "--batch", "--homedir", str(home), "--passphrase", "",
+           "--pinentry-mode", "loopback"]
+    then = int(time.time()) - 3 * 86400
+    subprocess.run([*gpg, f"--faked-system-time={then}!", "--quick-gen-key",
+                    "Live <live@example.com>", "ed25519", "sign", "never"],
+                   check=True, capture_output=True)
+    listing = subprocess.run([*gpg, "--with-colons", "--list-keys"], check=True,
+                             capture_output=True, text=True).stdout
+    fpr = next(line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr:"))
+    subprocess.run([*gpg, f"--faked-system-time={then}!", "--quick-add-key", fpr, "ed25519",
+                    "sign", "1d"], check=True, capture_output=True)
+    sums = sums_text()
+    signature = subprocess.run([*gpg, "-u", f"{fpr}!", "--detach-sign", "--armor"],
+                               input=sums, check=True, capture_output=True).stdout
+    armored = subprocess.run([*gpg, "--armor", "--export", fpr], check=True,
+                             capture_output=True).stdout
+    keyring = tmp_path / "k.gpg"
+    keyring.write_bytes(subprocess.run([*gpg, "--export", fpr], check=True,
+                                       capture_output=True).stdout)
+    (tmp_path / "s").write_bytes(sums)
+    (tmp_path / "s.asc").write_bytes(signature)
+    raw = subprocess.run(["gpgv", "--status-fd", "1", "--keyring", str(keyring),
+                          str(tmp_path / "s.asc"), str(tmp_path / "s")],
+                         capture_output=True, text=True).stdout
+    assert "[GNUPG:] KEYEXPIRED " in raw and "[GNUPG:] GOODSIG " in raw  # the case is real
+    pins.verify_sums(sums, signature, armored, fpr)
 
 def test_primary_fingerprints_skips_subkeys():
     colons = "\n".join([
