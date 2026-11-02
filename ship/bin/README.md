@@ -46,7 +46,7 @@ through `homefs.py`: paths are opened one folder at a time with `O_NOFOLLOW`, a
 symlink anywhere on the way is refused (and reported in `messages`), and writes
 replace the file by `renameat`. Inside a folder ship-ctl owns outright (a skill
 copied by `tools`), stray symlinks are removed rather than followed.
-`ship/tests/test_symlinks.py` plants links for each case.
+`ship/tests/test_ship_symlinks.py` plants links for each case.
 
 ## Check on a real Ship (W11)
 
@@ -59,7 +59,7 @@ The tests use fakes, so these need a live Ship:
 - `claude auth status --json` signed in gives `email` and `subscriptionType`;
   `gh auth status` wording still yields the login.
 - Autostart sessions show `<prefix>-<agent>` names in the Claude app
-  (`claude --name`), and whether the name survives `claude --resume`.
+  (`claude --name`; phase 0 saw names survive `claude --resume`).
 
 ## Testing without a Ship
 

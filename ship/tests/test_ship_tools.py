@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import assert_valid
+from ship_harness import assert_valid
 
 RECIPES = {
     "example-cli": """\

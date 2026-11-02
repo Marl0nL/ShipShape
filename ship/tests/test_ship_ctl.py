@@ -6,7 +6,7 @@ import json
 import tomllib
 
 import pytest
-from conftest import BOOT_ID, assert_valid
+from ship_harness import BOOT_ID, assert_valid
 
 
 # --- status ---------------------------------------------------------------------

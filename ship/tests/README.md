@@ -1,6 +1,8 @@
 # ship/tests
 
 Unit tests for the Ship track (pytest; `pytest.ini` already lists this folder).
+Test modules are named `test_ship_*.py`: pytest imports test modules by basename,
+so they must not clash with `fleetledger/tests/`.
 Excluded from the tooling bundle.
 
 `conftest.py` builds a sandbox Ship per test: a temporary root with `ship.toml`,

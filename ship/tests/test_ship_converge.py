@@ -10,7 +10,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
-from conftest import assert_valid, make_bundle
+from ship_harness import assert_valid, make_bundle
 
 PROVISION_OK = '#!/bin/sh\necho converge >> "$SHIPSHAPE_ROOT/provision-ran"\n'
 PROVISION_FAIL = "#!/bin/sh\nexit 3\n"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from conftest import assert_valid
+from ship_harness import assert_valid
 
 
 def started_args(ship) -> dict[str, list[str]]:

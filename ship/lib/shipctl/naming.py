@@ -4,11 +4,12 @@ Every Claude session a Ship starts carries a readable, deterministic name,
 <session prefix>-<agent name> (the prefix defaults to the Ship's name), so the
 Claude app lists `ship-01-main` instead of an auto-generated title.
 
-`launch_args` turns the name into what the Claude launch needs: `--name <name>`
-(phase 0 showed `claude -n` names appear in the Claude app). The flag is passed
-only when the installed Claude Code lists it in `claude --help`, since the pinned
-minimum version predates the check. Whether the name survives `claude --resume`
-is being confirmed in phase 0.
+`launch_args` turns the name into what the Claude launch needs: `--name <name>`.
+Phase 0 showed names set this way appear as titles in the Claude app and survive
+`claude --resume` across a reboot, so herdr's own resume keeps them and the
+resume shim needs no part in it. The flag is passed only when the installed
+Claude Code lists it in `claude --help`, since the pinned minimum version
+predates that check.
 """
 
 from __future__ import annotations
