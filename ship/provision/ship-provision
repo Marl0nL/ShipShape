@@ -340,6 +340,19 @@ step_uv() {
   rm -rf "$tmp"
 }
 
+# ship-axi's Node dependencies, from its lockfile, into this release (root-owned).
+step_ship_axi() {
+  local dir=$BUNDLE/axi want have
+  [ -f "$dir/package-lock.json" ] || return 0
+  want=$(v npm.axi-sdk-js)
+  have=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' \
+    "$dir/node_modules/axi-sdk-js/package.json" 2>/dev/null || true)
+  [ "$have" != "$want" ] || return 0
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): npm ci for ship-axi"; return 0; fi
+  changed "ship-axi dependencies (axi-sdk-js $want)"
+  [ "$DRY" = 1 ] || (cd "$dir" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+}
+
 # --- the agent user --------------------------------------------------------------
 # The agent owns its home and can put a symlink anywhere in it, so everything
 # below runs AS the agent: a planted link can then only reach the agent's own
@@ -431,8 +444,8 @@ step_shipshape_files() {
   put_file "$FILES/shim/claude.py" /opt/shipshape/shim/claude 0755
   put_file "$FILES/hooks/mode_ledger.py" /opt/shipshape/hooks/mode-ledger 0755
   put_link /opt/shipshape/current/bin/ship-ctl /usr/local/bin/ship-ctl
-  if [ -e "$BUNDLE/axi/bin/ship-axi" ]; then
-    put_link /opt/shipshape/current/axi/bin/ship-axi /usr/local/bin/ship-axi
+  if [ -e "$BUNDLE/axi/bin/ship-axi.js" ]; then
+    put_link /opt/shipshape/current/axi/bin/ship-axi.js /usr/local/bin/ship-axi
   fi
   put_dir /etc/shipshape 0755
   put_dir /var/lib/shipshape 0755
@@ -576,6 +589,7 @@ main() {
   step_herdr
   step_uv
   step_shipshape_files
+  step_ship_axi
   step_agent_home
   step_claude
   step_system_config

@@ -66,6 +66,8 @@ quota-axi = "0.1.69"
 chrome-devtools-axi = "0.1.46"
 chrome-devtools-mcp = "1.12.0"
 axi-sdk-js = "0.1.13"
+lavish-axi = "0.1.96"
+tasks-axi = "0.2.6"
 
 [apt.github-cli]
 url = "https://cli.github.com/packages"

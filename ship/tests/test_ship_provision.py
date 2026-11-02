@@ -47,6 +47,8 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     assert mode(root / "opt/shipshape/shim/claude") == "0o755"
     assert mode(root / "opt/shipshape/hooks/mode-ledger") == "0o755"
     assert os.readlink(root / "usr/local/bin/ship-ctl") == "/opt/shipshape/current/bin/ship-ctl"
+    axi = os.readlink(root / "usr/local/bin/ship-axi")
+    assert axi == "/opt/shipshape/current/axi/bin/ship-axi.js"
     assert (root / "etc/ssh/sshd_config.d/10-shipshape.conf").exists()
     assert (root / "etc/systemd/logind.conf.d/50-shipshape.conf").exists()
     assert (root / "etc/systemd/journald.conf.d/50-shipshape.conf").exists()

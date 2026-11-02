@@ -1,0 +1,22 @@
+# A headless browser for agents. Google Chrome comes from Google's signed apt repo
+# (versions.toml [apt.google-chrome], amd64 only) and chrome-devtools-mcp is pinned,
+# so nothing is fetched with npx ...@latest at run time.
+schema = 1
+id = "chrome-devtools-axi"
+description = "A headless browser to open pages, take snapshots and debug web apps"
+kind = "npm"
+package = "chrome-devtools-axi"
+version = "0.1.46"
+apt = ["google-chrome-stable"]
+also_npm = ["chrome-devtools-mcp@1.12.0"]
+after = ["chrome-devtools-axi setup hooks"]
+check = "chrome-devtools-axi --version"
+default = true
+bake = true
+
+[env]
+CHROME_DEVTOOLS_AXI_MCP_PATH = "~/.local/lib/node_modules/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"
+# An idle browser bridge stops itself after 30 minutes, to give the memory back.
+CHROME_DEVTOOLS_AXI_IDLE_TIMEOUT_MS = "1800000"
+CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS = "1"
+CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS = "1"

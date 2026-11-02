@@ -1,0 +1,19 @@
+{
+  "name": "ship-axi",
+  "version": "0.1.0",
+  "description": "Tells agents about the Ship they are on (ShipShape)",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ship-axi": "bin/ship-axi.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "axi-sdk-js": "0.1.13"
+  }
+}

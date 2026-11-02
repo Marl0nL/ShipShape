@@ -1,0 +1,13 @@
+# The Ship's own tool: tells agents which Ship they are on and how it is managed.
+# Part of the Ship tooling (ship/axi), not published; ship-provision installs its
+# Node dependencies and /usr/local/bin/ship-axi. This recipe adds the `ship` skill
+# and the Claude session-start hook for the agent user.
+schema = 1
+id = "ship-axi"
+description = "Context about this Ship and how it is managed, for agents"
+kind = "script"
+script = "ship-axi.sh"
+after = ["ship-axi setup hooks"]
+check = "ship-axi --version"
+default = true
+bake = true

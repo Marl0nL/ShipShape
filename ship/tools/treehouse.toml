@@ -1,0 +1,7 @@
+# Disposable git worktrees for agents (github.com/kunchenguid/treehouse).
+schema = 1
+id = "treehouse"
+description = "Pools of disposable git worktrees for agents"
+kind = "script"
+script = "treehouse.sh"
+check = "treehouse --version"

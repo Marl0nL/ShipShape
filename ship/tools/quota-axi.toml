@@ -1,0 +1,11 @@
+# Claude usage windows, read locally, so agents can pace themselves.
+schema = 1
+id = "quota-axi"
+description = "Claude usage windows, read locally, so agents can pace themselves"
+kind = "npm"
+package = "quota-axi"
+version = "0.1.69"
+needs = ["claude"]
+check = "quota-axi --version"
+default = true
+bake = true

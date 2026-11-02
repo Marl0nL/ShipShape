@@ -1,0 +1,9 @@
+# Rich HTML review surfaces that agents open for a person to annotate.
+schema = 1
+id = "lavish-axi"
+description = "Rich HTML review pages agents share with a person for feedback"
+kind = "npm"
+package = "lavish-axi"
+version = "0.1.96"
+after = ["lavish-axi setup hooks"]
+check = "lavish-axi --version"
