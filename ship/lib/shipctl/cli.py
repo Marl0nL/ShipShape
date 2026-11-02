@@ -31,6 +31,10 @@ SET_KEYS = {
     "agent.sudo": "bool",
     "network.lan_guard": "bool",
 }
+RC_CHANGE_NOTE = (
+    "Remote Control changes reach running Claude sessions only when they restart "
+    "(a reboot restarts them); the Claude app can take a few minutes to show or drop them."
+)
 
 
 def result(command, ok=True, changed=(), messages=(), data=None, error=None) -> dict:
@@ -149,8 +153,12 @@ def cmd_set(ctx: Context, args) -> dict:
     changed = []
     if shiptoml.save(new, ctx.paths.ship_toml):
         changed.append(ctx.paths.agent_path(ctx.paths.ship_toml))
-    applied, messages = apply.apply(ctx, shiptoml.ShipToml(new))
-    return result("set", changed=changed + applied, messages=messages or ["Saved and applied."])
+    new_ship = shiptoml.ShipToml(new)
+    applied, messages = apply.apply(ctx, new_ship)
+    messages = messages or ["Saved and applied."]
+    if (current.claude["remote_control"] == "on") != (new_ship.claude["remote_control"] == "on"):
+        messages.append(RC_CHANGE_NOTE)
+    return result("set", changed=changed + applied, messages=messages)
 
 
 def cmd_status(ctx: Context, args) -> dict:

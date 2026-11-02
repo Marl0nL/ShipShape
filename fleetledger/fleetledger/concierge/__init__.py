@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from fleetledger.concierge import audit
 from fleetledger.concierge.engine import Child, Flow, FlowResult, Prompter, spawn
 from fleetledger.concierge.providers import Check, Provider
+from fleetledger.concierge.redact import clean
 from fleetledger.inventory import Inventory, Ship
 from fleetledger.ssh import SSH, as_agent
 
@@ -57,7 +58,9 @@ def _json_path(doc: object, path: str) -> object:
 
 def run_check(ssh: SSH, inventory: Inventory, ship: Ship, check: Check) -> CheckResult:
     result = ssh.run(ship, as_agent(check.run), timeout=90)
-    text = result.text
+    # Escapes off first: a login printed in bold (or a login shell's OSC 3008
+    # terminal-context line) must never end up inside the account name.
+    text = clean(result.text)
     signed_in = result.returncode == 0
     account = None
     doc = None

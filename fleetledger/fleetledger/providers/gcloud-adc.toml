@@ -1,8 +1,12 @@
 # Application Default Credentials only (for example to add scopes later).
+#
+# Every gcloud command runs with file logging off: gcloud's own debug log
+# (~/.config/gcloud/logs) records the sign-in code during `auth login`, and
+# the other commands handle tokens (phase 0 spike S5).
 id = "gcloud-adc"
 label = "Google ADC"
 mode = "paste-back"
-run = "gcloud auth application-default login --no-launch-browser"
+run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default login --no-launch-browser"
 timeout = 600
 
 [match]
@@ -13,7 +17,7 @@ failure = '(?i)(?:invalid_grant|ERROR: \(gcloud\.auth)'
 
 [[check]]
 service = "gcloud_adc"
-run = "gcloud auth application-default print-access-token >/dev/null"
+run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default print-access-token >/dev/null"
 
 [logout]
-run = "gcloud auth application-default revoke --quiet"
+run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default revoke --quiet"

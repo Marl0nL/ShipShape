@@ -108,7 +108,7 @@
         "remote_control": {
           "$ref": "#/$defs/remoteControl",
           "default": "on",
-          "description": "on: remoteControlAtStartup true; off: false; blocked: also disableRemoteControl."
+          "description": "on: remoteControlAtStartup true. off: remoteControlAtStartup false and disableRemoteControl true, which also keeps resumed sessions from reconnecting. blocked: an older name for off, identical to it; still accepted."
         },
         "default_mode": { "$ref": "#/$defs/permissionMode", "default": "auto" },
         "allow_bypass": {
@@ -120,7 +120,7 @@
         "session_prefix": {
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$",
-          "description": "Remote Control session-name prefix. Default: the Ship's name."
+          "description": "Session names: sessions the Ship starts are named <session_prefix>-<agent> (claude --name). Also set as the Remote Control name prefix, which only names a session before its first message. Default: the Ship's name."
         }
       }
     },
@@ -173,7 +173,11 @@
           "minLength": 1,
           "description": "ISO-capable storage used only for seed ISOs."
         },
-        "disk_storage": { "type": "string", "minLength": 1 },
+        "disk_storage": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Storage for the Ships' VM disks (the full clone's target). Required, with no default: storage names differ from server to server."
+        },
         "bridge": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,32}$" },
         "token_id": {
           "type": "string",

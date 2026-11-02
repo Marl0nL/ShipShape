@@ -227,7 +227,9 @@ or `--tag work` for every Ship with a tag):
    only once more output follows it, so a link is never cut short. A provider
    can answer fixed prompts (`[match.send]`), each once. gh runs with
    `GH_PROMPT_DISABLED=1`: its interactive prompts wait for a real terminal's
-   cursor report.
+   cursor report. Every gcloud command runs with
+   `CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1`: gcloud's own debug log would
+   otherwise store the sign-in code.
 4. **You.** FleetLedger shows the link and how long it stays valid, plus the
    code for device flows. Paste-back flows read your code with `getpass`, so it
    is not echoed, and type it into the Ship's terminal. It is never on a command
@@ -246,8 +248,9 @@ or `--tag work` for every Ship with a tag):
 If a pattern misses (a tool changed its wording), you are offered the live
 terminal to finish by hand; the checks still run afterwards. No transcript is
 kept: the output buffer lives in memory for the flow only. What is shown on
-failure is a few redacted lines (typed codes, URL query strings and long
-token-like strings removed).
+failure is a few redacted lines (escape sequences stripped first, then typed
+codes, URL query strings, email addresses and long token-like strings such as
+UUIDs removed).
 
 Providers are one TOML file each in `fleetledger/providers/`: the command, mode
 (`paste-back` or `device-code`), timeout, `[match]` patterns (`url`, `code`,

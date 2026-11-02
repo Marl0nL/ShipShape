@@ -23,17 +23,33 @@ Schemas: `ship.toml.schema.json`, `ships.toml.schema.json`. Examples:
 | ship.toml | Managed setting |
 |---|---|
 | `claude.remote_control = "on"` | `"remoteControlAtStartup": true` |
-| `claude.remote_control = "off"` | `"remoteControlAtStartup": false` |
-| `claude.remote_control = "blocked"` | `"remoteControlAtStartup": false` and `"disableRemoteControl": true` |
+| `claude.remote_control = "off"` | `"remoteControlAtStartup": false` and `"disableRemoteControl": true` |
+| `claude.remote_control = "blocked"` | the same as `"off"` (an older name, still accepted) |
 | `claude.default_mode` | `"permissions": { "defaultMode": ... }` |
 | `claude.allow_bypass = false` | `"permissions": { "disableBypassPermissionsMode": "disable" }` |
 | `claude.update_channel` | `"autoUpdatesChannel"`, plus `"minimumVersion"` from `versions.toml` `[claude].minimum_version` |
-| `claude.session_prefix` (default: the Ship's name) | `"env": { "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": ... }` |
+| `claude.session_prefix` (default: the Ship's name) | `"env": { "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": ... }` (a fallback only; see "Session names") |
+
+"off" needs `disableRemoteControl`: `remoteControlAtStartup` governs only new
+sessions, and a resumed session reconnects to the Remote Control session saved
+in its transcript. So "off" and "blocked" now write the same settings. Either
+way, a change reaches a running session only when it restarts (a reboot
+restarts them all), and the Claude app can take a few minutes to show or drop
+sessions.
 
 Never set on a Ship: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` (it turns off
 Remote Control), `DISABLE_AUTOUPDATER` or `DISABLE_UPDATES` (the native installer
 must update itself), `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` (sign-in is
 the agent's own `claude auth login`).
+
+#### Session names
+
+Every Claude session `ship-ctl autostart` starts is launched with
+`--name <session_prefix>-<agent name>` (when the installed Claude Code has
+`--name`). That name is what the Claude app shows, and it survives
+`claude --resume`. To name a session started some other way, send it
+`/rename <name>`. The prefix variable above only names a session that has no
+name and no messages yet, so it is a fallback, not how sessions are named.
 
 ### Agent user files
 

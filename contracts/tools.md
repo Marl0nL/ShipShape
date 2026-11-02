@@ -25,11 +25,11 @@ Schemas: `tool-recipe.schema.json`, `profile.schema.json`. Examples:
 
 For each id in `ship.toml` `[tools].install`, plus the tools of each listed profile:
 
-1. Install `apt` packages as root.
+1. Install `apt` packages as root, with `--no-install-recommends`.
 2. Install by kind, as `run_as` (default `agent`):
    - `npm`: `npm install -g <package>@<version>` and every `also_npm` entry, with
      the agent's npm prefix in `~/.local`.
-   - `apt`: `apt-get install <package>`.
+   - `apt`: `apt-get install --no-install-recommends <package>`.
    - `script`: run `ship/tools/<script>` with bash.
    - `skill-dir`: copy `ship/<skill_dir>` to `~/.claude/skills/<id>/`.
    - `claude-plugin`: `claude plugin install` (from `marketplace` if given).
