@@ -146,6 +146,29 @@ def test_parse_ss_and_listening_ports():
     }
 
 
+def test_addresses_are_written_canonically():
+    """Contract: no zone index, IPv4-mapped IPv6 as plain IPv4."""
+    line = "1.5 77 curl 6 fe80::5%eth0 fe80::1%eth0 443"
+    assert nw.parse_tcpconnect(line) == (77, "curl", "fe80::1", 443)
+    line = "1.5 77 curl 6 ::ffff:192.0.2.5 ::ffff:198.51.100.7 443"
+    assert nw.parse_tcpconnect(line) == (77, "curl", "198.51.100.7", 443)
+    est = "ESTAB 0 0 [fe80::5%eth0]:40000 [::ffff:198.51.100.7]:443\n"
+    assert nw.parse_ss(est) == [("fe80::5", 40000, "198.51.100.7", 443, "?")]
+    for raw in ("fe80::1%eth0", "[::ffff:192.0.2.1]", "::FFFF:192.0.2.1"):
+        assert "%" not in nw.clean_address(raw) and "ffff" not in nw.clean_address(raw)
+
+
+def test_ship_patterns_match_the_contract(monkeypatch):
+    ship_dir = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(ship_dir / "lib"))
+    from shipctl import net
+
+    schema = json.loads((ship_dir / "schemas/net-summary.schema.json").read_text())
+    dest = schema["properties"]["destinations"]["items"]["properties"]
+    assert net.NAME.pattern == dest["name"]["pattern"]
+    assert net.ADDRESS.pattern == dest["addresses"]["items"]["pattern"]
+
+
 def test_scope():
     assert nw.scope_of("127.0.0.1") == "local"
     assert nw.scope_of("10.1.2.3") == "lan" and nw.scope_of("100.64.0.1") == "lan"  # hygiene: allow

@@ -87,8 +87,9 @@ def clean_program(comm: object) -> str:
 
 
 def clean_address(text: str) -> str | None:
+    """Canonical form (net-summary contract): no zone index, mapped IPv6 as IPv4."""
     try:
-        addr = ipaddress.ip_address(text.strip().strip("[]"))
+        addr = ipaddress.ip_address(text.strip().strip("[]").split("%")[0])
     except ValueError:
         return None
     if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
@@ -380,7 +381,7 @@ def parse_ss(text: str) -> list[tuple[str, int, str, int, str]]:
             continue
         laddr, _, lport = local.rpartition(":")
         paddr, _, pport = peer.rpartition(":")
-        laddr, paddr = clean_address(laddr.split("%")[0]), clean_address(paddr.split("%")[0])
+        laddr, paddr = clean_address(laddr), clean_address(paddr)
         if not (laddr and paddr and lport.isdigit() and pport.isdigit()):
             continue
         m = SS_USERS.search(line)
