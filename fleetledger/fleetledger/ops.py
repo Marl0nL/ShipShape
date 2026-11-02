@@ -157,7 +157,7 @@ def select(
 
     Exactly one of the three must be given; `all` among the names means everything.
     """
-    names = list(names)
+    names = list(dict.fromkeys(names))  # a Ship named twice is acted on once
     if "all" in names:
         if len(names) > 1:
             raise FleetError("Give Ship names or 'all', not both.")

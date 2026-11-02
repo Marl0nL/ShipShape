@@ -230,6 +230,7 @@ def test_select_by_names_tag_or_all(store):
     assert [s.name for s in ops.select(inv, tag="work")] == ["ship-01"]
     assert [s.name for s in ops.select(inv, ["all"])] == ["ship-01", "ship-02"]
     assert [s.name for s in ops.select(inv, everything=True)] == ["ship-01", "ship-02"]
+    assert [s.name for s in ops.select(inv, ["ship-02", "ship-02"])] == ["ship-02"]
 
 
 @pytest.mark.parametrize("names,tag,everything", [
