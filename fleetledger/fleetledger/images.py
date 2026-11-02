@@ -164,7 +164,9 @@ def inputs_hash(base: BaseImage, repo: Repo, recipes: Sequence[str]) -> str:
     digest = hashlib.sha256()
     digest.update(f"base {base.sha256}\n".encode())
     digest.update(b"versions.toml\n" + repo.versions_path.read_bytes())
-    digest.update(b"ship-provision\n" + (repo.ship_dir / "provision/ship-provision").read_bytes())
+    for rel in ("provision/ship-provision", "image/bake", "image/image-clean.sh"):
+        path = repo.ship_dir / rel
+        digest.update(f"{rel}\n".encode() + (path.read_bytes() if path.exists() else b""))
     for rid in sorted(recipes):
         digest.update(f"recipe {rid}\n".encode() + (repo.tools_dir / f"{rid}.toml").read_bytes())
     return digest.hexdigest()

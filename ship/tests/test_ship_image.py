@@ -145,7 +145,10 @@ def test_bake_with_virt_customize(bake_env):
     run_commands = [args[i + 1] for i, a in enumerate(args) if a == "--run-command"]
     assert any("inside.sh /var/tmp/shipshape-bake 'chrome-devtools-axi'" in c
                for c in run_commands)
-    assert run_commands[-1] == "rm -rf /var/tmp/shipshape-bake"
+    # Clean-up comes after provisioning, and only the bake's folder goes after it.
+    assert run_commands[-2:] == ["bash /var/tmp/shipshape-bake/image-clean.sh",
+                                 "rm -rf /var/tmp/shipshape-bake"]
+    assert any("inside.sh" in c for c in run_commands[:-2])
     # The payload copied in: the bundle, the manifest as image.json, the clean-up.
     with tarfile.open(e.tmp / "payload.tar.gz") as tar:
         names = set(tar.getnames())
@@ -154,7 +157,7 @@ def test_bake_with_virt_customize(bake_env):
     assert {"./bundle/provision/ship-provision", "./image-clean.sh", "./inside.sh"} <= names
     assert image_json == e.manifest
     assert "ship-provision\" --bake" in inside and "/etc/shipshape/image.json" in inside
-    assert inside.index("--bake") < inside.index("image-clean.sh")  # clean last
+    assert "image-clean.sh" not in inside  # each backend runs it last, separately
     assert work_dirs(e) == []
 
 
@@ -206,14 +209,22 @@ def test_bake_needs_virt_customize_or_says_so(bake_env):
     assert r.returncode != 0 and "--backend qemu" in r.stderr
 
 
-def test_qemu_backend_seed_bakes_and_powers_off():
-    """The throwaway seed: no users, no passwords; it bakes, marks success, powers off."""
+def test_qemu_backend_seed_bakes_cleans_after_cloud_init_and_powers_off():
+    """The throwaway seed: no users, no passwords. It bakes; the clean-up runs from a unit
+    in /run ordered after cloud-init's last stage, so cloud-init writes nothing after it;
+    then a clean poweroff. Any failure powers off at once."""
     text = BAKE.read_text()
     start = text.index("#cloud-config")
     user_data = text[start:text.index("USERDATA\n", start)]
     assert "users: []" in user_data and "ssh_pwauth: false" in user_data
-    assert "inside.sh" in user_data
-    assert user_data.rstrip().endswith('systemctl poweroff --force"]')
+    unit = user_data[user_data.index("[Unit]"):user_data.index("runcmd:")]
+    assert "After=cloud-final.service" in unit and "image-clean.sh" in unit
+    assert "/run/systemd/system/shipshape-bake-finish.service" in user_data
+    assert "journalctl --relinquish-var" in unit and "systemctl poweroff" in unit
+    runcmd = user_data[user_data.index("runcmd:"):]
+    assert "inside.sh" in runcmd and "image-clean" not in runcmd
+    assert "start --no-block shipshape-bake-finish.service" in runcmd
+    assert "SHIPSHAPE-BAKE-FAILED" in runcmd and "poweroff --force" in runcmd
     assert "--bind 127.0.0.1" in text  # the payload is served on loopback only
 
 

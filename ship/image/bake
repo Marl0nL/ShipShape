@@ -26,6 +26,7 @@ shopt -s inherit_errexit
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 BASE="" BUNDLE="" MANIFEST="" OUT="" BACKEND=virt-customize GROW=6G
 TIMEOUT=${SHIPSHAPE_BAKE_TIMEOUT:-2400}
+# SHIPSHAPE_BAKE_KEEP=1 keeps the work folder (disk copy, console log) for debugging.
 # This computer, as QEMU's user network shows it to the guest (fixed by QEMU).
 QEMU_HOST=10.0.2.2 # hygiene: allow (QEMU's built-in address, not a real network)
 MARKER=SHIPSHAPE-BAKE-OK
@@ -92,7 +93,11 @@ chmod 0700 "$WORK"
 SERVER_PID=""
 cleanup() {
   [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true
-  rm -rf "$WORK"
+  if [ -n "${SHIPSHAPE_BAKE_KEEP:-}" ]; then
+    log "kept the work folder for debugging: $WORK"
+  else
+    rm -rf "$WORK"
+  fi
 }
 trap cleanup EXIT
 
@@ -106,17 +111,30 @@ cat >"$WORK/inside.sh" <<'INSIDE'
 set -euo pipefail
 dir=$1 recipes=$2
 export DEBIAN_FRONTEND=noninteractive
-# The copy was grown: grow the root filesystem into it (the cloud image's root is
-# partition 1, at the end of the disk; first boot would do the same).
-root=$(findmnt -no SOURCE /)
-disk=/dev/$(lsblk -no PKNAME "$root")
-part=${root##*[!0-9]}
-growpart "$disk" "$part" || true # "NOCHANGE" when there is nothing to grow
-resize2fs "$root" >/dev/null 2>&1 || true
+# The copy was grown: grow the root filesystem into it. The cloud image's root is
+# partition 1, at the end of the disk. Under QEMU cloud-init has already done it.
+root=$(findmnt -no SOURCE / 2>/dev/null || true)
+case $root in
+  /dev/*[0-9])
+    disk=/dev/$(lsblk -no PKNAME "$root" 2>/dev/null | head -n1)
+    growpart "$disk" "${root##*[!0-9]}" || true # NOCHANGE: nothing to grow
+    resize2fs "$root" >/dev/null 2>&1 || true
+    ;;
+esac
+df -h / | tail -n1
+# A booted copy (qemu backend) runs apt jobs of its own at boot: stop them, and have
+# every apt call wait for the lock rather than fail. The setting lives in the bake's
+# folder, not in the image.
+if [ -d /run/systemd/system ]; then
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service \
+    apt-daily-upgrade.service unattended-upgrades.service apt-news.service \
+    esm-cache.service 2>/dev/null || true
+fi
+printf 'DPkg::Lock::Timeout "600";\n' >"$dir/apt.conf"
+export APT_CONFIG=$dir/apt.conf
 "$dir/bundle/provision/ship-provision" --bake ${recipes:+--recipes "$recipes"}
 install -d -m 0755 /etc/shipshape
 install -m 0644 "$dir/image.json" /etc/shipshape/image.json
-bash "$dir/image-clean.sh"
 INSIDE
 
 mkdir -p "$WORK/payload/bundle"
@@ -135,6 +153,7 @@ bake_virt_customize() {
     --copy-in "$WORK/payload.tar.gz:/var/tmp/shipshape-bake" \
     --run-command "tar -xzf /var/tmp/shipshape-bake/payload.tar.gz -C /var/tmp/shipshape-bake" \
     --run-command "bash /var/tmp/shipshape-bake/inside.sh /var/tmp/shipshape-bake '$RECIPES'" \
+    --run-command "bash /var/tmp/shipshape-bake/image-clean.sh" \
     --run-command "rm -rf /var/tmp/shipshape-bake"
 }
 
@@ -146,31 +165,46 @@ bake_qemu() {
   port=$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
   printf 'instance-id: shipshape-bake-%s\nlocal-hostname: shipshape-bake\n' "$ID" >"$seed/meta-data"
   : >"$seed/vendor-data"
+  printf 'version: 2\nethernets:\n  primary:\n    match:\n      name: "e*"\n    dhcp4: true\n' \
+    >"$seed/network-config"
+  # runcmd provisions; the clean-up then runs from a unit ordered after cloud-init's
+  # last stage (in /run, so it is not in the image), and the copy powers off cleanly.
+  # On any failure it powers off at once; the console marker says which.
   cat >"$seed/user-data" <<USERDATA
 #cloud-config
 users: []
 ssh_pwauth: false
 disable_root: true
+write_files:
+  - path: /run/systemd/system/shipshape-bake-finish.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ShipShape bake: clean up, then power off
+      After=cloud-final.service
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/bash -c 'journalctl --relinquish-var; if bash /var/tmp/shipshape-bake/image-clean.sh > /dev/ttyS1 2>&1; then rm -rf /var/tmp/shipshape-bake; echo $MARKER > /dev/ttyS0; else echo SHIPSHAPE-BAKE-FAILED > /dev/ttyS0; fi'
+      ExecStartPost=/bin/systemctl poweroff --no-block
 runcmd:
-  # cloud-init waits for this command, so nothing it would write afterwards lands in
-  # the image: the forced poweroff ends the boot before cloud-init resumes.
-  - [bash, -c, "set -euo pipefail; d=/var/tmp/shipshape-bake; mkdir -p \$d; curl -fsS http://$QEMU_HOST:$port/payload.tar.gz -o \$d/payload.tar.gz; tar -xzf \$d/payload.tar.gz -C \$d; bash \$d/inside.sh \$d '$RECIPES' > /dev/ttyS0 2>&1; rm -rf \$d; echo $MARKER > /dev/ttyS0; sync; systemctl poweroff --force"]
+  - [bash, -c, "d=/var/tmp/shipshape-bake; if mkdir -p \$d && curl -fsS http://$QEMU_HOST:$port/payload.tar.gz -o \$d/payload.tar.gz && tar -xzf \$d/payload.tar.gz -C \$d && bash \$d/inside.sh \$d '$RECIPES' > /dev/ttyS1 2>&1; then systemctl daemon-reload; systemctl start --no-block shipshape-bake-finish.service; else echo SHIPSHAPE-BAKE-FAILED > /dev/ttyS0; sync; systemctl poweroff --force; fi"]
 USERDATA
   python3 -I -m http.server --bind 127.0.0.1 --directory "$seed" "$port" >/dev/null 2>&1 &
   SERVER_PID=$!
   [ -w /dev/kvm ] && accel=(-accel kvm -cpu host)
-  log "booting the copy in QEMU (console: $WORK/console.log)"
+  log "booting the copy in QEMU; this takes 5 to 15 minutes"
   timeout "$TIMEOUT" qemu-system-x86_64 "${accel[@]}" -m 4096 -smp 4 \
     -drive "file=$WORK/disk.qcow2,if=virtio,discard=unmap" \
     -nic user,model=virtio-net-pci \
     -smbios "type=1,serial=ds=nocloud;s=http://$QEMU_HOST:$port/" \
-    -serial "file:$WORK/console.log" -monitor none -display none || {
-    tail -n 60 "$WORK/console.log" >&2 || true
-    die "QEMU failed or did not finish within ${TIMEOUT}s; the console's last lines are above"
+    -serial "file:$WORK/console.log" -serial "file:$WORK/bake-output.log" \
+    -monitor none -display none || {
+    tail -n 60 "$WORK/bake-output.log" >&2 || true
+    die "QEMU failed or did not finish within ${TIMEOUT}s; the bake's last lines are above"
   }
   if ! grep -q "$MARKER" "$WORK/console.log"; then
-    tail -n 60 "$WORK/console.log" >&2 || true
-    die "the bake inside QEMU did not finish; the console's last lines are above"
+    tail -n 60 "$WORK/bake-output.log" >&2 || true
+    die "the bake inside QEMU failed; its last lines are above (SHIPSHAPE_BAKE_KEEP=1 keeps the console log)"
   fi
 }
 
