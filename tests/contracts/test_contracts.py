@@ -9,6 +9,7 @@ Layout (see contracts/README.md):
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -101,6 +102,15 @@ def test_valid_examples_validate(case: tuple[str, Path]):
 def test_invalid_examples_fail(case: tuple[str, Path]):
     name, path = case
     assert not validator(name).is_valid(load_doc(path)), f"{path} should not validate"
+
+
+def test_contract_files_are_not_git_ignored():
+    """A file that exists locally but is ignored would pass here and vanish in CI."""
+    files = [str(p.relative_to(ROOT)) for p in CONTRACTS.rglob("*") if p.is_file()]
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", *files], cwd=ROOT, capture_output=True, text=True
+    )
+    assert result.stdout.strip() == "", f"git-ignored contract files:\n{result.stdout}"
 
 
 def test_shared_definitions_are_identical():

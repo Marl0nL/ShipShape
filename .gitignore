@@ -1,7 +1,7 @@
 # --- Local config: personal, never committed (see docs/hygiene.md) -----------
 # FleetLedger inventory and any local overrides. The repo ships only generic
-# *.example files under contracts/examples/.
-ships.toml
+# examples under contracts/examples/.
+/ships.toml
 *.local.toml
 .env
 .env.*
