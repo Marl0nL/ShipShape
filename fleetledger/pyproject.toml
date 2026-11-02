@@ -7,9 +7,11 @@ requires-python = ">=3.12"
 # Keep in step with the pins in the repo's requirements-dev.txt, which CI tests with.
 dependencies = [
   "jsonschema>=4.26,<5",
+  "pexpect>=4.9,<5",
   "pycdlib>=1.22,<2",
   "PyYAML>=6.0.3,<7",
   "tomlkit>=0.15.2,<1",
+  "zeroconf>=0.153,<1",
 ]
 
 [project.scripts]
@@ -21,3 +23,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["fleetledger*"]
+
+[tool.setuptools.package-data]
+fleetledger = ["providers/*.toml"]
