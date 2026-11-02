@@ -1,0 +1,17 @@
+# After herdr starts, attach a hidden client once so herdr resumes the agents it
+# restored, then record the result (ship/files/libexec/ship_resume.py).
+[Unit]
+Description=Resume herdr's agents after boot (ShipShape)
+ConditionUser=agent
+After=herdr.service
+Requires=herdr.service
+
+[Service]
+Type=oneshot
+Environment=PATH=/opt/shipshape/shim:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h
+ExecStart=/usr/bin/python3 -I /opt/shipshape/current/files/libexec/ship_resume.py
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

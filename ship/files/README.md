@@ -1,6 +1,17 @@
 # ship/files
 
-Static files ship-provision installs: systemd units (`herdr.service`,
-`ship-resume.service`, `ship-status.timer`), the sshd, logind and journald
-drop-ins, the avahi service file, the resume shim and the mode-ledger hook
-(W4). Paths on the Ship are listed in `contracts/ship-runtime.md`.
+Files ship-provision installs (paths on the Ship: `contracts/ship-runtime.md`).
+
+| File | Installed as |
+|---|---|
+| `shim/claude.py` | `/opt/shipshape/shim/claude`: resume shim, first on herdr's PATH |
+| `hooks/mode_ledger.py` | `/opt/shipshape/hooks/mode-ledger`: Claude hook recording each session's mode |
+| `libexec/ship_resume.py` | run from the release by `ship-resume.service` |
+| `systemd/user/*.service` | `/etc/systemd/user/`: herdr and ship-resume, for the agent user only |
+| `systemd/system/ship-status.*` | `/etc/systemd/system/`: the 30-second status refresh |
+| `ssh/10-shipshape.conf` | `/etc/ssh/sshd_config.d/` |
+| `logind/50-shipshape.conf`, `journald/50-shipshape.conf` | `/etc/systemd/*.conf.d/` |
+| `profile.d/shipshape.sh` | `/etc/profile.d/`: the agent's PATH, npm prefix and tool environment |
+
+The avahi announcement is not here: it carries the Ship's name and id, so
+`ship-ctl apply` writes it from `ship.toml`.

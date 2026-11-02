@@ -1,0 +1,23 @@
+# herdr server for the agent user (contracts/ship-runtime.md).
+# Installed in /etc/systemd/user (root-owned); runs only for the agent user.
+[Unit]
+Description=herdr server (ShipShape)
+Documentation=https://herdr.dev
+ConditionUser=agent
+
+[Service]
+Type=simple
+# The resume shim first, so herdr's `claude --resume <id>` goes through it.
+Environment=PATH=/opt/shipshape/shim:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=npm_config_prefix=%h/.local
+# Catalogue tool settings (written by ship-ctl tools).
+EnvironmentFile=-%h/.config/shipshape/env
+WorkingDirectory=%h
+ExecStart=/usr/local/bin/herdr server
+Restart=on-failure
+RestartSec=2
+# herdr saves its state on shutdown; logind allows 30 s (50-shipshape.conf).
+TimeoutStopSec=25
+
+[Install]
+WantedBy=default.target

@@ -1,8 +1,37 @@
 # ship/provision
 
-`ship-provision`: the idempotent bash script that turns a fresh Ubuntu cloud image
-into a Ship (W4). Called with `--first-boot` by the seed bootstrap and with
-`--converge` by `ship-ctl converge`.
+`ship-provision` (W4): the idempotent bash script that turns a fresh Ubuntu cloud
+image into a Ship and makes `contracts/ship-runtime.md` true. Pinned versions,
+checksums and apt signing keys come from `versions.toml` at the bundle root.
 
-Must make `contracts/ship-runtime.md` true. Pinned versions, checksums and apt
-signing keys come from `versions.toml` (copied into the bundle root).
+```sh
+ship-provision --first-boot   # seed bootstrap: everything, then apply, tools, start herdr
+ship-provision --converge     # ship-ctl converge: everything; ship-ctl then applies and runs tools
+ship-provision --converge --dry-run      # on a Ship: what would change, changing nothing
+ship-provision --first-boot --root DIR   # anywhere: write the files under DIR, skip the rest
+```
+
+What it does, in order (each step checks first and only counts real changes):
+
+1. Ubuntu packages (git, jq, tmux, avahi, qemu-guest-agent, ...).
+2. Every `[apt.*]` repo in `versions.toml`, as a deb822 source with its own
+   keyring. A downloaded key is used only if every primary key in it is pinned.
+   Packages of the GitHub, Google Cloud and NodeSource repos are installed; Google
+   Chrome comes from the chrome-devtools-axi recipe.
+3. herdr and uv, downloaded and checked against their pinned sha256.
+4. ShipShape files: the resume shim, the mode-ledger hook, `/usr/local/bin/ship-ctl`,
+   `/etc/profile.d/shipshape.sh`.
+5. The agent's home folders, its npm prefix (`~/.local`) and lingering.
+6. Claude Code with the native installer, as `agent` (`install-claude.sh`: the
+   release manifest's signature and the binary's checksum are checked), once;
+   then it updates itself. herdr's Claude integration.
+7. The sshd, logind and journald drop-ins, then the units: `ship-status.timer`
+   (system), `herdr.service` and `ship-resume.service` (in `/etc/systemd/user`,
+   root-owned, `ConditionUser=agent`).
+8. First boot only: `ship-ctl apply`, `ship-ctl tools run`, start herdr.
+
+The result goes to `/var/lib/shipshape/provision.json`, which `ship-ctl status`
+reports as `provision.result`. Output goes to `/var/log/shipshape/provision.log`.
+
+Tested offline in `ship/tests/test_provision.py` (sandbox runs twice, dry runs,
+the pinned-key check). Real-VM runs happen through the phase 0 harness and W11.

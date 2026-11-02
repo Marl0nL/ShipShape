@@ -83,7 +83,24 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["version"],
-      "properties": { "version": { "$ref": "#/$defs/semver" } }
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "assets": {
+          "type": "object",
+          "description": "Release tarballs by machine architecture; ship-provision verifies the checksum.",
+          "propertyNames": { "enum": ["x86_64", "aarch64"] },
+          "required": ["x86_64"],
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url", "sha256"],
+            "properties": {
+              "url": { "$ref": "#/$defs/httpsUrl" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
     },
     "npm": {
       "type": "object",
