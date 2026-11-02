@@ -376,7 +376,9 @@ home_dir() { # DIR MODE: a folder under the agent's home
 
 home_npmrc() { # npm globals live in the agent's home (contracts/ship-runtime.md)
   local file=$ROOT$AGENT_HOME/.npmrc line="prefix=$AGENT_HOME/.local"
-  if ! as_owner test -L "$file" && as_owner grep -qx "$line" "$file" 2>/dev/null; then
+  # test -f first: grep on a FIFO the agent left there would block.
+  if as_owner test -f "$file" && ! as_owner test -L "$file" &&
+    as_owner grep -qx "$line" "$file" 2>/dev/null; then
     return 0
   fi
   changed "$AGENT_HOME/.npmrc"
@@ -385,7 +387,10 @@ home_npmrc() { # npm globals live in the agent's home (contracts/ship-runtime.md
   as_owner bash -c 'set -e
     file=$1 line=$2
     tmp=$(mktemp "$file.XXXXXX")
-    { [ -L "$file" ] || grep -v "^prefix=" "$file" 2>/dev/null || true; echo "$line"; } >"$tmp"
+    {
+      if [ -f "$file" ] && [ ! -L "$file" ]; then grep -v "^prefix=" "$file" || true; fi
+      echo "$line"
+    } >"$tmp"
     chmod 0644 "$tmp"
     mv -fT "$tmp" "$file"' _ "$file" "$line"
 }

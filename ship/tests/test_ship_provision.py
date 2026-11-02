@@ -578,3 +578,13 @@ def test_install_claude_refuses_tampered_manifest(release):
     r = install()
     assert r.returncode == 1 and "signature check failed" in r.stderr
     assert not (home / ".local/bin/claude").exists()
+
+
+def test_npmrc_fifo_does_not_hang(tmp_path):
+    home = tmp_path / "home/agent"
+    home.mkdir(parents=True)
+    os.mkfifo(home / ".npmrc")
+    r = provision("--converge", "--root", str(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (home / ".npmrc").is_file()
+    assert (home / ".npmrc").read_text() == "prefix=/home/agent/.local\n"

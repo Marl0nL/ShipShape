@@ -95,7 +95,8 @@ class HomeFS:
         except FileNotFoundError:
             return None
         except OSError as exc:
-            if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EISDIR):
+            # ENXIO: a Unix socket. Anything that is not a plain file is left alone.
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EISDIR, errno.ENXIO):
                 raise UnsafePath(rel) from exc
             raise
         if not stat.S_ISREG(os.fstat(fd).st_mode):

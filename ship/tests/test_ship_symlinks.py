@@ -192,3 +192,32 @@ def test_homefs_writes_atomically_and_reports_changes(tmp_path):
     assert [p.name for p in (home / "x/y").iterdir()] == ["z.json"]  # no temp files left
     with pytest.raises(ValueError):
         fs.write("../escape", "x")
+
+
+def test_homefs_refuses_sockets(tmp_path):
+    import socket
+
+    home = tmp_path / "home"
+    home.mkdir()
+    sock = socket.socket(socket.AF_UNIX)
+    try:
+        sock.bind(str(home / "sock"))
+        with pytest.raises(UnsafePath):
+            HomeFS(home).read("sock")
+        with pytest.raises(UnsafePath):
+            HomeFS(home).write("sock", "x")
+    finally:
+        sock.close()
+
+
+def test_apply_leaves_a_socket_alone(ship):
+    import socket
+
+    sock = socket.socket(socket.AF_UNIX)
+    try:
+        sock.bind(str(ship.p("/home/agent/.claude.json")))
+        rc, doc, _ = ship.ctl("apply", "--json")
+        assert rc == 0
+        assert any(".claude.json: a symlink or special file" in m for m in doc["messages"])
+    finally:
+        sock.close()
