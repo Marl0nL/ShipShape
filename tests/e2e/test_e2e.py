@@ -113,7 +113,8 @@ def check_runtime_contract(fleet: Fleet, name: str) -> None:
 def test_seed_boot_reboot_destroy(fleet):
     name = f"e2e-{secrets.token_hex(2)}"
     proc = fleet.cli(
-        "new", name, "--tag", "e2e", "--driver", "proxmox", "--mode", "auto", "--allow-bypass",
+        "new", name, "--tag", "e2e", "--driver", "proxmox", "--vmid", str(fleet.fresh_vmid()),
+        "--mode", "auto", "--allow-bypass",
         "--autostart", "main:~/work/main:auto",
         "--autostart", "grinder:~/work/grinder:bypassPermissions",
         timeout=3600,

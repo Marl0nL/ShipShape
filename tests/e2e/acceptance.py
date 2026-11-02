@@ -259,7 +259,8 @@ def config_tag(fleet: Fleet) -> dict:
 
 def run(fleet: Fleet, name: str) -> None:
     print(f"Creating {name} (about 10 minutes; nothing to do yet).")
-    fleet.cli("new", name, "--tag", "e2e", "--driver", "proxmox", "--mode", "auto",
+    fleet.cli("new", name, "--tag", "e2e", "--driver", "proxmox",
+              "--vmid", str(fleet.fresh_vmid()), "--mode", "auto",
               "--allow-bypass", "--autostart", "main:~/work/main:auto",
               "--autostart", "grinder:~/work/grinder:bypassPermissions", timeout=3600)
     view = fleet.status(name)
