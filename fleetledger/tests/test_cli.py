@@ -107,11 +107,17 @@ class FakeDriver:
         self.fail = fail
         self.created = []
         self.finished = []
+        self.images = []
+        self.destroyed = []
+        self.snaps = []
+        self.published = []
+        self.removed_images = []
 
-    def create(self, ship, seed, size):
+    def create(self, ship, seed, size, image=None):
         if self.fail:
             raise RuntimeError("clone failed")
         self.created.append((ship.name, seed.instance_id, dict(size)))
+        self.images.append(image)
         return Outcome(done=True, messages=["Started VM 9101."],
                        driver_ref={"vmid": 9101, "seed": seed.instance_id})
 
@@ -124,6 +130,35 @@ class FakeDriver:
     def finish_enrolment(self, ship):
         self.finished.append(ship.name)
         return Outcome(done=True, messages=["Detached and deleted the seed."])
+
+    def destroy(self, ship):
+        self.destroyed.append(ship.name)
+        return Outcome(done=True, messages=[f"Destroyed VM {ship.driver_ref.get('vmid')}."])
+
+    def snapshot(self, ship, name, description=""):
+        self.snaps.append(("take", ship.name, name, description))
+        return Outcome(done=True, messages=[f"Took snapshot {name}."])
+
+    def snapshots(self, ship):
+        from fleetledger.drivers import Snapshot
+
+        return [Snapshot("before", "2026-11-01T00:00:00Z", "a note")]
+
+    def rollback(self, ship, name):
+        self.snaps.append(("rollback", ship.name, name))
+        return Outcome(done=True, messages=[f"Rolled back to {name}."])
+
+    def delete_snapshot(self, ship, name):
+        self.snaps.append(("rm", ship.name, name))
+        return Outcome(done=True, messages=[f"Deleted {name}."])
+
+    def publish_image(self, image):
+        self.published.append(image)
+        return Outcome(done=True, messages=["Published."], driver_ref={"template_vmid": 9181})
+
+    def remove_image(self, image):
+        self.removed_images.append((image.id, dict(image.ref)))
+        return Outcome(done=True, messages=["Deleted the template."])
 
 
 @pytest.fixture
@@ -572,3 +607,166 @@ def test_logs(env):
     code, out, _ = env.run("logs", "ship-01", "herdr", "--lines", "2")
     assert code == 0 and out.splitlines() == ["line one", "line two"]
     assert env.ship.calls[-1][1][3:] == ["logs", "herdr", "--lines", "2", "--json"]
+
+
+# --- phase 4: images, destroy, snapshots ---------------------------------------
+
+IMG = "26.04-20261102-3f9a1c2e"
+
+
+def add_image(env, *, published=None, file=None, sha="ab" * 32):
+    entry = {"created": "2026-11-02T10:00:00Z", "sha256": sha,
+             "ubuntu": {"release": "26.04", "build": "20261016"}, "tooling": "0.1.0",
+             "commit": "unknown", "recipes": ["chrome-devtools-axi"]}
+    if file:
+        entry["file"] = str(file)
+    with env.store.edit() as ed:
+        ed.add_image(IMG, entry)
+        if published:
+            ed.set_image_field(IMG, "published", published)
+
+
+def test_new_with_on_and_the_stock_template(env):
+    assert env.run("new", "ship-04", "--on", "proxmox")[0] == 0
+    assert env.driver.images == [None]
+    assert env.store.load().ship("ship-04").image == "stock"
+
+
+def test_new_uses_the_pinned_image(env):
+    add_image(env, published={"proxmox": {"template_vmid": 9181}})
+    with env.store.edit() as ed:
+        ed.set_default("image", IMG)
+    code, out, err = env.run("new", "ship-04", "--on", "proxmox")
+    assert code == 0, err
+    (image,) = env.driver.images
+    assert image.id == IMG and image.ref == {"template_vmid": 9181}
+    assert env.store.load().ship("ship-04").image == IMG
+
+
+def test_new_refuses_an_image_not_published_to_the_driver(env, home):
+    add_image(env, published={"manual": {"template_vmid": 9050}})
+    code, out, err = env.run("new", "ship-04", "--on", "proxmox", "--image", IMG)
+    assert code != 0 and "not published to the proxmox driver" in err
+    assert not env.store.load().has_ship("ship-04") and env.driver.created == []
+    assert not list((home / "data" / "seeds").glob("*.iso"))
+
+
+def test_destroy_asks_for_the_name(env):
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.app.stdin_isatty = lambda: True
+    env.app.confirm = lambda prompt: "ship-4"
+    code, out, err = env.run("destroy", "ship-04")
+    assert code != 0 and "Not destroyed" in err and env.driver.destroyed == []
+    env.app.confirm = lambda prompt: "ship-04"
+    code, out, err = env.run("destroy", "ship-04")
+    assert code == 0, err
+    assert env.driver.destroyed == ["ship-04"]
+    assert not env.store.load().has_ship("ship-04")
+
+
+def test_destroy_without_a_terminal_needs_yes(env):
+    code, out, err = env.run("destroy", "ship-01")
+    assert code != 0 and "--yes" in err
+    assert env.store.load().has_ship("ship-01")
+
+
+def test_destroy_manual_prints_steps_and_keeps_the_entry_until_forget(env):
+    code, out, err = env.run("destroy", "ship-01", "--yes")
+    assert code == 0 and "destroy ship-01 --forget" in out
+    assert env.store.load().has_ship("ship-01")
+    assert env.run("destroy", "ship-01", "--yes", "--forget")[0] == 0
+    assert not env.store.load().has_ship("ship-01")
+
+
+def test_destroy_runs_the_before_destroy_hook_first(env):
+    env.run("new", "ship-04", "--on", "proxmox")
+    seen = []
+    env.app.before_destroy = lambda inv, ship: seen.append((ship.name, env.driver.destroyed[:]))
+    assert env.run("destroy", "ship-04", "--yes")[0] == 0
+    assert seen == [("ship-04", [])]
+
+
+def test_snapshot_commands(env):
+    env.run("new", "ship-04", "--on", "proxmox")
+    code, out, err = env.run("snapshot", "take", "ship-04", "before-x", "--note", "why")
+    assert code == 0 and env.driver.snaps[-1] == ("take", "ship-04", "before-x", "why")
+    assert "sign-ins" in err  # the warning
+    assert env.run("snapshot", "take", "ship-04")[0] == 0
+    assert env.driver.snaps[-1][2].startswith("snap-")
+    code, out, err = env.run("snapshot", "ls", "ship-04")
+    assert "before" in out and "a note" in out
+    code, out, err = env.run("snapshot", "rollback", "ship-04", "before")
+    assert code != 0 and "--yes" in err
+    assert env.run("snapshot", "rollback", "ship-04", "before", "--yes")[0] == 0
+    assert env.driver.snaps[-1] == ("rollback", "ship-04", "before")
+    assert env.run("snapshot", "rm", "ship-04", "before")[0] == 0
+    assert env.run("snapshot", "rm", "ship-04")[0] != 0
+
+
+def test_snapshot_on_a_driver_without_them(env):
+    code, out, err = env.run("snapshot", "ls", "ship-01")
+    assert code != 0 and "cannot list snapshots" in err  # manual: it cannot know
+    code, out, err = env.run("snapshot", "take", "ship-01", "s1")
+    assert code == 0 and "qm snapshot" not in out  # no [drivers.proxmox] here: generic text
+
+
+def test_image_ls_publish_use_rm(env, tmp_path):
+    qcow = tmp_path / f"{IMG}.qcow2"
+    qcow.write_bytes(b"QCOW")
+    import hashlib
+
+    add_image(env, file=qcow, sha=hashlib.sha256(b"QCOW").hexdigest())
+    code, out, err = env.run("image", "ls")
+    assert IMG in out and "stock template" in out
+    # Not published yet: cannot be pinned.
+    code, out, err = env.run("image", "use", IMG)
+    assert code != 0 and "not published to the manual driver" in err
+    code, out, err = env.run("image", "publish", IMG, "--driver", "proxmox")
+    assert code == 0, err
+    assert env.driver.published[0].path == qcow
+    assert env.store.load().images[IMG]["published"] == {"proxmox": {"template_vmid": 9181}}
+    with env.store.edit() as ed:
+        ed.set_default("driver", "proxmox")
+    assert env.run("image", "use", IMG)[0] == 0
+    assert env.store.load().pinned_image == IMG
+    code, out, err = env.run("image", "rm", IMG)
+    assert code != 0 and "pinned" in err
+    assert env.run("image", "use", "stock")[0] == 0
+    assert "image" not in env.store.load().defaults
+    code, out, err = env.run("image", "rm", IMG)
+    assert code == 0, err
+    assert env.driver.removed_images == [(IMG, {"template_vmid": 9181})]
+    assert not qcow.exists() and IMG not in env.store.load().images
+
+
+def test_image_publish_refuses_a_changed_file(env, tmp_path):
+    qcow = tmp_path / f"{IMG}.qcow2"
+    qcow.write_bytes(b"CHANGED")
+    add_image(env, file=qcow, sha="00" * 32)
+    code, out, err = env.run("image", "publish", IMG, "--driver", "proxmox")
+    assert code != 0 and "does not match" in err and env.driver.published == []
+
+
+def test_image_publish_by_hand(env):
+    add_image(env)
+    code, out, err = env.run("image", "publish", IMG, "--driver", "manual",
+                             "--template-vmid", "9050")
+    assert code == 0, err
+    assert env.store.load().images[IMG]["published"] == {"manual": {"template_vmid": 9050}}
+
+
+def test_image_build_records_the_image(env, tmp_path):
+    from fleetledger.images import Built
+
+    def builder(repo, *, recipes, backend, note):
+        assert recipes == ["chrome-devtools-axi"] and backend == "qemu"
+        entry = {"created": "2026-11-02T10:00:00Z", "sha256": "cd" * 32,
+                 "ubuntu": {"release": "26.04", "build": "20261016"}, "tooling": "0.1.0",
+                 "commit": "unknown", "dirty": True, "recipes": recipes}
+        return Built(IMG, tmp_path / "x.qcow2", {}, entry)
+
+    env.app.image_builder = builder
+    code, out, err = env.run("image", "build", "--recipes", "chrome-devtools-axi",
+                             "--backend", "qemu")
+    assert code == 0, err
+    assert env.store.load().images[IMG]["sha256"] == "cd" * 32

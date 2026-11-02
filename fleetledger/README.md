@@ -27,7 +27,9 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/repo.py`, `schemas.py`, `paths.py` | all | the checkout FleetLedger runs from, contract validation, local folders |
 | `fleetledger/ssh.py` | W8 | system OpenSSH, FleetLedger's own known-hosts file, connection reuse |
 | `fleetledger/status.py`, `shipctl.py` | W8 | polling `ship-ctl status --json` (`contracts/ship-status.schema.json`) and calling the other ship-ctl commands |
-| `fleetledger/drivers/` | W8 | the hypervisor driver interface; `manual`, and `proxmox` as a test helper (finished in phase 4) |
+| `fleetledger/drivers/` | W8, phase 4 | the hypervisor driver interface; `manual` (prints the steps) and `proxmox` (API: create, power, snapshots, image templates, destroy; every destructive call checks the VM's name). All hypervisor-specific code lives here. |
+| `fleetledger/images.py` | phase 4 | baked images: fetching and checking Ubuntu's image, ids and manifests, running `ship/image/bake` (`contracts/image.md`) |
+| `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `snapshot` and `image` |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)) |
@@ -55,6 +57,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/net/` | the last network summary per Ship and the first-seen ledger (0600) |
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
+| `~/.local/share/fleetledger/images/` | baked images and their manifests (0600); `base/` caches Ubuntu's verified cloud image |
 
 `FLEETLEDGER_CONFIG_DIR`, `FLEETLEDGER_DATA_DIR` and `FLEETLEDGER_RUNTIME_DIR`
 override these (the XDG variables are honoured too). `SHIPSHAPE_REPO` points

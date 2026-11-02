@@ -6,8 +6,9 @@ ShipShape has two parts that live in this repo and meet only through `contracts/
 
 A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
 
-- **Built from** Ubuntu's signed cloud image plus a small cloud-init seed ISO that
-  FleetLedger writes for each Ship (`contracts/seed.md`). The seed carries the
+- **Built from** Ubuntu's signed cloud image (or a baked image made from it by
+  the same provisioning script, `contracts/image.md`) plus a small cloud-init
+  seed ISO that FleetLedger writes for each Ship (`contracts/seed.md`). The seed carries the
   Ship's identity, its pinned SSH host key, its settings (`ship.toml`) and the
   tooling bundle. It carries no service tokens.
 - **Users:** `fleet` (admin, for FleetLedger) and `agent` (runs herdr and every
@@ -30,8 +31,9 @@ FleetLedger is a Python tool, `ship-fleet`, that runs on your own computer.
 
 - **Inventory:** it keeps a local inventory (`ships.toml`) of Ships, tags and
   the accounts each tag expects.
-- **Seeds:** it writes seeds and, through hypervisor drivers, creates Ships
-  (Proxmox first).
+- **Seeds and images:** it writes seeds, bakes base images, and through
+  hypervisor drivers creates, snapshots and destroys Ships (Proxmox first). No
+  hypervisor-specific code lives outside `fleetledger/drivers/`.
 - **Status:** it polls each Ship's status over SSH and shows what needs
   attention.
 - **Login concierge:** it runs each tool's no-browser sign-in on the Ship
@@ -78,6 +80,7 @@ agents and serves Remote Control with FleetLedger switched off.
 More: [security.md](security.md), and the runbooks in [runbooks/](runbooks/):
 [setting up Proxmox](runbooks/proxmox-setup.md),
 [creating a Ship](runbooks/create-ship.md),
+[baked images](runbooks/images.md),
 [signing in](runbooks/sign-in.md),
 [SSH certificates and attaching from other machines](runbooks/trust-machines.md),
 [retiring the old stack](runbooks/retire-old-stack.md).

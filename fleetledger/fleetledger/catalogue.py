@@ -25,6 +25,7 @@ class Recipe:
     default: bool
     needs: tuple[str, ...]
     version: str | None
+    bake: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class Catalogue:
                 default=d.get("default", False),
                 needs=tuple(d.get("needs", ())),
                 version=d.get("version"),
+                bake=d.get("bake", False),
             )
             for rid, d in raw_recipes.items()
         }
@@ -91,6 +93,10 @@ class Catalogue:
 
     def default_tools(self) -> list[str]:
         return sorted(r.id for r in self.recipes.values() if r.default)
+
+    def bake_tools(self) -> list[str]:
+        """Recipes whose system parts may go into a baked image (contracts/image.md)."""
+        return sorted(r.id for r in self.recipes.values() if r.bake)
 
     def check_tools(self, ids: Iterable[str]) -> None:
         unknown = [i for i in ids if i not in self.recipes]

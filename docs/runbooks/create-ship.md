@@ -67,6 +67,8 @@ Useful options (`ship-fleet new --help` lists them all):
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
 | `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults) |
 | `--agent-sudo` | give the agent user sudo (off by default) |
+| `--on proxmox` | where to create it (the same as `--driver`; default `defaults.driver`) |
+| `--image <id>` | the base image (default: the pinned one, see [images.md](images.md)); `stock` for the plain cloud image |
 
 What happens:
 
@@ -116,6 +118,36 @@ ship-fleet adopt ship-07 --host ship-07.local
 ```
 
 The same command with `--replace` re-pins a Ship you rebuilt from a new seed.
+
+## Snapshots
+
+With the proxmox driver (and the phase 4 rights in
+[proxmox-setup.md](proxmox-setup.md) section 4):
+
+```sh
+ship-fleet snapshot take ship-01 before-upgrade --note "before the big change"
+ship-fleet snapshot ls ship-01
+ship-fleet snapshot rollback ship-01 before-upgrade   # shuts down cleanly, rolls back, starts
+ship-fleet snapshot rm ship-01 before-upgrade
+```
+
+Snapshots are of the disk only, never memory. A snapshot holds the Ship's
+sign-ins as they were, so treat it like the Ship itself; rolling back can bring
+back a sign-in you have since revoked.
+
+## Destroy it
+
+```sh
+ship-fleet destroy ship-01            # asks you to type the name
+```
+
+It stops and deletes the VM and its disks through the driver, deletes any seed
+left over, and removes the Ship from the inventory. The proxmox driver checks
+the VM's name first and refuses to touch a VM that is not this Ship. With the
+manual driver it prints the steps; once you have run them,
+`ship-fleet destroy ship-01 --forget` removes the inventory entry. Sign the Ship
+out of its services first (`ship-fleet logout ship-01 all`) if its sign-ins
+should not outlive it in any snapshot or backup.
 
 ## If something goes wrong
 

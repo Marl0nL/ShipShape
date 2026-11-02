@@ -94,6 +94,19 @@ from the LAN to other machines or cloud VMs.
 Never in: the base image, seeds (apart from the Ship's own host key), FleetLedger
 logs, shell history, command lines, or the repo.
 
+### Baked images and snapshots
+
+- A baked image holds no secrets: no users, keys, host keys, seeds or sign-ins
+  (`contracts/image.md`). It is made only from Ubuntu's signed cloud image and
+  the pinned packages, and its bake ends by removing cloud-init state, the
+  machine id and any host keys, so two Ships from one image share nothing that
+  identifies them. Its sha256 is recorded and checked before every publish.
+- A snapshot is a copy of a Ship's disk, sign-ins included. FleetLedger takes
+  disk-only snapshots (never memory), but treat them like the Ship: rolling back
+  can restore a sign-in you have since revoked.
+- FleetLedger only stops, rolls back or deletes a VM after checking its name is
+  the Ship's (or, for an image, the template's), never by VM id alone.
+
 ### Seeds
 
 A seed ISO holds the Ship's private host key, so:
@@ -142,7 +155,8 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | A misbehaving or prompt-injected agent (more so in bypass) | use or leak that Ship's sign-ins; push to repos you can reach; probe your LAN | separate sign-ins per Ship (sign one out without touching others); no sudo; bypass only where allowed; no admin keys or agent forwarding on Ships; the network visibility record (LAN destinations included) for review afterwards; the optional LAN guard (`ship-fleet set SHIP lan_guard=true`) refuses new connections to private addresses other than the gateway and DNS, so Ships of different tags cannot reach each other |
 | A Ship on the wrong account | work done with personal credentials, or the reverse | expected accounts per tag, checked after every sign-in and on every poll |
 | Someone else on your LAN | fake an mDNS announcement; answer at a Ship's name; try passwords | pinned host keys; key-only SSH; announcements are hints only |
-| A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; treat snapshots as sensitive; re-seed and `adopt --replace` (which also lists the old host key as revoked for trusted machines); host certificates last 90 days; sign Ships out from FleetLedger |
+| A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; disk-only snapshots, treated as sensitive; baked images hold no secrets; re-seed and `adopt --replace` (which also lists the old host key as revoked for trusted machines); host certificates last 90 days; sign Ships out from FleetLedger |
+| A stale VM id in the inventory | destroy or roll back someone else's VM | every destructive driver call checks the VM's name first; the token reaches only the pool |
 | Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal |
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr pinned by checksum; recipes pin versions; verified Ubuntu images |

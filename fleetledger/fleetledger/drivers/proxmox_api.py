@@ -21,6 +21,7 @@ import stat
 import time
 import urllib.parse
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from fleetledger.errors import ConfigError, FleetError
@@ -128,15 +129,25 @@ class ProxmoxAPI:
             headers["Content-Type"] = content_type
         conn = self._connection()
         try:
-            conn.request(method, url, body=body, headers=headers)
+            try:
+                conn.request(method, url, body=body, headers=headers)
+            except (OSError, http.client.HTTPException) as exc:
+                if isinstance(exc, ProxmoxError):
+                    raise
+                raise ProxmoxError(f"Cannot reach the Proxmox API at {self.host}: {exc}") from exc
+            return self._answer(conn, method, path)
+        finally:
+            conn.close()
+
+    def _answer(self, conn: http.client.HTTPSConnection, method: str, path: str) -> Any:
+        """Read the response on conn; return its "data" member or raise."""
+        try:
             response = conn.getresponse()
             raw = response.read()
         except (OSError, http.client.HTTPException) as exc:
             if isinstance(exc, ProxmoxError):
                 raise
             raise ProxmoxError(f"Cannot reach the Proxmox API at {self.host}: {exc}") from exc
-        finally:
-            conn.close()
         try:
             doc = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
@@ -189,6 +200,68 @@ class ProxmoxAPI:
             body=body,
             content_type=f"multipart/form-data; boundary={boundary}",
         )
+
+    def upload_file(
+        self,
+        node: str,
+        storage: str,
+        file_name: str,
+        path: Path,
+        content: str,
+        *,
+        sha256: str,
+        chunk_size: int = 1 << 20,
+        timeout: float = 1800,
+    ) -> Any:
+        """Upload a large file from disk without holding it in memory.
+
+        The file is checked against sha256 first (so a changed file is never sent),
+        and Proxmox checks the same sum once it has the file.
+        """
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as fh:
+            while block := fh.read(chunk_size):
+                digest.update(block)
+                size += len(block)
+        if not hmac.compare_digest(digest.hexdigest(), sha256):
+            raise ProxmoxError(f"{path} does not match its recorded sha256; not uploading it.")
+        boundary = "fleetledger-" + secrets.token_hex(12)
+        head = b"".join(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n".encode()
+            for name, value in (("content", content), ("checksum-algorithm", "sha256"),
+                                ("checksum", sha256))
+        ) + (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="filename"; '
+            f'filename="{file_name}"\r\nContent-Type: application/octet-stream\r\n\r\n'
+        ).encode()
+        tail = f"\r\n--{boundary}--\r\n".encode()
+        api_path = f"/nodes/{node}/storage/{storage}/upload"
+        conn = self._factory(self.host, self.port, self.fingerprint, max(self.timeout, timeout))
+        try:
+            try:
+                conn.putrequest("POST", self.base + api_path)
+                conn.putheader(
+                    "Authorization", f"PVEAPIToken={self.token_id}={read_token(self._token_file)}"
+                )
+                conn.putheader("Accept", "application/json")
+                conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+                conn.putheader("Content-Length", str(len(head) + size + len(tail)))
+                conn.endheaders()  # connects, and checks the TLS pin, before anything is sent
+                conn.send(head)
+                with path.open("rb") as fh:
+                    while block := fh.read(chunk_size):
+                        conn.send(block)
+                conn.send(tail)
+            except (OSError, http.client.HTTPException) as exc:
+                if isinstance(exc, ProxmoxError):
+                    raise
+                raise ProxmoxError(f"Uploading to the Proxmox API at {self.host} failed: {exc}") \
+                    from exc
+            return self._answer(conn, "POST", api_path)
+        finally:
+            conn.close()
 
     def wait_task(
         self,

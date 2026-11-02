@@ -159,6 +159,49 @@ class InventoryEditor:
         else:
             machines[name][key] = _item(value)
 
+    # --- images (contracts/image.md) -----------------------------------------
+    def _images(self) -> Table:
+        if "image" not in self.doc:
+            self.doc["image"] = tomlkit.table(is_super_table=True)
+        return self.doc["image"]
+
+    def add_image(self, image_id: str, entry: Mapping[str, Any]) -> None:
+        images = self._images()
+        if image_id in images:
+            raise FleetError(f"Image {image_id} is already in the inventory.")
+        table = tomlkit.table()
+        for key, value in entry.items():
+            table[key] = _item(value)
+        images[image_id] = table
+
+    def set_image_field(self, image_id: str, key: str, value: Any) -> None:
+        images = self._images()
+        if image_id not in images:
+            raise NotFound(f"No image '{image_id}' in the inventory.")
+        if value is None:
+            if key in images[image_id]:
+                del images[image_id][key]
+        else:
+            images[image_id][key] = _item(value)
+
+    def remove_image(self, image_id: str) -> None:
+        images = self._images()
+        if image_id in images:
+            del images[image_id]
+        if not images:
+            del self.doc["image"]
+
+    def set_default(self, key: str, value: Any) -> None:
+        """Set defaults.<key>; None removes it."""
+        if "defaults" not in self.doc:
+            self.doc["defaults"] = tomlkit.table()
+        defaults = self.doc["defaults"]
+        if value is None:
+            if key in defaults:
+                del defaults[key]
+        else:
+            defaults[key] = _item(value)
+
 
 def _item(value: Any) -> Any:
     """Small mappings become inline tables, which read best in ships.toml."""
@@ -269,7 +312,7 @@ def ship_entry(ship: Ship) -> dict[str, Any]:
         entry["driver_ref"] = dict(ship.driver_ref)
     entry["names"] = list(ship.names)
     entry["host_key"] = ship.host_key
-    for key in ("created", "enrolled", "notes"):
+    for key in ("created", "enrolled", "notes", "image"):
         value = getattr(ship, key)
         if value is not None:
             entry[key] = value

@@ -5,11 +5,15 @@
 # changes anything, so a second run reports 0 changes. Versions, checksums and
 # signing keys come from versions.toml at the bundle root.
 #
-# usage: ship-provision --first-boot|--converge [--dry-run] [--root DIR]
+# usage: ship-provision --first-boot|--converge|--bake [--recipes ID,...] [--dry-run] [--root DIR]
 #
 #   --first-boot  run by the seed's bootstrap (contracts/seed.md); also applies
 #                 ship.toml, installs the catalogue tools and starts herdr
 #   --converge    run by `ship-ctl converge` (which then runs apply and tools)
+#   --bake        run inside an image by ship/image/bake (contracts/image.md): only
+#                 the system layer every Ship shares (packages, apt repos, herdr,
+#                 uv) plus the apt packages of the bake recipes given with
+#                 --recipes. No users, keys, settings or services; no record.
 #   --dry-run     change nothing; print what would change
 #   --root DIR    treat DIR as / (tests, image work): files are written under DIR,
 #                 system commands and downloads are skipped. SHIPSHAPE_ROOT does
@@ -25,6 +29,7 @@ VERSIONS=$BUNDLE/versions.toml
 [ -f "$VERSIONS" ] || VERSIONS=$(dirname "$BUNDLE")/versions.toml # repo checkout
 
 MODE=""
+BAKE_RECIPES=""
 DRY=0
 ROOT=${SHIPSHAPE_ROOT:-}
 CHANGES=0
@@ -183,6 +188,8 @@ boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null || true; }
 
 record() { # RESULT: ship-provision's record, read by ship-ctl status (internal)
   [ "$DRY" = 1 ] && return 0
+  # A baked image must not claim a provisioning run: first boot makes the record.
+  [ "$MODE" = bake ] && return 0
   local dir=$ROOT/var/lib/shipshape
   ensure_parent "$dir"
   printf '{"result": "%s", "mode": "%s", "pid": %d, "boot_id": "%s", "last_run": "%s"}\n' \
@@ -224,6 +231,7 @@ ensure_debs() {
 # from it: start it as soon as it is installed, not after the slow steps. (Installing
 # the package does not start it.)
 start_guest_agent() {
+  [ "$MODE" = bake ] && return 0 # nothing runs inside an image being baked
   sys systemctl start qemu-guest-agent || true
 }
 
@@ -592,11 +600,39 @@ step_first_boot() {
   log "herdr started (after ${i}s)"
 }
 
+# --- bake: the apt packages of the recipes marked bake ----------------------------
+step_bake_recipes() {
+  local id file pkgs=()
+  [ -n "$BAKE_RECIPES" ] || return 0
+  for id in ${BAKE_RECIPES//,/ }; do
+    [[ $id =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] || die "--recipes: bad recipe id '$id'"
+    file=$BUNDLE/tools/$id.toml
+    [ -f "$file" ] || die "--recipes: no recipe $id in this bundle"
+    [ "$(cfg "$file" bake)" = true ] || die "--recipes: $id is not marked bake = true"
+    mapfile -t -O "${#pkgs[@]}" pkgs < <(cfg "$file" apt)
+  done
+  [ "${#pkgs[@]}" -gt 0 ] || return 0
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): apt packages ${pkgs[*]}"; return 0; fi
+  # As ship-ctl tools installs them (contracts/tools.md): no recommends.
+  local missing
+  mapfile -t missing < <(missing_debs "${pkgs[@]}")
+  [ "${#missing[@]}" -gt 0 ] || return 0
+  if [ "$APT_STALE" = 1 ] || [ "$APT_UPDATED" = 0 ]; then
+    sys apt-get update -q
+    APT_STALE=0
+    APT_UPDATED=1
+  fi
+  changed "apt packages: ${missing[*]}"
+  sys apt-get install -y -q --no-install-recommends "${missing[@]}"
+}
+
 parse_args() {
   while [ $# -gt 0 ]; do
     case $1 in
       --first-boot) MODE=first-boot ;;
       --converge) MODE=converge ;;
+      --bake) MODE=bake ;;
+      --recipes) [ $# -ge 2 ] || { usage >&2; exit 2; }; BAKE_RECIPES=$2; shift ;;
       --dry-run) DRY=1 ;;
       --root) [ $# -ge 2 ] || { usage >&2; exit 2; }; ROOT=$2; shift ;;
       -h | --help) usage; exit 0 ;;
@@ -605,6 +641,9 @@ parse_args() {
     shift
   done
   [ -n "$MODE" ] || { usage >&2; exit 2; }
+  if [ -n "$BAKE_RECIPES" ] && [ "$MODE" != bake ]; then
+    die "--recipes goes with --bake only"
+  fi
   if [ -n "$ROOT" ] && [ "$(realpath -m "$ROOT")" = / ]; then
     die "--root / would change this machine; leave --root out for a real run"
   fi
@@ -622,7 +661,7 @@ main() {
   if [ "$SANDBOX" = 0 ]; then
     [ "$(id -u)" = 0 ] || die "run as root"
   fi
-  if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
+  if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ] && [ "$MODE" != bake ]; then
     exec 9>/run/lock/ship-provision.lock
     flock -n 9 || die "another ship-provision is running"
     if [ "$MODE" = converge ]; then
@@ -642,6 +681,13 @@ main() {
   step_core_packages
   step_herdr
   step_uv
+  if [ "$MODE" = bake ]; then
+    step_bake_recipes
+    [ "$SANDBOX" = 1 ] || [ "$DRY" = 1 ] || sys apt-get clean
+    FINISHED=1
+    log "bake done: $CHANGES change(s)"
+    return 0
+  fi
   step_shipshape_files
   step_ship_axi
   step_agent_home

@@ -2,11 +2,30 @@
 
 from __future__ import annotations
 
-from fleetledger.drivers.base import Driver, NotSupported, Outcome, PowerState, SeedFile
+from fleetledger.drivers.base import (
+    Driver,
+    ImageFile,
+    NotSupported,
+    Outcome,
+    PowerState,
+    PublishedImage,
+    SeedFile,
+    Snapshot,
+)
 from fleetledger.errors import ConfigError
 from fleetledger.inventory import Inventory
 
-__all__ = ["Driver", "NotSupported", "Outcome", "PowerState", "SeedFile", "get_driver"]
+__all__ = [
+    "Driver",
+    "ImageFile",
+    "NotSupported",
+    "Outcome",
+    "PowerState",
+    "PublishedImage",
+    "SeedFile",
+    "Snapshot",
+    "get_driver",
+]
 
 
 def get_driver(inventory: Inventory, driver_id: str, *, ubuntu_release: str = "26.04") -> Driver:
