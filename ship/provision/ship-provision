@@ -324,28 +324,56 @@ step_uv() {
 }
 
 # --- the agent user --------------------------------------------------------------
+# The agent owns its home and can put a symlink anywhere in it, so everything
+# below runs AS the agent: a planted link can then only reach the agent's own
+# files. With --root (tests) it runs as the caller instead.
+as_owner() {
+  if [ "$SANDBOX" = 1 ]; then "$@"; else as_agent "$@"; fi
+}
+
+home_dir() { # DIR MODE: a folder under the agent's home
+  local real=$ROOT$1 want
+  want=$(printf %o "$((8#$2))") # 0755 -> 755, as stat prints it
+  if as_owner test -d "$real" && ! as_owner test -L "$real" &&
+    [ "$(as_owner stat -c %a "$real")" = "$want" ]; then
+    return 0
+  fi
+  changed "$1/"
+  [ "$DRY" = 1 ] && return 0
+  if as_owner test -L "$real"; then as_owner rm -f "$real"; fi # the link, not its target
+  as_owner install -d -m "$2" "$real"
+}
+
+home_npmrc() { # npm globals live in the agent's home (contracts/ship-runtime.md)
+  local file=$ROOT$AGENT_HOME/.npmrc line="prefix=$AGENT_HOME/.local"
+  if ! as_owner test -L "$file" && as_owner grep -qx "$line" "$file" 2>/dev/null; then
+    return 0
+  fi
+  changed "$AGENT_HOME/.npmrc"
+  [ "$DRY" = 1 ] && return 0
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  as_owner bash -c 'set -e
+    file=$1 line=$2
+    tmp=$(mktemp "$file.XXXXXX")
+    { [ -L "$file" ] || grep -v "^prefix=" "$file" 2>/dev/null || true; echo "$line"; } >"$tmp"
+    chmod 0644 "$tmp"
+    mv -fT "$tmp" "$file"' _ "$file" "$line"
+}
+
 step_agent_home() {
   if [ "$SANDBOX" = 0 ] && ! id "$AGENT" >/dev/null 2>&1; then
     die "user $AGENT does not exist (the seed creates it)"
   fi
-  local own=$AGENT:$AGENT d
+  local d
   for d in "$AGENT_HOME/.local" "$AGENT_HOME/.local/bin" "$AGENT_HOME/.local/lib" \
     "$AGENT_HOME/.config" "$AGENT_HOME/.config/herdr" "$AGENT_HOME/.config/shipshape" \
     "$AGENT_HOME/work"; do
-    put_dir "$d" 0755 "$own"
+    home_dir "$d" 0755
   done
-  put_dir "$AGENT_HOME/.claude" 0700 "$own" # holds the Claude sign-in
-  put_dir "$AGENT_HOME/.local/state" 0700 "$own"
-  put_dir "$AGENT_HOME/.local/state/shipshape" 0700 "$own"
-  # npm globals live in the agent's home (contracts/ship-runtime.md).
-  if ! grep -qx "prefix=$AGENT_HOME/.local" "$ROOT$AGENT_HOME/.npmrc" 2>/dev/null; then
-    local tmp
-    tmp=$(mktemp)
-    { grep -v '^prefix=' "$ROOT$AGENT_HOME/.npmrc" 2>/dev/null || true
-      echo "prefix=$AGENT_HOME/.local"; } >"$tmp"
-    put_file "$tmp" "$AGENT_HOME/.npmrc" 0644 "$own"
-    rm -f "$tmp"
-  fi
+  home_dir "$AGENT_HOME/.claude" 0700 # holds the Claude sign-in
+  home_dir "$AGENT_HOME/.local/state" 0700
+  home_dir "$AGENT_HOME/.local/state/shipshape" 0700
+  home_npmrc
   if [ ! -e "$ROOT/var/lib/systemd/linger/$AGENT" ]; then
     sys_change "lingering for $AGENT" loginctl enable-linger "$AGENT"
   fi
@@ -356,7 +384,7 @@ step_claude() {
     log "skipped (--root): Claude Code install and herdr integration"
     return 0
   fi
-  if [ -x "$AGENT_HOME/.local/bin/claude" ] || [ -L "$AGENT_HOME/.local/bin/claude" ]; then
+  if as_agent test -x "$AGENT_HOME/.local/bin/claude"; then
     : # installed; Claude Code updates itself from here on
   else
     local channel platform

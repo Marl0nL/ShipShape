@@ -327,3 +327,24 @@ def test_resume_record_feeds_status(tmp_path):
         "resumed": 2,
         "failed": 0,
     }
+
+
+def test_agent_home_symlinks_are_replaced_not_followed(tmp_path):
+    """On a Ship these steps run as the agent; even so, a planted link is never followed."""
+    root = tmp_path / "root"
+    home = root / "home/agent"
+    home.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o750)
+    outside.chmod(0o750)
+    victim = tmp_path / "victim"
+    victim.write_text("ROOT-ONLY\n")
+    (home / ".local").symlink_to(outside)
+    (home / ".npmrc").symlink_to(victim)
+    r = provision("--converge", "--root", str(root))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert victim.read_text() == "ROOT-ONLY\n"
+    assert mode(outside) == "0o750" and list(outside.iterdir()) == []
+    assert not (home / ".local").is_symlink() and (home / ".local/state/shipshape").is_dir()
+    assert not (home / ".npmrc").is_symlink()
+    assert (home / ".npmrc").read_text() == "prefix=/home/agent/.local\n"
