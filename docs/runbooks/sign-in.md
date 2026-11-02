@@ -13,6 +13,11 @@ ship-fleet login ship-01 claude     # or one service
 ship-fleet login --tag work claude  # every work Ship, one after the other
 ```
 
+Or in the browser: `ship-fleet ui`, then **Sign in** on a Ship's page, in
+Needs attention, or for a whole tag on the Sign-ins page
+([web-ui.md](../web-ui.md#the-concierge-in-the-browser)). The rules below are
+the same.
+
 For each service:
 
 | Service | You do |

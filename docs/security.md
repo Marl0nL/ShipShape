@@ -115,6 +115,14 @@ is removed straight away; it is never written anywhere else.
 - After every sign-in, and on every status poll, the account is compared with
   the one the Ship's tags expect. A mismatch is reported as a wrong account.
 
+## The web UI
+
+`ship-fleet ui` listens on `127.0.0.1` only, admits a browser through a one-time
+link swapped for a cookie, refuses foreign `Host` headers (DNS rebinding), and
+needs a CSRF token and an exact `Origin` on every change and on the live
+terminal's WebSocket. Pasted codes follow the concierge's rules above; request
+logging is off. Details: [web-ui.md](web-ui.md#security).
+
 ## Public repository
 
 Nothing committed may point at a person, their work, machines or network:

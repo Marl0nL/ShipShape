@@ -26,12 +26,14 @@ ssh-add ~/.ssh/shipshape_fleet_ed25519
 ship-fleet new ship-01 --tag work      # seed, VM, provision, enrol
 ship-fleet login ship-01 all           # Claude Code, gcloud + ADC, GitHub
 ship-fleet ls
+ship-fleet ui                          # the same in your browser (this computer only)
 ```
 
 Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [create a Ship](docs/runbooks/create-ship.md),
 [sign it in](docs/runbooks/sign-in.md),
 [attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, herdr --remote),
+[the web UI](docs/web-ui.md),
 [retire the old stack](docs/runbooks/retire-old-stack.md).
 
 ## Layout
