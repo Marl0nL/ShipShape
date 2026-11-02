@@ -33,5 +33,5 @@ What it does, in order (each step checks first and only counts real changes):
 The result goes to `/var/lib/shipshape/provision.json`, which `ship-ctl status`
 reports as `provision.result`. Output goes to `/var/log/shipshape/provision.log`.
 
-Tested offline in `ship/tests/test_provision.py` (sandbox runs twice, dry runs,
+Tested offline in `ship/tests/test_ship_provision.py` (sandbox runs twice, dry runs,
 the pinned-key check). Real-VM runs happen through the phase 0 harness and W11.
