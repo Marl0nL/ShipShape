@@ -370,11 +370,18 @@ SS_USERS = re.compile(r'\("((?:[^"\\]|\\.)*)",pid=(\d+)')
 
 
 def parse_ss(text: str) -> list[tuple[str, int, str, int, str]]:
-    """(local, lport, peer, pport, program) from `ss -tnpH` lines."""
+    """(local, lport, peer, pport, program) of established connections in `ss -tnpH`.
+
+    Without a state filter each line starts with the state (ESTAB, SYN-SENT...);
+    with one (`state established`) ss leaves that column out, so a line starting
+    with a number is already established and everything sits one column left.
+    """
     out = []
     for line in text.splitlines():
         parts = line.split()
-        if len(parts) < 5:
+        if parts and parts[0].isdigit():
+            parts = ["ESTAB", *parts]
+        if len(parts) < 5 or parts[0] != "ESTAB":
             continue
         local, peer = parts[3], parts[4]
         if ":" not in local or ":" not in peer:
@@ -511,9 +518,7 @@ class SSPoller:
     def poll(self) -> None:
         listening = listening_ports(self.run(["ss", "-tlnH"]))
         current = set()
-        for laddr, lport, paddr, pport, program in parse_ss(
-            self.run(["ss", "-tnpH", "state", "established"])
-        ):
+        for laddr, lport, paddr, pport, program in parse_ss(self.run(["ss", "-tnpH"])):
             if lport in listening:
                 continue  # someone connected to us
             key = (laddr, lport, paddr, pport)
@@ -539,7 +544,8 @@ def _stream(
     ready: threading.Event | None = None,
 ) -> subprocess.Popen | None:
     try:
-        # The bcc tools are Python: unbuffered, so each line arrives as it happens.
+        # Line by line as it happens: stdbuf for the C tools (EBPF_TOOLS), and
+        # unbuffered for anything in Python.
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env

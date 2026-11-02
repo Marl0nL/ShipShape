@@ -130,6 +130,22 @@ def test_untrusted_names_and_programs_are_cleaned():
     assert len(nw.clean_program("x" * 99)) == 32
 
 
+def test_parse_ss_reads_both_ss_layouts():
+    """`ss -tnpH` starts each line with the state; with a state filter ss drops it."""
+    unfiltered = (
+        "ESTAB      0      0        192.0.2.5:56742        198.51.100.7:443"
+        '  users:(("chrome",pid=4082,fd=50))            \n'
+        "TIME-WAIT  0      0        192.0.2.5:56744        198.51.100.7:443\n"
+    )
+    filtered = (
+        "0      0                                  192.0.2.5:56742"
+        '                198.51.100.7:443  users:(("chrome",pid=4082,fd=50)) \n'
+    )
+    want = [("192.0.2.5", 56742, "198.51.100.7", 443, "chrome")]
+    assert nw.parse_ss(unfiltered) == want
+    assert nw.parse_ss(filtered) == want
+
+
 def test_parse_ss_and_listening_ports():
     est = (
         'ESTAB 0 0 192.0.2.5:51122 198.51.100.7:443 users:(("node",pid=88,fd=21))\n'
@@ -257,11 +273,21 @@ def test_store_saves_privately_and_reloads(tmp_path):
 
 def test_ss_poller_counts_each_new_outbound_connection_once():
     c, _ = collector()
+    # As ss prints them (iproute2 6.x): column padding and trailing spaces included.
     out = {
-        "ss -tlnH": "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n",
-        "ss -tnpH state established": (
-            'ESTAB 0 0 192.0.2.5:51122 198.51.100.7:443 users:(("node",pid=88,fd=21))\n'
-            'ESTAB 0 0 192.0.2.5:22 192.0.2.99:60001 users:(("sshd",pid=9,fd=4))\n'
+        "ss -tlnH": (
+            "LISTEN 0      4096         0.0.0.0:22         0.0.0.0:*\n"
+            "LISTEN 0      4096            [::]:22            [::]:*\n"
+        ),
+        "ss -tnpH": (
+            "ESTAB      0      0                 192.0.2.5:51122       198.51.100.7:443"
+            '   users:(("node",pid=88,fd=21))             \n'
+            "ESTAB      0      0                 192.0.2.5:22           192.0.2.99:60001"
+            '  users:(("sshd-session",pid=9,fd=4))      \n'
+            "SYN-SENT   0      1                 192.0.2.5:51130       198.51.100.8:443"
+            '   users:(("curl",pid=91,fd=5))             \n'
+            "CLOSE-WAIT 1      0                 192.0.2.5:51124       198.51.100.9:443"
+            '   users:(("node",pid=88,fd=22))             \n'
         ),
     }
     poller = nw.SSPoller(c, lambda argv: out[" ".join(argv)])
@@ -336,6 +362,24 @@ def test_net_summary(ship):  # noqa: F811
     assert t["source"] == "vnstat" and [i["name"] for i in t["interfaces"]] == ["ens18"]
     assert t["rx_mb_24h"] == pytest.approx(25 * 2.0, abs=2.1)  # 24 or 25 hourly slots
     assert t["rx_mb_7d"] == pytest.approx(169 * 2.0, abs=2.1)
+
+
+def test_net_summary_keeps_the_500_busiest_and_counts_the_rest(ship):  # noqa: F811
+    install_unit(ship)
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    s = nw.Store(now=now)
+    s.source = "ebpf"
+    for i in range(600):
+        for _ in range(2 if i < 10 else 1):  # ten busier ones
+            s.record_connect(f"d{i}.example.com", "198.51.100.7", 443, "curl", now)
+    write_store(ship, s.to_doc())
+    rc, doc, out = ship.ctl("net", "--json")
+    assert rc == 0, out
+    data = doc["data"]
+    assert_valid("net-summary", data)
+    assert len(data["destinations"]) == 500 and data["truncated"] == 100
+    names = {d["name"] for d in data["destinations"]}
+    assert {f"d{i}.example.com" for i in range(10)} <= names
 
 
 def test_status_net_section_and_new_destinations(ship):  # noqa: F811
