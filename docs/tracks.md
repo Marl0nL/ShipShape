@@ -14,7 +14,6 @@ directories; everything they share is written down in `contracts/`.
 | `scripts/`, `.github/`, `tests/contracts/`, `tests/scripts/`, `pytest.ini`, `ruff.toml`, `requirements-dev.txt` | shared | tooling; change only in its own PR |
 | `tests/e2e/` | both | W11, after the tracks land |
 | `docs/` | shared | each track may add its own pages; edit shared pages in their own PR |
-| `legacy/` | nobody | frozen; deleted after phase 2 |
 
 ## What each track builds against
 

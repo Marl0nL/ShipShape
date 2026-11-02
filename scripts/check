@@ -6,8 +6,6 @@
 #   4. npm test in any package under ship/ or fleetledger/ that has one
 #   5. the public-repo hygiene check (generic rules + your private deny-list)
 #
-# legacy/ is frozen and skipped by steps 1-4.
-#
 # Environment:
 #   PYTHON                       interpreter with requirements-dev.txt installed
 #                                (default: python3)
@@ -35,7 +33,7 @@ need() {
 shell_files() {
   git ls-files --cached --others --exclude-standard -z |
     while IFS= read -r -d '' f; do
-      case "$f" in legacy/*|*/node_modules/*) continue ;; esac
+      case "$f" in */node_modules/*) continue ;; esac
       [ -f "$f" ] || continue
       case "$f" in
         *.sh) printf '%s\0' "$f" ;;

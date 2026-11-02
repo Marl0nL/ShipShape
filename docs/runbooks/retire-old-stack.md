@@ -1,11 +1,16 @@
 # Runbook: retire the old container stack
 
 The previous design (one locked-down Docker container per stack, the
-`shipshape` control plane, a Squid egress proxy) lives in `legacy/` and is
-removed after phase 2. Retire a running stack once its work has moved to Ships.
+`shipshape` control plane, a Squid egress proxy) is no longer in the repo:
+the tag `container-stack-final` keeps it (`git checkout container-stack-final`).
+Retire a running stack once its work has moved to Ships.
 
 1. **Check the tag.** The last commit of the old design is tagged
-   `container-stack-final`; nothing else needs keeping in the repo.
+   `container-stack-final`; nothing else needs keeping in the repo. The tag is
+   from before the stack moved into `legacy/`. The folder's final state (with
+   its `LEGACY.md` note and two scrubbed example lines) is at commit `cdeecd7`,
+   the last change to `legacy/` before it was deleted:
+   `git checkout cdeecd7 -- legacy` brings it back.
 2. **Copy what is worth keeping onto a Ship,** for example an instance's data
    folder:
 
@@ -32,5 +37,6 @@ removed after phase 2. Retire a running stack once its work has moved to Ships.
 5. **Delete local leftovers** the old stack kept in its checkout (`auth/`,
    `instances/`, `control-plane/state/` and the per-instance data folders): they held
    credentials. They are git-ignored, so `git status` does not show them.
-6. **After phase 2's checks pass,** `legacy/` is deleted from the repo in one
-   commit.
+6. **Update or remove the old checkout.** The repo's `main` no longer has the
+   old stack; anything you still run from it stays on `container-stack-final`
+   until it is retired.

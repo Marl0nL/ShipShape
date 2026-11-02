@@ -24,7 +24,8 @@ dist/
 node_modules/
 
 # --- Old container stack: local data left in existing checkouts ---------------
-# These paths held secrets and runtime state for the stack now in legacy/.
+# These paths held secrets and runtime state for the old stack (tag
+# container-stack-final).
 # Keep ignoring them so leftovers in an existing checkout are never committed.
 /auth/
 /instances/
@@ -35,5 +36,3 @@ node_modules/
 /squid.conf
 /egress/allowed_domains.txt
 /egress/*.bak
-legacy/auth/*
-!legacy/auth/README.md

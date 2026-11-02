@@ -95,4 +95,4 @@ More: [security.md](security.md), and the runbooks in [runbooks/](runbooks/):
 | `docs/hygiene.md` | the public repo rule and its check |
 | `docs/security.md`, `docs/runbooks/` | security model; how to set up, create, sign in and retire |
 | `tests/e2e/` | end-to-end tests on a real hypervisor pool, and the guided acceptance run |
-| `legacy/`, `docs/archive/` | the previous container-based design |
+| `docs/archive/` | design notes from the previous container-based stack (its code: tag `container-stack-final`) |
