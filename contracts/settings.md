@@ -42,14 +42,15 @@ integration and agents edit these files too):
 
 | File | Keys |
 |---|---|
-| `~/.claude/settings.json` | `skipDangerousModePermissionPrompt` (true exactly when `allow_bypass` is true); the mode-ledger `UserPromptSubmit` hook entry |
-| `~/.claude.json` | `projects["<cwd>"].hasTrustDialogAccepted = true` for every autostart `cwd` |
+| `~/.claude/settings.json` | `skipDangerousModePermissionPrompt` (true exactly when `allow_bypass` is true); the mode-ledger hook entries for `UserPromptSubmit` and `SessionStart` (command `/opt/shipshape/hooks/mode-ledger`) |
+| `~/.claude.json` | `hasCompletedOnboarding = true` (no first-run screens in unattended launches); `projects["<cwd>"].hasTrustDialogAccepted = true` for every autostart `cwd` |
 | `~/.config/herdr/config.toml` | `onboarding = false`; `[update] version_check = false`; `[session] resume_agents_on_restore = true` |
 
 ### System
 
 | ship.toml | Effect |
 |---|---|
+| `ship.name`, `ship.id` | `/etc/avahi/services/shipshape.service`: the LAN announcement (`ship-runtime.md`) |
 | `agent.sudo` | `/etc/sudoers.d/91-shipshape-agent` present (`NOPASSWD: ALL`) or absent |
 | `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent (phase 2) |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
@@ -61,8 +62,11 @@ Claude Code restores a resumed session's permission mode, except bypass, which i
 drops. herdr resumes each session with a bare `claude --resume <id>`. The Ship
 covers the gap:
 
-- A `UserPromptSubmit` hook records the session's mode in
-  `~/.local/state/shipshape/modes.json`:
+- A hook records the session's mode in `~/.local/state/shipshape/modes.json`. On
+  `UserPromptSubmit` it records the `permission_mode` Claude reports. On
+  `SessionStart` it reads the mode from the launching `claude` process's own flags
+  (`--dangerously-skip-permissions` or `--permission-mode`), so an agent started in
+  bypass but never prompted is covered too; a launch without flags records nothing. The ledger:
 
   ```json
   { "schema": "shipshape.modes/1",

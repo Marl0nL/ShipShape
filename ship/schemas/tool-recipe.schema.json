@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/tool-recipe.schema.json",
+  "title": "Catalogue recipe (ship/tools/<id>.toml)",
+  "description": "Written by the Ship track (W6); run on the Ship by ship-ctl tools; listed by `ship-fleet tools ls` (W10), which reads the files from the repo. The file name must be <id>.toml. See contracts/tools.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "description", "kind", "check"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": { "$ref": "#/$defs/toolId" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "kind": { "enum": ["npm", "apt", "script", "claude-plugin", "skill-dir", "mcp"] },
+    "package": {
+      "type": "string",
+      "minLength": 1,
+      "description": "npm or apt package name (kind npm or apt)."
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pinned version. For npm, must equal versions.toml [npm] when listed there."
+    },
+    "run_as": { "enum": ["agent", "root"], "default": "agent" },
+    "apt": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "apt packages installed as root first; their repos must be in versions.toml [apt]."
+    },
+    "also_npm": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^(@[a-z0-9-]+/)?[a-z0-9._-]+@[0-9A-Za-z.+-]+$" },
+      "uniqueItems": true,
+      "description": "Extra pinned npm packages, name@version."
+    },
+    "script": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+$",
+      "description": "kind script: path relative to ship/tools/, run with bash."
+    },
+    "skill_dir": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+$",
+      "description": "kind skill-dir: folder relative to ship/, copied to ~/.claude/skills/<id>/."
+    },
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "marketplace": { "type": "string", "minLength": 1 }
+      },
+      "description": "kind claude-plugin: installed with `claude plugin install`."
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } }
+      },
+      "description": "kind mcp: added for the agent user with `claude mcp add --scope user`."
+    },
+    "env": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "additionalProperties": { "type": "string" },
+      "description": "Variables written to the agent user's environment file; ~/ is expanded on the Ship."
+    },
+    "needs": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+      "uniqueItems": true,
+      "description": "Sign-in services (status auth ids) required before the after-commands run."
+    },
+    "after": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Commands run as run_as after install (and after needs are met)."
+    },
+    "check": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Command that exits 0 when the tool works; its first line of output is the reported version."
+    },
+    "default": { "type": "boolean", "default": false, "description": "On every new Ship." },
+    "bake": { "type": "boolean", "default": false, "description": "Included in the phase 4 image." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["npm", "apt"] } } },
+      "then": { "required": ["package"] }
+    },
+    { "if": { "properties": { "kind": { "const": "npm" } } }, "then": { "required": ["version"] } },
+    { "if": { "properties": { "kind": { "const": "script" } } }, "then": { "required": ["script"] } },
+    {
+      "if": { "properties": { "kind": { "const": "skill-dir" } } },
+      "then": { "required": ["skill_dir"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "claude-plugin" } } },
+      "then": { "required": ["plugin"] }
+    },
+    { "if": { "properties": { "kind": { "const": "mcp" } } }, "then": { "required": ["mcp"] } }
+  ],
+  "$defs": {
+    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" }
+  }
+}

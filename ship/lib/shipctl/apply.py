@@ -1,0 +1,230 @@
+"""`ship-ctl apply`: turn ship.toml into real configuration (contracts/settings.md).
+
+Writes only what changed and returns the paths it wrote. Files in the agent's home
+are merged key by key: herdr's integration, Claude Code and the agents edit them
+too, so ship-ctl touches only the keys it owns.
+"""
+
+from __future__ import annotations
+
+import copy
+import json
+import os
+import tempfile
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+from . import tomlw
+from .context import Context
+from .errors import CtlError
+from .fsutil import ensure_dir, read_bytes, remove, write_atomic
+from .paths import Paths
+from .shiptoml import ShipToml
+
+LEDGER_EVENTS = ("UserPromptSubmit", "SessionStart")
+SUDOERS_LINE = "agent ALL=(ALL:ALL) NOPASSWD: ALL\n"
+HERDR_KEYS = {
+    ("", "onboarding"): False,
+    ("update", "version_check"): False,
+    ("session", "resume_agents_on_restore"): True,
+}
+
+
+def managed_settings(ship: ShipToml, versions: dict) -> dict:
+    c = ship.claude
+    rc = c["remote_control"]
+    doc: dict = {"remoteControlAtStartup": rc == "on"}
+    if rc == "blocked":
+        doc["disableRemoteControl"] = True
+    permissions: dict = {"defaultMode": c["default_mode"]}
+    if not c["allow_bypass"]:
+        permissions["disableBypassPermissionsMode"] = "disable"
+    doc["permissions"] = permissions
+    doc["autoUpdatesChannel"] = c["update_channel"]
+    minimum = versions.get("claude", {}).get("minimum_version")
+    if minimum:
+        doc["minimumVersion"] = minimum
+    doc["env"] = {"CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": c["session_prefix"]}
+    return doc
+
+
+def avahi_service(ship: ShipToml) -> str:
+    """The LAN announcement (contracts/ship-runtime.md): a hint for `ship-fleet scan`."""
+    return (
+        '<?xml version="1.0" standalone="no"?>\n'
+        '<!DOCTYPE service-group SYSTEM "avahi-service.dtd">\n'
+        "<!-- Written by ship-ctl apply from /etc/shipshape/ship.toml. -->\n"
+        "<service-group>\n"
+        f"  <name>{escape(ship.name)}</name>\n"
+        "  <service>\n"
+        "    <type>_shipshape._tcp</type>\n"
+        "    <port>22</port>\n"
+        "    <txt-record>schema=1</txt-record>\n"
+        f"    <txt-record>name={escape(ship.name)}</txt-record>\n"
+        f"    <txt-record>id={escape(ship.id)}</txt-record>\n"
+        "  </service>\n"
+        "</service-group>\n"
+    )
+
+
+def merge_user_settings(existing: dict, allow_bypass: bool, hook_command: str) -> dict:
+    """~/.claude/settings.json: skipDangerousModePermissionPrompt and the ledger hooks."""
+    doc = copy.deepcopy(existing)
+    if allow_bypass:
+        doc["skipDangerousModePermissionPrompt"] = True
+    else:
+        doc.pop("skipDangerousModePermissionPrompt", None)
+    hooks = doc.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = doc["hooks"] = {}
+    for event in LEDGER_EVENTS:
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            entries = hooks[event] = []
+        present = any(
+            isinstance(entry, dict)
+            and any(
+                isinstance(h, dict) and h.get("command") == hook_command
+                for h in entry.get("hooks", [])
+            )
+            for entry in entries
+        )
+        if not present:
+            entries.append({"hooks": [{"type": "command", "command": hook_command}]})
+    return doc
+
+
+def merge_claude_json(existing: dict, trusted: list[str]) -> dict:
+    """~/.claude.json: onboarding done, and trust for every autostart folder."""
+    doc = copy.deepcopy(existing)
+    doc["hasCompletedOnboarding"] = True
+    projects = doc.setdefault("projects", {})
+    if not isinstance(projects, dict):
+        projects = doc["projects"] = {}
+    for cwd in trusted:
+        project = projects.setdefault(cwd, {})
+        if isinstance(project, dict):
+            project["hasTrustDialogAccepted"] = True
+    return doc
+
+
+def expand_cwd(cwd: str, agent_home: str = "/home/agent") -> str:
+    return agent_home + cwd[1:] if cwd.startswith("~/") else cwd
+
+
+def _load_json_obj(path: Path) -> dict:
+    raw = read_bytes(path)
+    if raw is None:
+        return {}
+    try:
+        doc = json.loads(raw)
+    except ValueError as exc:
+        raise CtlError("internal", f"{path} is not valid JSON; not touching it") from exc
+    if not isinstance(doc, dict):
+        raise CtlError("internal", f"{path} is not a JSON object; not touching it")
+    return doc
+
+
+def _mode(path: Path, default: int) -> int:
+    try:
+        return path.stat().st_mode & 0o7777
+    except FileNotFoundError:
+        return default
+
+
+def _check_sudoers(ctx: Context, text: str) -> None:
+    if ctx.paths.sandbox:
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".sudoers", delete=False) as fh:
+        fh.write(text)
+    try:
+        result = ctx.runner.run(["visudo", "-c", "-q", "-f", fh.name], timeout=10)
+    finally:
+        os.unlink(fh.name)
+    if not result.ok:
+        raise CtlError("internal", "visudo rejected the agent sudoers rule")
+
+
+def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str], list[str]]:
+    """Returns (changed paths, messages)."""
+    paths: Paths = ctx.paths
+    owner = ctx.agent_owner
+    changed: list[str] = []
+    messages: list[str] = []
+
+    def note(path: Path, did: bool) -> None:
+        if did:
+            changed.append(paths.agent_path(path))
+
+    # Root-owned: Claude Code managed settings.
+    managed = json.dumps(managed_settings(ship, ctx.versions), indent=2) + "\n"
+    note(
+        paths.managed_settings,
+        write_atomic(paths.managed_settings, managed, 0o644, dry_run=dry_run),
+    )
+
+    # Root-owned: passwordless sudo for agent, only when switched on.
+    if ship.agent_sudo:
+        _check_sudoers(ctx, SUDOERS_LINE)
+        note(
+            paths.sudoers_agent,
+            write_atomic(paths.sudoers_agent, SUDOERS_LINE, 0o440, dry_run=dry_run),
+        )
+    else:
+        note(paths.sudoers_agent, remove(paths.sudoers_agent, dry_run=dry_run))
+
+    # Root-owned: the LAN announcement. avahi reloads its services folder by itself.
+    avahi = paths.p("/etc/avahi/services/shipshape.service")
+    note(avahi, write_atomic(avahi, avahi_service(ship), 0o644, dry_run=dry_run))
+
+    if ship.lan_guard:
+        messages.append("network.lan_guard is not built yet (phase 2); no rules were written.")
+
+    # Agent-owned files: merge only our keys.
+    home = paths.agent_home
+    if not home.is_dir():
+        messages.append(f"{paths.agent_path(home)} does not exist; agent files skipped.")
+        return changed, messages
+    if not dry_run:
+        for d in (home / ".claude", home / ".config/herdr"):
+            ensure_dir(d, 0o755 if d.name == "herdr" else 0o700, owner)
+
+    settings_path = home / ".claude/settings.json"
+    settings = merge_user_settings(
+        _load_json_obj(settings_path), ship.claude["allow_bypass"], Paths.LEDGER_HOOK
+    )
+    note(
+        settings_path,
+        write_atomic(
+            settings_path,
+            json.dumps(settings, indent=2) + "\n",
+            _mode(settings_path, 0o644),
+            owner,
+            dry_run,
+        ),
+    )
+
+    claude_json_path = home / ".claude.json"
+    agent_home = paths.agent_path(home)
+    trusted = [expand_cwd(a["cwd"], agent_home) for a in ship.autostart]
+    claude_json = merge_claude_json(_load_json_obj(claude_json_path), trusted)
+    note(
+        claude_json_path,
+        write_atomic(
+            claude_json_path,
+            json.dumps(claude_json, indent=2) + "\n",
+            _mode(claude_json_path, 0o600),
+            owner,
+            dry_run,
+        ),
+    )
+
+    herdr_path = home / ".config/herdr/config.toml"
+    raw = read_bytes(herdr_path)
+    try:
+        herdr = tomlw.set_keys(raw.decode("utf-8") if raw else "", HERDR_KEYS)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise CtlError("internal", f"cannot update {herdr_path}: {exc}") from exc
+    note(herdr_path, write_atomic(herdr_path, herdr, _mode(herdr_path, 0o644), owner, dry_run))
+
+    return changed, messages
