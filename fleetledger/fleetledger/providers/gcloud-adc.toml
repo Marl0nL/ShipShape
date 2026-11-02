@@ -1,0 +1,19 @@
+# Application Default Credentials only (for example to add scopes later).
+id = "gcloud-adc"
+label = "Google ADC"
+mode = "paste-back"
+run = "gcloud auth application-default login --no-launch-browser"
+timeout = 600
+
+[match]
+url = 'https://accounts\.google\.com/o/oauth2/\S+'
+prompt = '(?i)enter (?:the )?(?:verification|authorization) code'
+success = 'Credentials saved to file'
+failure = '(?i)(?:invalid_grant|ERROR: \(gcloud\.auth)'
+
+[[check]]
+service = "gcloud_adc"
+run = "gcloud auth application-default print-access-token >/dev/null"
+
+[logout]
+run = "gcloud auth application-default revoke --quiet"

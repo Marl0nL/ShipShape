@@ -3,6 +3,8 @@ ruff==0.17.3
 pytest==9.2.0
 jsonschema==4.26.0
 # FleetLedger's runtime dependencies (fleetledger/pyproject.toml), pinned for its tests.
+# zeroconf is left out: the tests replace mDNS browsing with a fake.
+pexpect==4.9.0
 pycdlib==1.22.0
 PyYAML==6.0.3
 tomlkit==0.15.2

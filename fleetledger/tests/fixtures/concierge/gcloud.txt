@@ -1,0 +1,13 @@
+> Go to the following link in your browser, and complete the sign-in prompts:
+>
+>     https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=000000000000-example.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fsdk.cloud.google.com%2Fauthcode.html&scope=openid&state=example-state&prompt=consent
+>
+>> Once finished, enter the verification code provided in your browser: 
+? 4/0EXAMPLE-verification-code
+>
+> Credentials saved to file: [/home/agent/.config/gcloud/application_default_credentials.json]
+>
+> You are now logged in as [work@example.com].
+> Your current project is [None].  You can change this setting by running:
+>   $ gcloud config set project PROJECT_ID
+! 0

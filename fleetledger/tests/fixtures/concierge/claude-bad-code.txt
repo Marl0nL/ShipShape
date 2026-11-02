@@ -1,0 +1,5 @@
+> Browser didn't open? Use the url below to sign in:
+> https://claude.ai/oauth/authorize?code=true&state=example-state
+>> Paste code here if prompted > 
+? EXAMPLE-CODE-0123456789abcdef#example-state
+! 0

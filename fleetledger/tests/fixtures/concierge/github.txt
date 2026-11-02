@@ -1,0 +1,13 @@
+>
+> ! First copy your one-time code: ABCD-1234
+>> Press Enter to open https://github.com/login/device in your browser... 
+<
+> ! Failed opening a web browser at https://github.com/login/device
+>   exec: "xdg-open,x-www-browser,www-browser,wslview": executable file not found in $PATH
+>   Please try entering the URL in your browser manually
+~ 0.5
+> ✓ Authentication complete.
+> - gh config set -h github.com git_protocol https
+> ✓ Configured git protocol
+> ✓ Logged in as example-work
+! 0

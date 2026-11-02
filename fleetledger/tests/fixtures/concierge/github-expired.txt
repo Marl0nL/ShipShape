@@ -1,0 +1,5 @@
+> ! First copy your one-time code: WXYZ-9876
+>> Press Enter to open https://github.com/login/device in your browser... 
+<
+~ 30
+! 1

@@ -1,0 +1,26 @@
+# GitHub device flow: gh shows a one-time code; you type it at
+# github.com/login/device and gh finishes on its own.
+id = "github"
+label = "GitHub"
+mode = "device-code"
+run = "gh auth login --hostname github.com --git-protocol https --web --skip-ssh-key"
+timeout = 900
+after = ["gh auth setup-git --hostname github.com"]
+
+[match]
+url = 'https://github\.com/login/device'
+code = 'one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})'
+success = '(?:Authentication complete|Logged in as)'
+failure = '(?i)(?:failed to authenticate|authentication failed|expired_token)'
+
+[match.send]
+'Press Enter to open' = "\r"
+'(?i)authenticate git with your github credentials\?' = "Y\r"
+
+[[check]]
+service = "github"
+run = "gh api user --jq .login"
+account = "stdout"
+
+[logout]
+run = "gh auth logout --hostname github.com"
