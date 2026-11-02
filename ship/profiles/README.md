@@ -16,4 +16,6 @@ repo_url = "https://github.com/example/firstmate.git"
 ```
 
 A private repo needs the GitHub sign-in: until then the setup fails, and the Ship
-retries it by itself after the next sign-in.
+retries it by itself after the next sign-in. Once GitHub is signed in, setup runs
+`gh auth setup-git` so plain `git clone` uses that sign-in (the gh-axi recipe does
+the same). Check on a real Ship (W11) that a private clone succeeds this way.

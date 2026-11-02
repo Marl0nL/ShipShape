@@ -16,6 +16,9 @@ binaries are pinned by version and sha256 in their install scripts.
 | `treehouse` | | script | release binary into `~/.local/bin` (`lib/release-binary.sh`) |
 | `no-mistakes` | | script | release binary into `~/.local/bin` |
 
+Ships are amd64 for now: Google publishes Chrome for amd64 only, so on an arm64
+Ship `chrome-devtools-axi` fails its apt step (the other recipes are arm64-ready).
+
 Adding a tool: write `<id>.toml`, pin any npm package in `versions.toml`, and take
 apt packages only from a `versions.toml` `[apt.*]` repo. `ship/tests/test_ship_catalogue.py`
 checks all of this.

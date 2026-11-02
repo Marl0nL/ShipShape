@@ -3,7 +3,7 @@
 set -euo pipefail
 src=$(cd "$(dirname "$0")/../skills/ship" && pwd)
 dest=$HOME/.claude/skills/ship
-if [ -d "$dest" ] && diff -rq "$src" "$dest" >/dev/null 2>&1; then
+if [ -d "$dest" ] && diff -rq -x README.md "$src" "$dest" >/dev/null 2>&1; then
   exit 0
 fi
 mkdir -p "$HOME/.claude/skills"

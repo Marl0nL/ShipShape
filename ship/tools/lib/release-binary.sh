@@ -18,7 +18,8 @@ install_release_binary() {
   url=${template//\{version\}/$version}
   url=${url//\{arch\}/$arch}
   tmp=$(mktemp -d)
-  curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$tmp/release.tar.gz" "$url"
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
+    --connect-timeout 20 --max-time 600 -o "$tmp/release.tar.gz" "$url"
   if ! echo "$sum  $tmp/release.tar.gz" | sha256sum -c --quiet -; then
     rm -rf "$tmp"
     echo "$name: checksum mismatch for $url" >&2

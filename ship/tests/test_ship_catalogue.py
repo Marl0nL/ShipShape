@@ -143,9 +143,154 @@ def test_profile_retries_after_sign_in(fleet_ship):
     ship.set(gh={"login": None})
     rc, doc, _ = ship.ctl("tools", "run", "--json")
     assert rc == 1 and doc["data"]["profiles"] == {"firstmate": "failed"}
+    # The first refresh compares against "not signed in" (contracts/ship-ctl.md), so it
+    # retries too; GitHub is still missing, so the clone still fails.
     ship.ctl("refresh")
+    assert ship.json("/var/lib/shipshape/profiles.json")["firstmate"]["state"] == "failed"
     ship.p("/home/agent/gh-ok").write_text("")
     ship.set(gh={"login": "example-user"})
-    ship.ctl("refresh")
+    rc, _, out = ship.ctl("refresh")
+    assert "profiles retried: firstmate ok" in out
     assert ship.p("/home/agent/cloned").read_text() == "https://example.com/firstmate.git\n"
     assert ship.json("/var/lib/shipshape/profiles.json")["firstmate"]["state"] == "ok"
+
+
+# --- review follow-ups ------------------------------------------------------------------
+import subprocess  # noqa: E402
+import tarfile  # noqa: E402
+
+
+def test_ship_axi_skill_install_is_idempotent(tmp_path):
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
+    first = subprocess.run(
+        ["bash", str(TOOLS / "ship-axi.sh")], env=env, capture_output=True, text=True
+    )
+    assert first.returncode == 0 and "installed" in first.stdout
+    skill = tmp_path / ".claude/skills/ship"
+    assert (skill / "SKILL.md").exists() and not (skill / "README.md").exists()
+    inode = skill.stat().st_ino
+    second = subprocess.run(
+        ["bash", str(TOOLS / "ship-axi.sh")], env=env, capture_output=True, text=True
+    )
+    assert second.returncode == 0 and second.stdout == ""
+    assert skill.stat().st_ino == inode
+
+
+FAKE_CURL = """#!/bin/sh
+echo "$@" >> "$FIXTURE/calls"
+out=""; url=""
+while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; https://*) url=$1 ;; esac; shift; done
+cp "$FIXTURE/${url##*/}" "$out"
+"""
+
+
+@pytest.fixture
+def release_server(tmp_path):
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    payload = tmp_path / "demo"
+    payload.write_text("#!/bin/sh\necho demo 1.0\n")
+    payload.chmod(0o755)
+    for arch in ("amd64", "arm64"):
+        with tarfile.open(fixture / f"demo-v1.0.0-{arch}.tar.gz", "w:gz") as tar:
+            tar.add(payload, arcname="demo")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "curl").write_text(FAKE_CURL)
+    (bindir / "curl").chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    import hashlib
+
+    def run(sha: str | None = None):
+        sha = sha or hashlib.sha256((fixture / "demo-v1.0.0-amd64.tar.gz").read_bytes()).hexdigest()
+        arm = hashlib.sha256((fixture / "demo-v1.0.0-arm64.tar.gz").read_bytes()).hexdigest()
+        script = (
+            f'. "{TOOLS}/lib/release-binary.sh"; install_release_binary demo v1.0.0 '
+            f'"https://example.com/{{version}}/demo-{{version}}-{{arch}}.tar.gz" {sha} {arm}'
+        )
+        return subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env={"HOME": str(home), "PATH": f"{bindir}:/usr/bin:/bin", "FIXTURE": str(fixture)},
+        )
+
+    return run, home, fixture
+
+
+def test_release_binary_checks_checksum_and_skips_when_installed(release_server):
+    run, home, fixture = release_server
+    if subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip() not in (
+        "x86_64",
+        "aarch64",
+    ):
+        pytest.skip("needs x86_64 or aarch64")
+    bad = run("0" * 64)
+    is_x86 = (
+        subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip() == "x86_64"
+    )
+    if is_x86:
+        assert bad.returncode == 1 and "checksum mismatch" in bad.stderr
+        assert not (home / ".local/bin/demo").exists()
+    ok = run()
+    assert ok.returncode == 0, ok.stderr
+    assert (home / ".local/bin/demo.version").read_text() == "v1.0.0\n"
+    calls = (fixture / "calls").read_text().count("\n")
+    again = run()
+    assert again.returncode == 0 and again.stdout == ""
+    assert (fixture / "calls").read_text().count("\n") == calls  # nothing downloaded
+
+
+def test_firstmate_setup_clones_once(tmp_path):
+    origin = tmp_path / "origin"
+    git = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run(["git", "init", "-q", "-b", "main", str(origin)], check=True, env=git)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(origin),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        check=True,
+        env=git,
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "SHIPSHAPE_OPT_REPO_URL": str(origin)}
+    setup = PROFILES / "firstmate/setup.sh"
+    r = subprocess.run(["bash", str(setup)], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert (home / "work/firstmate/.git").is_dir()
+    (home / "work/firstmate/mine").write_text("agent work")
+    r = subprocess.run(["bash", str(setup)], env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and (home / "work/firstmate/mine").exists()
+    env["SHIPSHAPE_OPT_REPO_URL"] = str(tmp_path / "missing")
+    shutil.rmtree(home / "work/firstmate")
+    r = subprocess.run(["bash", str(setup)], env=env, capture_output=True, text=True)
+    assert r.returncode == 1 and "could not clone" in r.stderr
+    assert sorted(p.name for p in (home / "work").iterdir()) == []
+
+
+@pytest.mark.parametrize("url,reason", [("-oProxyCommand=x", "not valid"), (None, "is not set")])
+def test_profile_options_are_checked(fleet_ship, url, reason):
+    ship = fleet_ship
+    text = ship.p("/etc/shipshape/ship.toml").read_text()
+    if url is None:
+        text = text.split("[profile_options.firstmate]")[0]
+    else:
+        text = text.replace("https://example.com/firstmate.git", url)
+    ship.write_toml(text)
+    rc, doc, _ = ship.ctl("tools", "run", "--json")
+    assert rc == 1 and doc["data"]["profiles"] == {"firstmate": "failed"}
+    assert any(reason in m for m in doc["messages"])
+    assert not ship.p("/home/agent/cloned").exists()

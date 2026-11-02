@@ -6,7 +6,8 @@ kind = "npm"
 package = "gh-axi"
 version = "0.1.47"
 needs = ["github"]
-after = ["gh-axi setup hooks"]
+# setup-git lets plain git (clones, pushes) use the GitHub sign-in.
+after = ["gh auth setup-git --hostname github.com", "gh-axi setup hooks"]
 check = "gh-axi --version"
 default = true
 bake = true

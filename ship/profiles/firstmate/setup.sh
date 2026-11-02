@@ -10,8 +10,13 @@ if [ -d "$dest/.git" ]; then
   exit 0
 fi
 mkdir -p "$HOME/work"
+# A private GitHub repo needs git to use gh's sign-in (the device-code login does
+# not set that up). Idempotent; only touches ~/.gitconfig.
+if command -v gh >/dev/null 2>&1 && gh auth status --hostname github.com >/dev/null 2>&1; then
+  gh auth setup-git --hostname github.com
+fi
 tmp=$(mktemp -d "$HOME/work/.firstmate.XXXXXX")
-if ! GIT_TERMINAL_PROMPT=0 git clone --quiet "$url" "$tmp/repo"; then
+if ! GIT_TERMINAL_PROMPT=0 git clone --quiet -- "$url" "$tmp/repo"; then
   rm -rf "$tmp"
   echo "firstmate: could not clone the repo (is GitHub signed in?)" >&2
   exit 1
