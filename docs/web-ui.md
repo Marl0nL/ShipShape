@@ -25,7 +25,8 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 | **Ship** (`/ships/<name>`) | Status, Needs attention, sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, herdr's last resume, Claude Code, host and tooling. |
 | Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`), and tags. Update or reboot this Ship from its Overview. |
 | Ship **Logs** | `ship-ctl logs` for one source. |
-| Ship **Network** | Phase 3's visibility summary (traffic totals and first-seen destinations) from the status document's `net` field. Until a Ship's collector reports, it says "not available". |
+| Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |
+| **Network** (`/network`) | Across the fleet, filterable by tag: destinations first seen in the last day, a "who talked to this domain" search (the domain or any subdomain), and each Ship's collector and traffic (`ship-fleet net --new`, `--who`). |
 | **Sign-ins** (`/signin`) | The concierge: start a sign-in for one Ship, or for every Ship with a tag; each sign-in's link, code box and countdown; results. |
 | **Audit log** (`/audit`) | Who, what and when for every sign-in and sign-out. |
 
@@ -127,7 +128,7 @@ and htmx for polling; no front-end build.
 | `fleet.py` | the background poller; Needs attention from `ops.attention` |
 | `flows.py` | the concierge's browser prompter, the live-terminal bridge, batches |
 | `actions.py` | settings, tags, logs, update and reboot through the shared day-2 operations (`fleetledger/ops.py`), sign-out through `ship-fleet logout`; update and reboot run in the background |
-| `network.py` | the Network tab's reading of the status `net` field |
+| `network.py` | the Network tab and page over `fleetledger/net.py` (shared with `ship-fleet net`), plus the status `net` digest |
 
 Tests: `fleetledger/tests/test_web.py` (the gate's every check, pages, actions,
 and real sign-in sessions in a terminal driven through the browser routes).

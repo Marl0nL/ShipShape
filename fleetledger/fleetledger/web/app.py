@@ -28,7 +28,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import commands, ops
+from fleetledger import commands, net, ops
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -118,6 +118,8 @@ def make_env() -> Environment:
         SERVICES=SERVICES,
         SETTINGS=SETTINGS,
         SETTINGS_TEXT=SETTINGS_TEXT,
+        human_bytes=net.human_bytes,
+        since=network.since,
     )
     env.filters["pill"] = _pill
     return env
@@ -291,7 +293,10 @@ async def ship_page(request: Request) -> Response:
             context["log"] = clean("\n".join(lines))
             context["log_ok"] = ok
     if tab == "network":
-        context["net"] = network.summary(context["view"])
+        snap = ui.fleet.snapshot
+        context["netview"] = network.ship_view(snap.inventory, context["ship"])
+        context["net"] = network.status_digest(context["view"])
+        context["week"] = request.query_params.get("week") == "1"
     return render(request, "ship.html", tab=tab, **context)
 
 
@@ -396,6 +401,61 @@ async def fleet_operation(request: Request) -> Response:
     ui.flash(session, "ok", f"{operation.capitalize()} started; its progress is on the "
              "Fleet page.")
     return back("/", tag=tag)
+
+
+# --- network visibility ----------------------------------------------------------------
+
+
+async def ship_network_refresh(request: Request) -> Response:
+    ui = ui_of(request)
+    name = _ship_name(request)
+    if not name or name not in ui.fleet.snapshot.by_name:
+        return not_found(request, "No such Ship in the inventory.")
+    session = session_of(request)
+    try:
+        problems = await run_in_threadpool(network.refresh, ui.app, [name])
+    except FleetError as exc:
+        problems = {name: exc.message}
+    for ship, problem in problems.items():
+        ui.flash(session, "bad", f"{ship}: {problem}")
+    return back(f"/ships/{name}/network")
+
+
+async def network_page(request: Request) -> Response:
+    ui = ui_of(request)
+    snap = ui.fleet.snapshot
+    tag = _tag_param(request)
+    who = (request.query_params.get("who") or "").strip()[:253]
+    found, who_error = None, None
+    if snap.inventory is None:
+        return render(request, "message.html", title="Network", text=snap.error or "No inventory.")
+    if who:
+        try:
+            found = net.who_talked(snap.inventory, who, tag)
+        except FleetError as exc:
+            who_error = exc.message
+    return render(request, "network.html", tag=tag, tags=snap.tags(), who=who,
+                  found=found, who_error=who_error,
+                  new=net.new_destinations(snap.inventory, tag)[:200],
+                  views=[network.ship_view(snap.inventory, v.ship) for v in snap.views_for(tag)])
+
+
+async def network_refresh(request: Request) -> Response:
+    ui = ui_of(request)
+    session = session_of(request)
+    fields = await form(request)
+    tag = one(fields, "tag")
+    if tag and not TAG_RE.match(tag):
+        tag = ""
+    try:
+        problems = await run_in_threadpool(network.refresh, ui.app, None, tag or None)
+    except FleetError as exc:
+        problems = {"fleet": exc.message}
+    for ship, problem in problems.items():
+        ui.flash(session, "bad", f"{ship}: {problem}")
+    if not problems:
+        ui.flash(session, "ok", "Network summaries refreshed.")
+    return back("/network", tag=tag)
 
 
 # --- sign-ins (the concierge) ---------------------------------------------------------
@@ -593,6 +653,9 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
         Route("/operations", fleet_operation, methods=["POST"]),
+        Route("/ships/{name}/network/refresh", ship_network_refresh, methods=["POST"]),
+        Route("/network", network_page),
+        Route("/network/refresh", network_refresh, methods=["POST"]),
         Route("/signin", signin_page),
         Route("/signin", signin_start, methods=["POST"]),
         Route("/flows/{flow}/card", flow_card),

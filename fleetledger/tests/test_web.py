@@ -13,6 +13,7 @@ import re
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ from fleetledger.web.flows import Concierge, WebFlow, WebPrompter
 from fleetledger.web.security import Gate
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
-from test_cli import CLAUDE_CODE, RUNNING, FakeShip, ShipSSH
+from test_cli import CLAUDE_CODE, EXAMPLES, RUNNING, VERSION, FakeShip, ShipSSH, result
 
 from fleetledger import cli, ops, status
 
@@ -45,9 +46,46 @@ class Clock:
         return self.t
 
 
+NET_SUMMARY = json.loads((EXAMPLES / "net-summary" / "running.json").read_text())
+
+
+class NetShip(FakeShip):
+    """The CLI tests' fake Ship, plus phase 3's `ship-ctl net`."""
+
+    def __init__(self):
+        super().__init__()
+        self.net = {}  # ship name -> net-summary document
+        self.net_contract = True
+
+    def __call__(self, ship, command):
+        if command[:4] == ["sudo", "-n", "/usr/local/bin/ship-ctl", "version"]:
+            self.calls.append((ship.name, command))
+            doc = copy.deepcopy(VERSION)
+            if self.net_contract:
+                doc["data"]["contracts"]["net-summary"] = 1
+            return 0, json.dumps(doc), ""
+        if command[:4] == ["sudo", "-n", "/usr/local/bin/ship-ctl", "net"]:
+            self.calls.append((ship.name, command))
+            return 0, json.dumps(result("net", data=self.net[ship.name])), ""
+        return super().__call__(ship, command)
+
+
+def fresh_summary():
+    """The contract's example summary, as if generated just now."""
+    doc = copy.deepcopy(NET_SUMMARY)
+    now = datetime.now(UTC)
+    stamp = lambda delta: (now - delta).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    doc["generated_at"] = stamp(timedelta(0))
+    doc["collector"]["updated_at"] = stamp(timedelta(seconds=30))
+    for i, d in enumerate(doc["destinations"]):
+        d["last_seen"] = stamp(timedelta(minutes=5))
+        d["first_seen"] = stamp(timedelta(hours=2) if i == 1 else timedelta(days=3))
+    return doc
+
+
 @pytest.fixture
 def web(store, fake_repo, monkeypatch, tmp_path):
-    ship_side = FakeShip()
+    ship_side = NetShip()
     monkeypatch.setenv("FAKE_CLI_INPUT_LOG", str(tmp_path / "typed.log"))
     fixture = {"path": FIX / "claude.txt"}
     argvs = []
@@ -485,31 +523,81 @@ def test_ship_page(web):
     assert web.client.get("/ships/ship-01/nonsense").status_code == 404
 
 
-def test_network_tab_until_phase_3(web):
+@pytest.mark.parametrize("net", [None, {"window_h": 24, "rx_mb": 0, "tx_mb": 0,
+                                         "new_destinations": [], "collector": "unavailable"}])
+def test_network_tab_without_a_collector(web, net):
+    doc = copy.deepcopy(RUNNING)
+    doc["net"] = net
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
     web.sign_in()
     page = web.client.get("/ships/ship-01/network").text
     assert "not available" in page
 
 
-def test_network_tab_with_visibility_data(web):
+def test_network_tab_shows_the_status_digest_before_a_full_summary(web):
     doc = copy.deepcopy(RUNNING)
     doc["net"] = {"window_h": 24, "rx_mb": 12.5, "tx_mb": 3.25,
-                  "new_destinations": ["new.example.com", "<b>x</b>.example"]}
+                  "new_destinations": ["new.example.com", "<b>x</b>.example"],
+                  "collector": "stopped", "source": "ss", "destinations": 14,
+                  "connections": 602}
     web.ship.status_override["ship-01"] = doc
     web.fleet.poll()
     web.sign_in()
     page = web.client.get("/ships/ship-01/network").text
-    assert "not available" not in page
+    assert "not available" not in page and "own 24-hour digest" in page
     assert "12.5 MB" in page and "new.example.com" in page
     assert "<b>x</b>" not in page
+    assert "602" in page and "collector is stopped" in page and "short connections" in page
 
 
-def test_network_summary_tolerates_bad_data():
+def test_network_tab_fetches_the_full_summary_through_fleetledger_net(web):
+    web.ship.net["ship-01"] = fresh_summary()
+    web.sign_in()
+    assert "Fetch the latest summary" in web.client.get("/ships/ship-01/network").text
+    assert not [c for _, c in web.ship.calls if c[3:4] == ["net"]]  # pages never fetch
+    response = web.post("/ships/ship-01/network/refresh")
+    assert response.headers["location"] == "/ships/ship-01/network"
+    assert [c for _, c in web.ship.calls if c[3:4] == ["net"]]
+    page = web.client.get("/ships/ship-01/network").text
+    assert "Top destinations" in page and "api.example.com" in page
+    assert "new to the fleet" in page and "new-service.example.net" in page
+    assert "Programs (7 days)" in page
+    week = web.client.get("/ships/ship-01/network?week=1").text
+    assert "fd00:db8::55" in week
+
+
+def test_network_refresh_reports_a_ship_without_visibility(web):
+    web.ship.net_contract = False
+    web.sign_in()
+    web.post("/ships/ship-01/network/refresh")
+    assert "predates network visibility" in web.client.get("/ships/ship-01/network").text
+
+
+def test_fleet_network_page_new_destinations_and_who_talked(web):
+    web.ship.net["ship-01"] = fresh_summary()
+    web.ship.net["ship-02"] = fresh_summary()
+    web.sign_in()
+    assert "no summary yet" in web.client.get("/network").text
+    web.post("/network/refresh", {"tag": "work"})
+    assert [n for n, c in web.ship.calls if c[3:4] == ["net"]] == ["ship-01"]
+    page = web.client.get("/network").text
+    assert "new-service.example.net" in page and "new to the fleet" in page
+    found = web.client.get("/network?who=example.com").text
+    assert "/ships/ship-01/network" in found and "api.example.com" in found
+    assert "No Ship reached" in web.client.get("/network?who=nothing.example").text
+    bad = web.client.get("/network?who=%3Cscript%3E").text
+    assert "Give a domain name" in bad and "<script>" not in bad
+    personal = web.client.get("/network?tag=personal").text
+    assert "new-service.example.net" not in personal
+
+
+def test_status_digest_tolerates_bad_data():
     v = view()
     v.status["net"] = {"window_h": "x"}
-    assert network.summary(v) is None
+    assert network.status_digest(v) is None
     v.status["net"] = None
-    assert network.summary(v) is None
+    assert network.status_digest(v) is None
 
 
 def test_settings_go_through_ship_ctl_and_the_inventory(web):
