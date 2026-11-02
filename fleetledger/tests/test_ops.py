@@ -1,0 +1,721 @@
+"""Day-2 operations (ops.py) against a simulated Ship.
+
+The simulated Ship keeps its own clock, uptime, bundle and agents: a reboot takes
+it down for a while, it comes back with a fresh uptime, and herdr resumes its
+agents a little later (or not, when a test says so). Uploads run the real upload
+script with bash into a temporary folder, and converge reads the bundle that
+actually arrived, so the checksum sidecar and paths are tested for real.
+"""
+
+from __future__ import annotations
+
+import copy
+import gzip
+import hashlib
+import io
+import json
+import subprocess
+import tarfile
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from fleetledger.errors import FleetError
+from fleetledger.seed.bundle import Bundle
+from fleetledger.ssh import Result, Unreachable
+
+from fleetledger import cli, ops, status
+
+HERE = Path(__file__).resolve().parent
+EXAMPLES = HERE.parents[1] / "contracts" / "examples"
+RUNNING = json.loads((EXAMPLES / "ship-status" / "running.json").read_text())
+EPOCH = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
+OLD_COMMIT = "0123456789ab"
+NEW_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
+VERSION = {
+    "schema": "shipshape.ship-ctl-result/1", "command": "version", "ok": True, "changed": [],
+    "messages": [], "error": None,
+    "data": {"tooling": "0.1.0", "commit": OLD_COMMIT, "contracts": {
+        "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1,
+        "runtime": 1}},
+}
+
+
+def make_bundle(commit=NEW_COMMIT, tooling="0.2.0", dirty=False) -> Bundle:
+    manifest = {"schema": "shipshape.bundle/1", "tooling_version": tooling, "commit": commit,
+                "dirty": dirty, "created_at": "2026-01-02T00:00:00Z"}
+    raw = io.BytesIO()
+    with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz, \
+            tarfile.open(fileobj=gz, mode="w") as tar:
+        data = json.dumps(manifest).encode()
+        info = tarfile.TarInfo("bundle.json")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    return Bundle(raw.getvalue(), manifest)
+
+
+def ctl_result(command, ok=True, data=None, error=None, changed=()):
+    return {"schema": "shipshape.ship-ctl-result/1", "command": command, "ok": ok,
+            "changed": list(changed), "messages": [], "data": data or {}, "error": error}
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.t += seconds
+
+
+class SimShip:
+    """One simulated Ship."""
+
+    def __init__(self, clock, incoming: Path, name="ship-01"):
+        self.clock = clock
+        self.incoming = incoming
+        self.name = name
+        self.booted = clock.t - 86400
+        self.down_until = None
+        self.boot_delay = 40  # seconds from the reboot command until it answers again
+        self.resume_delay = 30  # seconds after boot until herdr resumed its agents
+        self.agents = {"main": "auto", "builder": "bypassPermissions"}
+        self.after_reboot = None  # agents after resume, if different
+        self.never_back = False
+        self.bundle_commit = OLD_COMMIT
+        self.tooling = "0.1.0"
+        self.herdr_changes = False  # does the next converge replace herdr?
+        self.herdr_pending = False
+        self.converge_error = None
+        self.report_commit = None  # lie about the bundle after converge
+        self.accounts = {}  # service -> account reported in auth
+        self.calls = []
+        self.converged = []
+        self.reboots = []
+
+    # --- state ------------------------------------------------------------
+    def up(self):
+        if self.down_until is None:
+            return True
+        if self.never_back or self.clock.t < self.down_until:
+            return False
+        self.booted = self.down_until
+        self.down_until = None
+        self.herdr_pending = False
+        if self.after_reboot is not None:
+            self.agents = dict(self.after_reboot)
+        return True
+
+    def status(self, ship):
+        doc = copy.deepcopy(RUNNING)
+        now = self.clock.t
+        uptime = int(now - self.booted)
+        doc["generated_at"] = datetime.fromtimestamp(EPOCH + now, UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        doc["ship"].update(name=ship.name, id=ship.id, tags=list(ship.tags or ()),
+                           tooling=self.tooling, bundle_commit=self.bundle_commit)
+        doc["host"]["uptime_s"] = uptime
+        resumed = uptime >= self.resume_delay
+        agents = self.agents if resumed else {}
+        doc["herdr"]["agents"] = [
+            {"name": n, "kind": "claude", "state": "idle", "mode": m} for n, m in agents.items()
+        ]
+        doc["herdr"]["last_resume"] = None if not resumed else {
+            "at": datetime.fromtimestamp(EPOCH + self.booted + self.resume_delay, UTC)
+            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "method": "hidden-client", "resumed": len(agents), "failed": 0}
+        for service, account in self.accounts.items():
+            doc["auth"][service]["account"] = account
+        doc["attention"] = []
+        if self.herdr_pending:
+            doc["attention"].append({"code": "herdr-restart-pending",
+                                     "message": "herdr was updated; reboot to switch."})
+        doc["state"] = "running" if agents else "ready"
+        return doc
+
+    # --- commands -----------------------------------------------------------
+    def __call__(self, ship, command, input):
+        self.calls.append(list(command))
+        if not self.up():
+            raise Unreachable(f"Cannot reach {ship.name}: connection refused")
+        if command[:2] == ["bash", "-c"]:
+            local = [self.incoming.as_posix() if a == ops.INCOMING else a for a in command]
+            proc = subprocess.run(local, input=input or b"", capture_output=True)
+            return proc.returncode, proc.stdout, proc.stderr.decode()
+        if command == ["sudo", "-n", "systemctl", "reboot"]:
+            self.reboots.append(list(ship.names))
+            self.down_until = self.clock.t + self.boot_delay
+            raise Unreachable(f"Cannot reach {ship.name}: connection closed by remote host")
+        assert command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"], command
+        verb = command[3]
+        if verb == "version":
+            return 0, json.dumps(VERSION), ""
+        if verb == "status":
+            return 0, json.dumps(self.status(ship)), ""
+        if verb == "converge":
+            return self.converge(command[command.index("--bundle") + 1])
+        if verb == "logs":
+            return 0, json.dumps(ctl_result("logs", data={"lines": [f"{ship.name} line"]})), ""
+        return 0, json.dumps(ctl_result(verb, changed=["/etc/shipshape/ship.toml"])), ""
+
+    def converge(self, path):
+        assert path.startswith(ops.INCOMING + "/")
+        local = self.incoming / path.rsplit("/", 1)[1]
+        data = local.read_bytes()
+        sidecar = local.with_name(local.name + ".sha256").read_text().split()[0]
+        assert sidecar == hashlib.sha256(data).hexdigest()
+        assert local.stat().st_mode & 0o077 == 0
+        if self.converge_error:
+            return 1, json.dumps(ctl_result("converge", ok=False, error={
+                "code": "provision-failed", "message": self.converge_error})), ""
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            manifest = json.load(tar.extractfile("bundle.json"))
+        self.converged.append(manifest["commit"])
+        old = f"{self.tooling}-{self.bundle_commit}"
+        self.tooling = manifest["tooling_version"]
+        self.bundle_commit = self.report_commit or manifest["commit"][:12]
+        if self.herdr_changes:
+            self.herdr_pending = True
+        return 0, json.dumps(ctl_result("converge", data={
+            "from": old, "to": f"{self.tooling}-{manifest['commit'][:12]}"})), ""
+
+
+class SimSSH:
+    def __init__(self, sims):
+        self.sims = sims
+
+    def run(self, ship, command, *, input=None, timeout=60):
+        sim = self.sims[ship.name]
+        code, out, err = sim(ship, list(command), input)
+        if isinstance(out, str):
+            out = out.encode()
+        return Result(code, out, err, ship.names[0])
+
+
+@pytest.fixture
+def world(store, fake_repo, tmp_path):
+    clock = Clock()
+    incoming = tmp_path / "incoming"
+    sims = {name: SimShip(clock, incoming / name, name) for name in ("ship-01", "ship-02")}
+    sims["ship-02"].accounts = {"claude": "you@example.com", "github": "example-user"}
+    fleet = ops.Fleet(store=store, ssh_factory=lambda inv: SimSSH(sims),
+                      repo_factory=lambda: fake_repo, sleep=clock.sleep, clock=clock)
+
+    class World:
+        pass
+
+    w = World()
+    w.clock, w.sims, w.fleet, w.store, w.incoming = clock, sims, fleet, store, incoming
+    w.ship = lambda name: store.load().ship(name)
+    return w
+
+
+def events():
+    seen = []
+    return seen, lambda ship, text: seen.append((ship, text))
+
+
+# --- select -----------------------------------------------------------------
+
+
+def test_select_by_names_tag_or_all(store):
+    inv = store.load()
+    assert [s.name for s in ops.select(inv, ["ship-02"])] == ["ship-02"]
+    assert [s.name for s in ops.select(inv, tag="work")] == ["ship-01"]
+    assert [s.name for s in ops.select(inv, ["all"])] == ["ship-01", "ship-02"]
+    assert [s.name for s in ops.select(inv, everything=True)] == ["ship-01", "ship-02"]
+
+
+@pytest.mark.parametrize("names,tag,everything", [
+    ([], None, False), (["ship-01"], "work", False), (["all", "ship-01"], None, False),
+    ([], "work", True),
+])
+def test_select_needs_exactly_one_way(store, names, tag, everything):
+    with pytest.raises(FleetError):
+        ops.select(store.load(), names, tag, everything)
+
+
+def test_select_unknown_tag_or_name(store):
+    with pytest.raises(FleetError):
+        ops.select(store.load(), tag="nope")
+    with pytest.raises(FleetError):
+        ops.select(store.load(), ["ship-09"])
+
+
+# --- reboot -------------------------------------------------------------------
+
+
+def test_reboot_waits_and_checks_agents_resumed_in_their_modes(world):
+    seen, on_event = events()
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], on_event=on_event)
+    assert outcome.ok, outcome
+    assert "2/2 agents resumed in their modes" in outcome.summary
+    assert outcome.data["agents_after"] == {"main": "auto", "builder": "bypassPermissions"}
+    assert world.sims["ship-01"].reboots == [["ship-01.local"]]
+    assert ("ship-01", "rebooting") in seen
+
+
+def test_reboot_flags_an_agent_that_lost_bypass(world):
+    sim = world.sims["ship-01"]
+    sim.after_reboot = {"main": "auto", "builder": "auto"}
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert not outcome.ok
+    assert outcome.details == ["agent builder came back in auto, was bypassPermissions"]
+
+
+def test_reboot_flags_a_missing_agent_after_the_resume_window(world):
+    world.sims["ship-01"].after_reboot = {"main": "auto"}
+    start = world.clock.t
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")],
+                           times=ops.RebootTimes(back=600, resume=120, poll=10))
+    assert not outcome.ok
+    assert outcome.details == ["agent builder did not come back"]
+    assert world.clock.t - start >= 120  # it waited for the resume window
+
+
+def test_reboot_gives_up_when_the_ship_does_not_come_back(world):
+    world.sims["ship-01"].never_back = True
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")],
+                           times=ops.RebootTimes(back=120, resume=60, poll=10))
+    assert not outcome.ok
+    assert "did not come back within 120 s" in outcome.summary
+
+
+def test_reboot_does_not_mistake_the_old_boot_for_the_new_one(world):
+    """While the Ship is still shutting down it may answer with its old uptime."""
+    sim = world.sims["ship-01"]
+    sim.boot_delay = 60
+    original = sim.up
+
+    def slow_up():
+        if sim.down_until is not None and world.clock.t < sim.down_until - 35:
+            return True  # still answering from the old boot for 25 s
+        return original()
+
+    sim.up = slow_up
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert outcome.ok
+    assert outcome.data["back_after_s"] >= 60
+
+
+def test_reboot_is_sent_over_one_name_only(world, store):
+    """A connection dropped by the reboot is never retried on the Ship's other names."""
+    sim = world.sims["ship-02"]
+    sim.agents = {}
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-02")])
+    assert outcome.ok
+    assert sim.reboots == [["ship-02.local"]]  # not both of its names
+    assert "no agents were running" in outcome.summary
+
+
+def test_reboot_without_wait(world):
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], wait=False)
+    assert outcome.ok and outcome.summary == "reboot started"
+    assert world.sims["ship-01"].reboots
+
+
+def test_reboot_of_an_unreachable_ship_fails_only_that_ship(world):
+    world.sims["ship-02"].down_until = world.clock.t + 10_000
+    outcomes = ops.reboot(world.fleet, [world.ship("ship-01"), world.ship("ship-02")])
+    assert [o.ok for o in outcomes] == [True, False]
+    assert "Cannot reach ship-02" in outcomes[1].summary
+    assert world.sims["ship-02"].reboots == []
+
+
+# --- update ---------------------------------------------------------------------
+
+
+def test_update_uploads_converges_and_cleans_up(world):
+    sim = world.sims["ship-01"]
+    seen, on_event = events()
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                           on_event=on_event)
+    assert outcome.ok, outcome
+    assert outcome.summary == f"updated to 0.2.0-{NEW_COMMIT[:12]}"
+    assert sim.converged == [NEW_COMMIT]
+    assert sim.reboots == []  # herdr did not change: no reboot
+    assert outcome.data["rebooted"] is False
+    assert list((world.incoming / "ship-01").iterdir()) == []  # upload and sidecar removed
+    assert any("uploading the bundle" in text for _, text in seen)
+
+
+def test_update_reboots_when_herdr_changed_and_checks_agents(world):
+    sim = world.sims["ship-01"]
+    sim.herdr_changes = True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok, outcome
+    assert sim.reboots and outcome.data["rebooted"] is True
+    assert "2/2 agents resumed in their modes" in outcome.summary
+    assert outcome.data["reboot"]["agents_before"] == {"main": "auto",
+                                                        "builder": "bypassPermissions"}
+
+
+def test_update_reports_a_mode_lost_across_the_herdr_reboot(world):
+    sim = world.sims["ship-01"]
+    sim.herdr_changes = True
+    sim.after_reboot = {"main": "auto", "builder": "default"}
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert not outcome.ok
+    assert "agent builder came back in default, was bypassPermissions" in outcome.details
+
+
+def test_update_never_reboots_with_never(world):
+    sim = world.sims["ship-01"]
+    sim.herdr_changes = True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                           reboot_policy="never")
+    assert outcome.ok and sim.reboots == []
+    assert any("next reboot" in d for d in outcome.details)
+
+
+def test_update_always_reboots_with_always(world):
+    sim = world.sims["ship-01"]
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                           reboot_policy="always")
+    assert outcome.ok and len(sim.reboots) == 1
+
+
+def test_update_skips_a_ship_already_on_the_bundle(world):
+    sim = world.sims["ship-01"]
+    sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and outcome.summary.startswith("already on")
+    assert sim.converged == []
+    [forced] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                          force=True)
+    assert forced.ok and sim.converged == [NEW_COMMIT]
+
+
+def test_update_always_converges_a_dirty_bundle(world):
+    sim = world.sims["ship-01"]
+    sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
+    seen, on_event = events()
+    ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(dirty=True),
+               on_event=on_event)
+    assert sim.converged == [NEW_COMMIT]
+    assert any("uncommitted" in text for _, text in seen)
+
+
+def test_update_up_to_date_ship_with_herdr_pending_still_reboots(world):
+    sim = world.sims["ship-01"]
+    sim.bundle_commit, sim.tooling, sim.herdr_pending = NEW_COMMIT[:12], "0.2.0", True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and sim.converged == [] and len(sim.reboots) == 1
+
+
+def test_update_converge_failure_is_reported_and_upload_removed(world):
+    sim = world.sims["ship-01"]
+    sim.converge_error = "apt failed"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert not outcome.ok
+    assert "provision-failed" in outcome.summary and "apt failed" in outcome.summary
+    assert list((world.incoming / "ship-01").iterdir()) == []
+    assert sim.reboots == []
+
+
+def test_update_catches_a_ship_reporting_the_wrong_bundle(world):
+    world.sims["ship-01"].report_commit = "badbadbadbad"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert not outcome.ok
+    assert "reports bundle badbadbadbad" in outcome.summary
+
+
+def test_update_refuses_a_provisioning_ship(world, monkeypatch):
+    sim = world.sims["ship-01"]
+    original = sim.status
+
+    def provisioning(ship):
+        doc = original(ship)
+        doc["state"] = "provisioning"
+        return doc
+
+    sim.status = provisioning
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert not outcome.ok and "still provisioning" in outcome.summary
+    assert sim.converged == []
+
+
+def test_update_rejects_an_unknown_reboot_policy(world):
+    with pytest.raises(FleetError):
+        ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                   reboot_policy="sometimes")
+
+
+def test_upload_never_puts_the_bundle_in_argv(world):
+    bundle = make_bundle()
+    ops.update(world.fleet, [world.ship("ship-01")], bundle=bundle)
+    upload = next(c for c in world.sims["ship-01"].calls if c[:2] == ["bash", "-c"])
+    assert upload[2] == ops.UPLOAD_SCRIPT
+    assert upload[3:] == ["upload", ops.INCOMING, f"bundle-{bundle.sha256[:16]}.tar.gz",
+                          bundle.sha256]
+
+
+def test_update_many_ships_one_failing(world):
+    world.sims["ship-02"].down_until = world.clock.t + 10_000
+    outcomes = ops.update(world.fleet, [world.ship("ship-01"), world.ship("ship-02")],
+                          bundle=make_bundle())
+    assert [o.ship for o in outcomes] == ["ship-01", "ship-02"]
+    assert [o.ok for o in outcomes] == [True, False]
+
+
+# --- settings, tags, tools, logs ------------------------------------------------
+
+
+def test_parse_assignments_new_keys():
+    assert ops.parse_assignments([
+        "lan_guard=true", "lan_guard_allow=192.0.2.10,198.51.100.0/24",
+        "auto_reboot=true", "reboot_time=03:30",
+    ]) == ["network.lan_guard=true", "network.lan_guard_allow=192.0.2.10,198.51.100.0/24",
+           "updates.auto_reboot=true", "updates.reboot_time=03:30"]
+    assert ops.parse_assignments(["lan_guard_allow="]) == ["network.lan_guard_allow="]
+
+
+@pytest.mark.parametrize("bad", [
+    "reboot_time=4am", "reboot_time=24:00", "lan_guard_allow=router.example.com",
+    "auto_reboot=yes", "session_prefix=-bad", "nonsense=1", "lan_guard",
+])
+def test_parse_assignments_rejects(bad):
+    with pytest.raises(FleetError):
+        ops.parse_assignments([bad])
+
+
+def test_set_settings_on_many_ships_records_claude_keys(world):
+    outcomes = ops.set_settings(world.fleet, [world.ship("ship-01"), world.ship("ship-02")],
+                                ["update_channel=stable", "lan_guard=true"])
+    assert all(o.ok for o in outcomes)
+    for name in ("ship-01", "ship-02"):
+        call = next(c for c in world.sims[name].calls if c[3:4] == ["set"])
+        assert call[4:] == ["claude.update_channel=stable", "network.lan_guard=true", "--json"]
+        assert world.store.load().ship(name).claude["update_channel"] == "stable"
+
+
+def test_set_tags_changes_inventory_and_ship(world):
+    [outcome] = ops.set_tags(world.fleet, [world.ship("ship-01")], ["+lab", "-work"])
+    assert outcome.ok and outcome.data["tags"] == ["lab"]
+    assert world.store.load().ship("ship-01").tags == ("lab",)
+    call = next(c for c in world.sims["ship-01"].calls if c[3:4] == ["set"])
+    assert call[4] == "ship.tags=lab"
+
+
+def test_set_tags_local_does_not_touch_the_ship(world):
+    [outcome] = ops.set_tags(world.fleet, [world.ship("ship-01")], ["+lab"], local=True)
+    assert outcome.ok and world.sims["ship-01"].calls == []
+
+
+def test_set_tags_rejects_a_bad_tag_before_any_change(world):
+    with pytest.raises(FleetError):
+        ops.set_tags(world.fleet, [world.ship("ship-01")], ["+Bad Tag"])
+    assert world.store.load().ship("ship-01").tags == ("work",)
+
+
+def test_set_tags_reports_a_ship_it_could_not_reach(world):
+    world.sims["ship-01"].down_until = world.clock.t + 10_000
+    [outcome] = ops.set_tags(world.fleet, [world.ship("ship-01")], ["+lab"])
+    assert not outcome.ok and "inventory" in outcome.summary
+    assert world.store.load().ship("ship-01").tags == ("lab", "work")
+
+
+def test_change_tools_on_many_ships(world):
+    outcomes = ops.change_tools(world.fleet, [world.ship("ship-01"), world.ship("ship-02")],
+                                "add", ["tasks-axi"])
+    assert all(o.ok for o in outcomes)
+    assert "tasks-axi" in world.store.load().ship("ship-02").tools
+
+
+def test_change_tools_rejects_unknown_ids_before_touching_ships(world):
+    with pytest.raises(FleetError):
+        ops.change_tools(world.fleet, [world.ship("ship-01")], "add", ["no-such-tool"])
+    assert world.sims["ship-01"].calls == []
+
+
+def test_logs_and_fleet_logs(world):
+    assert ops.logs(world.fleet, world.ship("ship-01"), "herdr", 5) == ["ship-01 line"]
+    outcomes = ops.fleet_logs(world.fleet, [world.ship("ship-01"), world.ship("ship-02")],
+                              "status", 5)
+    assert [o.data["lines"] for o in outcomes] == [["ship-01 line"], ["ship-02 line"]]
+    with pytest.raises(FleetError):
+        ops.logs(world.fleet, world.ship("ship-01"), "secrets", 5)
+    with pytest.raises(FleetError):
+        ops.logs(world.fleet, world.ship("ship-01"), "herdr", 0)
+
+
+# --- attention ------------------------------------------------------------------
+
+
+def test_attention_orders_by_severity_then_ship(store):
+    inv = store.load()
+    one, two = inv.ship("ship-01"), inv.ship("ship-02")
+    views = [
+        status.ShipView(one, status=RUNNING, attention=[
+            {"code": "behind-tooling", "message": "old tooling", "subject": "tooling"},
+            {"code": "agent-waiting", "message": "main waits", "subject": "main"},
+        ]),
+        status.ShipView(two, problem="unreachable", message="Cannot reach ship-02"),
+    ]
+    items = ops.attention(views)
+    assert [(i.ship, i.code, i.severity) for i in items] == [
+        ("ship-02", "unreachable", "high"),
+        ("ship-01", "agent-waiting", "medium"),
+        ("ship-01", "behind-tooling", "low"),
+    ]
+    assert items[1].as_dict()["subject"] == "main"
+
+
+def test_attention_shows_unknown_codes_as_medium(store):
+    ship = store.load().ship("ship-01")
+    view = status.ShipView(ship, status=RUNNING,
+                           attention=[{"code": "brand-new", "message": "something"}])
+    [item] = ops.attention([view])
+    assert item.code == "brand-new" and item.severity == "medium" and item.subject is None
+
+
+# --- the CLI on top -------------------------------------------------------------
+
+
+@pytest.fixture
+def app(world, fake_repo):
+    out, err = io.StringIO(), io.StringIO()
+    tty = {"value": False}
+    answers = []
+    a = cli.App(out=out, err=err, store_factory=lambda: world.store,
+                repo_factory=lambda: fake_repo, ssh_factory=world.fleet.ssh_factory,
+                sleep=world.clock.sleep, clock=world.clock,
+                stdin_isatty=lambda: tty["value"],
+                confirm=lambda prompt: answers.pop(0))
+
+    def run(*argv):
+        out.seek(0), out.truncate(), err.seek(0), err.truncate()
+        code = cli.main(list(argv), a)
+        return code, out.getvalue(), err.getvalue()
+
+    a.run, a.tty, a.answers = run, tty, answers
+    return a
+
+
+@pytest.fixture
+def packed(monkeypatch):
+    bundle = make_bundle()
+    monkeypatch.setattr(ops.bundle_mod, "pack", lambda repo: bundle)
+    return bundle
+
+
+def test_cli_update_one_ship(app, world, packed):
+    code, out, err = app.run("update", "ship-01")
+    assert code == 0, err
+    assert f"ship-01: updated to 0.2.0-{NEW_COMMIT[:12]}" in out
+    assert "ship-01: uploading the bundle" in err
+
+
+def test_cli_update_many_needs_yes_when_not_a_terminal(app, world, packed):
+    code, out, err = app.run("update", "all")
+    assert code == 1 and "--yes" in err
+    assert world.sims["ship-01"].converged == []
+    code, out, err = app.run("update", "all", "--yes")
+    assert code == 0, err
+    assert "2 of 2 Ships OK." in out
+
+
+def test_cli_update_many_asks_on_a_terminal(app, world, packed):
+    app.tty["value"] = True
+    app.answers.append("no")
+    code, _, err = app.run("update", "--tag", "work")
+    assert code == 0  # one Ship: no question asked
+    app.answers.append("no")
+    code, _, err = app.run("update", "all", "--force")
+    assert code == 1 and "Nothing done" in err
+
+
+def test_cli_update_never_does_not_ask(app, world, packed):
+    code, out, _ = app.run("update", "all", "--reboot", "never", "--json")
+    assert code == 0
+    assert [o["ship"] for o in json.loads(out)] == ["ship-01", "ship-02"]
+
+
+def test_cli_reboot_reports_lost_mode_with_exit_1(app, world):
+    world.sims["ship-01"].after_reboot = {"main": "auto", "builder": "auto"}
+    code, out, _ = app.run("reboot", "ship-01")
+    assert code == 1
+    assert "ship-01: FAILED:" in out
+    assert "agent builder came back in auto, was bypassPermissions" in out
+
+
+def test_cli_reboot_tag_with_yes(app, world):
+    code, out, _ = app.run("reboot", "--tag", "personal", "--yes", "--no-wait")
+    assert code == 0 and "ship-02: reboot started" in out
+
+
+def test_cli_set_by_tag_and_all(app, world):
+    code, out, err = app.run("set", "--tag", "personal", "auto_reboot=true")
+    assert code == 0, err
+    assert "ship-02:" in out and "ship-01" not in out
+    code, out, err = app.run("set", "all", "reboot_time=02:15")
+    assert code == 0 and "2 of 2 Ships OK." in out
+    code, _, err = app.run("set", "ship-01", "reboot_time=late")
+    assert code == 1 and "HH:MM" in err
+    assert not any(c[3:4] == ["set"] and "updates.reboot_time=late" in c
+                   for c in world.sims["ship-01"].calls)
+
+
+def test_cli_tools_by_tag(app, world):
+    code, out, err = app.run("tools", "add", "--tag", "work", "tasks-axi")
+    assert code == 0, err
+    assert "ship-01: tools" in out and "tasks-axi" in out
+
+
+def test_cli_logs_many_prefixes_lines(app, world):
+    code, out, _ = app.run("logs", "all", "status", "--lines", "3")
+    assert code == 0
+    assert out.splitlines() == ["ship-01: ship-01 line", "ship-02: ship-02 line"]
+    code, out, _ = app.run("logs", "ship-01", "herdr")
+    assert out.splitlines() == ["ship-01 line"]
+    code, _, err = app.run("logs", "ship-01", "nope")
+    assert code == 1 and "Unknown log source" in err
+
+
+def test_cli_attention_table_json_and_watch(app, world):
+    world.sims["ship-02"].down_until = world.clock.t + 10_000
+    world.sims["ship-01"].herdr_pending = True
+    code, out, _ = app.run("attention")
+    assert code == 0
+    lines = out.splitlines()
+    assert lines[1].split()[:3] == ["high", "ship-02", "unreachable"]
+    assert "herdr-restart-pending" in out
+    code, out, _ = app.run("attention", "--json", "--tag", "work")
+    assert [i["code"] for i in json.loads(out)] == ["herdr-restart-pending"]
+
+    polls = {"n": 0}
+
+    def sleep(seconds):
+        polls["n"] += 1
+        world.clock.sleep(seconds)
+        if polls["n"] == 1:
+            world.sims["ship-01"].herdr_pending = False
+            world.sims["ship-01"].agents = {"main": "auto"}
+        if polls["n"] == 2:
+            raise KeyboardInterrupt
+
+    app.sleep = sleep
+    code, out, _ = app.run("attention", "--watch", "5")
+    assert code == 130
+    printed = out.splitlines()
+    # First round prints both items; the second prints nothing new.
+    assert len(printed) == 2
+    assert any("unreachable" in line or "Cannot reach" in line for line in printed)
+
+
+def test_cli_attention_nothing(app, world):
+    code, out, _ = app.run("attention", "--tag", "personal")
+    assert code == 0 and out.strip() == "Nothing needs attention."
+
+
+@pytest.mark.parametrize("argv,expected", [
+    (["tools", "add", "--tag", "work", "a", "b"], ["tools", "--tag", "work", "add", "a", "b"]),
+    (["logs", "--tag=work", "herdr"], ["logs", "--tag=work", "herdr"]),
+    (["set", "ship-01", "x=1"], ["set", "ship-01", "x=1"]),
+    (["ssh", "ship-01", "--", "--tag", "x"], ["ssh", "ship-01", "--", "--tag", "x"]),
+    (["login", "--tag", "work", "claude"], ["login", "--tag", "work", "claude"]),
+])
+def test_tag_option_is_hoisted_for_batch_commands(argv, expected):
+    assert cli._hoist_tag_option(argv) == expected

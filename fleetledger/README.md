@@ -7,6 +7,8 @@ ship-fleet new ship-01 --tag work
 ship-fleet status ship-01 --wait
 ship-fleet login ship-01 all
 ship-fleet ls
+ship-fleet attention          # what needs you, across the fleet
+ship-fleet update --tag work  # roll this checkout's tooling and pins out
 ```
 
 Owned by the **Fleet track** (W3, W8, W9, W10). A Python package installed with
@@ -29,6 +31,7 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
+| `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
 | `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
@@ -298,3 +301,29 @@ of its names resolves on this computer, `new` adds the address the hypervisor
 reports as the last name to try, so creation still finishes. The host key is
 pinned either way (`HostKeyAlias`), so an address is as safe to dial as a name.
 See also `docs/runbooks/create-ship.md`.
+
+## Day-2 operations (phase 2)
+
+`fleetledger/ops.py` holds every action that changes running Ships, so the CLI
+and the web UI behave the same. Each function takes an `ops.Fleet` (the
+inventory store and the ways to reach Ships), streams progress through
+`on_event(ship, text)`, and returns one `ops.Outcome(ship, ok, summary, details,
+data)` per Ship. One Ship failing never stops a batch; a request that is wrong
+for every Ship (an unknown setting or tool) is refused before any Ship is touched.
+
+| Command | Function | What it does |
+|---|---|---|
+| `ship-fleet update SHIP...\|--tag T\|all` | `ops.update` | packs `ship/` and `versions.toml` from this checkout, copies the bundle and its `.sha256` into `/home/fleet/incoming/` (mode 0600), runs `ship-ctl converge`, then checks the Ship reports the new bundle. `--reboot auto` (default) reboots only Ships whose herdr binary changed (`herdr-restart-pending`); `always` and `never` do what they say. A Ship already on a clean bundle is skipped unless `--force`. |
+| `ship-fleet reboot SHIP...\|--tag T\|all` | `ops.reboot` | records each agent's name and mode, runs `sudo -n systemctl reboot` over the one name that answered, waits until the Ship answers from a new boot (its uptime is shorter than the wait), then until herdr has resumed. Fails the Ship if any agent is missing or came back in another mode. |
+| `ship-fleet set SHIP...\|--tag T\|all KEY=VALUE...` | `ops.set_settings` | `ship-ctl set`; new keys `lan_guard_allow`, `auto_reboot`, `reboot_time`. |
+| `ship-fleet tag SHIP +T -T` | `ops.set_tags` | inventory first, then the Ship (`--local`: inventory only). |
+| `ship-fleet tools add\|remove SHIP\|all ID...` or `--tag T ID...` | `ops.change_tools` | `ship-ctl tools add\|remove`. |
+| `ship-fleet logs [SHIP...\|--tag T\|all] SOURCE` | `ops.logs`, `ops.fleet_logs` | `ship-ctl logs`; with several Ships each line is prefixed by its Ship. |
+| `ship-fleet attention [--tag T] [--watch [S]]` | `ops.attention` | every attention item across the fleet plus unreachable or untrusted Ships, most urgent first (`ops.SEVERITY`). `--watch` polls and prints only new items. |
+
+`update` and `reboot` on more than one Ship ask first (or need `--yes` when not
+run from a terminal). `ship-fleet status SHIP` also shows herdr's version and last
+resume, the bundle commit, provisioning and pending OS updates.
+
+How to roll out a new pin: `docs/runbooks/update-fleet.md`.
+

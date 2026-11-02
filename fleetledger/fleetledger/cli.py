@@ -21,7 +21,8 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "set", "tag", "tools", "ssh", "logs", "ca", "trust", "untrust",
+    "set", "tag", "tools", "update", "reboot", "attention", "ssh", "logs", "ca", "trust",
+    "untrust",
 )  # fmt: skip
 
 
@@ -42,6 +43,7 @@ class App:
     confirm: Callable[[str], str] = input
     resolves: Callable[[str], bool] = None  # (host) -> does it resolve here?
     sleep: Callable[[float], None] = None
+    clock: Callable[[], float] = time.monotonic
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
 
     def __post_init__(self) -> None:
@@ -81,6 +83,18 @@ def _resolves(host: str) -> bool:
     return True
 
 
+class _TopHelp(argparse.HelpFormatter):
+    """Line command names up with their help even when one is long (argparse
+    measures subcommands one indent level too shallow)."""
+
+    def add_argument(self, action):
+        super().add_argument(action)
+        if action.help is not argparse.SUPPRESS:
+            for sub in self._iter_indented_subactions(action):
+                width = len(self._format_action_invocation(sub)) + self._current_indent
+                self._action_max_length = max(self._action_max_length, width)
+
+
 def _add(sub, name: str, help_text: str, description: str | None = None):
     parser = sub.add_parser(
         name,
@@ -99,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="ship-fleet",
         description="Find, show and manage ShipShape Ships.",
         epilog="Run `ship-fleet <command> --help` for a command's options.",
+        formatter_class=_TopHelp,
     )
     parser.add_argument("--version", action="version", version=f"ship-fleet {__version__}")
     sub = parser.add_subparsers(title="commands", metavar="<command>")
@@ -181,13 +196,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("name")
     p.add_argument("service", help=services)
 
-    p = _add(sub, "set", "change a Ship's settings (ship-ctl set)",
-             "Change settings on a Ship. Keys: remote_control (on|off; blocked = off),\n"
-             "default_mode, allow_bypass, update_channel (latest|stable), session_prefix,\n"
-             "sudo, lan_guard, tags; or their full names (claude.remote_control, ...).\n\n"
-             "  ship-fleet set ship-01 remote_control=off default_mode=bypassPermissions")
-    p.add_argument("name")
-    p.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
+    p = _add(sub, "set", "change settings on Ships (ship-ctl set)",
+             "Change settings on one Ship, several, every Ship with a tag, or all.\n"
+             "Keys: remote_control (on|off; blocked = off), default_mode, allow_bypass,\n"
+             "update_channel (latest|stable), session_prefix, sudo, lan_guard,\n"
+             "lan_guard_allow (addresses or CIDRs, comma-separated), auto_reboot,\n"
+             "reboot_time (HH:MM), tags; or their full names (claude.remote_control, ...).\n\n"
+             "  ship-fleet set ship-01 remote_control=off default_mode=bypassPermissions\n"
+             "  ship-fleet set --tag work update_channel=stable\n"
+             "  ship-fleet set all lan_guard=true")
+    p.add_argument("args", nargs="+", metavar="[SHIP ...|all] KEY=VALUE")
+    p.add_argument("--tag", help="every Ship with this tag")
 
     p = _add(sub, "tag", "show or change a Ship's tags",
              "  ship-fleet tag ship-01            show its tags\n"
@@ -197,11 +216,53 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("changes", nargs="*", metavar="+TAG|-TAG")
     p.add_argument("--local", action="store_true", help="change the inventory only")
 
-    p = _add(sub, "tools", "list catalogue tools, or add and remove them on a Ship",
+    p = _add(sub, "tools", "list catalogue tools, or add and remove them on Ships",
              "  ship-fleet tools ls\n  ship-fleet tools add ship-01 tasks-axi\n"
-             "  ship-fleet tools remove ship-01 tasks-axi")
+             "  ship-fleet tools add --tag work lavish-axi tasks-axi\n"
+             "  ship-fleet tools remove all tasks-axi")
     p.add_argument("action", choices=("ls", "add", "remove"))
-    p.add_argument("rest", nargs="*", metavar="SHIP ID")
+    p.add_argument("rest", nargs="*", metavar="SHIP|all ID")
+    p.add_argument("--tag", help="every Ship with this tag (then give only tool ids)")
+
+    p = _add(sub, "update", "bring Ships to this checkout's tooling and pins",
+             "Pack ship/ and versions.toml from this checkout into a tooling bundle,\n"
+             "copy it to each Ship and converge (ship-ctl converge): the provisioning\n"
+             "script, settings and catalogue tools run again, so pin changes (herdr,\n"
+             "npm tools, uv) and recipe changes roll out. Agents keep running.\n\n"
+             "A new herdr binary takes over only after a reboot. --reboot auto (the\n"
+             "default) reboots exactly the Ships whose herdr changed, then checks every\n"
+             "agent came back in its permission mode.\n\n"
+             "  ship-fleet update ship-01\n  ship-fleet update --tag work\n"
+             "  ship-fleet update all --reboot never")
+    p.add_argument("names", nargs="*", metavar="SHIP|all")
+    p.add_argument("--tag", help="every Ship with this tag")
+    p.add_argument("--reboot", choices=("auto", "always", "never"), default="auto",
+                   help="when to reboot after converging (default auto: only if herdr changed)")
+    p.add_argument("--no-wait", action="store_true",
+                   help="do not wait for rebooted Ships to come back")
+    p.add_argument("--force", action="store_true",
+                   help="converge even if the Ship already has this bundle")
+    p.add_argument("--yes", action="store_true", help="do not ask before acting on many Ships")
+    p.add_argument("--json", action="store_true", help="print the results as JSON")
+
+    p = _add(sub, "reboot", "reboot Ships cleanly and check their agents come back",
+             "Reboot with systemctl reboot (never forced), so herdr saves its state;\n"
+             "then wait for each Ship and check every agent resumed in its mode.\n\n"
+             "  ship-fleet reboot ship-01\n  ship-fleet reboot --tag work --yes")
+    p.add_argument("names", nargs="*", metavar="SHIP|all")
+    p.add_argument("--tag", help="every Ship with this tag")
+    p.add_argument("--no-wait", action="store_true", help="do not wait for the Ships")
+    p.add_argument("--yes", action="store_true", help="do not ask before acting on many Ships")
+    p.add_argument("--json", action="store_true", help="print the results as JSON")
+
+    p = _add(sub, "attention", "list what needs you across the fleet (Needs attention)",
+             "Waiting agents, missing, expiring or wrong-account sign-ins, failed services\n"
+             "or tools, pending reboots, Ships behind on tooling or unreachable; most\n"
+             "urgent first. --watch keeps polling and prints only new items.")
+    p.add_argument("--tag", help="only Ships with this tag")
+    p.add_argument("--json", action="store_true", help="print JSON")
+    p.add_argument("--watch", type=float, nargs="?", const=30.0, metavar="SECONDS",
+                   help="poll every SECONDS (default 30) and print new items")
 
     p = _add(sub, "ssh", "open a shell on a Ship (as agent by default)")
     p.add_argument("name")
@@ -210,9 +271,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("remote", nargs="*",
                    help="command to run instead of a shell (put it after --)")
 
-    p = _add(sub, "logs", "show a Ship's logs (ship-ctl logs)")
-    p.add_argument("name")
-    p.add_argument("source", choices=LOG_SOURCES)
+    p = _add(sub, "logs", "show Ships' logs (ship-ctl logs)",
+             f"Sources: {', '.join(LOG_SOURCES)}.\n\n"
+             "  ship-fleet logs ship-01 herdr\n"
+             "  ship-fleet logs --tag work provision --lines 50   (lines prefixed by Ship)")
+    p.add_argument("args", nargs="+", metavar="[SHIP ...|all] SOURCE")
+    p.add_argument("--tag", help="every Ship with this tag")
     p.add_argument("--lines", type=int, default=200)
 
     p = _add(sub, "ca", "the SSH certificate authority: init, sign Ships, show",
@@ -272,6 +336,29 @@ def _protect_tag_removals(argv: list[str]) -> list[str]:
     return [*argv[:2], *rest, "--", *changes]
 
 
+TAG_FIRST = {"set", "tools", "update", "reboot", "logs"}
+
+
+def _hoist_tag_option(argv: list[str]) -> list[str]:
+    """`ship-fleet tools add --tag work ID`: argparse cannot fill a positional list
+    after an option, so --tag moves to just after the command name."""
+    if not argv or argv[0] not in TAG_FIRST or "--" in argv:
+        return argv
+    rest, hoisted, i = [], [], 1
+    while i < len(argv):
+        word = argv[i]
+        if word == "--tag" and i + 1 < len(argv):
+            hoisted += argv[i : i + 2]
+            i += 2
+            continue
+        if word.startswith("--tag="):
+            hoisted.append(word)
+        else:
+            rest.append(word)
+        i += 1
+    return [argv[0], *hoisted, *rest]
+
+
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     from fleetledger import commands
 
@@ -281,7 +368,7 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     if argv[:1] == ["ssh"] and "--" in argv:  # everything after -- runs on the Ship
         cut = argv.index("--")
         argv, remote = argv[:cut], argv[cut + 1 :]
-    args = parser.parse_args(_protect_tag_removals(argv))
+    args = parser.parse_args(_hoist_tag_option(_protect_tag_removals(argv)))
     if remote is not None:
         args.remote = remote
     app = app or App()
