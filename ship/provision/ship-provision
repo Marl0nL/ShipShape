@@ -105,10 +105,22 @@ same_meta() { # PATH MODE OWNER
   [ -n "$ROOT" ] || [ "$(stat -c %U:%G "$1")" = "$3" ]
 }
 
+# Root-owned paths only: the agent's home goes through home_dir and home_npmrc,
+# which run as the agent (a symlink there must never redirect a root write).
+not_in_home() {
+  case $1 in
+    "$AGENT_HOME" | "$AGENT_HOME"/*) die "internal: $1 is in the agent's home" ;;
+  esac
+}
+
+# Create a missing parent folder; never re-mode an existing one.
+ensure_parent() { [ -d "$1" ] || install -d -m 0755 "$1"; }
+
 # put_file SRC DEST MODE [OWNER]: install SRC as DEST if content, mode or owner differ.
 put_file() {
   local src=$1 dest=$2 mode=$3 owner=${4:-root:root}
   local real=$ROOT$dest
+  not_in_home "$dest"
   CHANGED=0
   if [ -f "$real" ] && [ ! -L "$real" ] && cmp -s "$src" "$real" && same_meta "$real" "$mode" "$owner"; then
     return 0
@@ -116,7 +128,7 @@ put_file() {
   CHANGED=1
   changed "$dest"
   [ "$DRY" = 1 ] && return 0
-  install -d -m 0755 "$(dirname "$real")"
+  ensure_parent "$(dirname "$real")"
   if [ -n "$ROOT" ]; then
     install -m "$mode" "$src" "$real"
   else
@@ -136,7 +148,8 @@ put_text() {
 put_dir() { # DIR MODE [OWNER]
   local dir=$1 mode=$2 owner=${3:-root:root}
   local real=$ROOT$dir
-  if [ -d "$real" ] && same_meta "$real" "$mode" "$owner"; then return 0; fi
+  not_in_home "$dir"
+  if [ -d "$real" ] && [ ! -L "$real" ] && same_meta "$real" "$mode" "$owner"; then return 0; fi
   changed "$dir/"
   [ "$DRY" = 1 ] && return 0
   if [ -n "$ROOT" ]; then
@@ -148,16 +161,20 @@ put_dir() { # DIR MODE [OWNER]
 
 put_link() { # TARGET LINK
   local real=$ROOT$2
+  not_in_home "$2"
   CHANGED=0
   [ "$(readlink "$real" 2>/dev/null || true)" = "$1" ] && return 0
   CHANGED=1
   changed "$2 -> $1"
   [ "$DRY" = 1 ] && return 0
-  install -d -m 0755 "$(dirname "$real")"
+  ensure_parent "$(dirname "$real")"
   ln -sfn "$1" "$real"
 }
 
-fetch() { curl -fsSL --proto '=https' --tlsv1.2 --retry 3 "$@"; }
+fetch() {
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
+    --connect-timeout 20 --max-time 900 "$@"
+}
 
 machine() { if [ -n "$ROOT" ]; then echo x86_64; else uname -m; fi; }
 deb_arch() { if [ -n "$ROOT" ]; then echo amd64; else dpkg --print-architecture; fi; }
@@ -167,7 +184,7 @@ boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null || true; }
 record() { # RESULT: ship-provision's record, read by ship-ctl status (internal)
   [ "$DRY" = 1 ] && return 0
   local dir=$ROOT/var/lib/shipshape
-  install -d -m 0755 "$dir"
+  ensure_parent "$dir"
   printf '{"result": "%s", "mode": "%s", "pid": %d, "boot_id": "%s", "last_run": "%s"}\n' \
     "$1" "$MODE" "$$" "$(boot_id)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$dir/.provision.json.tmp"
   mv "$dir/.provision.json.tmp" "$dir/provision.json"
@@ -427,12 +444,14 @@ step_system_config() {
   put_file "$FILES/ssh/10-shipshape.conf" /etc/ssh/sshd_config.d/10-shipshape.conf 0644
   if [ "$CHANGED" = 1 ]; then
     sys sshd -t
-    sys systemctl reload ssh
+    # try-: Ubuntu socket-activates sshd, so ssh.service may not be running yet.
+    sys systemctl try-reload-or-restart ssh
   fi
   put_file "$FILES/logind/50-shipshape.conf" /etc/systemd/logind.conf.d/50-shipshape.conf 0644
   if [ "$CHANGED" = 1 ]; then
-    # Reloading logind is safe on current systemd; otherwise it applies next boot.
-    sys systemctl reload systemd-logind || log "logind reload failed; the change applies at next boot"
+    # systemd-logind has no reload; restarting it is not worth the risk. The
+    # longer shutdown delay applies from the next boot.
+    log "logind drop-in changed; it applies from the next boot"
   fi
   put_dir /var/log/journal 2755 root:systemd-journal
   put_file "$FILES/journald/50-shipshape.conf" /etc/systemd/journald.conf.d/50-shipshape.conf 0644
@@ -451,13 +470,14 @@ step_units() {
   done
   [ "$system_changed" = 0 ] || sys systemctl daemon-reload
 
-  # Enabled through symlinks, so the check works in --root mode too.
+  # Enabled through symlinks, so the check works in --root mode too, where
+  # systemctl --root makes the same links offline.
   if [ ! -L "$ROOT/etc/systemd/system/timers.target.wants/ship-status.timer" ]; then
-    sys_change "enable ship-status.timer" systemctl enable ship-status.timer
+    enable_unit "ship-status.timer" ship-status.timer
   fi
   for unit in herdr.service ship-resume.service; do
     if [ ! -L "$ROOT/etc/systemd/user/default.target.wants/$unit" ]; then
-      sys_change "enable $unit for $AGENT" systemctl --global enable "$unit"
+      enable_unit "$unit for $AGENT" --global "$unit"
     fi
   done
   if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
@@ -466,6 +486,18 @@ step_units() {
     if [ "$user_changed" = 1 ] && [ -S "/run/user/$(id -u "$AGENT")/bus" ]; then
       as_agent systemctl --user daemon-reload # takes effect at the next start
     fi
+  fi
+}
+
+enable_unit() { # DESC [--global] UNIT
+  local desc=$1
+  shift
+  changed "enable $desc"
+  [ "$DRY" = 1 ] && return 0
+  if [ "$SANDBOX" = 1 ]; then
+    systemctl --root="$ROOT" enable "$@" >/dev/null 2>&1 || log "could not enable $desc under --root"
+  else
+    systemctl enable "$@"
   fi
 }
 
@@ -489,6 +521,8 @@ step_first_boot() {
   done
   as_agent systemctl --user daemon-reload
   as_agent systemctl --user start herdr.service
+  # Nothing to resume yet, but its record tells autostart this boot's resume is done.
+  as_agent systemctl --user start ship-resume.service || log "ship-resume did not finish"
   log "herdr started (after ${i}s)"
 }
 
@@ -505,6 +539,9 @@ parse_args() {
     shift
   done
   [ -n "$MODE" ] || { usage >&2; exit 2; }
+  if [ -n "$ROOT" ] && [ "$(realpath -m "$ROOT")" = / ]; then
+    die "--root / would change this machine; leave --root out for a real run"
+  fi
   ROOT=${ROOT%/}
   [ "$ROOT" = "" ] || [ -d "$ROOT" ] || die "--root $ROOT is not a folder"
   # SANDBOX: --root given; system commands, queries and downloads are skipped and
@@ -524,6 +561,7 @@ main() {
     flock -n 9 || die "another ship-provision is running"
     if [ "$MODE" = converge ]; then
       install -d -m 0750 /var/log/shipshape
+      [ -e /var/log/shipshape/provision.log ] || install -m 0640 /dev/null /var/log/shipshape/provision.log
       exec > >(tee -a /var/log/shipshape/provision.log) 2>&1
     fi
   fi

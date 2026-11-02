@@ -82,7 +82,7 @@
     "uv": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version"],
+      "required": ["version", "assets"],
       "properties": {
         "version": { "$ref": "#/$defs/semver" },
         "assets": {

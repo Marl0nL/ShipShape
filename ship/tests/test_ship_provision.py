@@ -348,3 +348,231 @@ def test_agent_home_symlinks_are_replaced_not_followed(tmp_path):
     assert not (home / ".local").is_symlink() and (home / ".local/state/shipshape").is_dir()
     assert not (home / ".npmrc").is_symlink()
     assert (home / ".npmrc").read_text() == "prefix=/home/agent/.local\n"
+
+
+# --- review follow-ups ------------------------------------------------------------------
+def test_claude_folder_symlink_and_home_mode(tmp_path):
+    root = tmp_path / "root"
+    home = root / "home/agent"
+    home.mkdir(parents=True, mode=0o750)
+    home.chmod(0o750)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.chmod(0o755)
+    (home / ".claude").symlink_to(outside)
+    r = provision("--converge", "--root", str(root))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert mode(outside) == "0o755"  # not re-moded through the link
+    assert not (home / ".claude").is_symlink() and mode(home / ".claude") == "0o700"
+    assert mode(home) == "0o750"  # the home folder keeps its own mode
+
+
+def test_mode_drift_is_repaired(tmp_path):
+    provision("--converge", "--root", str(tmp_path))
+    shim = tmp_path / "opt/shipshape/shim/claude"
+    shim.chmod(0o700)
+    r = provision("--converge", "--root", str(tmp_path))
+    assert "changed: /opt/shipshape/shim/claude" in r.stdout
+    assert r.stdout.rstrip().endswith("done: 1 change(s)")
+    assert mode(shim) == "0o755"
+
+
+def test_a_failed_run_records_failed(tmp_path):
+    (tmp_path / "opt").mkdir()
+    (tmp_path / "opt/shipshape").write_text("not a folder")
+    r = provision("--converge", "--root", str(tmp_path))
+    assert r.returncode != 0
+    record = json.loads((tmp_path / "var/lib/shipshape/provision.json").read_text())
+    assert record["result"] == "failed"
+
+
+def test_units_are_enabled(tmp_path):
+    if shutil.which("systemctl") is None:
+        pytest.skip("needs systemctl")
+    provision("--first-boot", "--root", str(tmp_path))
+    assert (tmp_path / "etc/systemd/system/timers.target.wants/ship-status.timer").is_symlink()
+    for unit in ("herdr.service", "ship-resume.service"):
+        assert (tmp_path / "etc/systemd/user/default.target.wants" / unit).is_symlink()
+
+
+def test_root_slash_is_refused(tmp_path):
+    for value in ("/", "//", f"{tmp_path}/../../../../../../.."):
+        r = provision("--converge", "--root", value)
+        assert r.returncode == 1 and "--root / would change this machine" in r.stderr
+    r = provision("--converge", env={"SHIPSHAPE_ROOT": "/"})
+    assert r.returncode == 1
+
+
+@pytest.mark.skipif(shutil.which("gpg") is None, reason="needs gpg")
+def test_keyring_match_is_exact(tmp_path):
+    ring, fprs = _keyring(tmp_path / "gpg", ["one@example.com"])
+    script = f'source "{PROVISION}"; keyring_ok "$1" "$2"'
+    for allowed in (fprs[0][1:], "X" + fprs[0], fprs[0] + "0", fprs[0].lower()):
+        r = subprocess.run(["bash", "-c", script, "x", str(ring), allowed], capture_output=True)
+        assert r.returncode != 0, allowed
+
+
+def test_resume_service_waits_for_herdr():
+    resume = unit(FILES / "systemd/user/ship-resume.service")
+    assert resume["Unit"]["Requires"] == "herdr.service"
+    assert resume["Unit"]["ConditionUser"] == "agent"
+
+
+def test_profile_snippet_ignores_other_users(tmp_path):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "id").write_text("#!/bin/sh\necho fleet\n")
+    (bindir / "id").chmod(0o755)
+    path = f"{bindir}:/usr/bin:/bin"
+    script = f'. "{FILES / "profile.d/shipshape.sh"}"; echo "$PATH|${{npm_config_prefix:-}}"'
+    r = subprocess.run(
+        ["sh", "-c", script],
+        env={"HOME": str(tmp_path), "PATH": path},
+        capture_output=True,
+        text=True,
+    )
+    assert r.stdout.strip() == f"{path}|"
+
+
+def test_ship_resume_waits_for_launches_and_counts_failures(tmp_path, monkeypatch):
+    mod = load_resume()
+    pending = [
+        {"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle", "launch_pending": True}
+    ]
+    final = [
+        {"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle"},
+        {"pane_id": "w2:p1", "agent": "claude", "agent_status": "unknown"},
+    ]
+    lists = iter([pending] * 5 + [final] * 100)
+    monkeypatch.setattr(
+        mod,
+        "run",
+        lambda argv, timeout=15: subprocess.CompletedProcess(
+            argv, 1 if "has-session" in argv else 0, "", ""
+        ),
+    )
+    monkeypatch.setattr(mod, "agent_list", lambda: next(lists))
+    dns = iter([False, False, True] + [True] * 100)
+    monkeypatch.setattr(mod, "dns_ok", lambda: next(dns))
+    monkeypatch.setattr(mod, "boot_id", lambda: "b")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    clock = FakeClock()
+    assert mod.main(clock=clock, sleep=clock.sleep) == 0
+    rec = json.loads((tmp_path / ".local/state/shipshape/last-resume.json").read_text())
+    assert rec["resumed"] == 1 and rec["failed"] == 1
+    assert clock.t >= 2  # waited for DNS
+
+
+# --- install-claude.sh against a fake release server ----------------------------------------
+FAKE_CURL = """#!/bin/sh
+# Serve https:// URLs from $FIXTURE: the path after the host.
+out=""
+url=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift ;;
+    https://*) url=$1 ;;
+  esac
+  shift
+done
+file="$FIXTURE/${url#https://*/}"
+[ -f "$file" ] || exit 22
+if [ -n "$out" ]; then cp "$file" "$out"; else cat "$file"; fi
+"""
+
+DUMMY_CLAUDE = """#!/bin/sh
+if [ "$1" = install ]; then
+  mkdir -p "$HOME/.local/bin"
+  printf '#!/bin/sh\\necho "%s (Claude Code)"\\n' "$2" > "$HOME/.local/bin/claude"
+  chmod +x "$HOME/.local/bin/claude"
+fi
+"""
+
+
+@pytest.fixture
+def release(tmp_path):
+    for tool in ("gpg", "gpgv", "jq", "sha256sum"):
+        if shutil.which(tool) is None:
+            pytest.skip(f"needs {tool}")
+    fixture = tmp_path / "fixture"
+    gnupg = tmp_path / "gpg"
+    ring, fprs = _keyring(gnupg, ["release@example.com"])
+    env = {"GNUPGHOME": str(gnupg), "PATH": "/usr/bin:/bin"}
+    (fixture / "keys").mkdir(parents=True)
+    (fixture / "keys/claude-code.asc").write_bytes(
+        subprocess.run(
+            ["gpg", "--batch", "--armor", "--export"], env=env, check=True, capture_output=True
+        ).stdout
+    )
+    rel = fixture / "rel"
+    (rel / "2.1.316/linux-x64").mkdir(parents=True)
+    (rel / "latest").write_text("2.1.316\n")
+    binary = rel / "2.1.316/linux-x64/claude"
+    binary.write_text(DUMMY_CLAUDE)
+    import hashlib
+
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    manifest = rel / "2.1.316/manifest.json"
+    manifest.write_text(
+        json.dumps({"version": "2.1.316", "platforms": {"linux-x64": {"checksum": digest}}})
+    )
+    subprocess.run(
+        ["gpg", "--batch", "--yes", "--detach-sign", "-o", str(manifest) + ".sig", str(manifest)],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "curl").write_text(FAKE_CURL)
+    (bindir / "curl").chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+
+    def install(fingerprint=fprs[0], minimum="2.1.284"):
+        return subprocess.run(
+            [
+                "bash",
+                str(SHIP / "provision/install-claude.sh"),
+                "https://downloads.example/rel",
+                "latest",
+                fingerprint,
+                minimum,
+                "linux-x64",
+            ],
+            env={"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(home), "FIXTURE": str(fixture)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    return install, home, manifest
+
+
+def test_install_claude_verifies_and_installs(release):
+    install, home, _ = release
+    r = install()
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip().endswith("2.1.316 (Claude Code)")
+    assert (home / ".local/bin/claude").exists()
+
+
+def test_install_claude_refuses_old_version(release):
+    install, home, _ = release
+    r = install(minimum="9.0.0")
+    assert r.returncode == 1 and "below the minimum" in r.stderr
+    assert not (home / ".local/bin/claude").exists()
+
+
+def test_install_claude_refuses_unpinned_key(release):
+    install, home, _ = release
+    r = install(fingerprint="0" * 40)
+    assert r.returncode == 1 and "not the pinned key" in r.stderr
+
+
+def test_install_claude_refuses_tampered_manifest(release):
+    install, home, manifest = release
+    manifest.write_text(manifest.read_text().replace("2.1.316", "2.1.317", 1))
+    r = install()
+    assert r.returncode == 1 and "signature check failed" in r.stderr
+    assert not (home / ".local/bin/claude").exists()

@@ -28,10 +28,24 @@ What it does, in order (each step checks first and only counts real changes):
 7. The sshd, logind and journald drop-ins, then the units: `ship-status.timer`
    (system), `herdr.service` and `ship-resume.service` (in `/etc/systemd/user`,
    root-owned, `ConditionUser=agent`).
-8. First boot only: `ship-ctl apply`, `ship-ctl tools run`, start herdr.
+8. First boot only: `ship-ctl apply`, `ship-ctl tools run`, start herdr, then
+   `ship-resume` (nothing to resume yet, but its record lets autostart run at once).
 
 The result goes to `/var/lib/shipshape/provision.json`, which `ship-ctl status`
 reports as `provision.result`. Output goes to `/var/log/shipshape/provision.log`.
 
+Everything in the agent's home (folders, `.npmrc`) is done *as the agent*, so a
+symlink the agent planted can only reach its own files; root-owned helpers refuse
+paths in the agent's home. `--root /` is refused.
+
 Tested offline in `ship/tests/test_ship_provision.py` (sandbox runs twice, dry runs,
 the pinned-key check). Real-VM runs happen through the phase 0 harness and W11.
+
+## Check on a real Ship (W11)
+
+- First boot with socket-activated sshd: the drop-in is picked up
+  (`try-reload-or-restart` does nothing while `ssh.service` is idle).
+- `InhibitDelayMaxSec=30` takes effect from the second boot (logind is not reloaded).
+- `ship-resume`'s detach keys; it falls back to ending tmux.
+- Google Chrome's package adds its own apt source; check apt does not warn about a
+  repository configured twice.
