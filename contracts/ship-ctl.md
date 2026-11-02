@@ -23,7 +23,7 @@ Exit codes:
 | Code | Meaning | `error.code` |
 |---|---|---|
 | 0 | Success | (null) |
-| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `internal` |
+| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `invalid-input`, `internal` |
 | 2 | Bad arguments | `usage` |
 | 3 | Not running as root | `not-root` |
 | 4 | `ship.toml` (or the replacement given) fails the schema | `invalid-ship-toml` |
@@ -59,13 +59,18 @@ How fields are worked out:
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
-| `net` | `null` until the phase 3 collector exists. |
+| `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
+| `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
-`reboot-required`, `provision-failed`, `tool-waiting`, `tool-failed`. FleetLedger
-adds its own on top (`signin-wrong-account` from the tag check, `behind-tooling`
-from `versions.toml`); it shows unknown codes as they are.
+`reboot-required`, `provision-failed`, `tool-waiting`, `tool-failed`,
+`host-cert-expiring` (the host certificate ends within 14 days),
+`host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
+running). FleetLedger adds its own on top (`signin-wrong-account` from the tag
+check, `behind-tooling` from `versions.toml`, `host-cert-missing` and
+`ssh-trust-behind` from its certificate authority); it shows unknown codes as
+they are.
 
 ### `ship-ctl apply [--dry-run] [--json]`
 
@@ -146,6 +151,90 @@ SOURCE is one of `provision`, `herdr`, `resume`, `tools`, `status`, `system`;
 default 200 lines. With `--json`, `data` is `{ "lines": [strings] }`. Log lines
 are passed through as written; the Ship track keeps secrets out of them.
 
+### `ship-ctl ssh-trust --file - [--json]`
+
+Installs what FleetLedger's SSH certificate authority issues for this Ship. Reads
+one `ssh-trust` document (`ssh-trust.schema.json`) on stdin; each field present
+replaces what the Ship has, fields left out are kept.
+
+- `host_certificate`: written to `/etc/ssh/ssh_host_ed25519_key-cert.pub` only if
+  `ssh-keygen -L` reads it as a *host* certificate whose public key is exactly
+  `/etc/ssh/ssh_host_ed25519_key.pub`, whose principals include the Ship's name,
+  and which has not expired. The Ship never takes a host key from this document:
+  the key it certifies is the one already pinned.
+- `user_ca_keys`: written to `/etc/ssh/shipshape/user-ca.pub`. An empty list
+  removes it, which turns certificate logins off.
+- `revoked_keys`: the KRL, written to `/etc/ssh/shipshape/revoked-keys` only if
+  `ssh-keygen -Q` can read it and it revokes none of the keys in `fleet`'s
+  `authorized_keys` (a list that locked FleetLedger out could not be undone over
+  SSH).
+
+Then it renders `/etc/ssh/sshd_config.d/20-shipshape-ca.conf` (below), checks the
+whole configuration with `sshd -t`, and reloads `ssh`. If `sshd -t` fails, every
+file goes back to what it was and the command exits 1 (`invalid-input`); the
+running sshd is never left with a configuration it would refuse.
+
+`20-shipshape-ca.conf` has a line only for each file that exists:
+
+```
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
+TrustedUserCAKeys /etc/ssh/shipshape/user-ca.pub
+AuthorizedPrincipalsFile /etc/ssh/shipshape/principals/%u
+RevokedKeys /etc/ssh/shipshape/revoked-keys
+```
+
+`AuthorizedPrincipalsFile` is always present once a user CA is. Only
+`/etc/ssh/shipshape/principals/agent` exists, so a certificate can log in as
+`agent` and never as `fleet` (the admin key stays a plain key in `fleet`'s
+`authorized_keys`). The agent file lists `agent:all`, `agent:tag:<tag>` for each
+tag in `ship.toml`, and `agent:ship:<name>`; `ship-ctl apply` keeps it in step
+with `ship.toml` (so `ship-ctl set ship.tags=...` changes which certificates
+work). Certificates are accepted for at most what their validity says; a lapsed
+or revoked one is refused by sshd itself.
+
+Errors: a document that fails the schema, or a certificate that fails the checks
+above, exits 1 with `invalid-input` and changes nothing. Never prints a key.
+
+`data`:
+
+```json
+{
+  "host_certificate": { "serial": 4242, "key_id": "...", "principals": ["ship-01", "ship-01.local"],
+                        "valid_after": "...Z", "valid_before": "...Z", "ca_fingerprint": "SHA256:..." },
+  "user_ca": ["SHA256:..."],
+  "agent_principals": ["agent:all", "agent:tag:work", "agent:ship:ship-01"],
+  "revoked_keys_sha256": "<64 hex>"
+}
+```
+
+(the same shape as the status document's `ssh`).
+
+### `ship-ctl net [--json]`
+
+The network visibility summary: which programs reached which destinations, how
+often and roughly how much, over the last 7 days, plus interface totals. `data`
+is a `net-summary` document (`net-summary.schema.json`). Works whatever state the
+collector is in: when it is stopped the last saved summary is reported, when it
+is not installed `collector.state` is `unavailable` and the lists are empty.
+
+How it is collected (`ship-netwatch.service`, root, read-only towards everything
+except `/var/lib/shipshape/net/`):
+
+- connections from `tcpconnect-libbpf` and bytes from `tcplife-libbpf`
+  (Ubuntu's `libbpf-tools`: precompiled, so nothing is compiled on the Ship;
+  source `ebpf`); if they cannot run, `ss` is polled every 5 seconds instead
+  (source `ss`: short connections can be missed and there are no byte counts);
+- names from `resolvectl monitor --json=short`: each connection's address is
+  matched to the DNS answer it came from, else the address itself is the
+  destination (`kind: address`);
+- totals from `vnstat --json`.
+
+Names and program names come from the Ship and could have been chosen by an agent,
+so ship-netwatch keeps only well-formed host names and replaces any other
+character in a program name with `_`. It is visibility, not control: an agent
+can still use its own DNS (DNS over HTTPS) or bare addresses, and with sudo it can
+stop the collector.
+
 ### `ship-ctl version [--json]`
 
 Needs no root. `data`:
@@ -154,9 +243,12 @@ Needs no root. `data`:
 {
   "tooling": "0.1.0",
   "commit": "0123456789ab",
-  "contracts": { "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1, "runtime": 1 }
+  "contracts": { "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1, "runtime": 1,
+                 "ssh-trust": 1, "net-summary": 1 }
 }
 ```
 
 FleetLedger checks `contracts` before using a Ship and refuses (with a clear
-message) any major version it does not know.
+message) any major version it does not know. A Ship without `ssh-trust` or
+`net-summary` predates phase 3: FleetLedger skips certificates and network
+visibility for it until it is updated.

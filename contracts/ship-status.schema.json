@@ -53,7 +53,7 @@
           "code": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, provision-failed, tool-waiting, tool-failed. FleetLedger adds its own (signin-wrong-account, behind-tooling) when it displays a Ship. Consumers show unknown codes as-is."
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, provision-failed, tool-waiting, tool-failed, host-cert-expiring, host-cert-expired, net-collector-down. FleetLedger adds its own (signin-wrong-account, behind-tooling, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
           },
           "message": { "type": "string", "maxLength": 500 },
           "subject": {
@@ -183,7 +183,7 @@
       }
     },
     "net": {
-      "description": "Network visibility summary (phase 3); null until the collector exists.",
+      "description": "Network visibility over the last window_h hours (phase 3); null when the Ship has no collector. The full summary is `ship-ctl net --json` (net-summary.schema.json).",
       "oneOf": [
         { "type": "null" },
         {
@@ -196,11 +196,72 @@
             "tx_mb": { "type": "number", "minimum": 0 },
             "new_destinations": {
               "type": "array",
-              "items": { "type": "string", "maxLength": 253 }
-            }
+              "maxItems": 50,
+              "items": { "type": "string", "maxLength": 253 },
+              "description": "Destinations (domain names, or addresses when no name is known) the Ship first contacted inside the window, newest first."
+            },
+            "collector": {
+              "enum": ["running", "stopped", "unavailable"],
+              "description": "running: ship-netwatch is recording. stopped: installed but not running. unavailable: not installed."
+            },
+            "source": {
+              "enum": ["ebpf", "ss", null],
+              "description": "How connections are seen: ebpf (tcpconnect and tcplife from libbpf-tools) or ss (polling, may miss short connections)."
+            },
+            "destinations": { "type": "integer", "minimum": 0, "description": "Distinct destinations in the window." },
+            "connections": { "type": "integer", "minimum": 0, "description": "Outbound connections in the window." }
           }
         }
       ]
+    },
+    "ssh": {
+      "description": "SSH certificate state (phase 3). Absent from Ships older than phase 3.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_certificate", "user_ca", "agent_principals", "revoked_keys_sha256"],
+      "properties": {
+        "host_certificate": {
+          "description": "The host certificate sshd presents, or null if none is installed.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["serial", "key_id", "principals", "valid_after", "valid_before", "ca_fingerprint"],
+              "properties": {
+                "serial": { "type": "integer", "minimum": 0 },
+                "key_id": { "type": "string", "maxLength": 200 },
+                "principals": {
+                  "type": "array",
+                  "items": { "type": "string", "maxLength": 253 },
+                  "description": "Every name the certificate is valid for."
+                },
+                "valid_after": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+                "valid_before": {
+                  "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
+                  "description": "null: never expires."
+                },
+                "ca_fingerprint": { "$ref": "#/$defs/sshFingerprint" }
+              }
+            }
+          ]
+        },
+        "user_ca": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sshFingerprint" },
+          "description": "Fingerprints of the CA keys whose user certificates sshd accepts (for the agent user only)."
+        },
+        "agent_principals": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 100 },
+          "description": "Certificate principals that may log in as agent: agent:all, agent:tag:<tag> per Ship tag, agent:ship:<name>."
+        },
+        "revoked_keys_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the installed revocation list, so FleetLedger can tell whether the Ship has its latest one; null if none is installed."
+        }
+      }
     },
     "errors": {
       "type": "array",
@@ -228,6 +289,7 @@
       "description": "UTC, RFC 3339, with a Z suffix."
     },
     "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "sshFingerprint": { "type": "string", "pattern": "^SHA256:[A-Za-z0-9+/]{43}$" },
     "authEntry": {
       "type": "object",
       "additionalProperties": false,

@@ -1,0 +1,150 @@
+{
+  "schema": "shipshape.net-summary/1",
+  "generated_at": "2026-01-08T12:00:00Z",
+  "collector": {
+    "state": "running",
+    "source": "ss",
+    "since": "2026-01-01T00:02:10Z",
+    "updated_at": "2026-01-08T11:59:30Z",
+    "dropped": 0,
+    "note": "eBPF tools unavailable; polling connections every 5 s (short connections can be missed; no byte counts)."
+  },
+  "retention_days": 7,
+  "totals": {
+    "source": "vnstat",
+    "rx_mb_24h": 812.4,
+    "tx_mb_24h": 96.1,
+    "rx_mb_7d": 5210.0,
+    "tx_mb_7d": 640.3,
+    "interfaces": [
+      {
+        "name": "ens18",
+        "rx_mb_24h": 812.4,
+        "tx_mb_24h": 96.1,
+        "rx_mb_7d": 5210.0,
+        "tx_mb_7d": 640.3
+      }
+    ],
+    "hourly": [
+      {
+        "hour": "2026-01-08T10:00:00Z",
+        "rx_mb": 40.2,
+        "tx_mb": 3.1
+      },
+      {
+        "hour": "2026-01-08T11:00:00Z",
+        "rx_mb": 12.9,
+        "tx_mb": 1.4
+      }
+    ]
+  },
+  "destinations": [
+    {
+      "name": "api.example.com",
+      "kind": "domain",
+      "scope": "internet",
+      "first_seen": "2026-01-01T00:03:00Z",
+      "last_seen": "2026-01-08T11:59:00Z",
+      "connections_24h": 310,
+      "connections_7d": 2104,
+      "tx_bytes_24h": null,
+      "rx_bytes_24h": null,
+      "tx_bytes_7d": null,
+      "rx_bytes_7d": null,
+      "ports": [
+        443
+      ],
+      "addresses": [
+        "192.0.2.10",
+        "2001:db8::10"
+      ],
+      "programs": [
+        {
+          "name": "claude",
+          "connections_7d": 2050
+        },
+        {
+          "name": "node",
+          "connections_7d": 54
+        }
+      ]
+    },
+    {
+      "name": "new-service.example.net",
+      "kind": "domain",
+      "scope": "internet",
+      "first_seen": "2026-01-08T09:14:00Z",
+      "last_seen": "2026-01-08T09:15:02Z",
+      "connections_24h": 3,
+      "connections_7d": 3,
+      "tx_bytes_24h": null,
+      "rx_bytes_24h": null,
+      "tx_bytes_7d": null,
+      "rx_bytes_7d": null,
+      "ports": [
+        443
+      ],
+      "addresses": [
+        "198.51.100.7"
+      ],
+      "programs": [
+        {
+          "name": "curl",
+          "connections_7d": 3
+        }
+      ]
+    },
+    {
+      "name": "fd00:db8::55",
+      "kind": "address",
+      "scope": "lan",
+      "first_seen": "2026-01-05T08:00:00Z",
+      "last_seen": "2026-01-07T08:00:00Z",
+      "connections_24h": 0,
+      "connections_7d": 2,
+      "tx_bytes_24h": null,
+      "rx_bytes_24h": null,
+      "tx_bytes_7d": null,
+      "rx_bytes_7d": null,
+      "ports": [
+        22
+      ],
+      "addresses": [
+        "fd00:db8::55"
+      ],
+      "programs": [
+        {
+          "name": "ssh",
+          "connections_7d": 2
+        }
+      ]
+    }
+  ],
+  "programs": [
+    {
+      "name": "claude",
+      "connections_24h": 300,
+      "connections_7d": 2050,
+      "destinations_7d": 1
+    },
+    {
+      "name": "node",
+      "connections_24h": 10,
+      "connections_7d": 54,
+      "destinations_7d": 1
+    },
+    {
+      "name": "curl",
+      "connections_24h": 3,
+      "connections_7d": 3,
+      "destinations_7d": 1
+    },
+    {
+      "name": "ssh",
+      "connections_24h": 0,
+      "connections_7d": 2,
+      "destinations_7d": 1
+    }
+  ],
+  "truncated": 0
+}

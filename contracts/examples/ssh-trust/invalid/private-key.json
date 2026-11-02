@@ -1,0 +1,4 @@
+{
+  "schema": "shipshape.ssh-trust/1",
+  "host_certificate": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----"
+}

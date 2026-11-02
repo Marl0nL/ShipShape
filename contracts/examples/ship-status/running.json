@@ -100,6 +100,39 @@
       "version": "1.2.3"
     }
   },
-  "net": null,
-  "errors": []
+  "net": {
+    "window_h": 24,
+    "rx_mb": 812.4,
+    "tx_mb": 96.1,
+    "new_destinations": [
+      "new-service.example.net"
+    ],
+    "collector": "running",
+    "source": "ebpf",
+    "destinations": 14,
+    "connections": 602
+  },
+  "errors": [],
+  "ssh": {
+    "host_certificate": {
+      "serial": 4242,
+      "key_id": "ship-01 host 2026-01-01",
+      "principals": [
+        "ship-01",
+        "ship-01.local"
+      ],
+      "valid_after": "2026-01-01T00:00:00Z",
+      "valid_before": "2026-04-01T00:00:00Z",
+      "ca_fingerprint": "SHA256:LRWV3VmUaaQ+EBYpxzFshXCPq6cirxpNo4d/zu3VYo0"
+    },
+    "user_ca": [
+      "SHA256:ThpAygeOWe12NxeBWorXpfTGxDLvQu7WlOGmO8gBe34"
+    ],
+    "agent_principals": [
+      "agent:all",
+      "agent:tag:work",
+      "agent:ship:ship-01"
+    ],
+    "revoked_keys_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  }
 }

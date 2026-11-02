@@ -154,6 +154,12 @@ def test_generic_findings_never_echo_the_value():
     assert all(ip not in str(f) and domain not in str(f) for f in findings)
 
 
+def test_ssh_algorithm_names_are_not_emails():
+    assert rules("ssh-ed25519-cert-v01" + AT + "openssh.com AAAAC3Nza ship-01") == []
+    assert rules("HostKeyAlgorithms ssh-ed25519-cert-v01" + AT + "openssh.com,ssh-ed25519") == []
+    assert rules("mail admin" + AT + "openssh.com") == ["email"]
+
+
 def test_package_versions_are_not_emails():
     assert rules("npm i example-helper" + AT + "2.0.1") == []
 

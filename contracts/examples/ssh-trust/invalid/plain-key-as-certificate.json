@@ -1,0 +1,4 @@
+{
+  "schema": "shipshape.ssh-trust/1",
+  "host_certificate": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMJg58ajxt0QNMiDBWq0djV2AooNxmLdBIiTxWsKSQXJ laptop"
+}

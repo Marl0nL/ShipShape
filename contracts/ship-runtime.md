@@ -35,6 +35,21 @@ AllowAgentForwarding no
 The only host key is the ed25519 key from the seed (see `seed.md`). No other host
 key types exist, so the key FleetLedger pinned is the only one a client can see.
 
+From phase 3 the Ship can also carry SSH certificates from FleetLedger's
+certificate authority, installed only by `ship-ctl ssh-trust` (`ship-ctl.md`):
+
+| Path | Owner, mode | What it is |
+|---|---|---|
+| `/etc/ssh/ssh_host_ed25519_key-cert.pub` | root, 0644 | Host certificate for the pinned key, listing every name the Ship is reached by. |
+| `/etc/ssh/shipshape/user-ca.pub` | root, 0644 | User CA public keys; certificates they sign may log in as `agent` only. |
+| `/etc/ssh/shipshape/principals/agent` | root, 0644 | `agent:all`, `agent:tag:<tag>` per tag, `agent:ship:<name>` (from `ship.toml`). No file exists for `fleet`. |
+| `/etc/ssh/shipshape/revoked-keys` | root, 0644 | Revocation list (KRL); applies to every user. |
+| `/etc/ssh/sshd_config.d/20-shipshape-ca.conf` | root, 0644 | `HostCertificate`, `TrustedUserCAKeys`, `AuthorizedPrincipalsFile`, `RevokedKeys`, each only when its file exists. |
+
+Plain keys keep working: `fleet` logs in with the admin key and `agent` with the
+keys from the seed, certificates or not. A Ship without certificates behaves
+exactly as in phase 1.
+
 ## Paths
 
 | Path | Owner, mode | What it is |
@@ -67,9 +82,12 @@ Agent home (`/home/agent`), owned by `agent`:
 | `~/.local` | npm global prefix: packages in `~/.local/lib/node_modules`, commands in `~/.local/bin`. |
 | `~/work/` | Default root for project folders. |
 
-Reserved, not created in phase 1: `/var/lib/shipshape/outbox/` and
+Reserved, not created yet: `/var/lib/shipshape/outbox/` and
 `/var/lib/shipshape/inbox/` (ship-axi requests and messages, collected by
-FleetLedger over SSH), and `/var/lib/shipshape/net/` (network visibility, phase 3).
+FleetLedger over SSH).
+
+`/var/lib/shipshape/net/` (root, 0700) holds the network visibility store that
+`ship-netwatch` writes and `ship-ctl net` reads; its files are internal.
 
 ## Services
 
@@ -78,6 +96,8 @@ FleetLedger over SSH), and `/var/lib/shipshape/net/` (network visibility, phase 
 | `herdr.service` | agent user | `herdr server`, restarted on failure. Its PATH starts with `/opt/shipshape/shim`, then `~/.local/bin`. |
 | `ship-resume.service` | agent user | One-shot after herdr: attaches a hidden client so herdr resumes agents, detaches, and records that this boot's resume is done. `agent` cannot run ship-ctl, so autostart follows from `ship-status` below, which waits for that record. |
 | `ship-status.timer`, `ship-status.service` | system | Refresh `/run/shipshape/status.json` every 30 seconds, and react to sign-ins: run tools waiting on a newly signed-in service, and `ship-ctl autostart` once Claude becomes signed in (`ship-ctl.md`). |
+| `ship-netwatch.service` | system | Network visibility collector (phase 3): records outbound connections and the DNS names they came from into `/var/lib/shipshape/net/`. Root, with `ProtectHome=yes`, so it cannot read or write any home folder. Observes only; blocks nothing. |
+| `vnstat.service` | system | Ubuntu's vnstat daemon: per-interface byte counters for the totals. |
 
 Also present: `/etc/systemd/logind.conf.d/50-shipshape.conf`
 (`InhibitDelayMaxSec=30`, so herdr can save on shutdown) and

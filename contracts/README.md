@@ -17,6 +17,8 @@ not part of the interface: ask for a contract change instead of guessing.
 | Ship runtime (users, paths, units, sudo) | prose only | Ship (W4) | Fleet (W8, W9) |
 | Catalogue recipes and profiles | `tool-recipe.schema.json`, `profile.schema.json` | Ship (W6) | Ship: ship-ctl tools (W5); Fleet: `ship-fleet tools`, `new --profile` (W3, W10) |
 | Pinned versions (`/versions.toml`) | `versions.schema.json` | shared | Ship (W4), Fleet (W3, W8) |
+| SSH certificates for a Ship (`ship-ctl ssh-trust` stdin) | `ssh-trust.schema.json` | Fleet: the certificate authority (phase 3) | Ship: ship-ctl |
+| Network visibility summary (`ship-ctl net --json` data) | `net-summary.schema.json` | Ship: ship-netwatch and ship-ctl (phase 3) | Fleet: Network tab, first-seen destinations, who-talked search |
 
 Prose documents:
 

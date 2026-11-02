@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/net-summary.schema.json",
+  "title": "Network visibility summary (the data of ship-ctl net --json, version 1)",
+  "description": "Which programs on a Ship reached which destinations, how often and roughly how much, over a rolling 7 days, plus interface totals. Produced by ship-ctl from the ship-netwatch collector and vnstat; consumed by FleetLedger (the Network tab, first-seen destinations, who-talked-to search). Observation only: nothing is blocked. Every name and program in it comes from the Ship, so treat them as untrusted text (already limited to safe characters). See contracts/ship-ctl.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "collector", "retention_days", "totals", "destinations", "programs", "truncated"],
+  "properties": {
+    "schema": { "const": "shipshape.net-summary/1" },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "source", "since", "updated_at", "dropped"],
+      "properties": {
+        "state": {
+          "enum": ["running", "stopped", "unavailable"],
+          "description": "running: recording now. stopped: installed but not running (the summary is what it last saved). unavailable: not installed."
+        },
+        "source": {
+          "enum": ["ebpf", "ss", null],
+          "description": "ebpf: tcpconnect and tcplife from Ubuntu's libbpf-tools (every connection, with bytes). ss: polling every few seconds (short connections can be missed; no bytes)."
+        },
+        "since": {
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
+          "description": "When recording began (the oldest data kept)."
+        },
+        "updated_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Destinations forgotten early because the store was full (it keeps the most recently used)."
+        },
+        "note": { "type": ["string", "null"], "maxLength": 300 }
+      }
+    },
+    "retention_days": { "type": "integer", "minimum": 1, "maximum": 31 },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "rx_mb_24h", "tx_mb_24h", "rx_mb_7d", "tx_mb_7d", "interfaces"],
+      "properties": {
+        "source": {
+          "enum": ["vnstat", "collector", null],
+          "description": "vnstat: kernel interface counters (everything, including traffic the collector cannot attribute). collector: sum of recorded connections. null: nothing known."
+        },
+        "rx_mb_24h": { "type": "number", "minimum": 0 },
+        "tx_mb_24h": { "type": "number", "minimum": 0 },
+        "rx_mb_7d": { "type": "number", "minimum": 0 },
+        "tx_mb_7d": { "type": "number", "minimum": 0 },
+        "interfaces": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "rx_mb_24h", "tx_mb_24h", "rx_mb_7d", "tx_mb_7d"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,32}$" },
+              "rx_mb_24h": { "type": "number", "minimum": 0 },
+              "tx_mb_24h": { "type": "number", "minimum": 0 },
+              "rx_mb_7d": { "type": "number", "minimum": 0 },
+              "tx_mb_7d": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "hourly": {
+          "type": "array",
+          "maxItems": 744,
+          "description": "Per-hour totals, oldest first, for a traffic chart.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hour", "rx_mb", "tx_mb"],
+            "properties": {
+              "hour": { "$ref": "#/$defs/timestamp" },
+              "rx_mb": { "type": "number", "minimum": 0 },
+              "tx_mb": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "destinations": {
+      "type": "array",
+      "maxItems": 500,
+      "description": "Destinations seen in the last retention_days, most connections first.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "kind",
+          "scope",
+          "first_seen",
+          "last_seen",
+          "connections_24h",
+          "connections_7d",
+          "ports",
+          "programs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 253,
+            "pattern": "^([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?)(\\.([A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?))*\\.?$|^[0-9.]{7,15}$|^[0-9a-f:]{2,39}$",
+            "description": "A domain name from the Ship's DNS answers, or the address itself when no name is known (kind address)."
+          },
+          "kind": { "enum": ["domain", "address"] },
+          "scope": {
+            "enum": ["internet", "lan", "local"],
+            "description": "lan: a private, link-local or shared address range (RFC 1918, RFC 6598, fc00::/7, fe80::/10). local: this Ship (loopback). internet: everything else."
+          },
+          "first_seen": {
+            "$ref": "#/$defs/timestamp",
+            "description": "When this Ship first contacted it, as far back as the collector remembers (longer than retention_days)."
+          },
+          "last_seen": { "$ref": "#/$defs/timestamp" },
+          "connections_24h": { "type": "integer", "minimum": 0 },
+          "connections_7d": { "type": "integer", "minimum": 0 },
+          "tx_bytes_24h": { "type": ["integer", "null"], "minimum": 0 },
+          "rx_bytes_24h": { "type": ["integer", "null"], "minimum": 0 },
+          "tx_bytes_7d": { "type": ["integer", "null"], "minimum": 0 },
+          "rx_bytes_7d": { "type": ["integer", "null"], "minimum": 0 },
+          "ports": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "type": "integer", "minimum": 0, "maximum": 65535 }
+          },
+          "addresses": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "type": "string", "pattern": "^[0-9.]{7,15}$|^[0-9a-f:]{2,39}$" }
+          },
+          "programs": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "$ref": "#/$defs/programCount" }
+          }
+        }
+      }
+    },
+    "programs": {
+      "type": "array",
+      "maxItems": 200,
+      "description": "Per program over the last retention_days, most connections first.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "connections_24h", "connections_7d", "destinations_7d"],
+        "properties": {
+          "name": { "$ref": "#/$defs/programName" },
+          "connections_24h": { "type": "integer", "minimum": 0 },
+          "connections_7d": { "type": "integer", "minimum": 0 },
+          "destinations_7d": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "truncated": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Destinations left out of this document (the 500 busiest are listed)."
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    },
+    "programName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.+:@-]{1,32}$|^\\?$",
+      "description": "The process name (comm) as the kernel reports it, with anything outside the allowed characters replaced by _. ? when unknown."
+    },
+    "programCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "connections_7d"],
+      "properties": {
+        "name": { "$ref": "#/$defs/programName" },
+        "connections_7d": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

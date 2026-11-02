@@ -1,0 +1,80 @@
+# FleetLedger inventory: ~/.config/fleetledger/ships.toml (local, never committed).
+# Every value here is a generic example.
+schema = 1
+
+[fleet]
+admin_key = "~/.ssh/shipshape_fleet_ed25519"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+
+[defaults]
+driver = "proxmox"
+tags = []
+tools = ["example-cli"]
+claude = { remote_control = "on", default_mode = "auto" }
+size = { cores = 4, memory_mb = 8192, disk_gb = 40 }
+
+[tag.work]
+claude = "work@example.com"
+gcloud = "work@example.com"
+github = "example-work"
+
+[tag.personal]
+claude = "you@example.com"
+gcloud = "you@example.com"
+github = "example-user"
+
+[profile_options.orchestrator]
+repo_url = "https://github.com/example/orchestrator.git"
+
+[drivers.proxmox]
+api_url = "https://pve.example.com:8006/api2/json"
+node = "pve"
+pool = "shipshape"
+template_vmid = 9000
+seed_storage = "shipshape-seeds"
+disk_storage = "local-lvm"
+bridge = "vmbr0"
+token_id = "shipshape@pve!build"
+token_file = "~/.config/fleetledger/proxmox-token"
+tls_fingerprint = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
+vmid_range = [9100, 9199]
+
+[ca]
+host_key = "~/.ssh/shipshape_host_ca_ed25519"
+user_key = "~/.ssh/shipshape_user_ca_ed25519"
+host_cert_days = 90
+user_cert_hours = 168
+
+[machine.laptop]
+public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMJg58ajxt0QNMiDBWq0djV2AooNxmLdBIiTxWsKSQXJ laptop"
+added = "2026-01-02T00:00:00Z"
+scope = ["tag:Work Ships"]
+cert_hours = 24
+last_serial = 7
+last_valid_before = "2026-01-03T00:00:00Z"
+
+[machine.old-desktop]
+public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVvbGRkZXNrdG9wa2V5ZXhhbXBsZW9sZGRl old-desktop"
+added = "2026-01-02T00:00:00Z"
+scope = ["all"]
+revoked = "2026-01-04T00:00:00Z"
+
+[ship.ship-01]
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+tags = ["work"]
+driver = "proxmox"
+driver_ref = { vmid = 9101 }
+names = ["ship-01.local"]
+host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZXlleGFt ship-01"
+created = "2026-01-01T00:00:00Z"
+enrolled = "2026-01-01T00:05:00Z"
+profiles = ["orchestrator"]
+
+[ship.ship-02]
+id = "2f1b8a54-3c6e-4d1f-9a2b-5e8c7d6f4a31"
+tags = ["personal"]
+driver = "manual"
+names = ["ship-02.local", "ship-02.example.net"]
+host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5c2hpcDAyZXhhbXBsZWhvc3Rr ship-02"
+claude = { default_mode = "bypassPermissions", allow_bypass = true }
+notes = "Test Ship."

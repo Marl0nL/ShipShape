@@ -77,6 +77,8 @@ HOME_RE = re.compile(
     r"(?:/home/|/Users/|[Cc]:\\Users\\)([A-Za-z0-9_.$<>{}-]+)", re.IGNORECASE
 )
 EMAIL_RE = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+# OpenSSH algorithm names look like addresses (ssh-ed25519-cert-v01@openssh.com).
+SSH_ALGORITHM_RE = re.compile(r"(?<![\w.+-])[a-z0-9-]+-v[0-9]{2}@openssh\.com\b")
 
 # Ranges that identify a private network. Documentation ranges (192.0.2.0/24,
 # 198.51.100.0/24, 203.0.113.0/24), loopback and 0.0.0.0 are fine.
@@ -167,7 +169,7 @@ def check_generic(line: str, frozen: bool = False) -> list[tuple[str, str]]:
         user = match.group(1).rstrip("/\\").lower()
         if user not in ALLOWED_HOME_USERS:
             found.append(("home-path", "a home-directory path names a user; use ~/ instead"))
-    for match in EMAIL_RE.finditer(line):
+    for match in EMAIL_RE.finditer(SSH_ALGORITHM_RE.sub("", line)):
         domain = match.group(1).lower()
         if domain.rsplit(".", 1)[-1].isdigit():
             continue  # name@1.2.3 is a package version, not an address

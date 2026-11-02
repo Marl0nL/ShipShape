@@ -1,0 +1,6 @@
+{
+  "schema": "shipshape.ssh-trust/1",
+  "user_ca_keys": [
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7 example-ca"
+  ]
+}

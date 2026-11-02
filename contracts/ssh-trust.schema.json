@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/ssh-trust.schema.json",
+  "title": "ssh-trust document (stdin of ship-ctl ssh-trust, version 1)",
+  "description": "What FleetLedger, as the fleet's SSH certificate authority, installs on a Ship: its host certificate, the CA keys whose user certificates the agent user accepts, and the revocation list. Every field is optional; a field that is present replaces what the Ship has. Public material only: never a private key. See contracts/ship-ctl.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema"],
+  "anyOf": [
+    { "required": ["host_certificate"] },
+    { "required": ["user_ca_keys"] },
+    { "required": ["revoked_keys"] }
+  ],
+  "properties": {
+    "schema": { "const": "shipshape.ssh-trust/1" },
+    "host_certificate": {
+      "type": "string",
+      "maxLength": 16384,
+      "pattern": "^ssh-ed25519-cert-v01@openssh\\.com [A-Za-z0-9+/]+={0,2}( [^\\n]*)?$",
+      "description": "One OpenSSH host certificate line for the Ship's own ed25519 host key. The Ship refuses it unless it is a host certificate, certifies exactly /etc/ssh/ssh_host_ed25519_key.pub, lists the Ship's name among its principals, and has not expired."
+    },
+    "user_ca_keys": {
+      "type": "array",
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "maxLength": 1000,
+        "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\\n]*)?$"
+      },
+      "description": "Public keys of the user CAs whose certificates may log in as agent (more than one during a CA rotation). An empty list turns certificate logins off."
+    },
+    "revoked_keys": {
+      "type": "string",
+      "maxLength": 1048576,
+      "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+      "description": "An OpenSSH key revocation list (KRL, from ssh-keygen -k), base64. Keys and certificates in it are refused for every user."
+    }
+  }
+}
