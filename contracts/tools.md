@@ -13,8 +13,10 @@ Schemas: `tool-recipe.schema.json`, `profile.schema.json`. Examples:
 - The file name is `<id>.toml` and matches `id`.
 - npm versions are pinned. If the package is listed in `versions.toml` `[npm]`,
   the recipe's `version` must equal it (a test checks this once recipes exist).
-- apt packages come only from Ubuntu or from repositories listed in
-  `versions.toml` `[apt]`, whose signing keys are pinned there.
+- ship-provision adds every `versions.toml` `[apt.*]` repository, with its
+  pinned signing keys, at provision time. A recipe's `apt` entries, and its
+  `package` for kind `apt`, must be Ubuntu packages or appear in some
+  `[apt.*].packages` list. Recipes never add repositories.
 - Nothing is fetched unpinned at run time (no `npx ...@latest`).
 - No real accounts, hostnames or URLs that point at a person: values that differ
   per person come from profile options or local config.
@@ -35,7 +37,8 @@ For each id in `ship.toml` `[tools].install`, plus the tools of each listed prof
 3. Write `env` to the agent's environment file.
 4. If every service in `needs` shows `ok` in the status document, run `after`;
    otherwise mark the tool `waiting` with `waiting_for` set, and retry on the next
-   `tools run` (FleetLedger triggers one after each successful sign-in).
+   `tools run`. The Ship does this by itself within a minute of the sign-in
+   (see "Reacting to sign-ins" in `ship-ctl.md`).
 5. Run `check`. Exit 0 marks the tool `ok`, and the first line of output is its
    version. Anything else marks it `failed`.
 

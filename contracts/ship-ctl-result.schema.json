@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.shipshape.invalid/ship-ctl-result.schema.json",
-  "title": "ship-ctl --json result for commands other than status",
-  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version and logs. The exit code carries the same outcome (see contracts/ship-ctl.md).",
+  "title": "ship-ctl --json result (every command except a successful status)",
+  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version and logs, and by `ship-ctl status --json` when it cannot produce a status document. The exit code carries the same outcome (see contracts/ship-ctl.md).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "command", "ok", "changed", "messages", "error"],
   "properties": {
     "schema": { "const": "shipshape.ship-ctl-result/1" },
     "command": {
-      "enum": ["apply", "set", "autostart", "converge", "tools", "version", "logs"]
+      "enum": ["status", "apply", "set", "autostart", "converge", "tools", "version", "logs"]
     },
     "ok": { "type": "boolean" },
     "changed": {

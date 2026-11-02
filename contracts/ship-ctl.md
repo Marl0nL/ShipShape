@@ -11,7 +11,8 @@ Version 1.
 - Path: `/usr/local/bin/ship-ctl`. Every command except `version` and `--help`
   needs root (FleetLedger runs `sudo -n ship-ctl ...`).
 - `--json` prints exactly one JSON document on stdout and nothing else:
-  - `status` prints a status document (`ship-status.schema.json`);
+  - `status` prints a status document (`ship-status.schema.json`), or a result
+    with `"command": "status"` if it cannot produce one;
   - every other command prints a result (`ship-ctl-result.schema.json`).
 - Without `--json` the output is for people; its format is not a contract.
 - Diagnostics go to stderr and the journal, never into the JSON.
@@ -32,8 +33,12 @@ Exit codes:
 ### `ship-ctl status --json [--write PATH]`
 
 Prints the status document. Exit 0 whenever a valid document is printed, even if
-the Ship is unhealthy: health is in the document, not the exit code. Exit 1 only
-if no valid document can be produced.
+the Ship is unhealthy: health is in the document, not the exit code.
+
+If no valid status document can be produced, it prints a result document instead
+(`"command": "status"`, `"ok": false`, `error.code` `internal`) and exits 1; when
+not run as root it prints the same with `not-root` and exits 3. FleetLedger tells
+the two shapes apart by their `schema` value.
 
 - Finishes within 15 seconds. Each probe has its own timeout (5 seconds at most);
   a failed probe sets its fields to `unknown`/`null` and adds a line to `errors`.
@@ -44,6 +49,7 @@ How fields are worked out:
 
 | Field | Source |
 |---|---|
+| `ship.bundle_commit` | `commit` from the installed `bundle.json`; the value `unknown` becomes `null`. |
 | `state` | First match: `provisioning` if `provision.result` is `running` or `never`, or cloud-init is running; `needs-sign-in` if `auth.claude.state` is `missing`, `expired` or `error`; `running` if herdr lists at least one agent; `ready` if the herdr server is running; else `unknown`. |
 | `auth.claude` | `claude auth status --json` as `agent`: `loggedIn` gives `ok` or `missing`; `account` is the email; `detail` is the plan or method. |
 | `auth.gcloud` | `gcloud auth list --filter=status:ACTIVE --format="value(account)"` as `agent`. |
@@ -87,7 +93,28 @@ Starts every `[[autostart]]` agent that is not running, in its own mode, with
 `herdr agent start <name> --kind claude`, then sends its prompt. It does nothing
 while the Ship is `provisioning` or `needs-sign-in`.
 
+The Ship runs it on its own: at boot (`ship-resume.service`) and once whenever
+Claude becomes signed in (see "Reacting to sign-ins" below). FleetLedger never
+needs to call it; calling it anyway is harmless.
+
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
+
+### Reacting to sign-ins
+
+The Ship reacts to sign-ins by itself; FleetLedger triggers nothing after a
+sign-in. Each time the status timer refreshes `/run/shipshape/status.json` (at
+least every 60 seconds), ship-ctl compares every `auth` service's state with the
+previous refresh:
+
+- a service that changed to `ok`: run `tools run` for the recipes waiting on it;
+- `claude` changed to `ok`: then run `autostart` once.
+
+This is triggered by the change, not by the state, so an agent you stop later is
+not restarted until the next boot or the next time Claude goes from signed out
+to signed in. It works however the sign-in happened: through the concierge or by
+hand over SSH. The first refresh after boot compares against "not signed in", and
+autostart is idempotent, so a boot that is already signed in starts each agent
+once.
 
 ### `ship-ctl converge --bundle PATH [--json]`
 

@@ -104,13 +104,22 @@ def test_invalid_examples_fail(case: tuple[str, Path]):
     assert not validator(name).is_valid(load_doc(path)), f"{path} should not validate"
 
 
-def test_contract_files_are_not_git_ignored():
+SOURCE_ROOTS = ("contracts", "ship", "fleetledger", "tests", "scripts", "docs", ".github")
+CACHE_PARTS = {"__pycache__", ".pytest_cache", ".ruff_cache", "node_modules", ".venv"}
+
+
+def test_source_files_are_not_git_ignored():
     """A file that exists locally but is ignored would pass here and vanish in CI."""
-    files = [str(p.relative_to(ROOT)) for p in CONTRACTS.rglob("*") if p.is_file()]
+    files = [
+        str(p.relative_to(ROOT))
+        for top in SOURCE_ROOTS
+        for p in (ROOT / top).rglob("*")
+        if p.is_file() and not CACHE_PARTS.intersection(p.relative_to(ROOT).parts)
+    ]
     result = subprocess.run(
         ["git", "check-ignore", "--no-index", *files], cwd=ROOT, capture_output=True, text=True
     )
-    assert result.stdout.strip() == "", f"git-ignored contract files:\n{result.stdout}"
+    assert result.stdout.strip() == "", f"git-ignored source files:\n{result.stdout}"
 
 
 def test_shared_definitions_are_identical():

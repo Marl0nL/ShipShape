@@ -53,7 +53,7 @@ integration and agents edit these files too):
 | `agent.sudo` | `/etc/sudoers.d/91-shipshape-agent` present (`NOPASSWD: ALL`) or absent |
 | `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent (phase 2) |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
-| `autostart` | used by `ship-ctl autostart` at boot and on demand |
+| `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
 
 ## Permission modes across reboots
 

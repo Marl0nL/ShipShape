@@ -40,7 +40,7 @@
     },
     "state": {
       "enum": ["provisioning", "needs-sign-in", "ready", "running", "unknown"],
-      "description": "provisioning: cloud-init or ship-provision not finished. needs-sign-in: Claude not signed in (or a service ship.toml marks required). ready: signed in, herdr up, no agents. running: one or more agents."
+      "description": "provisioning: cloud-init or ship-provision not finished. needs-sign-in: Claude not signed in. ready: signed in, herdr up, no agents. running: one or more agents."
     },
     "attention": {
       "type": "array",
@@ -53,7 +53,7 @@
           "code": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "description": "Known codes: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, provision-failed, tool-waiting, tool-failed, behind-tooling. Consumers show unknown codes as-is."
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, provision-failed, tool-waiting, tool-failed. FleetLedger adds its own (signin-wrong-account, behind-tooling) when it displays a Ship. Consumers show unknown codes as-is."
           },
           "message": { "type": "string", "maxLength": 500 },
           "subject": {

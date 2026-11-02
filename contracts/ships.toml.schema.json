@@ -124,6 +124,11 @@
         }
       }
     },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    },
     "path": {
       "type": "string",
       "minLength": 1,
@@ -220,7 +225,7 @@
           "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( .*)?$",
           "description": "The Ship's ed25519 host public key, pinned before first boot."
         },
-        "created": { "type": "string", "format": "date-time" },
+        "created": { "$ref": "#/$defs/timestamp" },
         "size": { "$ref": "#/$defs/size" },
         "claude": { "$ref": "#/$defs/claudeSettings" },
         "tools": { "type": "array", "items": { "$ref": "#/$defs/toolId" }, "uniqueItems": true },

@@ -1,0 +1,11 @@
+{
+  "schema": "shipshape.ship-ctl-result/1",
+  "command": "status",
+  "ok": false,
+  "changed": [],
+  "messages": [],
+  "error": {
+    "code": "internal",
+    "message": "could not read the herdr socket or ship.toml"
+  }
+}

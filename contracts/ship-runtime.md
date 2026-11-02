@@ -76,7 +76,7 @@ FleetLedger over SSH), and `/var/lib/shipshape/net/` (network visibility, phase 
 |---|---|---|
 | `herdr.service` | agent user | `herdr server`, restarted on failure. Its PATH starts with `/opt/shipshape/shim`, then `~/.local/bin`. |
 | `ship-resume.service` | agent user | One-shot after herdr: attaches a hidden client so herdr resumes agents, detaches, then runs `ship-ctl autostart`. |
-| `ship-status.timer`, `ship-status.service` | system | Refresh `/run/shipshape/status.json` every 30 seconds. |
+| `ship-status.timer`, `ship-status.service` | system | Refresh `/run/shipshape/status.json` every 30 seconds, and react to sign-ins: run tools waiting on a newly signed-in service, and `ship-ctl autostart` once Claude becomes signed in (`ship-ctl.md`). |
 
 Also present: `/etc/systemd/logind.conf.d/50-shipshape.conf`
 (`InhibitDelayMaxSec=30`, so herdr can save on shutdown) and
@@ -103,6 +103,9 @@ file, and agent forwarding off.
 | Sign-ins (concierge) | `ssh -tt fleet@<ship> sudo -n -iu agent -- <command>` (a login shell, so `HOME` and `PATH` are the agent's) |
 | Update tooling | upload the bundle into `/home/fleet/incoming/`, then `sudo -n /usr/local/bin/ship-ctl converge --bundle <path> --json` |
 | Reboot | `sudo -n systemctl reboot` (never a forced reboot) |
+
+After a sign-in FleetLedger triggers nothing: within a minute the Ship finishes
+the tools that were waiting on it and, for Claude, starts its autostart agents.
 
 An optional read-only poller key may be installed for `fleet` with
 `restrict,command="sudo -n /usr/local/bin/ship-ctl status --json"`.

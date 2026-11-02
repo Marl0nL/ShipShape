@@ -39,8 +39,9 @@ sha256 = "17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c"
 # Native installer as the agent user; it then updates itself on the Ship's channel.
 install = "native"
 default_channel = "latest"
-# auto is the built-in starting permission mode from this version on.
-minimum_version = "2.1.283"
+# From this version, auto is the built-in starting permission mode on every plan
+# and provider (2.1.283 did so only on third-party providers or with telemetry off).
+minimum_version = "2.1.284"
 # Anthropic Claude Code release signing key; signs each release's manifest.json.
 release_key = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
 manifest_base = "https://downloads.claude.ai/claude-code-releases"
