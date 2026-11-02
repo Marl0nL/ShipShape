@@ -215,8 +215,25 @@ def for_each(
 # --- status helpers -----------------------------------------------------------
 
 
+# The status contract's timestamp: UTC, whole or fractional seconds.
+TIMESTAMP_RE = re.compile(
+    r"^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\.[0-9]+)?Z$")
+
+
 def _parse_ts(value: str) -> float:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
+    """Seconds since the epoch for a status timestamp.
+
+    Raises FleetError, so a Ship that reports an unreadable time fails on its
+    own instead of stopping the whole batch.
+    """
+    match = TIMESTAMP_RE.match(value) if isinstance(value, str) else None
+    try:
+        if not match:
+            raise ValueError(value)
+        whole = datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
+    except ValueError:
+        raise FleetError(f"The Ship reported an unreadable time: {value!r}.") from None
+    return whole.timestamp() + float("0" + (match.group(2) or ""))
 
 
 def _fetch(fleet: Fleet, inventory: Inventory, ship: Ship) -> status_mod.ShipView:

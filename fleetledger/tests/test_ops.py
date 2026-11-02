@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from fleetledger.errors import FleetError
 from fleetledger.seed.bundle import Bundle
-from fleetledger.ssh import Result, Unreachable
+from fleetledger.ssh import HostKeyMismatch, Result, Unreachable
 
 from fleetledger import cli, ops, status
 
@@ -92,6 +92,11 @@ class SimShip:
         self.report_commit = None  # lie about the bundle after converge
         self.accounts = {}  # service -> account reported in auth
         self.forgotten = 0  # shared SSH connections closed by FleetLedger
+        self.time_format = "%Y-%m-%dT%H:%M:%SZ"  # the contract also allows fractions
+        self.refuse_reboot = None  # stderr of a refused reboot command
+        self.after_reboot_id = None  # someone else answers at its name after the reboot
+        self.after_reboot_host_key = False  # ... or answers with a different host key
+        self.impostor = False
         self.calls = []
         self.converged = []
         self.reboots = []
@@ -105,6 +110,7 @@ class SimShip:
         self.booted = self.down_until
         self.down_until = None
         self.herdr_pending = False
+        self.impostor = bool(self.after_reboot_id or self.after_reboot_host_key)
         if self.after_reboot is not None:
             self.agents = dict(self.after_reboot)
         return True
@@ -114,9 +120,11 @@ class SimShip:
         now = self.clock.t
         uptime = int(now - self.booted)
         doc["generated_at"] = datetime.fromtimestamp(EPOCH + now, UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ")
+            self.time_format)
         doc["ship"].update(name=ship.name, id=ship.id, tags=list(ship.tags or ()),
                            tooling=self.tooling, bundle_commit=self.bundle_commit)
+        if self.impostor and self.after_reboot_id:
+            doc["ship"]["id"] = self.after_reboot_id
         doc["host"]["uptime_s"] = uptime
         resumed = uptime >= self.resume_delay
         agents = self.agents if resumed else {}
@@ -125,7 +133,7 @@ class SimShip:
         ]
         doc["herdr"]["last_resume"] = None if not resumed else {
             "at": datetime.fromtimestamp(EPOCH + self.booted + self.resume_delay, UTC)
-            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            .strftime(self.time_format),
             "method": "hidden-client", "resumed": len(agents), "failed": 0}
         for service, account in self.accounts.items():
             doc["auth"][service]["account"] = account
@@ -141,11 +149,15 @@ class SimShip:
         self.calls.append(list(command))
         if not self.up():
             raise Unreachable(f"Cannot reach {ship.name}: connection refused")
+        if self.impostor and self.after_reboot_host_key:
+            raise HostKeyMismatch(f"{ship.name} answered with a host key other than the pinned one")
         if command[:2] == ["bash", "-c"]:
             local = [self.incoming.as_posix() if a == ops.INCOMING else a for a in command]
             proc = subprocess.run(local, input=input or b"", capture_output=True)
             return proc.returncode, proc.stdout, proc.stderr.decode()
         if command == ["sudo", "-n", "systemctl", "reboot"]:
+            if self.refuse_reboot:
+                return 1, "", self.refuse_reboot
             self.reboots.append(list(ship.names))
             self.down_until = self.clock.t + self.boot_delay
             raise Unreachable(f"Cannot reach {ship.name}: connection closed by remote host")
@@ -314,6 +326,89 @@ def test_reboot_is_sent_over_one_name_only(world, store):
     assert outcome.ok
     assert sim.reboots == [["ship-02.local"]]  # not both of its names
     assert "no agents were running" in outcome.summary
+
+
+def test_reboot_accepts_fractional_second_timestamps(world):
+    """The status contract allows fractional seconds in generated_at and last_resume."""
+    sim = world.sims["ship-01"]
+    sim.time_format = "%Y-%m-%dT%H:%M:%S.%fZ"
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert outcome.ok, outcome
+    assert "2/2 agents resumed in their modes" in outcome.summary
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("2026-01-01T00:00:00Z", EPOCH),
+    ("2026-01-01T00:00:00.5Z", EPOCH + 0.5),
+    ("2026-01-01T00:00:00.123456789Z", EPOCH + 0.123456789),
+])
+def test_parse_ts_reads_the_contract_format(value, expected):
+    assert ops._parse_ts(value) == pytest.approx(expected, abs=1e-6)
+
+
+@pytest.mark.parametrize("value", [
+    "2026-01-01T00:00:00",  # no zone: would silently be read as local time
+    "2026-01-01T00:00:00+10:00", "2026-13-01T00:00:00Z", "", None,
+])
+def test_parse_ts_rejects_other_formats_as_a_fleet_error(value):
+    with pytest.raises(FleetError, match="unreadable time"):
+        ops._parse_ts(value)
+
+
+def test_an_unreadable_time_fails_only_that_ship(world, monkeypatch):
+    """Not a traceback for the whole batch, mid-reboot."""
+    real = ops._resumed_this_boot
+
+    def picky(doc):
+        if doc["ship"]["name"] == "ship-02":
+            doc = copy.deepcopy(doc)
+            doc["generated_at"] = "not a time"
+        return real(doc)
+
+    monkeypatch.setattr(ops, "_resumed_this_boot", picky)
+    outcomes = ops.reboot(world.fleet, [world.ship("ship-01"), world.ship("ship-02")])
+    assert [o.ok for o in outcomes] == [True, False]
+    assert "unreadable time" in outcomes[1].summary
+
+
+def test_a_refused_reboot_command_fails_at_once(world):
+    """sudo denied or an inhibitor refusing: fail now, do not wait 600 s for a reboot."""
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot = "sudo: a password is required\n"
+    start = world.clock.t
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert not outcome.ok
+    assert outcome.summary == "ship-01: the reboot command failed: sudo: a password is required"
+    assert world.clock.t == start  # no waiting at all
+    assert sim.reboots == []
+
+
+def test_reboot_without_wait_reports_a_refused_command(world):
+    world.sims["ship-01"].refuse_reboot = "Operation inhibited\n"
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], wait=False)
+    assert not outcome.ok and "the reboot command failed" in outcome.summary
+
+
+def test_reboot_stops_when_another_machine_answers_at_the_name(world):
+    """A status from a different Ship id after the reboot is not this Ship coming back."""
+    sim = world.sims["ship-01"]
+    sim.after_reboot_id = "00000000-0000-4000-8000-000000000099"
+    start = world.clock.t
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert not outcome.ok
+    assert "00000000-0000-4000-8000-000000000099" in outcome.summary
+    assert "ignoring its status" in outcome.summary
+    assert world.clock.t - start < 600  # stopped at once, did not wait out the budget
+
+
+def test_reboot_stops_when_the_ship_returns_with_another_host_key(world):
+    sim = world.sims["ship-01"]
+    sim.after_reboot_host_key = True
+    start = world.clock.t
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert not outcome.ok
+    assert "host key other than the pinned one" in outcome.summary
+    assert world.clock.t - start < 600
 
 
 def test_reboot_without_wait(world):
