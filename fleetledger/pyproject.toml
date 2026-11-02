@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "FleetLedger: find, show and manage ShipShape Ships (the ship-fleet command)."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+# Keep in step with the pins in the repo's requirements-dev.txt, which CI tests with.
+dependencies = [
+  "jsonschema>=4.26,<5",
+  "pycdlib>=1.22,<2",
+  "PyYAML>=6.0.3,<7",
+  "tomlkit>=0.15.2,<1",
+]
 
 [project.scripts]
 ship-fleet = "fleetledger.cli:main"

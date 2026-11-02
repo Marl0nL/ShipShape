@@ -226,6 +226,10 @@
           "description": "The Ship's ed25519 host public key, pinned before first boot."
         },
         "created": { "$ref": "#/$defs/timestamp" },
+        "enrolled": {
+          "$ref": "#/$defs/timestamp",
+          "description": "When FleetLedger finished enrolment (contracts/seed.md): provisioning done, seed detached and deleted. Absent until then."
+        },
         "size": { "$ref": "#/$defs/size" },
         "claude": { "$ref": "#/$defs/claudeSettings" },
         "tools": { "type": "array", "items": { "$ref": "#/$defs/toolId" }, "uniqueItems": true },

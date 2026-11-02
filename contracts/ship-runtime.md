@@ -116,3 +116,15 @@ above.
 
 Agents themselves read `/run/shipshape/status.json` (through ship-axi) and never
 need ship-ctl.
+
+## LAN announcement
+
+avahi announces one DNS-SD service so `ship-fleet scan` can list Ships on the LAN:
+
+- type `_shipshape._tcp`, port 22, instance name: the Ship's name;
+- host: the Ship's mDNS name (`<ship name>.local`);
+- TXT records `schema=1`, `name=<ship name>`, `id=<ship id>`.
+
+Announcements are hints only. FleetLedger trusts a Ship solely through its pinned
+host key; `ship-fleet adopt` shows the key's fingerprint for you to compare with
+the one cloud-init prints on the VM console before anything is recorded.
