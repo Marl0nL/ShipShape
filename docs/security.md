@@ -65,7 +65,9 @@ from the LAN to other machines or cloud VMs.
   native installer, replace their own Claude binary; neither reaches beyond
   that Ship.
 - **Root-owned, out of agents' reach:** Claude Code's managed settings (Remote
-  Control, the bypass policy), herdr's binary, `ship.toml`, the resume shim.
+  Control, the bypass policy), herdr's binary, `ship.toml`, the resume shim,
+  and the network visibility collector and its records ([network.md](network.md)).
+  The collector runs with `ProtectHome=yes` and never touches a home folder.
 - **Bypass is opt-in per Ship.** Without `allow_bypass`, managed settings disable
   bypass mode outright.
 
@@ -123,7 +125,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 
 | Threat | What it could do | What limits it |
 |---|---|---|
-| A misbehaving or prompt-injected agent (more so in bypass) | use or leak that Ship's sign-ins; push to repos you can reach; probe your LAN | separate sign-ins per Ship (sign one out without touching others); no sudo; bypass only where allowed; no admin keys or agent forwarding on Ships |
+| A misbehaving or prompt-injected agent (more so in bypass) | use or leak that Ship's sign-ins; push to repos you can reach; probe your LAN | separate sign-ins per Ship (sign one out without touching others); no sudo; bypass only where allowed; no admin keys or agent forwarding on Ships; the network visibility record (LAN destinations included) for review afterwards |
 | A Ship on the wrong account | work done with personal credentials, or the reverse | expected accounts per tag, checked after every sign-in and on every poll |
 | Someone else on your LAN | fake an mDNS announcement; answer at a Ship's name; try passwords | pinned host keys; key-only SSH; announcements are hints only |
 | A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; treat snapshots as sensitive; re-seed and `adopt --replace` (which also lists the old host key as revoked for trusted machines); host certificates last 90 days; sign Ships out from FleetLedger |

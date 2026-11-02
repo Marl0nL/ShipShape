@@ -14,6 +14,7 @@ from fleetledger.concierge import providers
 from fleetledger.drivers import SeedFile
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, new_ship_id, now_timestamp
+from fleetledger.netcmd import cmd_net  # noqa: F401
 from fleetledger.seed import Autostart, SeedOptions, cloudinit, hostkey, make_seed
 from fleetledger.seed.shiptoml import tools_for
 from fleetledger.shipctl import STATUS_SCHEMA
@@ -493,6 +494,12 @@ def cmd_status(args, app) -> int:
             + (f" at {doc['provision']['last_run']}" if doc["provision"]["last_run"] else ""))
     if doc["tools"]:
         app.say("Tools: " + ", ".join(f"{k} {v['state']}" for k, v in sorted(doc["tools"].items())))
+    if doc.get("net"):
+        n = doc["net"]
+        new = n["new_destinations"]
+        app.say(f"Network (24 h): {n['rx_mb']:,.1f} MB in, {n['tx_mb']:,.1f} MB out"
+                + (f"; first seen: {', '.join(new[:5])}" + (" ..." if len(new) > 5 else "")
+                   if new else "") + f"  (ship-fleet net {ship.name})")
     return 0
 
 

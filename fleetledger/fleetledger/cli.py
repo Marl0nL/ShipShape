@@ -22,7 +22,7 @@ from fleetledger.errors import FleetError
 COMMANDS = (
     "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "set", "tag", "tools", "update", "reboot", "attention", "ssh", "logs", "ca", "trust",
-    "untrust",
+    "untrust", "net",
 )  # fmt: skip
 
 
@@ -319,6 +319,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "untrust", "revoke a machine's certificates on every Ship")
     p.add_argument("machine")
+
+    p = _add(sub, "net", "where Ships connect: destinations, programs, traffic (visibility only)",
+             "Network visibility. Ships record which programs reach which domains; nothing\n"
+             "is blocked.\n\n"
+             "  ship-fleet net                     every Ship: traffic, destinations, new ones\n"
+             "  ship-fleet net ship-01 [--week]    one Ship's top destinations and programs\n"
+             "  ship-fleet net --new [--tag work]  destinations first contacted in the last day\n"
+             "  ship-fleet net --who example.com   which Ships reached it (or a subdomain)")
+    p.add_argument("name", nargs="?", metavar="SHIP")
+    p.add_argument("--tag", help="only Ships with this tag")
+    p.add_argument("--new", action="store_true", help="first-seen destinations across Ships")
+    p.add_argument("--who", metavar="DOMAIN", help="which Ships reached this domain")
+    p.add_argument("--week", action="store_true", help="rank by the last 7 days, not 24 hours")
+    p.add_argument("--offline", action="store_true", help="use the last fetched summaries")
+    p.add_argument("--json", action="store_true", help="print JSON")
     return parser
 
 

@@ -20,7 +20,9 @@ A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
   config, and the catalogue tools installed for agents.
 - **Interface:** `ship-ctl` reports status as one JSON document and applies
   changes (`contracts/ship-ctl.md`).
-- **Network:** there is no network control. SSH is the only way in.
+- **Network:** there is no network control. SSH is the only way in. A
+  collector records which programs reach which domains, for review
+  ([network.md](network.md)).
 
 ## FleetLedger
 
