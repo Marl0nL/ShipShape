@@ -1,0 +1,598 @@
+#!/usr/bin/env bash
+# ship-provision: turn a fresh Ubuntu cloud image into a Ship (W4).
+#
+# Makes contracts/ship-runtime.md true. Idempotent: every step checks before it
+# changes anything, so a second run reports 0 changes. Versions, checksums and
+# signing keys come from versions.toml at the bundle root.
+#
+# usage: ship-provision --first-boot|--converge [--dry-run] [--root DIR]
+#
+#   --first-boot  run by the seed's bootstrap (contracts/seed.md); also applies
+#                 ship.toml, installs the catalogue tools and starts herdr
+#   --converge    run by `ship-ctl converge` (which then runs apply and tools)
+#   --dry-run     change nothing; print what would change
+#   --root DIR    treat DIR as / (tests, image work): files are written under DIR,
+#                 system commands and downloads are skipped. SHIPSHAPE_ROOT does
+#                 the same.
+set -euo pipefail
+shopt -s inherit_errexit
+umask 022
+
+HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+BUNDLE=$(dirname "$HERE")
+FILES=$BUNDLE/files
+VERSIONS=$BUNDLE/versions.toml
+[ -f "$VERSIONS" ] || VERSIONS=$(dirname "$BUNDLE")/versions.toml # repo checkout
+
+MODE=""
+DRY=0
+ROOT=${SHIPSHAPE_ROOT:-}
+CHANGES=0
+CHANGED=0
+APT_STALE=0
+FINISHED=0
+SANDBOX=0
+APT_UPDATED=0
+AGENT=agent
+AGENT_HOME=/home/agent
+
+# Ubuntu packages every Ship has (contracts/ship-runtime.md, plan "What is on a Ship").
+BASE_PACKAGES=(ca-certificates curl gnupg git jq tmux ripgrep python3 build-essential
+  avahi-daemon unattended-upgrades qemu-guest-agent unzip xz-utils)
+# Third-party repos whose packages every Ship has. Other repos are added too, but
+# their packages come from recipes (Google Chrome for chrome-devtools-axi).
+CORE_REPOS=(github-cli google-cloud nodesource)
+
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; }
+log() { printf 'ship-provision: %s\n' "$*"; }
+die() { log "error: $*" >&2; exit 1; }
+
+# --- helpers -----------------------------------------------------------------
+# cfg FILE KEY: a value from a TOML file (dotted key). Tables print their keys and
+# arrays their items, one per line; a missing key prints nothing.
+cfg() {
+  python3 -I -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    node = tomllib.load(fh)
+for part in sys.argv[2].split("."):
+    node = node.get(part) if isinstance(node, dict) else None
+    if node is None:
+        sys.exit(0)
+if isinstance(node, dict):
+    print("\n".join(node))
+elif isinstance(node, list):
+    print("\n".join(str(x) for x in node))
+elif isinstance(node, bool):
+    print("true" if node else "false")
+else:
+    print(node)
+' "$1" "$2"
+}
+v() { cfg "$VERSIONS" "$1"; }
+
+changed() {
+  CHANGES=$((CHANGES + 1))
+  if [ "$DRY" = 1 ]; then log "would change: $*"; else log "changed: $*"; fi
+}
+
+# sys CMD...: a command that changes the system. Logged, not run, when simulating.
+sys() {
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): $*"; return 0; fi
+  if [ "$DRY" = 1 ]; then log "would run: $*"; return 0; fi
+  "$@"
+}
+
+# sys_change DESC CMD...: a counted change made by a system command.
+sys_change() {
+  local desc=$1
+  shift
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): $desc"; return 0; fi
+  changed "$desc"
+  sys "$@"
+}
+
+as_agent() {
+  local uid
+  uid=$(id -u "$AGENT")
+  runuser -u "$AGENT" -- env -i HOME="$AGENT_HOME" USER="$AGENT" LOGNAME="$AGENT" \
+    PATH="$AGENT_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 \
+    XDG_RUNTIME_DIR="/run/user/$uid" npm_config_prefix="$AGENT_HOME/.local" "$@"
+}
+
+same_meta() { # PATH MODE OWNER
+  [ "$((8#$(stat -c %a "$1")))" = "$((8#$2))" ] || return 1
+  [ -n "$ROOT" ] || [ "$(stat -c %U:%G "$1")" = "$3" ]
+}
+
+# Root-owned paths only: the agent's home goes through home_dir and home_npmrc,
+# which run as the agent (a symlink there must never redirect a root write).
+not_in_home() {
+  case $1 in
+    "$AGENT_HOME" | "$AGENT_HOME"/*) die "internal: $1 is in the agent's home" ;;
+  esac
+}
+
+# Create a missing parent folder; never re-mode an existing one.
+ensure_parent() { [ -d "$1" ] || install -d -m 0755 "$1"; }
+
+# put_file SRC DEST MODE [OWNER]: install SRC as DEST if content, mode or owner differ.
+put_file() {
+  local src=$1 dest=$2 mode=$3 owner=${4:-root:root}
+  local real=$ROOT$dest
+  not_in_home "$dest"
+  CHANGED=0
+  if [ -f "$real" ] && [ ! -L "$real" ] && cmp -s "$src" "$real" && same_meta "$real" "$mode" "$owner"; then
+    return 0
+  fi
+  CHANGED=1
+  changed "$dest"
+  [ "$DRY" = 1 ] && return 0
+  ensure_parent "$(dirname "$real")"
+  if [ -n "$ROOT" ]; then
+    install -m "$mode" "$src" "$real"
+  else
+    install -o "${owner%%:*}" -g "${owner##*:}" -m "$mode" "$src" "$real"
+  fi
+}
+
+# put_text DEST MODE [OWNER] <<<content
+put_text() {
+  local tmp
+  tmp=$(mktemp)
+  cat >"$tmp"
+  put_file "$tmp" "$@"
+  rm -f "$tmp"
+}
+
+put_dir() { # DIR MODE [OWNER]
+  local dir=$1 mode=$2 owner=${3:-root:root}
+  local real=$ROOT$dir
+  not_in_home "$dir"
+  if [ -d "$real" ] && [ ! -L "$real" ] && same_meta "$real" "$mode" "$owner"; then return 0; fi
+  changed "$dir/"
+  [ "$DRY" = 1 ] && return 0
+  if [ -n "$ROOT" ]; then
+    install -d -m "$mode" "$real"
+  else
+    install -d -o "${owner%%:*}" -g "${owner##*:}" -m "$mode" "$real"
+  fi
+}
+
+put_link() { # TARGET LINK
+  local real=$ROOT$2
+  not_in_home "$2"
+  CHANGED=0
+  [ "$(readlink "$real" 2>/dev/null || true)" = "$1" ] && return 0
+  CHANGED=1
+  changed "$2 -> $1"
+  [ "$DRY" = 1 ] && return 0
+  ensure_parent "$(dirname "$real")"
+  ln -sfn "$1" "$real"
+}
+
+fetch() {
+  curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 --retry 3 \
+    --connect-timeout 20 --max-time 900 "$@"
+}
+
+machine() { if [ -n "$ROOT" ]; then echo x86_64; else uname -m; fi; }
+deb_arch() { if [ -n "$ROOT" ]; then echo amd64; else dpkg --print-architecture; fi; }
+
+boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null || true; }
+
+record() { # RESULT: ship-provision's record, read by ship-ctl status (internal)
+  [ "$DRY" = 1 ] && return 0
+  local dir=$ROOT/var/lib/shipshape
+  ensure_parent "$dir"
+  printf '{"result": "%s", "mode": "%s", "pid": %d, "boot_id": "%s", "last_run": "%s"}\n' \
+    "$1" "$MODE" "$$" "$(boot_id)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$dir/.provision.json.tmp"
+  mv "$dir/.provision.json.tmp" "$dir/provision.json"
+}
+
+on_exit() {
+  local rc=$?
+  if [ "$FINISHED" != 1 ]; then
+    record failed || true
+    log "failed (exit $rc); see the lines above"
+  fi
+}
+
+# --- apt ---------------------------------------------------------------------
+missing_debs() {
+  local pkg
+  for pkg in "$@"; do
+    dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'ok installed$' || echo "$pkg"
+  done
+}
+
+ensure_debs() {
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): apt packages $*"; return 0; fi
+  local missing
+  mapfile -t missing < <(missing_debs "$@")
+  [ "${#missing[@]}" -gt 0 ] || return 0
+  if [ "$APT_STALE" = 1 ] || [ "$APT_UPDATED" = 0 ]; then
+    sys apt-get update -q
+    APT_STALE=0
+    APT_UPDATED=1
+  fi
+  changed "apt packages: ${missing[*]}"
+  sys apt-get install -y -q "${missing[@]}"
+}
+
+# The primary keys in a keyring file, one fingerprint per line.
+primary_keys() {
+  local home
+  home=$(mktemp -d)
+  GNUPGHOME=$home gpg --batch --show-keys --with-colons "$1" 2>/dev/null |
+    awk -F: '$1 == "pub" { p = 1; next } $1 == "fpr" && p { print $10; p = 0 }'
+  rm -rf "$home"
+}
+
+# keyring_ok FILE ALLOWED: every primary key is pinned, and there is at least one.
+keyring_ok() {
+  local keys key
+  keys=$(primary_keys "$1")
+  [ -n "$keys" ] || return 1
+  for key in $keys; do grep -qx "$key" <<<"$2" || return 1; done
+}
+
+step_apt_repos() {
+  local id arch url suite comps key_url fprs archs keyring tmp
+  arch=$(deb_arch)
+  for id in $(v apt); do
+    archs=$(v "apt.$id.architectures")
+    if [ -n "$archs" ] && ! grep -qx "$arch" <<<"$archs"; then
+      log "apt repo $id: not available for $arch"
+      continue
+    fi
+    url=$(v "apt.$id.url")
+    suite=$(v "apt.$id.suite")
+    comps=$(v "apt.$id.components" | paste -sd' ')
+    key_url=$(v "apt.$id.key_url")
+    fprs=$(v "apt.$id.key_fingerprints")
+    keyring=/etc/apt/keyrings/shipshape-$id.gpg
+
+    if [ "$SANDBOX" = 1 ]; then
+      log "skipped (--root): $keyring from $key_url"
+    elif [ -f "$keyring" ] && keyring_ok "$keyring" "$fprs"; then
+      :
+    elif [ "$DRY" = 1 ]; then
+      changed "$keyring (from $key_url)"
+    else
+      tmp=$(mktemp -d)
+      fetch -o "$tmp/key" "$key_url"
+      if grep -q 'BEGIN PGP PUBLIC KEY BLOCK' "$tmp/key"; then
+        GNUPGHOME=$tmp gpg --batch --dearmor <"$tmp/key" >"$tmp/key.gpg"
+      else
+        cp "$tmp/key" "$tmp/key.gpg"
+      fi
+      keyring_ok "$tmp/key.gpg" "$fprs" || die "apt repo $id: signing key is not the pinned key"
+      put_file "$tmp/key.gpg" "$keyring" 0644
+      rm -rf "$tmp"
+      APT_STALE=1
+    fi
+
+    {
+      echo "# Written by ship-provision from versions.toml [apt.$id]."
+      echo "Types: deb"
+      echo "URIs: $url"
+      echo "Suites: $suite"
+      echo "Components: $comps"
+      [ -z "$archs" ] || echo "Architectures: $arch"
+      echo "Signed-By: $keyring"
+    } | put_text "/etc/apt/sources.list.d/shipshape-$id.sources" 0644
+    [ "$CHANGED" = 0 ] || APT_STALE=1
+  done
+}
+
+step_core_packages() {
+  local id pkgs=()
+  for id in "${CORE_REPOS[@]}"; do
+    mapfile -t -O "${#pkgs[@]}" pkgs < <(v "apt.$id.packages")
+  done
+  ensure_debs "${pkgs[@]}"
+  [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ] || return 0
+  local want have
+  want=$(v node.major)
+  have=$(node --version | sed -E 's/^v([0-9]+).*/\1/')
+  [ "$have" = "$want" ] || die "Node.js major version is $have, versions.toml wants $want"
+}
+
+# --- pinned binaries -----------------------------------------------------------
+step_herdr() {
+  local arch url sum tmp
+  arch=$(machine)
+  url=$(v "herdr.assets.$arch.url")
+  sum=$(v "herdr.assets.$arch.sha256")
+  [ -n "$url" ] || die "versions.toml has no herdr build for $arch"
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): herdr download"; return 0; fi
+  if [ -f /usr/local/bin/herdr ] && echo "$sum  /usr/local/bin/herdr" | sha256sum -c --status - &&
+    same_meta /usr/local/bin/herdr 0755 root:root; then
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then changed "/usr/local/bin/herdr $(v herdr.version)"; return 0; fi
+  tmp=$(mktemp -d)
+  fetch -o "$tmp/herdr" "$url"
+  echo "$sum  $tmp/herdr" | sha256sum -c --quiet - || die "herdr checksum mismatch"
+  put_file "$tmp/herdr" /usr/local/bin/herdr 0755
+  rm -rf "$tmp"
+}
+
+step_uv() {
+  local arch url sum tmp version
+  arch=$(machine)
+  version=$(v uv.version)
+  url=$(v "uv.assets.$arch.url")
+  sum=$(v "uv.assets.$arch.sha256")
+  [ -n "$url" ] || die "versions.toml has no uv build for $arch"
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): uv download"; return 0; fi
+  if [ -x /usr/local/bin/uv ] && [ "$(/usr/local/bin/uv --version | awk '{print $2}')" = "$version" ]; then
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then changed "/usr/local/bin/uv $version"; return 0; fi
+  tmp=$(mktemp -d)
+  fetch -o "$tmp/uv.tar.gz" "$url"
+  echo "$sum  $tmp/uv.tar.gz" | sha256sum -c --quiet - || die "uv checksum mismatch"
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp" --strip-components=1
+  put_file "$tmp/uv" /usr/local/bin/uv 0755
+  put_file "$tmp/uvx" /usr/local/bin/uvx 0755
+  rm -rf "$tmp"
+}
+
+# --- the agent user --------------------------------------------------------------
+# The agent owns its home and can put a symlink anywhere in it, so everything
+# below runs AS the agent: a planted link can then only reach the agent's own
+# files. With --root (tests) it runs as the caller instead.
+as_owner() {
+  if [ "$SANDBOX" = 1 ]; then "$@"; else as_agent "$@"; fi
+}
+
+home_dir() { # DIR MODE: a folder under the agent's home
+  local real=$ROOT$1 want
+  want=$(printf %o "$((8#$2))") # 0755 -> 755, as stat prints it
+  if as_owner test -d "$real" && ! as_owner test -L "$real" &&
+    [ "$(as_owner stat -c %a "$real")" = "$want" ]; then
+    return 0
+  fi
+  changed "$1/"
+  [ "$DRY" = 1 ] && return 0
+  if as_owner test -L "$real"; then as_owner rm -f "$real"; fi # the link, not its target
+  as_owner install -d -m "$2" "$real"
+}
+
+home_npmrc() { # npm globals live in the agent's home (contracts/ship-runtime.md)
+  local file=$ROOT$AGENT_HOME/.npmrc line="prefix=$AGENT_HOME/.local"
+  if ! as_owner test -L "$file" && as_owner grep -qx "$line" "$file" 2>/dev/null; then
+    return 0
+  fi
+  changed "$AGENT_HOME/.npmrc"
+  [ "$DRY" = 1 ] && return 0
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  as_owner bash -c 'set -e
+    file=$1 line=$2
+    tmp=$(mktemp "$file.XXXXXX")
+    { [ -L "$file" ] || grep -v "^prefix=" "$file" 2>/dev/null || true; echo "$line"; } >"$tmp"
+    chmod 0644 "$tmp"
+    mv -fT "$tmp" "$file"' _ "$file" "$line"
+}
+
+step_agent_home() {
+  if [ "$SANDBOX" = 0 ] && ! id "$AGENT" >/dev/null 2>&1; then
+    die "user $AGENT does not exist (the seed creates it)"
+  fi
+  local d
+  for d in "$AGENT_HOME/.local" "$AGENT_HOME/.local/bin" "$AGENT_HOME/.local/lib" \
+    "$AGENT_HOME/.config" "$AGENT_HOME/.config/herdr" "$AGENT_HOME/.config/shipshape" \
+    "$AGENT_HOME/work"; do
+    home_dir "$d" 0755
+  done
+  home_dir "$AGENT_HOME/.claude" 0700 # holds the Claude sign-in
+  home_dir "$AGENT_HOME/.local/state" 0700
+  home_dir "$AGENT_HOME/.local/state/shipshape" 0700
+  home_npmrc
+  if [ ! -e "$ROOT/var/lib/systemd/linger/$AGENT" ]; then
+    sys_change "lingering for $AGENT" loginctl enable-linger "$AGENT"
+  fi
+}
+
+step_claude() {
+  if [ "$SANDBOX" = 1 ]; then
+    log "skipped (--root): Claude Code install and herdr integration"
+    return 0
+  fi
+  if as_agent test -x "$AGENT_HOME/.local/bin/claude"; then
+    : # installed; Claude Code updates itself from here on
+  else
+    local channel platform
+    channel=$(cfg "$ROOT/etc/shipshape/ship.toml" claude.update_channel 2>/dev/null || true)
+    channel=${channel:-$(v claude.default_channel)}
+    case $(machine) in
+      x86_64) platform=linux-x64 ;;
+      aarch64) platform=linux-arm64 ;;
+      *) die "no Claude Code build for $(machine)" ;;
+    esac
+    changed "Claude Code ($channel channel) for $AGENT"
+    if [ "$DRY" = 0 ]; then
+      as_agent bash "$HERE/install-claude.sh" "$(v claude.manifest_base)" "$channel" \
+        "$(v claude.release_key)" "$(v claude.minimum_version)" "$platform"
+    fi
+  fi
+  # herdr's Claude integration reports sessions, so herdr can resume them.
+  if ! as_agent herdr integration status 2>/dev/null | grep -q '^claude: current'; then
+    changed "herdr Claude integration"
+    [ "$DRY" = 1 ] || as_agent herdr integration install claude
+  fi
+}
+
+# --- ShipShape's own files -----------------------------------------------------------
+step_shipshape_files() {
+  put_dir /opt/shipshape 0755
+  put_file "$FILES/shim/claude.py" /opt/shipshape/shim/claude 0755
+  put_file "$FILES/hooks/mode_ledger.py" /opt/shipshape/hooks/mode-ledger 0755
+  put_link /opt/shipshape/current/bin/ship-ctl /usr/local/bin/ship-ctl
+  if [ -e "$BUNDLE/axi/bin/ship-axi" ]; then
+    put_link /opt/shipshape/current/axi/bin/ship-axi /usr/local/bin/ship-axi
+  fi
+  put_dir /etc/shipshape 0755
+  put_dir /var/lib/shipshape 0755
+  put_dir /var/log/shipshape 0750
+  put_file "$FILES/profile.d/shipshape.sh" /etc/profile.d/shipshape.sh 0644
+}
+
+step_system_config() {
+  put_file "$FILES/ssh/10-shipshape.conf" /etc/ssh/sshd_config.d/10-shipshape.conf 0644
+  if [ "$CHANGED" = 1 ]; then
+    sys sshd -t
+    # try-: Ubuntu socket-activates sshd, so ssh.service may not be running yet.
+    sys systemctl try-reload-or-restart ssh
+  fi
+  put_file "$FILES/logind/50-shipshape.conf" /etc/systemd/logind.conf.d/50-shipshape.conf 0644
+  if [ "$CHANGED" = 1 ]; then
+    # systemd-logind has no reload; restarting it is not worth the risk. The
+    # longer shutdown delay applies from the next boot.
+    log "logind drop-in changed; it applies from the next boot"
+  fi
+  put_dir /var/log/journal 2755 root:systemd-journal
+  put_file "$FILES/journald/50-shipshape.conf" /etc/systemd/journald.conf.d/50-shipshape.conf 0644
+  [ "$CHANGED" = 0 ] || sys systemctl restart systemd-journald
+}
+
+step_units() {
+  local unit system_changed=0 user_changed=0
+  for unit in ship-status.service ship-status.timer; do
+    put_file "$FILES/systemd/system/$unit" "/etc/systemd/system/$unit" 0644
+    [ "$CHANGED" = 0 ] || system_changed=1
+  done
+  for unit in herdr.service ship-resume.service; do
+    put_file "$FILES/systemd/user/$unit" "/etc/systemd/user/$unit" 0644
+    [ "$CHANGED" = 0 ] || user_changed=1
+  done
+  [ "$system_changed" = 0 ] || sys systemctl daemon-reload
+
+  # Enabled through symlinks, so the check works in --root mode too, where
+  # systemctl --root makes the same links offline.
+  if [ ! -L "$ROOT/etc/systemd/system/timers.target.wants/ship-status.timer" ]; then
+    enable_unit "ship-status.timer" ship-status.timer
+  fi
+  for unit in herdr.service ship-resume.service; do
+    if [ ! -L "$ROOT/etc/systemd/user/default.target.wants/$unit" ]; then
+      enable_unit "$unit for $AGENT" --global "$unit"
+    fi
+  done
+  if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
+    systemctl is-active --quiet ship-status.timer || systemctl start ship-status.timer
+    systemctl enable --now qemu-guest-agent >/dev/null 2>&1 || true
+    if [ "$user_changed" = 1 ] && [ -S "/run/user/$(id -u "$AGENT")/bus" ]; then
+      as_agent systemctl --user daemon-reload # takes effect at the next start
+    fi
+  fi
+}
+
+enable_unit() { # DESC [--global] UNIT
+  local desc=$1
+  shift
+  changed "enable $desc"
+  [ "$DRY" = 1 ] && return 0
+  if [ "$SANDBOX" = 1 ]; then
+    systemctl --root="$ROOT" enable "$@" >/dev/null 2>&1 || log "could not enable $desc under --root"
+  else
+    systemctl enable "$@"
+  fi
+}
+
+# --- first boot: settings, tools, herdr ----------------------------------------------
+ship_ctl() { "$BUNDLE/bin/ship-ctl" "$@"; }
+
+step_first_boot() {
+  if [ "$SANDBOX" = 1 ] || [ "$DRY" = 1 ]; then
+    log "skipped (simulated): ship-ctl apply, ship-ctl tools run, start herdr"
+    return 0
+  fi
+  ship_ctl apply || die "ship-ctl apply failed"
+  # A tool that fails shows in the status document; it does not fail provisioning.
+  ship_ctl tools run || log "some tools failed; see ship-ctl logs tools"
+  local uid i
+  uid=$(id -u "$AGENT")
+  systemctl start "user@$uid.service"
+  for i in $(seq 30); do
+    [ -S "/run/user/$uid/bus" ] && break
+    sleep 1
+  done
+  as_agent systemctl --user daemon-reload
+  as_agent systemctl --user start herdr.service
+  # Nothing to resume yet, but its record tells autostart this boot's resume is done.
+  as_agent systemctl --user start ship-resume.service || log "ship-resume did not finish"
+  log "herdr started (after ${i}s)"
+}
+
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --first-boot) MODE=first-boot ;;
+      --converge) MODE=converge ;;
+      --dry-run) DRY=1 ;;
+      --root) [ $# -ge 2 ] || { usage >&2; exit 2; }; ROOT=$2; shift ;;
+      -h | --help) usage; exit 0 ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  [ -n "$MODE" ] || { usage >&2; exit 2; }
+  if [ -n "$ROOT" ] && [ "$(realpath -m "$ROOT")" = / ]; then
+    die "--root / would change this machine; leave --root out for a real run"
+  fi
+  ROOT=${ROOT%/}
+  [ "$ROOT" = "" ] || [ -d "$ROOT" ] || die "--root $ROOT is not a folder"
+  # SANDBOX: --root given; system commands, queries and downloads are skipped and
+  # not counted. DRY: the real system is queried, and nothing is changed.
+  SANDBOX=0
+  [ -z "$ROOT" ] || SANDBOX=1
+  APT_UPDATED=0
+}
+
+# --- main ----------------------------------------------------------------------------
+main() {
+  if [ "$SANDBOX" = 0 ]; then
+    [ "$(id -u)" = 0 ] || die "run as root"
+  fi
+  if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
+    exec 9>/run/lock/ship-provision.lock
+    flock -n 9 || die "another ship-provision is running"
+    if [ "$MODE" = converge ]; then
+      install -d -m 0750 /var/log/shipshape
+      [ -e /var/log/shipshape/provision.log ] || install -m 0640 /dev/null /var/log/shipshape/provision.log
+      exec > >(tee -a /var/log/shipshape/provision.log) 2>&1
+    fi
+  fi
+  log "$MODE from $(basename "$BUNDLE")${ROOT:+ (root $ROOT)}$([ "$DRY" = 1 ] && echo ' (dry run)')"
+  trap on_exit EXIT
+  record running
+
+  export DEBIAN_FRONTEND=noninteractive
+  ensure_debs "${BASE_PACKAGES[@]}"
+  step_apt_repos
+  step_core_packages
+  step_herdr
+  step_uv
+  step_shipshape_files
+  step_agent_home
+  step_claude
+  step_system_config
+  step_units
+  [ "$MODE" = first-boot ] && step_first_boot
+
+  FINISHED=1
+  record ok
+  if [ "$DRY" = 1 ]; then
+    log "dry run: $CHANGES change(s) would be made"
+  else
+    log "done: $CHANGES change(s)"
+  fi
+}
+
+# Sourcing the script (tests) defines the functions without running anything.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  parse_args "$@"
+  main
+fi

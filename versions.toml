@@ -52,6 +52,14 @@ major = 26
 [uv]
 version = "0.13.6"
 
+[uv.assets.x86_64]
+url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
+
+[uv.assets.aarch64]
+url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d"
+
 [npm]
 gh-axi = "0.1.47"
 quota-axi = "0.1.69"

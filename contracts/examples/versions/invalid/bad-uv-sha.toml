@@ -1,0 +1,105 @@
+# uv asset checksum is not a sha256.
+# Pinned versions shared by the Ship and Fleet tracks.
+# Schema: contracts/versions.schema.json. Change it in its own PR; both tracks read it.
+#
+# Ship side: ship-provision installs exactly these (checksums and signing keys verified).
+# Fleet side: the seed generator picks the base image from [ubuntu]; ship-fleet compares
+# a Ship's reported tooling version with [shipshape].tooling.
+schema = 1
+
+[shipshape]
+tooling = "0.1.0"
+
+[ubuntu]
+release = "26.04"
+build = "20261016"
+base_url = "https://cloud-images.ubuntu.com/releases/26.04/release-20261016"
+# UEC Image Automatic Signing Key; signs SHA256SUMS (SHA256SUMS.gpg) in base_url.
+signing_key = "D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81"
+
+[ubuntu.images.amd64]
+file = "ubuntu-26.04-server-cloudimg-amd64.img"
+sha256 = "5645d0318ad21f643ebb1ac4567514620e9893380b07b0201fda163baa5b7eb5"
+
+[ubuntu.images.arm64]
+file = "ubuntu-26.04-server-cloudimg-arm64.img"
+sha256 = "8eb876c2ccc4b6ff89e4a65d511815923b285e04503ba465809bf587f763da24"
+
+[herdr]
+version = "0.9.5"
+
+[herdr.assets.x86_64]
+url = "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64"
+sha256 = "14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d"
+
+[herdr.assets.aarch64]
+url = "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64"
+sha256 = "17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c"
+
+[claude]
+# Native installer as the agent user; it then updates itself on the Ship's channel.
+install = "native"
+default_channel = "latest"
+# From this version, auto is the built-in starting permission mode on every plan
+# and provider (2.1.283 did so only on third-party providers or with telemetry off).
+minimum_version = "2.1.284"
+# Anthropic Claude Code release signing key; signs each release's manifest.json.
+release_key = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+manifest_base = "https://downloads.claude.ai/claude-code-releases"
+
+[node]
+major = 26
+
+[uv]
+version = "0.13.6"
+
+[uv.assets.x86_64]
+url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "not-a-sha"
+
+[uv.assets.aarch64]
+url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "229e194255c7958d86d56e8790d969a6f74736592133f0dfd0076f754c642c1d"
+
+[npm]
+gh-axi = "0.1.47"
+quota-axi = "0.1.69"
+chrome-devtools-axi = "0.1.46"
+chrome-devtools-mcp = "1.12.0"
+axi-sdk-js = "0.1.13"
+
+[apt.github-cli]
+url = "https://cli.github.com/packages"
+suite = "stable"
+components = ["main"]
+key_url = "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+key_fingerprints = [
+  "2C6106201985B60E6C7AC87323F3D4EA75716059",
+  "7F38BBB59D064DBCB3D84D725612B36462313325",
+]
+packages = ["gh"]
+
+[apt.google-cloud]
+url = "https://packages.cloud.google.com/apt"
+suite = "cloud-sdk"
+components = ["main"]
+key_url = "https://packages.cloud.google.com/apt/doc/apt-key.gpg"
+key_fingerprints = ["35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3"]
+packages = ["google-cloud-cli"]
+
+[apt.google-chrome]
+url = "https://dl.google.com/linux/chrome/deb"
+suite = "stable"
+components = ["main"]
+key_url = "https://dl.google.com/linux/linux_signing_key.pub"
+key_fingerprints = ["EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796"]
+packages = ["google-chrome-stable"]
+architectures = ["amd64"]
+
+[apt.nodesource]
+url = "https://deb.nodesource.com/node_26.x"
+suite = "nodistro"
+components = ["main"]
+key_url = "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+key_fingerprints = ["6F71F525282841EEDAF851B42F59B5F99B1BE0B4"]
+packages = ["nodejs"]

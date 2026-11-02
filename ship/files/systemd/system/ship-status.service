@@ -1,0 +1,13 @@
+# Refresh /run/shipshape/status.json and react to sign-ins (ship-ctl refresh):
+# tools waiting on a new sign-in are finished, and autostart runs once when
+# Claude becomes signed in.
+[Unit]
+Description=ShipShape status refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ship-ctl refresh
+# Finishing a waiting tool can mean an npm install.
+TimeoutStartSec=30min
