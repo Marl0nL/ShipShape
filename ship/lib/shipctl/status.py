@@ -267,11 +267,18 @@ def probe_claude_auth(ctx: Context) -> tuple[dict, list[str]]:
     return _auth("ok", account, detail if isinstance(detail, str) else None), []
 
 
+# gcloud copies each command's output into its log files (~/.config/gcloud/logs),
+# so `print-access-token` would leave a live token there on every refresh even
+# with stdout discarded. Probes never write gcloud logs.
+GCLOUD_ENV = {"CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "1"}
+
+
 def probe_gcloud_auth(ctx: Context) -> tuple[dict, list[str]]:
     r = ctx.runner.run(
         ["gcloud", "auth", "list", "--filter=status:ACTIVE", "--format=value(account)"],
         timeout=PROBE_TIMEOUT,
         agent=True,
+        env=GCLOUD_ENV,
     )
     if r.rc in (NOT_FOUND_RC, TIMEOUT_RC):
         return _auth("unknown"), [_fail("gcloud auth list", r)]
@@ -288,6 +295,7 @@ def probe_adc(ctx: Context) -> tuple[dict, list[str]]:
         timeout=PROBE_TIMEOUT,
         agent=True,
         discard=True,
+        env=GCLOUD_ENV,
     )
     if r.rc in (NOT_FOUND_RC, TIMEOUT_RC):
         return _auth("unknown"), [_fail("gcloud ADC check", r)]
