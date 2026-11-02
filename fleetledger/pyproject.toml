@@ -1,0 +1,17 @@
+[project]
+name = "fleetledger"
+version = "0.1.0"
+description = "FleetLedger: find, show and manage ShipShape Ships (the ship-fleet command)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+ship-fleet = "fleetledger.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fleetledger*"]

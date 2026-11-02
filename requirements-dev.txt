@@ -1,0 +1,4 @@
+# Tools for scripts/check and CI. Ships never install these.
+ruff==0.17.3
+pytest==9.2.0
+jsonschema==4.26.0

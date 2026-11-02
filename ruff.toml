@@ -1,0 +1,7 @@
+# Lint settings for all Python in the repo (scripts, tests, ship/, fleetledger/).
+target-version = "py312"
+line-length = 100
+extend-exclude = ["legacy"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
