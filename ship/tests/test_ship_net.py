@@ -445,3 +445,6 @@ def test_collector_unit_is_hardened():
     for line in ("ProtectHome=yes", "NoNewPrivileges=yes", "ReadWritePaths=/var/lib/shipshape/net"):
         assert line in text.splitlines()
     assert "ship_netwatch.py" in text and os.path.basename(LIBEXEC) in text
+    # Least privilege: root, but only what eBPF and ss -p need (checked on a Ship).
+    caps = [ln for ln in text.splitlines() if ln.startswith("CapabilityBoundingSet=")]
+    assert caps == ["CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_DAC_READ_SEARCH"]

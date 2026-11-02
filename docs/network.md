@@ -9,7 +9,10 @@ not URLs; there is no TLS inspection.
 ## On each Ship
 
 `ship-netwatch.service` runs as root and only observes. It is installed by
-`ship-provision`, together with Ubuntu's `libbpf-tools` and `vnstat`.
+`ship-provision`, together with Ubuntu's `libbpf-tools` and `vnstat`. Its
+capabilities are bounded to `CAP_BPF CAP_PERFMON` (the eBPF tools) and
+`CAP_SYS_PTRACE CAP_DAC_READ_SEARCH` (so `ss -p` can name other users'
+processes), with no home folders and a read-only system.
 
 | Source | What it gives |
 |---|---|

@@ -595,11 +595,15 @@ def main() -> int:
         procs.append(dns)
 
     # eBPF first. tcpconnect prints a header line once it is attached; if it has
-    # not within 30 s, or exits, poll ss instead.
+    # not within 30 s, or exits, poll ss instead (at once when it exits).
     ready = threading.Event()
     tcpconnect = _stream(EBPF_TOOLS["tcpconnect"], collector.on_tcpconnect, stop, ready)
     poller = None
-    if tcpconnect is not None and (ready.wait(30) and tcpconnect.poll() is None):
+    if tcpconnect is not None:
+        for _ in range(30):
+            if ready.wait(1) or tcpconnect.poll() is not None:
+                break
+    if tcpconnect is not None and ready.is_set() and tcpconnect.poll() is None:
         procs.append(tcpconnect)
         life = _stream(EBPF_TOOLS["tcplife"], collector.on_tcplife, stop)
         if life is not None:
