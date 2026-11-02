@@ -66,9 +66,13 @@ def cmd_overlay(args, app) -> int:
                 app.say(f"{ship.name}: not joined: {exc.message}")
                 failed += 1
                 continue
+            name = joined.name if joined.name and overlay.HOST_RE.match(joined.name) else None
+            if joined.name and name is None:
+                app.say(f"{ship.name}: its overlay name {joined.name!r} is not a usable host "
+                        "name; add one by hand to its names in ships.toml.")
             with store.edit() as ed:
                 ed.set_field(ship.name, "names",
-                             overlay.names_with(store.load().ship(ship.name), joined.name))
+                             overlay.names_with(store.load().ship(ship.name), name))
             app.say(f"{ship.name}: on the overlay as {joined.name or '?'} "
                     f"({', '.join(joined.addresses) or 'no address yet'}).")
         if not failed:

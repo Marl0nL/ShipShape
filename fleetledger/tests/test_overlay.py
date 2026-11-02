@@ -74,6 +74,13 @@ def test_api_mints_a_single_use_preapproved_tagged_key(api_config):
     assert body["expirySeconds"] == 300 and body["description"] == "ShipShape ship-03"
 
 
+def test_api_keys_expire_in_ten_minutes_by_default(api_config):
+    del api_config["api"]["key_expiry_s"]
+    opener, seen = recording([{"access_token": TOKEN}, {"key": MINTED}])
+    overlay.key_source(api_config, opener=opener).key(SHIP)
+    assert json.loads(seen[1].data)["expirySeconds"] == 600
+
+
 def test_api_reuses_its_access_token(api_config):
     opener, seen = recording([{"access_token": TOKEN}, {"key": MINTED}, {"key": MINTED}])
     keys = overlay.key_source(api_config, opener=opener)

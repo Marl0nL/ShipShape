@@ -875,7 +875,24 @@ def test_overlay_policy_lets_your_devices_in_and_ships_nowhere(env):
                             "dst": ["tag:ship:22"]}]
     assert not any("tag:ship" in rule["src"] for rule in doc["acls"])  # Ships open nothing
     assert doc["ssh"] == []  # no Tailscale SSH
+    # Only admins may mint keys for the Ships' tag.
+    assert doc["tagOwners"] == {"tag:ship": ["autogroup:admin"]}
     assert doc["tests"] == [{"src": "tag:ship", "deny": ["tag:ship:22"]}]
+
+
+def test_overlay_join_skips_an_overlay_name_the_inventory_cannot_hold(env):
+    with_overlay(env)
+    real = env.ship.overlay_call
+
+    def odd_name(ship, args):
+        code, out, err = real(ship, args)
+        env.ship.overlay[ship.name]["name"] = "ship_01.hs.example.com"
+        return code, out.replace("ship-01.example-tailnet.ts.net", "ship_01.hs.example.com"), err
+
+    env.ship.overlay_call = odd_name
+    code, out, err = env.run("overlay", "join", "ship-01")
+    assert code == 0 and "not a usable host name" in out
+    assert env.store.load().ship("ship-01").names == ("ship-01.local",)
 
 
 def test_overlay_status(env):

@@ -67,12 +67,16 @@ def test_the_key_goes_through_a_file_that_is_removed(ov):
     assert oct(state.stat().st_mode & 0o777) == "0o600"
 
 
-def test_a_failed_join_reports_without_the_key(ov):
+@pytest.mark.parametrize("key", [
+    KEY,
+    "3f9a1c2e4b5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f",  # a Headscale key: no tskey- prefix
+])
+def test_a_failed_join_reports_without_the_key(ov, key):
     ov.set(tailscale={"up_fails": True})
-    code, doc, out = ov.ctl(*JOIN, input=KEY + "\n")
+    code, doc, out = ov.ctl(*JOIN, input=key + "\n")
     assert code == 1 and doc["error"]["code"] == "overlay-failed"
-    assert KEY not in out and "SECRETPART" not in out  # tailscale echoed it; we did not
-    assert "[key]" in doc["error"]["message"] or "redacted" in doc["error"]["message"]
+    assert key not in out and key[-12:] not in out  # tailscale echoed it; we did not
+    assert "[key]" in doc["error"]["message"]
     assert list((ov.root / "run/shipshape/overlay").iterdir()) == []
     assert not ov.p("/var/lib/shipshape/overlay.json").exists()
 

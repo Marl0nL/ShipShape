@@ -30,6 +30,7 @@ from fleetledger.shipctl import ShipCtl, ShipCtlError
 
 API = "https://api.tailscale.com/api/v2"
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{16,500}$")
+HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")  # ships.toml names
 DEFAULT_TAGS = ("tag:ship",)
 
 
