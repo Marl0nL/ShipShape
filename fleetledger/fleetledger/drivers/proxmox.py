@@ -9,6 +9,7 @@ never needs root, SSH to the host, or the web UI.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -19,6 +20,15 @@ from fleetledger.inventory import Ship
 
 BOOT_DISK = "scsi0"  # the template's disk (plan: "The template, once")
 SEED_DRIVE = "ide2"
+
+
+GONE = re.compile(r"does not exist|no such", re.IGNORECASE)
+
+
+def is_gone(exc: ProxmoxError) -> bool:
+    """The VM or volume is already gone. Proxmox answers 500 for most failures
+    (locked, storage offline, in use), so the message decides, not the status."""
+    return exc.status in (404, 500) and bool(GONE.search(exc.message))
 
 
 def seed_volume(storage: str, instance_id: str) -> str:
@@ -167,8 +177,10 @@ class ProxmoxDriver(Driver):
 
     def finish_enrolment(self, ship: Ship) -> Outcome:
         vmid = self._vmid(ship)
-        self._task(self.api.post(self._vm(vmid) + "/config", delete=SEED_DRIVE))
-        messages = [f"Detached the seed CD-ROM from VM {vmid}."]
+        # Eject the media: applied at once on a running VM (removing an IDE
+        # drive would only be a pending change until the next power cycle).
+        self._task(self.api.post(self._vm(vmid) + "/config", **{SEED_DRIVE: "none,media=cdrom"}))
+        messages = [f"Ejected the seed CD-ROM from VM {vmid}."]
         if "seed" in ship.driver_ref:
             self._delete_volume(self._ship_seed(ship))
             messages.append("Deleted the uploaded seed ISO.")
@@ -184,15 +196,19 @@ class ProxmoxDriver(Driver):
             if self.api.get(vm + "/status/current").get("status") == "running":
                 self._task(self.api.post(vm + "/status/stop"))
         except ProxmoxError as exc:
-            if exc.status != 500:  # 500: no such VM
+            if not is_gone(exc):
                 raise
             return
-        self._task(self.api.delete(vm, purge=True, **{"destroy-unreferenced-disks": True}))
+        try:
+            self._task(self.api.delete(vm, purge=True, **{"destroy-unreferenced-disks": True}))
+        except ProxmoxError as exc:
+            if not is_gone(exc):
+                raise
 
     def _delete_volume(self, volume: str) -> None:
         storage = volume.split(":", 1)[0]
         try:
             self._task(self.api.delete(f"/nodes/{self.node}/storage/{storage}/content/{volume}"))
         except ProxmoxError as exc:
-            if exc.status not in (404, 500):  # already gone
+            if not is_gone(exc):
                 raise

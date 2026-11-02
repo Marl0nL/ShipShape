@@ -14,6 +14,7 @@ machines (docs/hygiene.md).
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 
@@ -79,7 +80,7 @@ def private_dir(path: Path) -> Path:
 
 def write_private(path: Path, data: bytes) -> None:
     """Write a file atomically with mode 0600 (the folder must already exist)."""
-    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         with os.fdopen(fd, "wb") as fh:

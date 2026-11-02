@@ -75,6 +75,15 @@ def test_identity_mismatch_is_not_trusted(store, fake_ssh):
     assert "says it is ship-01" in view.message
 
 
+def test_same_name_other_id_is_not_trusted(store, fake_ssh):
+    """A rebuilt or impostor Ship that keeps the name but not the id."""
+    doc = copy.deepcopy(RUNNING)
+    doc["ship"]["id"] = "00000000-0000-4000-8000-000000000000"
+    inv = store.load()
+    view = fetch(fake_ssh(answer(doc)), inv, inv.ship("ship-01"))
+    assert view.problem == "identity" and view.status is None
+
+
 def test_invalid_and_failed_documents(store, fake_ssh):
     inv = store.load()
     ship = inv.ship("ship-01")

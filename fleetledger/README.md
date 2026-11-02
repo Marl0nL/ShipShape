@@ -113,8 +113,11 @@ adds only options that make each connection safe and quick:
 - **Names in order.** Names that cannot be reached are skipped; the first one
   that answers is used.
 - **Shared connections.** `ControlMaster` sockets live in the runtime folder and
-  persist for 60 seconds. If that folder's path is too long for a Unix socket,
-  sharing is turned off rather than failing.
+  persist for 60 seconds. A shared connection skips the key exchange, so each
+  socket's name includes a hash of the pinned key. After a re-pin, the next
+  command opens a new connection and is checked against the new key; it never
+  reuses one that was checked against the old key. If the folder's path is too
+  long for a Unix socket, sharing is turned off rather than failing.
 
 Remote commands follow `contracts/ship-runtime.md`: `sudo -n
 /usr/local/bin/ship-ctl ... --json` for ship-ctl, and `sudo -n -iu agent -- bash
@@ -162,6 +165,11 @@ alike.
   seed on `ide2`, sets cores, memory and bridge, grows `scsi0`, starts the VM,
   and waits for every Proxmox task. It reads addresses from the guest agent and
   destroys the VM again. If creation fails part-way, it removes what it made.
+  At enrolment it ejects the seed media (applied at once on a running VM) and
+  deletes the ISO. A VM or volume counts as already gone only when Proxmox says
+  it "does not exist". Proxmox answers HTTP 500 for most failures (locked, in
+  use, storage offline), so any other error is raised: a seed ISO holds the
+  Ship's private host key and must not be reported deleted when it is not.
   The client pins the SHA-256 fingerprint of the API's TLS certificate and
   checks it before the token is sent. The token is read from its file (which
   must be 0600) for each request and never appears in errors.
@@ -169,7 +177,8 @@ alike.
 ## Enrolment (W8)
 
 `enrol.enrol` waits for `provision.result` to be `ok` (retrying while the Ship is
-still booting, and stopping at once on a wrong host key). It then has the driver
+still booting, and stopping at once on a wrong host key or a Ship that says it
+is another one). It then has the driver
 detach the seed CD-ROM and delete the uploaded ISO, deletes FleetLedger's own
 copy of the seed, and records `ship.<name>.enrolled`. With the manual driver the
 detach-and-delete steps are printed, and the seed's name stays in `driver_ref`

@@ -64,6 +64,14 @@ def test_host_key_stops_at_once(store, scripted):
         enrol_mod.wait_for_provisioning(None, inv, inv.ship("ship-01"), sleep=lambda s: None)
 
 
+def test_identity_problem_stops_at_once(store, scripted):
+    calls = scripted("unreachable", "identity", "ok")
+    inv = store.load()
+    with pytest.raises(FleetError, match="identity"):
+        enrol_mod.wait_for_provisioning(None, inv, inv.ship("ship-01"), sleep=lambda s: None)
+    assert len(calls) == 2
+
+
 def test_times_out(store, scripted):
     scripted(*["unreachable"] * 10)
     inv = store.load()

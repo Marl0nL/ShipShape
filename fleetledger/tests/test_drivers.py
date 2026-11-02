@@ -143,7 +143,7 @@ def test_proxmox_status_and_enrolment():
     outcome = driver.finish_enrolment(ship(vmid=9101, seed="ship-03-0a1b2c3d"))
     assert outcome.done
     assert mutating(api) == [
-        ("POST", "/nodes/pve/qemu/9101/config", {"delete": "ide2"}),
+        ("POST", "/nodes/pve/qemu/9101/config", {"ide2": "none,media=cdrom"}),
         ("DELETE",
          "/nodes/pve/storage/shipshape-seeds/content/shipshape-seeds:iso/ship-03-0a1b2c3d.iso",
          {}),
@@ -193,3 +193,43 @@ def test_get_driver(store):
     assert get_driver(inv, "manual").id == "manual"
     with pytest.raises(ConfigError, match="drivers.proxmox"):
         get_driver(inv, "proxmox")
+
+
+class FailingAPI(FakeAPI):
+    """Every DELETE (and the status lookup) fails with a given Proxmox message."""
+
+    def __init__(self, message, **kw):
+        super().__init__(**kw)
+        self.message = message
+
+    def get(self, path, **params):
+        if path.endswith("/status/current") and "status" in self.message:
+            raise ProxmoxError(self.message, status=500)
+        return super().get(path, **params)
+
+    def delete(self, path, **params):
+        self.calls.append(("DELETE", path, params))
+        raise ProxmoxError(self.message, status=500)
+
+
+@pytest.mark.parametrize("message", [
+    "Proxmox DELETE failed: 500 can't lock file '/var/lock/qemu-server/lock-9101.conf'",
+    "Proxmox DELETE failed: 500 storage 'shipshape-seeds' is not online",
+    "Proxmox GET failed: 500 status lookup failed: VM is locked (clone)",
+])
+def test_other_server_errors_are_not_taken_as_gone(message):
+    """Only "does not exist" means gone: the seed ISO holds the private host key."""
+    driver = ProxmoxDriver(PX, api=FailingAPI(message, vm_status="stopped"))
+    with pytest.raises(ProxmoxError):
+        driver.destroy(ship(vmid=9101))
+    with pytest.raises(ProxmoxError):
+        driver.finish_enrolment(ship(vmid=9101, seed="ship-03-0a1b2c3d"))
+
+
+def test_already_gone_is_fine():
+    api = FailingAPI("Proxmox DELETE failed: 500 Configuration file "
+                     "'nodes/pve/qemu-server/9101.conf' does not exist", vm_status="stopped")
+    assert ProxmoxDriver(PX, api=api).destroy(ship(vmid=9101, seed="ship-03-0a1b2c3d")).done
+    api = FailingAPI("Proxmox DELETE failed: 500 volume 'shipshape-seeds:iso/x.iso' "
+                     "does not exist")
+    assert ProxmoxDriver(PX, api=api).finish_enrolment(ship(vmid=9101, seed="x")).done

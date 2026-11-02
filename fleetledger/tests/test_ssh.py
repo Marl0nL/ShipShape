@@ -55,6 +55,8 @@ def test_argv_pins_and_locks_down(store):
     assert opt(argv, "HostKeyAlgorithms") == "ssh-ed25519"
     assert opt(argv, "ForwardAgent") == "no"
     assert opt(argv, "ClearAllForwardings") == "yes"
+    assert opt(argv, "UpdateHostKeys") == "no" and opt(argv, "CheckHostIP") == "no"
+    assert opt(argv, "PermitLocalCommand") == "no" and opt(argv, "ForwardX11") == "no"
     assert opt(argv, "BatchMode") == "yes"
     assert opt(argv, "IdentitiesOnly") == "yes"
     assert argv[argv.index("-i") + 1] == str(inv.admin_key)
@@ -204,6 +206,31 @@ def test_real_ssh_runs_with_pinned_key(store, sshd):
         ["ssh", "-O", "exit", *ssh.options(inv.ship("ship-01")), "127.0.0.1"],
         capture_output=True,
     )
+
+
+def test_repin_is_checked_even_with_a_shared_connection_open(store, sshd, tmp_path):
+    """The control socket is named after the pinned key: a re-pin never reuses
+    a connection that was checked against the old key."""
+    port, host_key = sshd
+    _pin(store, host_key)
+    first = SSH(store.load(), fleet_user=getpass.getuser(), extra_options=["-p", str(port)])
+    assert first.run(store.load().ship("ship-01"), ["true"]).returncode == 0  # master stays up
+    other = tmp_path / "other"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(other)], check=True)
+    _pin(store, (tmp_path / "other.pub").read_text().strip())
+    second = SSH(store.load(), fleet_user=getpass.getuser(), extra_options=["-p", str(port)])
+    with pytest.raises(HostKeyMismatch):
+        second.run(store.load().ship("ship-01"), ["true"])
+    _pin(store, host_key)
+    subprocess.run(["ssh", "-O", "exit", *first.options(store.load().ship("ship-01")),
+                    "127.0.0.1"], capture_output=True)
+
+
+def test_control_socket_follows_the_pin(store, short_runtime):
+    inv = store.load()
+    one = opt(SSH(inv).argv(inv.ship("ship-01"), "h"), "ControlPath")
+    two = opt(SSH(inv).argv(inv.ship("ship-02"), "h"), "ControlPath")
+    assert one != two and one.endswith("-%C") and two.endswith("-%C")
 
 
 def test_real_ssh_refuses_impostor(store, sshd, tmp_path):

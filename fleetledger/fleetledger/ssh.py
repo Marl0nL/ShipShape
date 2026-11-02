@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import subprocess
@@ -132,7 +133,10 @@ class SSH:
     def options(self, ship: Ship, *, user: str | None = None, batch: bool = True) -> list[str]:
         user = user or self.fleet_user
         known_hosts = self.sync_known_hosts()
-        control = paths.private_dir(paths.runtime_dir()) / "cm-%C"
+        # The socket name includes the pinned key, so after a re-pin no command
+        # can ride on a connection that was checked against the old key.
+        pin = hashlib.sha256(ship.host_key_type_and_blob.encode()).hexdigest()[:8]
+        control = paths.private_dir(paths.runtime_dir()) / f"cm-{pin}-%C"
         opts = {
             "StrictHostKeyChecking": "yes",
             "UserKnownHostsFile": str(known_hosts),

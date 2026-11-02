@@ -167,7 +167,10 @@ def fetch(
         return view
     view.status = doc
     view.attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, tooling)
-    write_cache(ship.name, doc)
+    try:
+        write_cache(ship.name, doc)
+    except OSError:
+        pass  # the cache only serves `ls --offline`; never fail a poll for it
     return view
 
 
