@@ -220,8 +220,9 @@ is not installed `collector.state` is `unavailable` and the lists are empty.
 How it is collected (`ship-netwatch.service`, root, read-only towards everything
 except `/var/lib/shipshape/net/`):
 
-- connections from `tcpconnect-bpfcc` and bytes from `tcplife-bpfcc` (source
-  `bcc`); if the eBPF tools cannot run, `ss` is polled every 5 seconds instead
+- connections from `tcpconnect-libbpf` and bytes from `tcplife-libbpf`
+  (Ubuntu's `libbpf-tools`: precompiled, so nothing is compiled on the Ship;
+  source `ebpf`); if they cannot run, `ss` is polled every 5 seconds instead
   (source `ss`: short connections can be missed and there are no byte counts);
 - names from `resolvectl monitor --json=short`: each connection's address is
   matched to the DNS answer it came from, else the address itself is the

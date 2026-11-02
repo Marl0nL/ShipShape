@@ -3,7 +3,7 @@
   "generated_at": "2026-01-08T12:00:00Z",
   "collector": {
     "state": "running",
-    "source": "bcc",
+    "source": "ebpf",
     "since": "2026-01-01T00:02:10Z",
     "updated_at": "2026-01-08T11:59:30Z",
     "dropped": 0,

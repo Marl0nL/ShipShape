@@ -205,8 +205,8 @@
               "description": "running: ship-netwatch is recording. stopped: installed but not running. unavailable: not installed."
             },
             "source": {
-              "enum": ["bcc", "ss", null],
-              "description": "How connections are seen: bcc (eBPF tcpconnect and tcplife) or ss (polling, may miss short connections)."
+              "enum": ["ebpf", "ss", null],
+              "description": "How connections are seen: ebpf (tcpconnect and tcplife from libbpf-tools) or ss (polling, may miss short connections)."
             },
             "destinations": { "type": "integer", "minimum": 0, "description": "Distinct destinations in the window." },
             "connections": { "type": "integer", "minimum": 0, "description": "Outbound connections in the window." }

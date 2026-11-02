@@ -108,7 +108,7 @@
       "new-service.example.net"
     ],
     "collector": "running",
-    "source": "bcc",
+    "source": "ebpf",
     "destinations": 14,
     "connections": 602
   },
