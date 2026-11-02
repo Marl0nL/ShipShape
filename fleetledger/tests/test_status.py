@@ -52,6 +52,14 @@ def test_wrong_account_and_fleet_attention(store, fake_ssh):
     assert sum(a["code"] == "signin-wrong-account" for a in view.attention) == 1
 
 
+def test_tags_differ_uses_default_tags(store, fake_ssh):
+    with store.edit() as ed:
+        ed.set_field("ship-01", "tags", None)  # defaults.tags = ["work"], as the Ship says
+    inv = store.load()
+    view = fetch(fake_ssh(answer(RUNNING)), inv, inv.ship("ship-01"))
+    assert all(a["code"] != "tags-differ" for a in view.attention)
+
+
 def test_signed_out_services_are_not_compared(store, fake_ssh):
     doc = copy.deepcopy(RUNNING)
     doc["auth"]["claude"].update(state="missing", account="you@example.com")

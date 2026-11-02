@@ -131,7 +131,7 @@ class ShipCtl:
                 f"{self.ship.name} speaks contract versions this FleetLedger does not know "
                 f"({listed}).",
                 code="incompatible",
-                hint="Update FleetLedger (git pull, then fleetledger/install.sh).",
+                hint="Update FleetLedger: git pull in its checkout.",
             )
         self._checked = True
         return result.data

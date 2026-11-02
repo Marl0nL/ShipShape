@@ -105,7 +105,8 @@ def fleet_attention(
                 "run ship-fleet update.",
             }
         )
-    if set(status["ship"]["tags"]) != set(ship.tags):
+    tags = inventory.effective_tags(ship)
+    if set(status["ship"]["tags"]) != set(tags):
         found.append(
             {
                 "code": "tags-differ",
@@ -113,7 +114,7 @@ def fleet_attention(
                 "message": "The Ship's tags ("
                 + (", ".join(status["ship"]["tags"]) or "none")
                 + ") differ from the inventory's ("
-                + (", ".join(ship.tags) or "none")
+                + (", ".join(tags) or "none")
                 + ").",
             }
         )
