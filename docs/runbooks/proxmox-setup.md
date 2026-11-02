@@ -5,10 +5,22 @@ one small storage for seed ISOs, one bridge, a template VM, and an API token
 scoped to those. About 15 minutes, as root on the Proxmox host. Nothing here
 needs repeating per Ship.
 
-The names below (`shipshape`, `shipshape-seeds`, `local-lvm`, `vmbr0`, VMID
-`9000`) are examples: use your own and put them in `ships.toml` afterwards.
+The pool, seed storage, user and VMID (`shipshape`, `shipshape-seeds`,
+`shipshape@pve`, `9000`) are suggestions; the VM disk storage and the bridge are
+whatever your host has. Put the names you use in `ships.toml` afterwards.
 
 ## 1. Pool, seed storage, roles, user and token
+
+First set the two names that differ per host (`pvesm status` lists the
+storages; the bridge is the one your LAN is on, often `vmbr0`):
+
+```sh
+DISK_STORAGE=CHANGE-ME     # where VM disks go, e.g. local-lvm or local-zfs
+BRIDGE=CHANGE-ME           # e.g. vmbr0
+pvesm status --storage "$DISK_STORAGE" && ip link show "$BRIDGE" >/dev/null && echo names-ok
+```
+
+Then, still as root:
 
 ```sh
 pveum pool add shipshape --comment "ShipShape Ships"
@@ -27,12 +39,19 @@ pveum user add shipshape@pve --comment "ShipShape, API only"
 pveum user token add shipshape@pve build --privsep 1 \
   --expire $(date -d '+90 days' +%s)      # prints the secret once: keep it for step 3
 
-for who in "--users shipshape@pve" "--tokens shipshape@pve!build"; do
-  pveum acl modify /pool/shipshape               $who --roles ShipShapeVM
-  pveum acl modify /storage/shipshape-seeds      $who --roles ShipShapeSeeds
-  pveum acl modify /storage/local-lvm            $who --roles ShipShapeDisks
-  pveum acl modify /sdn/zones/localnetwork/vmbr0 $who --roles PVESDNUser
-done
+# The same grants for the user and for its token (a privilege-separated token
+# gets only the overlap). Keep the token id in single quotes: in an interactive
+# shell an exclamation mark inside double quotes starts a history expansion.
+pveum acl modify /pool/shipshape                   --users shipshape@pve --roles ShipShapeVM
+pveum acl modify /storage/shipshape-seeds          --users shipshape@pve --roles ShipShapeSeeds
+pveum acl modify "/storage/$DISK_STORAGE"          --users shipshape@pve --roles ShipShapeDisks
+pveum acl modify "/sdn/zones/localnetwork/$BRIDGE" --users shipshape@pve --roles PVESDNUser
+pveum acl modify /pool/shipshape                   --tokens 'shipshape@pve!build' --roles ShipShapeVM
+pveum acl modify /storage/shipshape-seeds          --tokens 'shipshape@pve!build' --roles ShipShapeSeeds
+pveum acl modify "/storage/$DISK_STORAGE"          --tokens 'shipshape@pve!build' --roles ShipShapeDisks
+pveum acl modify "/sdn/zones/localnetwork/$BRIDGE" --tokens 'shipshape@pve!build' --roles PVESDNUser
+
+pveum acl list | grep shipshape                    # eight lines: four paths, user and token
 pveum user token permissions shipshape@pve build   # review: nothing beyond these
 ```
 
@@ -47,7 +66,8 @@ Why each piece:
 
 ## 2. The template VM
 
-From Ubuntu's signed cloud image, at the build pinned in the repo's
+In the same shell as step 1 (it uses `$DISK_STORAGE` and `$BRIDGE`), from
+Ubuntu's signed cloud image, at the build pinned in the repo's
 `versions.toml` `[ubuntu]` (`base_url`, `signing_key`, and the image's `sha256`).
 Check the signature with `gpgv` against that one key, then the checksum against
 both `SHA256SUMS` and the pin:
@@ -66,8 +86,8 @@ sha256sum -c --ignore-missing SHA256SUMS
 echo "5645d0318ad21f643ebb1ac4567514620e9893380b07b0201fda163baa5b7eb5  $IMG" | sha256sum -c
                                                     # [ubuntu.images.amd64].sha256
 qm create 9000 --name shipshape-base --pool shipshape --memory 8192 \
-  --cores 4 --cpu host --net0 virtio,bridge=vmbr0 --scsihw virtio-scsi-pci \
-  --scsi0 local-lvm:0,import-from=$PWD/$IMG \
+  --cores 4 --cpu host --net0 "virtio,bridge=$BRIDGE" --scsihw virtio-scsi-pci \
+  --scsi0 "$DISK_STORAGE:0,import-from=$PWD/$IMG" \
   --boot order=scsi0 --serial0 socket --vga serial0 --agent enabled=1
 qm template 9000
 ```
@@ -102,8 +122,8 @@ node = "pve"
 pool = "shipshape"
 template_vmid = 9000
 seed_storage = "shipshape-seeds"
-disk_storage = "local-lvm"
-bridge = "vmbr0"
+disk_storage = "local-lvm"           # your $DISK_STORAGE
+bridge = "vmbr0"                     # your $BRIDGE
 token_id = "shipshape@pve!build"
 token_file = "~/.config/fleetledger/proxmox-token"
 tls_fingerprint = "AB:CD:...:89"     # the SHA-256 fingerprint above
