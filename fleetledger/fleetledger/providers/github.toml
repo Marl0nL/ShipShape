@@ -1,9 +1,14 @@
 # GitHub device flow: gh shows a one-time code; you type it at
 # github.com/login/device and gh finishes on its own.
+#
+# GH_PROMPT_DISABLED=1 is required: gh's interactive prompts query the
+# terminal for its cursor position (CSI 6n) and wait for an answer that only
+# a real terminal emulator gives. With prompts off, gh prints the code and the
+# link and goes straight to polling (as recorded in phase 0 spike S5).
 id = "github"
 label = "GitHub"
 mode = "device-code"
-run = "gh auth login --hostname github.com --git-protocol https --web --skip-ssh-key"
+run = "GH_PROMPT_DISABLED=1 gh auth login --hostname github.com --git-protocol https --web"
 timeout = 900
 after = ["gh auth setup-git --hostname github.com"]
 
@@ -12,10 +17,6 @@ url = 'https://github\.com/login/device'
 code = 'one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})'
 success = '(?:Authentication complete|Logged in as)'
 failure = '(?i)(?:failed to authenticate|authentication failed|expired_token)'
-
-[match.send]
-'Press Enter to open' = "\r"
-'(?i)authenticate git with your github credentials\?' = "Y\r"
 
 [[check]]
 service = "github"

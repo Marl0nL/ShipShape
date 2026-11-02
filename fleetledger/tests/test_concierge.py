@@ -41,14 +41,43 @@ class Prompter:
         return self.live
 
 
-def play(fixture, monkeypatch, tmp_path):
+def play(fixture, monkeypatch, tmp_path, columns=None):
     log = tmp_path / "typed.log"
     monkeypatch.setenv("FAKE_CLI_INPUT_LOG", str(log))
-    return engine.spawn([sys.executable, str(FAKE), str(FIX / fixture)]), log
+    path = fixture if isinstance(fixture, Path) else FIX / fixture
+    argv = [sys.executable, str(FAKE), str(path)]
+    child = engine.spawn(argv, columns=columns) if columns else engine.spawn(argv)
+    return child, log
+
+
+CLAUDE_URL = (
+    "https://claude.com/cai/oauth/authorize?code=true&client_id=00000000-0000-4000-8000-"
+    "000000000000&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth"
+    "%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference&"
+    "code_challenge=example-code-challenge&code_challenge_method=S256&state=example-state"
+)
+
+
+class Clock:
+    """A clock tests can jump, and that can tick on every read."""
+
+    def __init__(self):
+        self.t = 1000.0
+        self.step = 0.0
+
+    def __call__(self):
+        self.t += self.step
+        return self.t
 
 
 def provider(name):
     return providers.load_all()[name]
+
+
+def test_github_runs_without_prompts():
+    """gh's prompts wait for a terminal's cursor report that never comes."""
+    assert provider("github").run.startswith("GH_PROMPT_DISABLED=1 gh auth login ")
+    assert provider("github").send == ()
 
 
 def test_providers_load():
@@ -71,16 +100,101 @@ def test_provider_schema_rejects_bad_files(tmp_path):
 
 
 def test_claude_paste_back(monkeypatch, tmp_path):
+    """The session recorded in spike S5 (no echo of the pasted code)."""
     child, typed = play("claude.txt", monkeypatch, tmp_path)
     prompter = Prompter(code=f"  {CLAUDE_CODE}\n")
     result = Flow(provider("claude"), child, prompter).run()
     assert result.outcome == "completed", result
     (url, code, expires_in) = prompter.shown[0]
-    assert url.startswith("https://claude.ai/oauth/authorize?code=true&client_id=")
-    assert url.endswith("state=example-state")  # whole link, no escape codes
+    assert url == CLAUDE_URL
     assert code is None and 590 < expires_in <= 600
     assert typed.read_text() == CLAUDE_CODE + "\n"  # typed into the terminal, trimmed
     assert CLAUDE_CODE not in result.detail
+
+
+def test_escape_sequences_and_hyperlinks(monkeypatch, tmp_path):
+    child, _ = play("claude-ansi.txt", monkeypatch, tmp_path)
+    prompter = Prompter(code=CLAUDE_CODE)
+    assert Flow(provider("claude"), child, prompter).run().outcome == "completed"
+    url = prompter.shown[0][0]
+    assert url.startswith("https://claude.ai/oauth/authorize?code=true&client_id=")
+    assert url.endswith("state=example-state") and "\x1b" not in url
+
+
+@pytest.mark.parametrize("fixture", ["claude-split.txt", "claude-osc-split.txt"])
+def test_link_split_across_reads(fixture, monkeypatch, tmp_path):
+    """Neither half a link nor half an escape sequence is ever shown."""
+    child, _ = play(fixture, monkeypatch, tmp_path)
+    prompter = Prompter(code=CLAUDE_CODE)
+    assert Flow(provider("claude"), child, prompter).run().outcome == "completed"
+    assert [s[0] for s in prompter.shown] == [CLAUDE_URL]
+
+
+def test_wide_terminal_keeps_long_links_whole(monkeypatch, tmp_path):
+    """A tool that wraps at the terminal's width must not break the link."""
+    child, _ = play("claude-wrapped.txt", monkeypatch, tmp_path)
+    prompter = Prompter(code=CLAUDE_CODE)
+    assert Flow(provider("claude"), child, prompter).run().outcome == "completed"
+    long_line = (FIX / "claude-wrapped.txt").read_text().splitlines()[1]
+    assert prompter.shown[0][0] == long_line.removeprefix(">w ")  # 1300+ characters
+    narrow, _ = play("claude-wrapped.txt", monkeypatch, tmp_path, columns=80)
+    cut = Prompter(code=CLAUDE_CODE)
+    Flow(provider("claude"), narrow, cut).run()
+    assert len(cut.shown[0][0]) == 80  # what an 80-column terminal would have given
+
+
+def test_clean_exit_without_success_line_goes_to_the_checks(monkeypatch, tmp_path):
+    child, _ = play("claude-quiet.txt", monkeypatch, tmp_path)
+    result = Flow(provider("claude"), child, Prompter(code=CLAUDE_CODE)).run()
+    assert result.outcome == "completed" and result.exitstatus == 0
+
+
+def test_code_arriving_after_the_window_is_not_typed(monkeypatch, tmp_path):
+    child, typed = play("claude.txt", monkeypatch, tmp_path)
+    clock = Clock()
+
+    class Slow(Prompter):
+        def ask_code(self):
+            clock.t += 700  # the person took longer than the 600 s window
+            return CLAUDE_CODE
+
+    result = Flow(provider("claude"), child, Slow(), clock=clock).run()
+    assert result.outcome == "cancelled" and "window closed" in result.detail
+    assert not typed.exists()
+
+
+def test_typed_code_gets_its_verdict_past_the_window(monkeypatch, tmp_path):
+    child, typed = play("claude-slow-verdict.txt", monkeypatch, tmp_path)
+    clock = Clock()
+
+    class JustInTime(Prompter):
+        def ask_code(self):
+            clock.t += 595
+            clock.step = 5  # the window closes while the tool checks the code
+            return CLAUDE_CODE
+
+    result = Flow(provider("claude"), child, JustInTime(), clock=clock).run()
+    assert result.outcome == "completed"
+    assert typed.read_text() == CLAUDE_CODE + "\n"
+
+
+def test_fixed_prompts_are_answered_once(monkeypatch, tmp_path):
+    toml = tmp_path / "demo.toml"
+    toml.write_text(
+        'id = "demo"\nlabel = "Demo"\nmode = "device-code"\nrun = "demo"\ntimeout = 60\n'
+        "[match]\nurl = 'https://example\\.com/device'\ncode = 'code: (\\S+)'\n"
+        "success = 'Done'\n[match.send]\n'Press Enter' = \"\\r\"\n"
+        '[[check]]\nservice = "demo"\nrun = "true"\n[logout]\nrun = "true"\n'
+    )
+    session = tmp_path / "demo.txt"
+    session.write_text("> code: ABCD at https://example.com/device now\n>> Press Enter \n<\n"
+                       "~ 1\n> Done\n! 0\n")
+    child, typed = play(session, monkeypatch, tmp_path)
+    sent = []
+    real_send = child.send
+    monkeypatch.setattr(child, "send", lambda text: sent.append(text) or real_send(text))
+    result = Flow(providers.parse(toml), child, Prompter()).run()
+    assert result.outcome == "completed" and sent == ["\r"]
 
 
 def test_gcloud_paste_back(monkeypatch, tmp_path):
@@ -89,7 +203,7 @@ def test_gcloud_paste_back(monkeypatch, tmp_path):
     result = Flow(provider("gcloud"), child, prompter).run()
     assert result.outcome == "completed"
     assert prompter.shown[0][0].startswith("https://accounts.google.com/o/oauth2/auth?")
-    assert prompter.shown[0][0].endswith("prompt=consent")
+    assert prompter.shown[0][0].endswith("code_challenge_method=S256")
     assert typed.read_text() == GCLOUD_CODE + "\n"
 
 
@@ -101,7 +215,7 @@ def test_github_device_code(monkeypatch, tmp_path):
     assert prompter.shown == [
         ("https://github.com/login/device", "ABCD-1234", pytest.approx(900, abs=5))
     ]
-    assert typed.read_text() == "\n"  # only Enter was pressed for "Press Enter"
+    assert not typed.exists()  # prompts are off: nothing to answer
     assert prompter.ticks > 0  # the countdown ran while waiting
 
 
@@ -268,6 +382,51 @@ def test_github_after_command(store, fake_ssh, monkeypatch, tmp_path):
                              spawner=fake_spawner("github.txt", monkeypatch, tmp_path))
     assert result.outcome == "ok" and result.account == "example-work"
     assert seen[1] == "gh auth setup-git --hostname github.com"
+
+
+def test_signed_out_status_is_a_failure(store, fake_ssh, monkeypatch, tmp_path):
+    """claude auth status exits 0 either way; loggedIn decides."""
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(ship_side({
+        "claude auth status --json": (0, json.dumps({"loggedIn": False}), ""),
+    })), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("claude"),
+                             Prompter(code=CLAUDE_CODE),
+                             spawner=fake_spawner("claude.txt", monkeypatch, tmp_path))
+    assert result.outcome == "failed" and result.checks[0].signed_in is False
+
+
+def test_gcloud_wrong_account(store, fake_ssh, monkeypatch, tmp_path):
+    """One wrong check is enough, even when another (ADC) has no account."""
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(ship_side({
+        "gcloud auth list": (0, b"you@example.com\n", ""),
+        "print-access-token": (0, b"", ""),
+    })), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("gcloud"),
+                             Prompter(code=GCLOUD_CODE),
+                             spawner=fake_spawner("gcloud.txt", monkeypatch, tmp_path))
+    assert result.outcome == "wrong-account"
+    assert [(c.service, c.matches) for c in result.checks] == [
+        ("gcloud", False), ("gcloud_adc", None)]
+
+
+def test_checks_run_after_a_live_takeover(store, fake_ssh, monkeypatch, tmp_path):
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(ship_side({
+        "claude auth status --json": (0, json.dumps({"loggedIn": True,
+                                                      "email": "work@example.com"}), ""),
+    })), store)
+
+    def spawner(argv):
+        child, _ = play("changed-wording.txt", monkeypatch, tmp_path)
+        monkeypatch.setattr(child, "interact", lambda: None)
+        return child
+
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("claude"),
+                             Prompter(live=True), spawner=spawner,
+                             flow_options={"pattern_timeout": 1})
+    assert result.outcome == "ok" and result.checks and result.account == "work@example.com"
 
 
 def test_failed_flow_skips_checks(store, fake_ssh, monkeypatch, tmp_path):

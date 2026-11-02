@@ -1,0 +1,11 @@
+> \e[1mClaude Code\e[0m
+> Opening browser to sign in...
+> Browser didn't open? Use the url below to sign in:
+>
+> \e]8;;https://claude.ai/oauth/authorize?code=true&client_id=00000000-0000-4000-8000-000000000000&response_type=code&state=example-state\e\\e[4mhttps://claude.ai/oauth/authorize?code=true&client_id=00000000-0000-4000-8000-000000000000&response_type=code&state=example-state\e[24m\e]8;;\e\
+>
+>> Paste code here if prompted > 
+? EXAMPLE-CODE-0123456789abcdef#example-state
+>
+> \e[32mLogin successful.\e[0m
+! 0

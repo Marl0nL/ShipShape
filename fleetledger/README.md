@@ -219,17 +219,22 @@ or `--tag work` for every Ship with a tag):
 1. **Preflight.** A plain SSH call checks the pinned host key and opens the
    shared connection that the sign-in terminal reuses.
 2. **The tool's own sign-in, in a terminal.** `ssh -tt fleet@<ship> sudo -n -iu
-   agent -- bash -c '<command>'` in a pseudo-terminal 1000 columns wide, so
+   agent -- bash -c '<command>'` in a pseudo-terminal 4096 columns wide, so
    links never wrap.
 3. **Matching.** The engine reads the output itself and strips escape sequences
-   (colours, OSC 8 hyperlinks). It matches the provider's patterns, and accepts
-   a link or code only once more output follows it, so a link is never cut
-   short. It answers fixed prompts such as gh's "Press Enter".
+   (colours, OSC 8 hyperlinks); a sequence split across two reads waits for its
+   other half. It matches the provider's patterns, and accepts a link or code
+   only once more output follows it, so a link is never cut short. A provider
+   can answer fixed prompts (`[match.send]`), each once. gh runs with
+   `GH_PROMPT_DISABLED=1`: its interactive prompts wait for a real terminal's
+   cursor report.
 4. **You.** FleetLedger shows the link and how long it stays valid, plus the
    code for device flows. Paste-back flows read your code with `getpass`, so it
    is not echoed, and type it into the Ship's terminal. It is never on a command
-   line, in `ps`, or in shell history. Device flows show a countdown until gh
-   finishes.
+   line, in `ps`, or in shell history. A code pasted after the sign-in window
+   has closed is not typed. Once a code is typed, the engine waits for the
+   tool's verdict even if the window closes meanwhile. Device flows show a
+   countdown until gh finishes.
 5. **Checks.** Each provider's `[[check]]` commands run as agent (for example
    `claude auth status --json`, or `gcloud auth list` plus an ADC token test
    sent to `/dev/null`). The accounts are compared with the Ship's tags, so
@@ -250,9 +255,10 @@ Providers are one TOML file each in `fleetledger/providers/`: the command, mode
 and `[logout]`. Adding a service is one file.
 
 The pattern tests replay sessions in a real pseudo-terminal from
-`tests/fixtures/concierge/`. Those sessions are synthetic for now, modelled on
-each tool's no-browser sign-in. The sessions recorded in phase 0 spike S5 will
-replace them.
+`tests/fixtures/concierge/`. The claude, gcloud and github sessions follow the
+wording recorded from the real tools in phase 0 spike S5 (example values
+only); the rest are variants for the engine's edge cases (see that folder's
+README).
 
 ## The CLI (W10)
 

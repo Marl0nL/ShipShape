@@ -1,11 +1,11 @@
 > Go to the following link in your browser, and complete the sign-in prompts:
 >
->     https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=000000000000-example.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fsdk.cloud.google.com%2Fauthcode.html&scope=openid&state=example-state&prompt=consent
+>     https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=000000000000-example.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fsdk.cloud.google.com%2Fauthcode.html&scope=openid+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email&state=example-state&prompt=consent&token_usage=remote&access_type=offline&code_challenge=example-code-challenge&code_challenge_method=S256
 >
 >> Once finished, enter the verification code provided in your browser: 
 ? 4/0EXAMPLE-verification-code
 >
-> Credentials saved to file: [/home/agent/.config/gcloud/application_default_credentials.json]
+> Application Default Credentials (ADC) were updated.
 >
 > You are now logged in as [work@example.com].
 > Your current project is [None].  You can change this setting by running:

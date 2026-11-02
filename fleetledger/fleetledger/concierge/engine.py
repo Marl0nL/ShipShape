@@ -22,12 +22,15 @@ from typing import Protocol
 import pexpect
 
 from fleetledger.concierge.providers import Provider
-from fleetledger.concierge.redact import clean, tail
+from fleetledger.concierge.redact import tail, visible
 
 # How long to wait for the link (or, after it, the code prompt) before
 # offering the live terminal.
 PATTERN_TIMEOUT = 60.0
 EXIT_GRACE = 30.0
+# Once a code has been typed, wait this long for the tool's verdict even if the
+# sign-in window closes meanwhile: the code is spent, and the answer matters.
+VERDICT_GRACE = 120.0
 
 
 class Child(Protocol):
@@ -98,7 +101,8 @@ class Flow:
         self.clock = clock
         self.pattern_timeout = pattern_timeout
         self.read_timeout = read_timeout
-        self.buffer = ""
+        self.raw = ""  # everything read, escape sequences included
+        self.buffer = ""  # what a person would see: visible(raw)
         self.secrets: list[str] = []
         self.send_from = 0
         self.outcome_from = 0
@@ -106,6 +110,8 @@ class Flow:
         self.code: str | None = None
         self.shown_at: float | None = None
         self.code_sent = False
+        self.sent_at: float | None = None
+        self.deadline = 0.0
 
     # --- output -----------------------------------------------------------
     def _read(self) -> bool:
@@ -116,7 +122,8 @@ class Flow:
             return True
         except pexpect.EOF:
             return False
-        self.buffer += clean(chunk)
+        self.raw += chunk
+        self.buffer = visible(self.raw)
         return True
 
     def _answer_prompts(self) -> None:
@@ -138,7 +145,7 @@ class Flow:
             status = self.child.exitstatus
         except Exception:  # noqa: BLE001 - closing must never mask the outcome
             pass
-        self.buffer = ""  # no transcript outlives the flow
+        self.raw = self.buffer = ""  # no transcript outlives the flow
         return FlowResult(outcome, detail, status)
 
     # --- the flow ---------------------------------------------------------
@@ -156,22 +163,28 @@ class Flow:
         self.outcome_from = len(self.buffer)
         self.prompter.show_link(self.url, self.code, deadline - now)
 
-    def _maybe_paste(self) -> bool:
-        """Type the pasted code once the CLI asks for it; False if you cancelled."""
+    def _maybe_paste(self) -> str | None:
+        """Type the pasted code once the CLI asks for it.
+
+        Returns None to carry on, or the reason nothing was typed.
+        """
         if not (self.p.prompt and self.p.prompt.search(self.buffer)):
-            return True
+            return None
         typed = (self.prompter.ask_code() or "").strip()
         if not typed:
-            return False
+            return "Cancelled; nothing was typed."
+        if self.clock() > self.deadline:
+            return "The sign-in window closed before the code arrived; nothing was typed."
         self.secrets.append(typed)
         self.child.send(typed + "\r")
         self.code_sent = True
+        self.sent_at = self.clock()
         self.outcome_from = len(self.buffer)
-        return True
+        return None
 
     def run(self) -> FlowResult:
         start = self.clock()
-        deadline = start + self.p.timeout
+        deadline = self.deadline = start + self.p.timeout
         paste_back = self.p.mode == "paste-back"
         while True:
             alive = self._read()
@@ -181,8 +194,10 @@ class Flow:
             if self.shown_at is None:
                 self._maybe_show(now, deadline)
             if self.shown_at is not None and paste_back and not self.code_sent:
-                if not self._maybe_paste():
-                    return self._finish("cancelled", "Cancelled; nothing was typed.")
+                reason = self._maybe_paste()
+                if reason:
+                    return self._finish("cancelled", reason)
+                now = self.clock()
 
             region = self.buffer[self.outcome_from :] if self.shown_at is not None else ""
             if region and self.p.success.search(region):
@@ -192,7 +207,10 @@ class Flow:
 
             if not alive:
                 return self._ended()
-            if now > deadline:
+            if self.code_sent:
+                if now - self.sent_at > VERDICT_GRACE:
+                    return self._finish("timeout", "The tool gave no verdict on the code.")
+            elif now > deadline:
                 return self._finish("timeout", "The sign-in code expired before it was used.")
             if self.shown_at is None and now - start > self.pattern_timeout:
                 return self._live("No sign-in link appeared.")
@@ -225,7 +243,7 @@ class Flow:
         return FlowResult("manual", reason, result.exitstatus)
 
 
-def spawn(argv: list[str], *, columns: int = 1000) -> pexpect.spawn:
+def spawn(argv: list[str], *, columns: int = 4096) -> pexpect.spawn:
     """Start argv in a pseudo-terminal wide enough that links never wrap."""
     return pexpect.spawn(
         argv[0],

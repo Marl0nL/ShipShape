@@ -1,13 +1,13 @@
+> ! Did you know that expiring tokens can be requested with --expiring? Read more at https://gh.io/gh-expiring-tokens
 >
-> ! First copy your one-time code: ABCD-1234
->> Press Enter to open https://github.com/login/device in your browser... 
-<
-> ! Failed opening a web browser at https://github.com/login/device
->   exec: "xdg-open,x-www-browser,www-browser,wslview": executable file not found in $PATH
->   Please try entering the URL in your browser manually
+> ! Failed to copy one-time code to clipboard
+>   No clipboard utilities available. Please install xsel, xclip, wl-clipboard or Termux:API add-on for termux-clipboard-get/set.
+> ! First copy your one-time code: \e[1mABCD-1234\e[0m
+> Open this URL to continue in your web browser: https://github.com/login/device
 ~ 0.5
 > ✓ Authentication complete.
 > - gh config set -h github.com git_protocol https
 > ✓ Configured git protocol
+> ! Authentication credentials saved in plain text
 > ✓ Logged in as example-work
 ! 0

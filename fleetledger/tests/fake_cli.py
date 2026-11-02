@@ -3,8 +3,10 @@
 Fixture lines:
   > text      print text and a newline     (\\e is ESC)
   >> text     print text without a newline
+  >w text     print text hard-wrapped at the terminal's width, as TUIs do
   ? VALUE     read a line (echoed back, like a remote terminal); if it is not
               VALUE print "error: invalid code" and exit 1
+  ?! VALUE    the same without the echo (a raw-mode prompt, like Claude Code's)
   <           read a line and ignore it (e.g. "Press Enter")
   ~ SECONDS   sleep
   ! CODE      exit with CODE
@@ -36,8 +38,17 @@ def main(path):
     for raw in open(path, encoding="utf-8").read().splitlines():
         if raw.startswith(">> "):
             out(raw[3:], newline=False)
+        elif raw.startswith(">w "):
+            width = os.get_terminal_size(sys.stdout.fileno()).columns
+            text = raw[3:]
+            for i in range(0, len(text), width):
+                out(text[i : i + width])
         elif raw.startswith(">"):
             out(raw[2:])
+        elif raw.startswith("?! "):
+            if read_line() != raw[3:]:
+                out("error: invalid code")
+                sys.exit(1)
         elif raw.startswith("? "):
             line = read_line()
             out(line)  # a terminal echoes what you type

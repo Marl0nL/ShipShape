@@ -26,6 +26,19 @@ def clean(text: str) -> str:
     return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ch >= " ")
 
 
+def visible(raw: str) -> str:
+    """clean() of everything read so far, minus an escape sequence still arriving.
+
+    Reads can split a sequence (an OSC 8 hyperlink is hundreds of bytes); its
+    first half must not be cleaned on its own, or its leftovers would run into
+    the link next to it. So a trailing unfinished sequence waits for more input.
+    """
+    cut = raw.rfind("\x1b")
+    if cut != -1 and not ANSI.match(raw, cut):
+        raw = raw[:cut]
+    return clean(raw)
+
+
 def redact(text: str, secrets: Iterable[str] = ()) -> str:
     """Remove typed codes, URL query strings and long token-like strings."""
     for secret in secrets:
