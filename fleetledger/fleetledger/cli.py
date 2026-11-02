@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import re
+import socket
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TextIO
@@ -38,6 +40,8 @@ class App:
     browse: Callable = None  # (timeout) -> [Announcement]
     keyscan: Callable = None  # (host) -> "ssh-ed25519 AAAA..."
     confirm: Callable[[str], str] = input
+    resolves: Callable[[str], bool] = None  # (host) -> does it resolve here?
+    sleep: Callable[[float], None] = None
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
 
     def __post_init__(self) -> None:
@@ -58,6 +62,8 @@ class App:
             )
         )
         self.browse = self.browse or scan.browse
+        self.resolves = self.resolves or _resolves
+        self.sleep = self.sleep or time.sleep
         self.keyscan = self.keyscan or scan.keyscan
 
     def say(self, text: str = "") -> None:
@@ -65,6 +71,14 @@ class App:
 
     def note(self, text: str) -> None:
         print(text, file=self.err)
+
+
+def _resolves(host: str) -> bool:
+    try:
+        socket.getaddrinfo(host, 22)
+    except OSError:
+        return False
+    return True
 
 
 def _add(sub, name: str, help_text: str, description: str | None = None):

@@ -115,6 +115,12 @@ class FakeDriver:
         return Outcome(done=True, messages=["Started VM 9101."],
                        driver_ref={"vmid": 9101, "seed": seed.instance_id})
 
+    def status(self, ship):
+        from fleetledger.drivers.base import PowerState
+
+        self.polls = getattr(self, "polls", 0) + 1
+        return PowerState("running", ["192.0.2.44"] if self.polls > 1 else [])
+
     def finish_enrolment(self, ship):
         self.finished.append(ship.name)
         return Outcome(done=True, messages=["Detached and deleted the seed."])
@@ -147,6 +153,8 @@ def env(store, fake_repo, monkeypatch, tmp_path):
         browse=lambda timeout: [],
         keyscan=lambda host: (_ for _ in ()).throw(AssertionError("keyscan")),
         stdin_isatty=lambda: False,
+        resolves=lambda host: False,
+        sleep=lambda s: None,
     )
 
     class Env:
@@ -255,9 +263,17 @@ def test_new_proxmox_waits_and_enrols(env, home):
     assert env.driver.created[0][2] == {"cores": 2, "memory_mb": 8192, "disk_gb": 40}
     ship = env.store.load().ship("ship-04")
     assert ship.enrolled and ship.driver_ref == {"vmid": 9101}
+    # ship-04.local does not resolve here: the hypervisor's address is the fallback.
+    assert ship.names == ("ship-04.local", "192.0.2.44")
     assert env.driver.finished == ["ship-04"]
     assert not list((home / "data" / "seeds").glob("*.iso"))
     assert "ship-04 is enrolled." in out and "ship-fleet login ship-04 all" in out
+
+
+def test_new_proxmox_keeps_names_that_resolve(env):
+    env.app.resolves = lambda host: host == "ship-06.local"
+    assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0
+    assert env.store.load().ship("ship-06").names == ("ship-06.local",)
 
 
 def test_new_failure_leaves_nothing(env, home):

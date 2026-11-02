@@ -118,6 +118,8 @@ def test_upload_is_multipart_with_checksum(server):
         f"Content-Type: {headers['Content-Type']}\r\n\r\n".encode() + body
     )
     parts = {p.get_param("name", header="content-disposition"): p for p in message.iter_parts()}
+    # Proxmox needs the algorithm before the checksum, and the file last.
+    assert list(parts) == ["content", "checksum-algorithm", "checksum", "filename"]
     assert parts["content"].get_content().strip() == "iso"
     assert parts["checksum-algorithm"].get_content().strip() == "sha256"
     assert parts["checksum"].get_content().strip() == hashlib.sha256(b"ISO!").hexdigest()

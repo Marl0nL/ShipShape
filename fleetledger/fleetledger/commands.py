@@ -255,7 +255,35 @@ def cmd_new(args, app) -> int:
     if not outcome.done or args.no_wait:
         app.say(f"\nWhen it has booted: ship-fleet status {name} --wait")
         return 0
+    _reachable_name(app, store, driver, name)
     return _enrol(app, store, name)
+
+
+def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None:
+    """Make sure FleetLedger can reach a Ship the driver just started.
+
+    Once the hypervisor reports the Ship's address, its names are checked. If
+    none resolves on this computer (for example .local names without mDNS
+    name resolution), the address is added as the last name to try.
+    """
+    ship = store.load().ship(name)
+    waited = 0.0
+    while True:
+        addresses = driver.status(ship).addresses
+        if addresses:
+            break
+        if waited >= timeout:
+            app.note(f"{name}: the hypervisor reported no address; trying its names only.")
+            return
+        app.sleep(10)
+        waited += 10
+    if any(app.resolves(host) for host in ship.names):
+        return
+    with store.edit() as ed:
+        ed.set_field(name, "names", [*ship.names, addresses[0]])
+    app.note(f"{name}: {', '.join(ship.names)} does not resolve on this computer, so "
+             f"{addresses[0]} is added as a fallback name (see fleetledger/README.md, "
+             "\"Names\").")
 
 
 def _enrol(app, store, name: str, say=None) -> int:
