@@ -140,3 +140,19 @@ def test_refresh_does_nothing_while_provisioning(ship):
     assert ship.json("/run/shipshape/status.json")["state"] == "provisioning"
     assert not ship.p("/run/shipshape/auth-previous.json").exists()
     assert ship.scenario()["herdr"]["agents"] == []
+
+
+def test_autostart_records_session_names(ship):
+    ship.ctl("autostart", "--json")
+    record = ship.json("/var/lib/shipshape/autostart.json")
+    assert record["main"]["session_name"] == "ship-01-main"
+    assert record["grinder"]["session_name"] == "ship-01-grinder"
+    ship.ctl("set", "claude.session_prefix=lab", "--json")
+    import sys
+
+    sys.path.insert(0, str(ship.bundle / "lib"))
+    from shipctl import naming, shiptoml
+    from shipctl.paths import Paths
+
+    toml = shiptoml.load(Paths(ship.root, ship.bundle))
+    assert naming.session_name(toml, "main") == "lab-main"

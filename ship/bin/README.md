@@ -14,6 +14,7 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 | `status.py` | the status document: parallel probes, each with a 5 s timeout |
 | `apply.py` | ship.toml -> managed settings, agent settings, herdr config, sudoers, avahi |
 | `autostart.py` | starts `[[autostart]]` agents that are not running |
+| `naming.py` | the Claude session name for each agent (`<prefix>-<agent>`): the one place to change how it is applied |
 | `tools.py` | the catalogue runner (`contracts/tools.md`) |
 | `converge.py` | switches to a new tooling bundle, rolling back on failure |
 | `logs.py` | `ship-ctl logs SOURCE` |

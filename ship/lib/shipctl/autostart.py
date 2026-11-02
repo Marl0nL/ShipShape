@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 
+from . import naming
 from .apply import expand_cwd
 from .context import Context, utc_now
 from .errors import CtlError
@@ -148,15 +149,22 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
             skipped.append({"name": name, "reason": f"workspace create failed: {why or 'no pane'}"})
             continue
         mode = entry.get("mode") or default_mode
+        session = naming.session_name(ship, name)
         argv = ["agent", "start", name, "--kind", "claude", "--pane", pane]
         argv += ["--timeout", str(START_TIMEOUT_MS), "--", *mode_args(mode)]
+        argv += naming.launch_args(session)
         out, why = _herdr_json(ctx, argv, START_TIMEOUT_MS / 1000 + 15)
         if out is None:
             failures += 1
             skipped.append({"name": name, "reason": f"agent start failed: {why}"})
             continue
         started.append(name)
-        record[name] = {"pane": pane, "mode": mode, "started_at": utc_now()}
+        record[name] = {
+            "pane": pane,
+            "mode": mode,
+            "session_name": session,
+            "started_at": utc_now(),
+        }
         prompt = entry.get("prompt")
         if prompt:
             sent, why = _herdr_json(ctx, ["agent", "prompt", name, prompt], 30)
