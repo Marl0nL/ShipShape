@@ -136,6 +136,7 @@ def test_bake_with_virt_customize(bake_env):
     assert r.returncode == 0, r.stderr
     assert e.out.read_bytes().startswith(b"cloud image")  # a copy, compressed at the end
     assert e.base.read_bytes() == b"cloud image"  # the base is never modified
+    assert list(e.out.parent.iterdir()) == [e.out]  # no .part left beside it
     log = (e.tmp / "fake.log").read_text()
     assert "qemu-img resize -q" in log and "+6G" in log
     assert "convert -q -c -O qcow2" in log  # compressed output
@@ -232,5 +233,6 @@ def test_image_clean_removes_what_makes_ships_alike():
     text = CLEAN.read_text()
     for needed in ("rm -f /etc/ssh/ssh_host_*", "truncate -s 0 /etc/machine-id",
                    "cloud-init clean --logs", "rm -rf /var/lib/cloud",
-                   "/var/lib/shipshape/provision.json", "apt-get clean"):
+                   "/var/lib/shipshape/provision.json", "apt-get clean",
+                   "echo localhost >/etc/hostname"):
         assert needed in text, needed

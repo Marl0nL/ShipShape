@@ -135,6 +135,12 @@ class ProxmoxDriver(Driver):
     ) -> Outcome:
         cfg = self.config
         template = int(image.ref["template_vmid"]) if image else int(cfg["template_vmid"])
+        if image is not None and not self.check_name(
+            template, template_name(image.id), template=True
+        ):
+            raise FleetError(f"Image {image.id}'s template VM {template} does not exist on "
+                             f"{self.node}.", hint=f"Publish it again: ship-fleet image publish "
+                             f"{image.id}")
         vmid = int(ship.driver_ref["vmid"]) if "vmid" in ship.driver_ref else self.allocate_vmid()
         volume = seed_volume(cfg["seed_storage"], seed.instance_id)
         messages: list[str] = []

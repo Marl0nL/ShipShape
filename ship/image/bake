@@ -91,8 +91,10 @@ ID=$(manifest id)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/shipshape-bake.XXXXXX")
 chmod 0700 "$WORK"
 SERVER_PID=""
+PART=""
 cleanup() {
   [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true
+  [ -z "$PART" ] || rm -f "$PART"
   if [ -n "${SHIPSHAPE_BAKE_KEEP:-}" ]; then
     log "kept the work folder for debugging: $WORK"
   else
@@ -211,6 +213,9 @@ USERDATA
 "bake_${BACKEND//-/_}"
 
 log "compressing"
-qemu-img convert -q -c -O qcow2 "$WORK/disk.qcow2" "$WORK/out.qcow2"
-mv "$WORK/out.qcow2" "$OUT"
+# Written beside its final name, then renamed: an interrupted bake never leaves a
+# file that looks finished (the work folder may be on another filesystem).
+PART="$OUT.part"
+qemu-img convert -q -c -O qcow2 "$WORK/disk.qcow2" "$PART"
+mv -f "$PART" "$OUT"
 log "done: $OUT"

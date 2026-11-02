@@ -11,6 +11,8 @@ rm -rf /var/lib/apt/lists/*
 if command -v cloud-init >/dev/null 2>&1; then cloud-init clean --logs || true; fi
 rm -rf /var/lib/cloud
 truncate -s 0 /etc/machine-id
+# The qemu backend's throwaway seed named the copy; each Ship's seed names it again.
+echo localhost >/etc/hostname
 rm -f /var/lib/dbus/machine-id
 rm -f /root/.bash_history
 find /var/log -type f \( -name '*.log' -o -name '*.gz' -o -name '*.[0-9]' \) -delete

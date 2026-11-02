@@ -371,8 +371,25 @@ def test_power_actions_check_the_name(verb):
     assert mutating(api) == []
 
 
+def test_create_from_an_image_refuses_a_vm_that_is_not_its_template():
+    """A stale or hand-typed template_vmid must not clone another VM's disk."""
+    image = PublishedImage(IMG, {"template_vmid": 9181})
+    for vms in ({9181: ("ship-03", False)}, {9181: (f"shipshape-img-{IMG}", False)},
+                {9181: ("other-template", True)}):
+        api = FakeAPI(vms=vms)
+        driver = ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO")
+        with pytest.raises(NotOurs):
+            driver.create(ship(vmid=9101), SEED, SIZE, image)
+        assert mutating(api) == []  # nothing uploaded, nothing cloned
+    api = FakeAPI(vms={9181: None})
+    with pytest.raises(FleetError, match="does not exist"):
+        ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO").create(ship(vmid=9101), SEED,
+                                                                         SIZE, image)
+    assert mutating(api) == []
+
+
 def test_create_from_a_published_image_clones_its_template():
-    api = FakeAPI()
+    api = FakeAPI(vms={9181: (f"shipshape-img-{IMG}", True)})
     driver = ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO")
     image = PublishedImage(IMG, {"template_vmid": 9181})
     outcome = driver.create(ship(vmid=9101), SEED, SIZE, image)
