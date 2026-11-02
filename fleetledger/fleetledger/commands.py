@@ -720,6 +720,37 @@ def cmd_attention(args, app) -> int:
         ships = inv.ships(args.tag)
 
 
+# --- pins ----------------------------------------------------------------------
+
+
+def cmd_pins(args, app) -> int:
+    from fleetledger import pins
+
+    repo = app.repo_factory()
+    http = app.http_factory()
+    if args.action == "check":
+        if args.pin or args.value:
+            raise FleetError("pins check takes no arguments.")
+        rows = pins.check(repo, http, on_error=lambda pin, why: app.note(f"{pin}: {why}"))
+        if args.json:
+            app.say(json.dumps([{**r.__dict__, "behind": r.behind} for r in rows], indent=2))
+            return 0
+        app.say(table([[r.pin, r.current, r.latest or "?", "newer available" if r.behind
+                        else "", r.note] for r in rows],
+                      ["PIN", "PINNED", "LATEST", "", "NOTE"]))
+        if any(r.behind for r in rows):
+            app.say("\nMove one with: ship-fleet pins set PIN VERSION")
+        return 0
+    if not args.pin or not args.value:
+        raise FleetError("Usage: ship-fleet pins set PIN VERSION")
+    change = pins.set_pin(repo, args.pin, args.value, http)
+    app.say(f"{change.pin}: {change.old} -> {change.new} in {repo.versions_path}")
+    for detail in change.details:
+        app.say(f"  {detail}")
+    app.say("Next: scripts/check, commit, then ship-fleet update (one Ship first).")
+    return 0
+
+
 # --- ssh and logs --------------------------------------------------------------
 
 

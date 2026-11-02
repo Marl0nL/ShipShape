@@ -12,8 +12,17 @@ and Ubuntu security fixes.
 
 `ship-fleet update` sends exactly what is in the checkout FleetLedger runs from.
 
-1. Pull or make the change, for example a new herdr pin in `versions.toml`
-   (version, every asset URL and its sha256).
+1. Pull or make the change. To move a pin, let FleetLedger do the checking:
+
+   ```sh
+   ship-fleet pins                    # every pin against its newest release
+   ship-fleet pins set herdr 0.9.6    # new URLs; each download must match GitHub's SHA-256
+   ship-fleet pins set gh-axi 0.1.48  # the version must exist in the npm registry
+   ```
+
+   It rewrites `versions.toml` in place (comments kept) and refuses anything it
+   cannot verify. Read the herdr release notes before moving herdr: its CLI and
+   protocol have changed between releases before.
 2. Run `scripts/check`.
 3. Commit. A bundle packed from uncommitted changes under `ship/` is marked
    `dirty`, and every update converges it again, so commit before a fleet-wide
@@ -85,3 +94,17 @@ ship-fleet set all timezone=Europe/Berlin
 
 Automatic reboots are clean too, so agents resume in their modes as after any
 reboot.
+
+## A new Ubuntu image
+
+```sh
+ship-fleet pins set ubuntu 20261101
+```
+
+FleetLedger fetches that build's `SHA256SUMS` and its signature, checks the
+signature with `gpgv` against the pinned Ubuntu signing key alone (a keyserver
+answer carrying any other key is refused), and takes the image hashes from the
+verified file. Only new Ships use the image: rebuild the
+Proxmox template from it (`docs/runbooks/proxmox-setup.md`, the template steps,
+checking the download against the new `sha256`). Existing Ships are never
+re-imaged; unattended-upgrades keeps them current.
