@@ -8,3 +8,9 @@ pexpect==4.9.0
 pycdlib==1.22.0
 PyYAML==6.0.3
 tomlkit==0.15.2
+# The web UI (fleetledger/fleetledger/web); httpx is only for Starlette's test client.
+Jinja2==3.1.6
+starlette==1.10.0
+uvicorn==0.54.0
+websockets==17.4
+httpx==0.28.1
