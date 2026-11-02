@@ -32,6 +32,7 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
 | `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
+| `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |
 | `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
@@ -49,6 +50,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
+| `~/.local/share/fleetledger/net/` | the last network summary per Ship and the first-seen ledger (0600) |
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
 

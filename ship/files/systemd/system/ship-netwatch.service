@@ -1,0 +1,27 @@
+# Network visibility (contracts/ship-ctl.md, `ship-ctl net`): records which
+# programs connect where. Observes only; blocks nothing.
+[Unit]
+Description=ShipShape network visibility collector
+After=systemd-resolved.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /opt/shipshape/current/files/libexec/ship_netwatch.py
+Restart=always
+RestartSec=30
+# Root, but only the capabilities it uses (checked on Ubuntu 26.04, kernel 7.0):
+# BPF and PERFMON load and attach the eBPF tools; SYS_PTRACE and DAC_READ_SEARCH
+# let the ss fallback name other users' processes. It never needs a home folder.
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/shipshape/net
+PrivateTmp=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+StateDirectory=shipshape/net
+StateDirectoryMode=0700
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

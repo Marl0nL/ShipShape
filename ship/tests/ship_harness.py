@@ -34,6 +34,7 @@ FAKE_COMMANDS = [
     "journalctl",
     "visudo",
     "sshd",
+    "vnstat",
 ]
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
 
