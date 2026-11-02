@@ -67,6 +67,7 @@ integration and agents edit these files too):
 | ship.toml | Effect |
 |---|---|
 | `ship.name`, `ship.id` | `/etc/avahi/services/shipshape.service`: the LAN announcement (`ship-runtime.md`) |
+| `ship.name`, `ship.tags` | `/etc/ssh/shipshape/principals/agent`: which user certificates may log in as `agent` (`agent:all`, `agent:tag:<tag>`, `agent:ship:<name>`; `ship-ctl.md`) |
 | `agent.sudo` | `/etc/sudoers.d/91-shipshape-agent` present (`NOPASSWD: ALL`) or absent |
 | `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent (phase 2) |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
@@ -113,3 +114,22 @@ the seed:
 
 The `[tag.*]` expected accounts stay in `ships.toml`: they are never copied to a
 Ship. FleetLedger compares them with the `account` values in each status document.
+
+## The certificate authority in ships.toml (phase 3)
+
+`[ca]` and `[machine.<name>]` stay on your computer; Ships get only what
+`ship-ctl ssh-trust` installs (`ssh-trust.schema.json`):
+
+| ships.toml | On each Ship |
+|---|---|
+| `ca.host_key` (its `.pub`) | signs `/etc/ssh/ssh_host_ed25519_key-cert.pub` over the pinned `host_key`, with every name in `ship.<name>.names` plus the bare name as principals, valid `ca.host_cert_days` |
+| `ca.user_key` (its `.pub`), plus `ca.previous_user_keys` | `/etc/ssh/shipshape/user-ca.pub` |
+| `machine.<m>.public_key` of every machine with `revoked` | in the KRL, `/etc/ssh/shipshape/revoked-keys` |
+| `machine.<m>.scope` | not sent: it becomes the principals of that machine's certificates (`all` → `agent:all`, `tag:work` → `agent:tag:work`, `ship:ship-01` → `agent:ship:ship-01`) |
+| `ca.revoked_host_keys` | not sent: trusted machines get it as their `RevokedHostKeys` list |
+
+Trusted machines get, from `ship-fleet trust <machine>`: their certificate, one
+`@cert-authority` line for the host CA limited to the Ships' names, an SSH config
+block per Ship (`User agent`, the certificate, `ForwardAgent no`), and each Ship
+registered as a herdr saved machine.
+

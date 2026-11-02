@@ -1,0 +1,24 @@
+{
+  "schema": "shipshape.net-summary/1",
+  "generated_at": "2026-01-08T12:00:00Z",
+  "collector": {
+    "state": "unavailable",
+    "source": null,
+    "since": null,
+    "updated_at": null,
+    "dropped": 0,
+    "note": "ship-netwatch is not installed on this Ship."
+  },
+  "retention_days": 7,
+  "totals": {
+    "source": null,
+    "rx_mb_24h": 0,
+    "tx_mb_24h": 0,
+    "rx_mb_7d": 0,
+    "tx_mb_7d": 0,
+    "interfaces": []
+  },
+  "destinations": [],
+  "programs": [],
+  "truncated": 0
+}

@@ -2,14 +2,25 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.shipshape.invalid/ship-ctl-result.schema.json",
   "title": "ship-ctl --json result (every command except a successful status)",
-  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version and logs, and by `ship-ctl status --json` when it cannot produce a status document. The exit code carries the same outcome (see contracts/ship-ctl.md).",
+  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version, logs, ssh-trust and net, and by `ship-ctl status --json` when it cannot produce a status document. The exit code carries the same outcome (see contracts/ship-ctl.md).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "command", "ok", "changed", "messages", "error"],
   "properties": {
     "schema": { "const": "shipshape.ship-ctl-result/1" },
     "command": {
-      "enum": ["status", "apply", "set", "autostart", "converge", "tools", "version", "logs"]
+      "enum": [
+        "status",
+        "apply",
+        "set",
+        "autostart",
+        "converge",
+        "tools",
+        "version",
+        "logs",
+        "ssh-trust",
+        "net"
+      ]
     },
     "ok": { "type": "boolean" },
     "changed": {
@@ -44,6 +55,7 @@
                 "provision-failed",
                 "tool-failed",
                 "herdr-unavailable",
+                "invalid-input",
                 "internal"
               ]
             },
