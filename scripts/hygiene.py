@@ -6,7 +6,7 @@ person, employer, machine or network. This script enforces that in two layers:
 
 1. Generic rules, committed here, that catch the common leaks: private IPv4
    addresses, home-directory paths and real-looking email addresses. The
-   home-path and email rules skip frozen folders (legacy/, docs/archive/);
+   home-path and email rules skip the frozen folder docs/archive/;
    private IPs are checked everywhere. Findings never repeat the matched value.
 2. A private deny-list of exact terms (names, hostnames, project ids...). The
    list lives OUTSIDE the repo, so the terms themselves are never committed, and
@@ -50,7 +50,7 @@ MAX_BYTES = 2 * 1024 * 1024
 # Frozen material that predates the rule. The home-path and email rules skip it
 # (it uses a container user's home and old placeholders); the private-IP rule and
 # the deny-list still apply there.
-FROZEN_PREFIXES = ("legacy/", "docs/archive/")
+FROZEN_PREFIXES = ("docs/archive/",)
 
 # Users that may appear in paths: the Ship's own accounts and common placeholders.
 ALLOWED_HOME_USERS = {
@@ -154,7 +154,7 @@ def check_generic(line: str, frozen: bool = False) -> list[tuple[str, str]]:
     """Return (rule, detail) pairs for generic-rule violations in one line.
 
     Details name the rule and the fix, never the matched value: findings end up in
-    public CI logs. `frozen` lines (legacy/, docs/archive/) get the private-IP rule
+    public CI logs. `frozen` lines (docs/archive/) get the private-IP rule
     only.
     """
     if ALLOW_MARKER in line:

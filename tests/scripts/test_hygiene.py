@@ -123,7 +123,7 @@ def test_missing_denylist_means_generic_only(tmp_path):
 
 
 def test_frozen_folders_are_listed():
-    assert hygiene.FROZEN_PREFIXES == ("legacy/", "docs/archive/")
+    assert hygiene.FROZEN_PREFIXES == ("docs/archive/",)
 
 
 def test_frozen_lines_still_get_the_private_ip_rule():
@@ -218,12 +218,12 @@ def test_scan_tree_checks_file_paths_against_the_denylist(tmp_path):
 
 def test_scan_tree_applies_private_ip_rule_in_frozen_folders(tmp_path):
     _git(tmp_path, "init", "-q")
-    (tmp_path / "legacy").mkdir()
-    (tmp_path / "legacy" / "old.conf").write_text(
+    (tmp_path / "docs" / "archive").mkdir(parents=True)
+    (tmp_path / "docs" / "archive" / "old.conf").write_text(
         "dns " + "10." + "0.0.53\nhome " + HOME + "olduser" + "/x\n", encoding="utf-8"
     )
     findings = hygiene.scan_tree(tmp_path, [])
-    assert [(f.rule, f.where) for f in findings] == [("private-ip", "legacy/old.conf:1")]
+    assert [(f.rule, f.where) for f in findings] == [("private-ip", "docs/archive/old.conf:1")]
 
 
 def test_binary_and_oversize_files_are_skipped(tmp_path, monkeypatch):

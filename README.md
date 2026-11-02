@@ -4,7 +4,8 @@
 
 > **Status: phase 1.** Ships boot, provision themselves and resume their agents;
 > FleetLedger creates, enrols, shows and signs them in. The previous Docker-based
-> design is frozen in `legacy/` and `docs/archive/`.
+> design's code is kept by the tag `container-stack-final`; its notes are in
+> `docs/archive/`.
 
 ## What it is
 
@@ -45,7 +46,6 @@ Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 | `scripts/check` | lint, tests and the public-repo hygiene check (what CI runs) |
 | `docs/` | architecture, security, runbooks, build tracks, hygiene, archived design notes |
 | `tests/e2e/` | end-to-end tests on a real hypervisor pool, and the guided acceptance run |
-| `legacy/` | the previous container stack (frozen, to be removed) |
 
 ## Development
 
