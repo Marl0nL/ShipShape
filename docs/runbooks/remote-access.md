@@ -31,7 +31,7 @@ secret may do: `keys` (the default: mint keys only), `devices` (also remove
 destroyed Ships' devices; `devices:core` is tailnet-wide) or `policy` (also add
 the Ships' access rules for you, after a diff and your yes). It checks the
 client's scopes with Tailscale before saving anything, writes `[overlay]` to
-`ships.toml` and the secret to a 0600 file, and prints the access rules to add
+`ships.toml` and the secret to your OS keyring (or a 0600 file), and prints the access rules to add
 to your policy unless it adds them itself. `check` verifies the setup, the policy (tag owners; your devices
 reach the Ships on port 22; no rule lets a Ship start a connection; the Ship
 tests pass in Tailscale's own engine, at the `policy` level; otherwise from an

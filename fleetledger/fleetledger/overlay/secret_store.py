@@ -81,8 +81,9 @@ def keyring_usable() -> tuple[bool, str]:
 
 
 def _describe(exc: Exception) -> str:
-    text = str(exc).strip().splitlines()[0][:120] if str(exc).strip() else ""
-    return type(exc).__name__ + (f" ({text})" if text else "")
+    """The kind of keyring error, never its text: a backend's message could echo
+    what it was handed (the secret)."""
+    return type(exc).__name__
 
 
 def store_in_keyring(item: str, secret: str) -> str:

@@ -127,3 +127,29 @@ def test_the_file_store_is_unchanged(tmp_path):
     secret.chmod(0o640)
     with pytest.raises(ConfigError, match="chmod 600"):
         secret_store.load({"oauth_secret_file": str(secret)})
+
+
+def test_keyring_errors_never_relay_the_backends_text(use):
+    """A backend error could echo the value it was handed; only its kind is shown."""
+
+    class Leaky(Exception):
+        pass
+
+    backend = fake_backend()
+
+    def set_password(service, item, value):
+        raise Leaky(f"refused value {value}")
+
+    def get_password(service, item):
+        raise Leaky(f"locked; last value {SECRET}")
+
+    backend.set_password, backend.get_password = set_password, get_password
+    use(backend)
+    with pytest.raises(ConfigError) as exc:
+        secret_store.store_in_keyring("item", SECRET)
+    assert SECRET not in exc.value.message and "Leaky" in exc.value.message
+    with pytest.raises(ConfigError) as exc:
+        secret_store.load(KEYRING_API)
+    assert SECRET not in exc.value.message + (exc.value.hint or "")
+    usable, why = secret_store.keyring_usable()
+    assert not usable and SECRET not in why

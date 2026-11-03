@@ -1191,8 +1191,10 @@ def test_each_level_needs_exactly_its_scopes(env, home, level):
     assert api["manage_policy"] is (level == "policy")
 
 
-def test_setup_notes_a_client_wider_than_its_level(env):
-    tailnet = FakeTailscale(scopes=("auth_keys", "devices:core", "policy_file"))
+@pytest.mark.parametrize("extra", ["devices:core", "policy_file", "devices:core:read",
+                                   "policy_file:read"])
+def test_setup_notes_a_client_wider_than_its_level(env, extra):
+    tailnet = FakeTailscale(scopes=("auth_keys", extra))
     interactive(env, ["", "", "keys", "kExampleClient1"], tailnet=tailnet)
     code, out, err = env.run("overlay", "setup")
     assert code == 0 and "more than this level uses" in err

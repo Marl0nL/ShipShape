@@ -8,7 +8,7 @@ optionally a live probe that a Ship cannot open a connection to this computer or
 to another Ship.
 
 Secrets: the OAuth client secret is read without echo, checked in memory, and
-only then written to its 0600 file. It never goes into ships.toml, a command
+only then stored (the OS keyring, or a 0600 file). It never goes into ships.toml, a command
 line, a message or the audit log. See docs/guide/your-own-fleet.md.
 """
 
@@ -247,7 +247,8 @@ def _setup_oauth(app, store) -> int:
             granted = ", ".join(sorted(api.granted)) or "none"
             raise FleetError(f"The OAuth client lacks the scopes: {', '.join(missing)} "
                              f"(Tailscale says it has: {granted}). Nothing was saved.")
-        extra = sorted({"devices:core", "policy_file"} & api.granted - set(scopes))
+        wider = {"devices:core", "devices:core:read", "policy_file", "policy_file:read"}
+        extra = sorted(wider & api.granted - set(scopes))
         if extra:
             app.note(f"Note: the client also has {', '.join(extra)}, more than this level "
                      "uses. A narrower client keeps a leaked secret less useful.")
@@ -362,7 +363,8 @@ def _probe(app, inv, ship, ip: str) -> tuple[str, str]:
     if result.returncode == 0:
         return "fail", f"it opened a connection to {ip}:22"
     if result.returncode == PROBE_TIMEOUT_RC:
-        return "ok", f"{ip}:22 timed out (blocked by the policy)"
+        return "ok", (f"{ip}:22 timed out: blocked by the policy (or that machine is off "
+                      "the overlay; run this with it online)")
     if "refused" in result.stderr.lower():
         return "fail", (f"{ip}:22 refused the connection: the packet got through, so the "
                         "policy lets the Ship reach it (nothing happens to listen on 22)")

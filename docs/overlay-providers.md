@@ -43,7 +43,8 @@ one of two sources (`key_source`):
   console for each Ship and paste it. FleetLedger stores no credential at all.
   Destroying a Ship prints how to remove its device.
 - **`tailscale-api`**: FleetLedger signs in with an OAuth client and mints each
-  key itself. The client's secret is stored on your computer (0600).
+  key itself. The client's secret is stored on your computer, in
+  the OS keyring by default or a 0600 file (`overlay.api.secret_store`).
 
 OAuth scopes, by the names in Tailscale's current "Trust credentials" reference
 (checked against it, not from memory; re-check if Tailscale renames them):

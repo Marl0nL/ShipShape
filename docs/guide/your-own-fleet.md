@@ -58,7 +58,8 @@ otherwise or if you prefer. The keyring keeps it encrypted at rest; while it is
 unlocked, though, any program running as you can read it, agents on this computer
 included. It protects the secret on a lost or copied disk, not from your own
 processes. If the keyring is locked or gone, FleetLedger says so and how to
-unlock it or switch to the file; it never quietly reads a file instead.
+unlock it or switch to the file; it never quietly reads a file instead. If you run FleetLedger over SSH, with no desktop session (and so no
+keyring) on that computer, choose the file store.
 
 Whatever you pick, revoke the client in the admin console if your computer is
 lost, and run `ship-fleet overlay check` now and then: it tells you if the
