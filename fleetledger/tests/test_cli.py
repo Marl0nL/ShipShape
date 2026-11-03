@@ -632,6 +632,19 @@ def test_ssh(env, monkeypatch):
     assert seen[-1][-1] == "uptime"
 
 
+def test_ssh_dials_the_first_name_that_resolves(env, monkeypatch):
+    seen = []
+    monkeypatch.setattr("os.execvp", lambda file, argv: seen.append(argv))
+    env.app.resolves = lambda host: host == "ship-02.example.net"
+    env.run("ssh", "ship-02")
+    argv = seen[-1]
+    assert argv[argv.index("--") + 1] == "ship-02.example.net"
+    assert "HostKeyAlias=ship-02" in argv  # still pinned to the Ship's own key
+    env.app.resolves = lambda host: False  # nothing resolves: try the first, as before
+    env.run("ssh", "ship-02")
+    assert seen[-1][seen[-1].index("--") + 1] == "ship-02.local"
+
+
 def test_logs(env):
     code, out, _ = env.run("logs", "ship-01", "herdr", "--lines", "2")
     assert code == 0 and out.splitlines() == ["line one", "line two"]
