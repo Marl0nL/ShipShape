@@ -33,12 +33,13 @@ class PromptKeys:
 
     def key(self, ship: Ship) -> str:
         wanted = ", ".join(self.config.get("tags", ("tag:ship",)))
+        headscale = self.config.get("provider") == "headscale" or self.config.get("login_server")
         if not self.isatty():
             raise FleetError(
                 "Pasting an auth key needs a terminal.",
-                hint="Run it in a terminal, or set key_source = \"tailscale-api\" in [overlay].",
+                hint="Run it in a terminal." if headscale else
+                "Run it in a terminal, or set key_source = \"tailscale-api\" in [overlay].",
             )
-        headscale = self.config.get("provider") == "headscale" or self.config.get("login_server")
         where = ("your Headscale server (headscale preauthkeys create)" if headscale else
                  "the Tailscale admin console, Settings > Keys")
         return check_key(self.ask(

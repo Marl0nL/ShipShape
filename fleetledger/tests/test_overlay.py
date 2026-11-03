@@ -104,13 +104,22 @@ def test_api_errors_never_carry_secrets(api_config):
     assert exc.value.__suppress_context__  # the request (with the token) is not chained
 
 
-def test_api_refuses_a_secret_file_others_can_read(api_config, tmp_path):
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604])
+def test_api_refuses_a_secret_file_others_can_read(api_config, tmp_path, mode):
     secret = tmp_path / "tailscale-oauth"
-    secret.chmod(0o644)
+    secret.chmod(mode)
     opener, seen = recording([])
     with pytest.raises(ConfigError, match="chmod 600"):
         overlay.key_source(api_config, opener=opener).key(SHIP)
     assert seen == []
+
+
+def test_sign_in_errors_never_carry_the_secret(api_config):
+    for answer in ({"no_token": SECRET}, {"access_token": ""}):
+        opener, _ = recording([answer])
+        with pytest.raises(FleetError) as exc:
+            overlay.key_source(api_config, opener=opener).key(SHIP)
+        assert SECRET not in str(exc.value) and "access token" in str(exc.value)
 
 
 def test_api_answer_must_be_a_key(api_config):
@@ -273,34 +282,110 @@ def api_provider(devices, tags=("tag:ship",)):
     return providers.get(config, api_factory=lambda api: fake), fake
 
 
-def test_remove_deletes_the_ships_tagged_device():
+def test_remove_deletes_the_ships_device_by_its_recorded_name():
     ship = Ship(**{**SHIP.__dict__, "names": ("ship-03.ts.example", "ship-03.local")})
     p, fake = api_provider([
         {"nodeId": "nOther", "name": "laptop.ts.example", "hostname": "laptop", "tags": []},
-        {"nodeId": "nShip3", "name": "ship-03.ts.example.", "hostname": "ship-03",
+        {"nodeId": "nShip3", "name": "ship-03.ts.example.", "hostname": "renamed",
          "tags": ["tag:ship"]},
     ])
     removal = p.remove(ship)
     assert removal.done and fake.deleted == ["nShip3"]
+    assert "tailnet name or address" in removal.messages[0]
 
 
-def test_remove_never_touches_an_untagged_device_of_the_same_name():
-    """A person's own machine called ship-03 is not the Ship: only tagged devices go."""
+def test_remove_by_node_id_wins_over_names():
+    """The node id recorded at join is the identity: a renamed device still matches,
+    and a device that merely has the Ship's name does not."""
+    ship = Ship(**{**SHIP.__dict__, "names": ("ship-03.ts.example",), "overlay_node": "nShip3"})
+    p, fake = api_provider([
+        {"nodeId": "nImpostor", "name": "ship-03.ts.example", "hostname": "ship-03",
+         "tags": ["tag:ship"]},
+        {"nodeId": "nShip3", "name": "something-else.ts.example", "hostname": "x",
+         "tags": ["tag:ship"]},
+    ])
+    removal = p.remove(ship)
+    assert removal.done and fake.deleted == ["nShip3"] and "node id" in removal.messages[0]
+
+
+def test_remove_uses_the_live_node_id_and_addresses():
+    p, fake = api_provider([{"nodeId": "nLive", "name": "a.ts.example", "hostname": "a",
+                             "tags": ["tag:ship"], "addresses": ["192.0.2.10"]}])
+    assert p.remove(SHIP, {"node_id": "nLive"}).done and fake.deleted == ["nLive"]
+    p, fake = api_provider([{"nodeId": "nAddr", "name": "a.ts.example", "hostname": "a",
+                             "tags": ["tag:ship"], "addresses": ["192.0.2.10"]}])
+    assert p.remove(SHIP, {"addresses": ["192.0.2.10"]}).done and fake.deleted == ["nAddr"]
+
+
+def test_remove_never_by_hostname_alone():
+    """A tagged device whose hostname is the Ship's name, with nothing recorded to tie it
+    to this Ship (another fleet on the tailnet, a stale one): never removed."""
+    p, fake = api_provider([{"nodeId": "nTheirs", "name": "ship-03.ts.example",
+                             "hostname": "ship-03", "tags": ["tag:ship"]}])
+    removal = p.remove(SHIP)  # SHIP.names has only ship-03.local, no node id
+    assert not removal.done and fake.deleted == [] and "cannot tell" in removal.messages[0]
+
+
+def test_remove_never_touches_an_untagged_device():
+    ship = Ship(**{**SHIP.__dict__, "names": ("ship-03.ts.example",), "overlay_node": "nMine"})
     p, fake = api_provider([{"nodeId": "nMine", "name": "ship-03.ts.example",
                              "hostname": "ship-03", "tags": []}])
-    removal = p.remove(SHIP)
-    assert removal.done and fake.deleted == [] and "no device" in removal.messages[0]
+    removal = p.remove(ship)
+    assert fake.deleted == [] and not removal.done
 
 
 def test_remove_does_nothing_when_several_devices_match():
+    ship = Ship(**{**SHIP.__dict__, "names": ("ship-03.ts.example",)})
     p, fake = api_provider([
-        {"nodeId": "n1", "name": "ship-03.ts.example", "hostname": "ship-03",
-         "tags": ["tag:ship"]},
-        {"nodeId": "n2", "name": "ship-03-1.ts.example", "hostname": "ship-03",
-         "tags": ["tag:ship"]},
+        {"nodeId": "n1", "name": "ship-03.ts.example", "tags": ["tag:ship"]},
+        {"nodeId": "n2", "name": "other.ts.example", "tags": ["tag:ship"],
+         "addresses": ["192.0.2.10"]},
     ])
-    removal = p.remove(SHIP)
+    removal = p.remove(ship, {"addresses": ["192.0.2.10"]})
     assert not removal.done and fake.deleted == [] and "Several" in removal.messages[0]
+
+
+def test_remove_devices_off_prints_the_steps():
+    fake = FakeTS([{"nodeId": "nShip3", "name": "ship-03.ts.example", "tags": ["tag:ship"]}])
+    config = {"provider": "tailscale", "key_source": "tailscale-api",
+              "api": {"oauth_client_id": "x", "oauth_secret_file": "/unused",
+                      "remove_devices": False}}
+    p = providers.get(config, api_factory=lambda api: (_ for _ in ()).throw(AssertionError))
+    removal = p.remove(Ship(**{**SHIP.__dict__, "overlay_node": "nShip3"}))
+    assert not removal.done and "remove_devices is off" in removal.messages[0]
+    assert fake.deleted == []
+
+
+def test_the_device_removal_default_is_one_constant():
+    config = {"provider": "tailscale", "key_source": "tailscale-api",
+              "api": {"oauth_client_id": "x", "oauth_secret_file": "/unused"}}
+    assert providers.get(config).removes_devices is providers.REMOVE_DEVICES_DEFAULT
+
+
+def test_writing_the_policy_needs_manage_policy():
+    class Recorder(FakeTS):
+        def __init__(self):
+            super().__init__([])
+            self.written = []
+
+        def set_policy(self, text, etag):
+            self.written.append((text, etag))
+
+    for manage, allowed in ((False, False), (True, True)):
+        fake = Recorder()
+        config = {"provider": "tailscale", "key_source": "tailscale-api",
+                  "api": {"oauth_client_id": "x", "oauth_secret_file": "/unused",
+                          "manage_policy": manage}}
+        p = providers.get(config, api_factory=lambda api, f=fake: f)
+        if allowed:
+            p.write_policy("{}", '"e"')
+            assert fake.written == [("{}", '"e"')]
+        else:
+            with pytest.raises(FleetError, match="manage_policy is off"):
+                p.write_policy("{}", '"e"')
+            assert fake.written == []
+    with pytest.raises(FleetError):
+        providers.get({"provider": "tailscale"}).write_policy("{}", '"e"')
 
 
 def test_remove_with_pasted_keys_says_how():

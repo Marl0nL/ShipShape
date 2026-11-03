@@ -61,6 +61,7 @@ class Ship:
     profiles: tuple[str, ...] | None = None
     notes: str | None = None
     image: str | None = None  # the base image it was made from (None: before images)
+    overlay_node: str | None = None  # overlay node id recorded at join (phase 5)
 
     @classmethod
     def from_entry(cls, name: str, entry: Mapping[str, Any]) -> Ship:
@@ -80,6 +81,7 @@ class Ship:
             profiles=tuple(entry["profiles"]) if "profiles" in entry else None,
             notes=entry.get("notes"),
             image=entry.get("image"),
+            overlay_node=entry.get("overlay_node"),
         )
 
     @property

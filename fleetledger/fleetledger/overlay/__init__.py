@@ -21,8 +21,8 @@ from typing import Any
 
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship
-from fleetledger.overlay.keys import KEY_RE, PromptKeys, check_key  # noqa: F401
-from fleetledger.overlay.tsapi import API, read_secret  # noqa: F401
+from fleetledger.overlay.keys import PromptKeys  # noqa: F401  (re-exported for callers)
+from fleetledger.overlay.tsapi import read_secret  # noqa: F401  (overlay check)
 from fleetledger.shipctl import ShipCtl, ShipCtlError
 
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")  # ships.toml names
@@ -60,12 +60,16 @@ def provider(config: Mapping[str, Any], **options: Any):
 # --- joining, leaving, status ----------------------------------------------------------
 
 
+NODE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
+
+
 @dataclass
 class Joined:
     ship: str
     name: str | None
     addresses: list[str]
     messages: list[str]
+    node_id: str | None = None
 
 
 def join(ctl: ShipCtl, ship: Ship, config: Mapping[str, Any], keys) -> Joined:
@@ -73,8 +77,10 @@ def join(ctl: ShipCtl, ship: Ship, config: Mapping[str, Any], keys) -> Joined:
     key = keys.key(ship)
     result = ctl.call("overlay", *argv, input=(key + "\n").encode("ascii"), timeout=900)
     overlay = result.data.get("overlay") or {}
+    node_id = overlay.get("node_id")
     return Joined(ship.name, overlay.get("name"), list(overlay.get("addresses", [])),
-                  list(result.messages))
+                  list(result.messages),
+                  node_id if isinstance(node_id, str) and NODE_ID_RE.match(node_id) else None)
 
 
 def status(ctl: ShipCtl) -> dict | None:
@@ -108,6 +114,7 @@ def before_destroy(app, inventory: Inventory, ship: Ship) -> None:
     does not linger there. Neither step stops the destroy."""
     if not inventory.overlay:
         return
+    current = None
     try:
         ctl = ShipCtl(app.ssh_factory(inventory), ship)
         current = status(ctl)
@@ -118,7 +125,7 @@ def before_destroy(app, inventory: Inventory, ship: Ship) -> None:
         app.note(f"{ship.name}: could not leave the overlay ({exc.message}).")
     try:
         options = {"api_factory": app.overlay_api} if getattr(app, "overlay_api", None) else {}
-        removal = provider(inventory.overlay, **options).remove(ship)
+        removal = provider(inventory.overlay, **options).remove(ship, current)
     except FleetError as exc:
         app.note(f"{ship.name}: could not remove its overlay device ({exc.message}); "
                  "remove it in your overlay's admin console.")

@@ -27,6 +27,7 @@ TAG_RE = re.compile(r"^tag:[a-z0-9][a-z0-9-]{0,62}$")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$")
 ADDRESS_RE = re.compile(r"^[0-9a-fA-F:.]+$")
+NODE_ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 MAX_KEY_BYTES = 512
 JOIN_TIMEOUT = 60
 
@@ -87,7 +88,9 @@ def probe(ctx: Context) -> dict | None:
         return None
     me = doc.get("Self") or {}
     name = str(me.get("DNSName") or "").rstrip(".") or None
+    node_id = str(me.get("ID") or "")
     return {
+        "node_id": node_id if NODE_ID_RE.match(node_id) else None,
         "state": BACKEND.get(str(doc.get("BackendState")), "unknown"),
         "name": name if name and len(name) <= 253 else None,
         "addresses": [a for a in me.get("TailscaleIPs") or [] if isinstance(a, str)
@@ -103,9 +106,11 @@ def status(ctx: Context, ship: ShipToml) -> dict | None:
     if not installed():
         if not is_joined:
             return None
-        live = {"state": "not-installed", "name": None, "addresses": [], "tags": []}
+        live = {"state": "not-installed", "name": None, "addresses": [], "tags": [],
+                "node_id": record.get("node_id")}
     else:
-        live = probe(ctx) or {"state": "off", "name": None, "addresses": [], "tags": []}
+        live = probe(ctx) or {"state": "off", "name": None, "addresses": [], "tags": [],
+                              "node_id": record.get("node_id")}
     return {
         "provider": PROVIDER,
         "joined": is_joined,
@@ -263,6 +268,7 @@ def join(ctx: Context, ship: ShipToml, *, hostname: str, tags: list[str],
         "tags": tags,
         "login_server": login_server,
         "name": live["name"],
+        "node_id": live["node_id"],
         "addresses": live["addresses"],
         "joined_at": utc_now(),
     }

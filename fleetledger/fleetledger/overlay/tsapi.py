@@ -4,7 +4,10 @@ Scopes (Tailscale's "trust credentials" reference; the names are checked against
 the current docs, see docs/overlay-providers.md):
 
 - auth_keys: make the single-use keys Ships join with;
-- devices:core (with the Ships' tags): find and remove a destroyed Ship's device;
+- devices:core: find and remove a destroyed Ship's device. Tailscale makes you
+  pick tags for a client with this scope, but the tags only bind the keys it
+  makes: the scope itself reaches every device in the tailnet, so a leaked
+  secret could remove any of them (see overlay.api.remove_devices);
 - policy_file:read (needs devices:core:read and devices:posture_attributes:read):
   read and validate the tailnet policy, for `overlay check`;
 - policy_file (needs devices:posture_attributes): change the policy, only with

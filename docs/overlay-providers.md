@@ -23,7 +23,7 @@ Whatever the provider, two things never change:
 | `keys()` | Where one-off join keys come from: an object with `key(ship) -> str`. |
 | `join_args(ship)` | The arguments for `ship-ctl overlay join` (hostname, tags, server). Never the key. |
 | `policy()` | The access rules for the Ships, as text: your devices may reach the Ships' tag on port 22, and nothing allows the Ships' tag as a source. |
-| `remove(ship)` | Take a destroyed Ship's device off the overlay, or return the steps to do it by hand. Must never remove a device it cannot tie to the Ship (for Tailscale: the Ship's tag *and* its name). |
+| `remove(ship, live)` | Take a destroyed Ship's device off the overlay, or return the steps to do it by hand. Must never remove a device it cannot tie to the Ship by identity: for Tailscale, a Ship tag *and* the node id recorded at join (or, for Ships joined before node ids were recorded, the tailnet name recorded at join or the Ship's live overlay address); never the hostname alone. `live` is the Ship's overlay status just before it left, when it could be read. |
 | `check(ships)` | Checks of the overlay itself, for `ship-fleet overlay check`. |
 
 Joining, leaving and status are the same for every provider: FleetLedger calls
@@ -51,7 +51,7 @@ OAuth scopes, by the names in Tailscale's current "Trust credentials" reference
 | Level | Scopes | What FleetLedger does with them |
 |---|---|---|
 | Default | `auth_keys` | mint one single-use, pre-approved, tagged key per join (10-minute expiry by default) |
-| | `devices:core`, with the tag `tag:ship` | find a destroyed Ship's device and remove it; a credential with this scope must have tags, and only reaches devices with them |
+| | `devices:core` (Tailscale requires choosing tags, here `tag:ship`) | find a destroyed Ship's device and remove it. **The scope is tailnet-wide**: the tags only bind the keys the client makes, not which devices it can see or remove, so a leaked secret could remove *any* device (Tailscale issue 10702 asks for tag-limited clients). FleetLedger itself only ever removes a device it can tie to the Ship by identity. To keep the secret to "mint keys" only, set `api.remove_devices = false` and leave this scope out; destroy then prints the steps |
 | | `policy_file:read`, which also needs `devices:core:read` and `devices:posture_attributes:read` | read and validate the policy, for `overlay check` |
 | Opt-in (`api.manage_policy = true`) | `policy_file`, which also needs `devices:posture_attributes` | merge the Ships' rules into the policy, after showing a diff and asking |
 

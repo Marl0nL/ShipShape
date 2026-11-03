@@ -55,7 +55,10 @@ In the Tailscale admin console (or on your Headscale server):
      FleetLedger then mints a single-use, pre-approved, tagged key that expires in
      10 minutes for each join, removes a destroyed Ship's device, and can read the
      policy to check it. It cannot change the policy unless you opt in
-     (`manage_policy`, see the providers page).
+     (`manage_policy`, see the providers page). Note that Tailscale's
+     `devices:core` scope reaches every device in the tailnet, not only
+     `tag:ship` ones; if you would rather the stored secret could not remove your
+     other machines, leave that scope out and set `remove_devices = false`.
 
 ## 2. FleetLedger (once)
 
@@ -166,10 +169,12 @@ ship-fleet overlay leave ship-01
 
 turns `ssh_listen` back to `any`, logs the Ship out of the tailnet, and stops and
 disables `tailscaled`. `ship-fleet destroy` does this first by itself, then
-removes the Ship's device from the tailnet: with the API key source it deletes
-the one device tagged `tag:ship` that carries the Ship's name (an untagged
-device of the same name is never touched, and if several match it removes none
-and says so); with pasted keys, or on Headscale, it prints the steps.
+removes the Ship's device from the tailnet: with the API key source (and
+`remove_devices` on, the default) it deletes the one `tag:ship` device with the
+node id the Ship joined as (Ships joined before that was recorded: its recorded
+tailnet name or live address). It never removes a device by hostname alone,
+never an untagged one, and if several match it removes none and says so. With
+pasted keys, `remove_devices = false`, or on Headscale, it prints the steps.
 
 ## Threats this adds, and what limits them
 
@@ -178,5 +183,5 @@ and says so); with pasted keys, or on Headscale, it prints the steps.
 | Someone on the overlay reaches a Ship | Only SSH is allowed in, and only from your devices (access rules); logins still need your key and the pinned host key |
 | A compromised Ship reaches your laptop or other Ships over the overlay | The access rules give `tag:ship` no destinations at all; a policy test guards it |
 | A leaked join key | Single use, pre-approved only for `tag:ship`, expires in minutes; never stored |
-| A leaked OAuth client secret | At the default level it can mint keys for `tag:ship` (which only get port 22 from your devices), remove `tag:ship` devices and read the policy; with `manage_policy` it can also change the policy. Revoke it in the admin console; pasted keys avoid storing one at all |
+| A leaked OAuth client secret | It can mint keys for `tag:ship` (which only get port 22 from your devices) and read the policy. With `devices:core` (needed for `remove_devices`) it can also remove **any** device in the tailnet, not only Ships: Tailscale does not limit that scope by tag. With `manage_policy` it can change the policy. Revoke it in the admin console; leaving out `devices:core`, or pasting keys, keeps the secret narrow or absent |
 | Tailscale's coordination service | It can add nodes to your tailnet, but not log in to a Ship: SSH keys and pinned host keys are separate from it. Headscale removes this dependency |

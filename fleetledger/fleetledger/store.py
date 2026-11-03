@@ -312,7 +312,7 @@ def ship_entry(ship: Ship) -> dict[str, Any]:
         entry["driver_ref"] = dict(ship.driver_ref)
     entry["names"] = list(ship.names)
     entry["host_key"] = ship.host_key
-    for key in ("created", "enrolled", "notes", "image"):
+    for key in ("created", "enrolled", "notes", "image", "overlay_node"):
         value = getattr(ship, key)
         if value is not None:
             entry[key] = value

@@ -11,7 +11,8 @@ The interface:
 - keys(): where one-off join keys come from (KeySource.key(ship) -> str);
 - join_args(ship): the `ship-ctl overlay join` arguments (never the key);
 - policy(): the access rules to give the overlay, as text;
-- remove(ship): take a destroyed Ship's device off the overlay, or say how;
+- remove(ship, live): take a destroyed Ship's device off the overlay, by identity
+  only, or say how;
 - check(fleet): provider-side checks of the overlay itself (`overlay check`).
 """
 
@@ -30,6 +31,8 @@ from fleetledger.overlay import keys as keymod
 from fleetledger.overlay.tsapi import TailscaleAPI, default_opener
 
 DEFAULT_TAGS = ("tag:ship",)
+# Whether destroy removes a Ship's tailnet device by default (overlay.api.remove_devices).
+REMOVE_DEVICES_DEFAULT = True
 
 
 class KeySource(Protocol):
@@ -79,7 +82,8 @@ class OverlayProvider(ABC):
         return json.dumps(policy_doc(self.tags), indent=2) + "\n"
 
     @abstractmethod
-    def remove(self, ship: Ship) -> Removal: ...
+    def remove(self, ship: Ship, live: Mapping[str, Any] | None = None) -> Removal:
+        """live: the Ship's overlay status just before it left, if it could be read."""
 
     def check(self, fleet: Iterable[Ship]) -> list[Check]:
         return []
@@ -128,27 +132,54 @@ class TailscaleProvider(OverlayProvider):
         return keymod.PromptKeys(self.config, ask=self.options.get("ask"),
                                  isatty=self.options.get("isatty", sys.stdin.isatty))
 
-    def find_devices(self, ship: Ship) -> list[dict]:
-        """The Ship's device(s): tagged with one of its tags, and named as the Ship."""
-        found = []
-        for device in self.api().devices():
-            tags = set(device.get("tags") or [])
-            if not tags & set(self.tags):
-                continue
-            name = str(device.get("name") or "").rstrip(".")
-            if name in ship.names or device.get("hostname") == ship.name or \
-                    name.split(".", 1)[0] == ship.name:
-                found.append(device)
-        return found
-
-    def remove(self, ship: Ship) -> Removal:
+    @property
+    def removes_devices(self) -> bool:
+        """Whether destroy removes the Ship's device through the API. One default, here:
+        Tailscale's devices:core is tailnet-wide, so this decides what a leaked
+        secret could do (docs/overlay-providers.md)."""
         if not self.uses_api:
+            return False
+        return bool(self.config["api"].get("remove_devices", REMOVE_DEVICES_DEFAULT))
+
+    def find_devices(self, ship: Ship, live: Mapping[str, Any] | None = None
+                     ) -> tuple[list[dict], str]:
+        """The Ship's device(s), by identity; (matches, how they were matched).
+
+        Strongest first: the node id (recorded at join, or reported by the Ship now);
+        else the tailnet name recorded at join or the Ship's live overlay addresses.
+        Never the hostname alone: anyone can name a machine after a Ship. Only
+        devices carrying one of the Ships' tags are ever considered.
+        """
+        devices = [d for d in self.api().devices()
+                   if set(d.get("tags") or []) & set(self.tags)]
+        live = live or {}
+        node = live.get("node_id") or ship.overlay_node
+        if node:
+            return [d for d in devices if node in (d.get("nodeId"), d.get("id"))], "node id"
+        names = {n for n in ship.names if "." in n} | (
+            {str(live["name"])} if live.get("name") else set())
+        addresses = set(live.get("addresses") or [])
+        found = [d for d in devices
+                 if str(d.get("name") or "").rstrip(".") in names
+                 or addresses & set(d.get("addresses") or [])]
+        return found, "tailnet name or address"
+
+    def remove(self, ship: Ship, live: Mapping[str, Any] | None = None) -> Removal:
+        if not self.removes_devices:
+            why = ("FleetLedger has no API access with pasted keys" if not self.uses_api else
+                   "overlay.api.remove_devices is off")
             return Removal(False, [
                 f"Remove {ship.name} from your tailnet: admin console > Machines > "
-                f"{ship.name} > Remove (FleetLedger has no API access with pasted keys).",
+                f"{ship.name} > Remove ({why}).",
             ])
-        devices = self.find_devices(ship)
+        devices, how = self.find_devices(ship, live)
         if not devices:
+            namesakes = [d for d in self.api().devices() if d.get("hostname") == ship.name]
+            if namesakes:
+                return Removal(False, [
+                    f"A device named {ship.name} is on the tailnet, but FleetLedger cannot "
+                    "tell it is this Ship's (no recorded node id or tailnet name matches); "
+                    "not removing it. Remove it in the admin console if it is."])
             return Removal(True, [f"{ship.name} has no device on the tailnet."])
         if len(devices) > 1:
             names = ", ".join(str(d.get("name")) for d in devices)
@@ -157,7 +188,15 @@ class TailscaleProvider(OverlayProvider):
         device = devices[0]
         device_id = str(device.get("nodeId") or device.get("id") or "")
         self.api().delete_device(device_id)
-        return Removal(True, [f"Removed {device.get('name') or ship.name} from the tailnet."])
+        return Removal(True, [f"Removed {device.get('name') or ship.name} from the tailnet "
+                              f"(matched by {how})."])
+
+    def write_policy(self, text: str, etag: str | None) -> None:
+        """Change the tailnet policy: only with overlay.api.manage_policy (opt-in)."""
+        if not (self.uses_api and self.config["api"].get("manage_policy", False)):
+            raise FleetError("FleetLedger may not change the tailnet policy: "
+                             "overlay.api.manage_policy is off.")
+        self.api().set_policy(text, etag)
 
 
 class APIKeys:
@@ -183,7 +222,7 @@ class HeadscaleProvider(OverlayProvider):
         return keymod.PromptKeys(self.config, ask=self.options.get("ask"),
                                  isatty=self.options.get("isatty", sys.stdin.isatty))
 
-    def remove(self, ship: Ship) -> Removal:
+    def remove(self, ship: Ship, live: Mapping[str, Any] | None = None) -> Removal:
         return Removal(False, [
             f"Remove {ship.name} from Headscale, on its server: headscale nodes list "
             f"(find {ship.name}), then headscale nodes delete --identifier <id>.",
@@ -197,7 +236,7 @@ PROVIDERS: dict[str, Callable[..., OverlayProvider]] = {
 
 
 def get(config: Mapping[str, Any], **options: Any) -> OverlayProvider:
-    try:
-        return PROVIDERS[config.get("provider", "tailscale")](config, **options)
-    except KeyError:
-        raise FleetError(f"Unknown overlay provider {config.get('provider')!r}.") from None
+    make = PROVIDERS.get(config.get("provider", "tailscale"))
+    if make is None:
+        raise FleetError(f"Unknown overlay provider {config.get('provider')!r}.")
+    return make(config, **options)

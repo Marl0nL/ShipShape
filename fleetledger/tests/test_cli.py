@@ -87,7 +87,7 @@ def _overlay_call(self, ship, args):
         tags = [args[i + 1] for i, a in enumerate(args) if a == "--tag"]
         current = {"provider": "tailscale", "joined": True, "state": "running",
                    "name": f"{ship.name}.example-tailnet.ts.net", "addresses": ["192.0.2.10"],
-                   "tags": tags, "ssh_listen": "any"}
+                   "tags": tags, "ssh_listen": "any", "node_id": f"n{ship.name.replace('-', '')}"}
         self.overlay[ship.name] = current
     elif action == "leave":
         current = self.overlay.pop(ship.name, None)
@@ -943,10 +943,16 @@ def test_set_ssh_listen(env):
 
 
 class FakeTailnet:
-    def __init__(self, devices):
-        self._devices, self.deleted = devices, []
+    def __init__(self, devices, log=None, fail=False):
+        self._devices, self.deleted, self.log, self.fail = devices, [], log, fail
 
     def devices(self):
+        if self.log is not None:
+            self.log.append("devices")
+        if self.fail:
+            from fleetledger.errors import FleetError
+
+            raise FleetError("Tailscale API: listing devices failed (503).")
         return self._devices
 
     def delete_device(self, device_id):
@@ -958,14 +964,22 @@ def test_destroy_removes_the_ships_device_from_the_tailnet(env):
                  api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
     env.run("new", "ship-04", "--on", "proxmox")
     env.run("overlay", "join", "ship-04")
-    tailnet = FakeTailnet([{"nodeId": "nShip4", "name": "ship-04.example-tailnet.ts.net",
-                            "hostname": "ship-04", "tags": ["tag:ship"]}])
+    assert env.store.load().ship("ship-04").overlay_node == "nship04"  # recorded at join
+    order = []
+    tailnet = FakeTailnet([{"nodeId": "nship04", "name": "ship-04.example-tailnet.ts.net",
+                            "hostname": "ship-04", "tags": ["tag:ship"]}], log=order)
     env.app.overlay_api = lambda api: tailnet
-    env.ship.calls.clear()
+    real = env.ship.overlay_call
+
+    def logged(ship, args):
+        order.append(args[0])
+        return real(ship, args)
+
+    env.ship.overlay_call = logged
     code, out, err = env.run("destroy", "ship-04", "--yes")
     assert code == 0, err
-    assert any("leave" in c for _, c in env.ship.calls)  # left first, then removed
-    assert tailnet.deleted == ["nShip4"] and "Removed" in err
+    assert order.index("leave") < order.index("devices")  # left first, then removed
+    assert tailnet.deleted == ["nship04"] and "matched by node id" in err
 
 
 def test_destroy_removes_the_device_even_if_the_ship_is_unreachable(env):
@@ -974,12 +988,30 @@ def test_destroy_removes_the_device_even_if_the_ship_is_unreachable(env):
     env.run("new", "ship-04", "--on", "proxmox")
     env.run("overlay", "join", "ship-04")
     env.ship.down.add("ship-04")
-    tailnet = FakeTailnet([{"nodeId": "nShip4", "name": "ship-04.example-tailnet.ts.net",
+    tailnet = FakeTailnet([{"nodeId": "nship04", "name": "ship-04.example-tailnet.ts.net",
                             "hostname": "ship-04", "tags": ["tag:ship"]}])
     env.app.overlay_api = lambda api: tailnet
     code, out, err = env.run("destroy", "ship-04", "--yes")
-    assert code == 0 and tailnet.deleted == ["nShip4"]
+    assert code == 0 and tailnet.deleted == ["nship04"]  # the node id recorded at join
     assert env.driver.destroyed == ["ship-04"]
+
+
+def test_destroy_goes_on_when_the_tailnet_cannot_be_reached(env):
+    with_overlay(env, key_source="tailscale-api",
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.app.overlay_api = lambda api: FakeTailnet([], fail=True)
+    code, out, err = env.run("destroy", "ship-04", "--yes")
+    assert code == 0 and env.driver.destroyed == ["ship-04"]
+    assert "could not remove its overlay device" in err and "admin console" in err
+
+
+def test_overlay_leave_forgets_the_node_id(env):
+    with_overlay(env)
+    env.run("overlay", "join", "ship-01")
+    assert env.store.load().ship("ship-01").overlay_node == "nship01"
+    env.run("overlay", "leave", "ship-01")
+    assert env.store.load().ship("ship-01").overlay_node is None
 
 
 def test_destroy_with_pasted_keys_says_how_to_remove_the_device(env):
