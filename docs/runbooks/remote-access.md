@@ -42,16 +42,20 @@ In the Tailscale admin console (or on your Headscale server):
      Generate auth key: *not* reusable, *not* ephemeral (a Ship that reboots must
      stay), *pre-approved*, tags `tag:ship`, expiry 1 hour or less. Headscale:
      `headscale preauthkeys create --user <user> --expiration 1h --tags tag:ship`.
-   - **API.** Make an OAuth client under Settings > OAuth clients with only the
-     **Auth Keys: write** scope and the tag `tag:ship`. Put its secret in a file
-     only you can read:
+   - **API.** Make an OAuth client (Settings > Trust credentials) with the
+     scopes `auth_keys`, `devices:core` (tag `tag:ship`), `policy_file:read`,
+     `devices:core:read` and `devices:posture_attributes:read`; exact names and
+     what each is for are in [../overlay-providers.md](../overlay-providers.md).
+     Put its secret in a file only you can read:
 
      ```sh
      ( umask 077; cat > ~/.config/fleetledger/tailscale-oauth )   # paste, then Ctrl-D
      ```
 
      FleetLedger then mints a single-use, pre-approved, tagged key that expires in
-     10 minutes for each join. The OAuth client can do nothing but make such keys.
+     10 minutes for each join, removes a destroyed Ship's device, and can read the
+     policy to check it. It cannot change the policy unless you opt in
+     (`manage_policy`, see the providers page).
 
 ## 2. FleetLedger (once)
 
@@ -161,8 +165,11 @@ ship-fleet overlay leave ship-01
 ```
 
 turns `ssh_listen` back to `any`, logs the Ship out of the tailnet, and stops and
-disables `tailscaled`. `ship-fleet destroy` does this first by itself. A
-logged-out machine may still be listed in the admin console; remove it there.
+disables `tailscaled`. `ship-fleet destroy` does this first by itself, then
+removes the Ship's device from the tailnet: with the API key source it deletes
+the one device tagged `tag:ship` that carries the Ship's name (an untagged
+device of the same name is never touched, and if several match it removes none
+and says so); with pasted keys, or on Headscale, it prints the steps.
 
 ## Threats this adds, and what limits them
 
@@ -171,5 +178,5 @@ logged-out machine may still be listed in the admin console; remove it there.
 | Someone on the overlay reaches a Ship | Only SSH is allowed in, and only from your devices (access rules); logins still need your key and the pinned host key |
 | A compromised Ship reaches your laptop or other Ships over the overlay | The access rules give `tag:ship` no destinations at all; a policy test guards it |
 | A leaked join key | Single use, pre-approved only for `tag:ship`, expires in minutes; never stored |
-| A leaked OAuth client secret | It can only mint keys for `tag:ship` (which still only get port 22 from your devices); revoke it in the admin console |
+| A leaked OAuth client secret | At the default level it can mint keys for `tag:ship` (which only get port 22 from your devices), remove `tag:ship` devices and read the policy; with `manage_policy` it can also change the policy. Revoke it in the admin console; pasted keys avoid storing one at all |
 | Tailscale's coordination service | It can add nodes to your tailnet, but not log in to a Ship: SSH keys and pinned host keys are separate from it. Headscale removes this dependency |

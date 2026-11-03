@@ -940,3 +940,50 @@ def test_set_ssh_listen(env):
     assert ["sudo", "-n", "/usr/local/bin/ship-ctl", "set", "network.ssh_listen=overlay",
             "--json"] in [c for _, c in env.ship.calls]
     assert env.run("set", "ship-01", "ssh_listen=lan")[0] != 0
+
+
+class FakeTailnet:
+    def __init__(self, devices):
+        self._devices, self.deleted = devices, []
+
+    def devices(self):
+        return self._devices
+
+    def delete_device(self, device_id):
+        self.deleted.append(device_id)
+
+
+def test_destroy_removes_the_ships_device_from_the_tailnet(env):
+    with_overlay(env, key_source="tailscale-api",
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.run("overlay", "join", "ship-04")
+    tailnet = FakeTailnet([{"nodeId": "nShip4", "name": "ship-04.example-tailnet.ts.net",
+                            "hostname": "ship-04", "tags": ["tag:ship"]}])
+    env.app.overlay_api = lambda api: tailnet
+    env.ship.calls.clear()
+    code, out, err = env.run("destroy", "ship-04", "--yes")
+    assert code == 0, err
+    assert any("leave" in c for _, c in env.ship.calls)  # left first, then removed
+    assert tailnet.deleted == ["nShip4"] and "Removed" in err
+
+
+def test_destroy_removes_the_device_even_if_the_ship_is_unreachable(env):
+    with_overlay(env, key_source="tailscale-api",
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.run("overlay", "join", "ship-04")
+    env.ship.down.add("ship-04")
+    tailnet = FakeTailnet([{"nodeId": "nShip4", "name": "ship-04.example-tailnet.ts.net",
+                            "hostname": "ship-04", "tags": ["tag:ship"]}])
+    env.app.overlay_api = lambda api: tailnet
+    code, out, err = env.run("destroy", "ship-04", "--yes")
+    assert code == 0 and tailnet.deleted == ["nShip4"]
+    assert env.driver.destroyed == ["ship-04"]
+
+
+def test_destroy_with_pasted_keys_says_how_to_remove_the_device(env):
+    with_overlay(env)
+    env.run("new", "ship-04", "--on", "proxmox")
+    code, out, err = env.run("destroy", "ship-04", "--yes")
+    assert code == 0 and "admin console > Machines" in err
