@@ -20,6 +20,7 @@ def fake_backend(module="keyring.backends.SecretService", name="Keyring", locked
     class Backend:
         def __init__(self):
             self.items = {}
+            self.sets = []  # every set_password call
 
         def get_password(self, service, item):
             if locked:
@@ -27,6 +28,7 @@ def fake_backend(module="keyring.backends.SecretService", name="Keyring", locked
             return self.items.get((service, item))
 
         def set_password(self, service, item, value):
+            self.sets.append((service, item))
             if locked:
                 raise Locked("Failed to unlock the collection!")
             self.items[(service, item)] = value
@@ -153,3 +155,30 @@ def test_keyring_errors_never_relay_the_backends_text(use):
     assert SECRET not in exc.value.message + (exc.value.hint or "")
     usable, why = secret_store.keyring_usable()
     assert not usable and SECRET not in why
+
+
+@pytest.mark.parametrize("module, name", [
+    ("keyring.backends.fail", "Keyring"),
+    ("keyrings.alt.file", "PlaintextKeyring"),
+])
+def test_an_existing_item_is_only_read_from_a_secure_keyring(use, module, name):
+    """Setup offers to reuse an item only from a secure backend: a plaintext keyring
+    holding the item is ignored (load() would refuse it later anyway)."""
+    backend = use(fake_backend(module, name))
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = SECRET
+    assert secret_store.existing_in_keyring("tailscale-oauth:kExampleClient1") is None
+
+
+def test_an_existing_item_is_read_from_a_secure_keyring(use):
+    backend = use(fake_backend())
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = SECRET + "\n"
+    assert secret_store.existing_in_keyring("tailscale-oauth:kExampleClient1") == SECRET
+    assert secret_store.existing_in_keyring("tailscale-oauth:other") is None
+    assert backend.sets == []  # looking never writes
+
+
+def test_a_secret_file_that_cannot_be_read_is_a_plain_error(tmp_path):
+    folder = tmp_path / "tailscale-oauth"
+    folder.mkdir(mode=0o700)
+    with pytest.raises(ConfigError, match="Cannot read"):
+        secret_store.read_file(str(folder))

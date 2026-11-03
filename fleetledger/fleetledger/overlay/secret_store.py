@@ -22,7 +22,14 @@ from typing import Any
 from fleetledger import paths
 from fleetledger.errors import ConfigError
 
+# Stable names: people may store the secret by hand before running setup
+# (service fleetledger, item tailscale-oauth:<client id>), and setup reuses it.
 SERVICE = "fleetledger"
+OAUTH_ITEM_PREFIX = "tailscale-oauth:"
+
+
+def oauth_item(client_id: str) -> str:
+    return OAUTH_ITEM_PREFIX + client_id
 
 # Backends that keep secrets encrypted by the OS. Anything else (the fail and null
 # backends, plaintext or "encrypted file" keyrings from keyrings.alt, ...) is refused.
@@ -86,6 +93,19 @@ def _describe(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def existing_in_keyring(item: str) -> str | None:
+    """A secret already in a secure, usable keyring under item; None otherwise
+    (no keyring, locked, insecure, or no such item)."""
+    backend, _ = secure_backend()
+    if backend is None:
+        return None
+    try:
+        value = backend.get_password(SERVICE, item)
+    except Exception:
+        return None
+    return value.strip() if value and value.strip() else None
+
+
 def store_in_keyring(item: str, secret: str) -> str:
     backend, why = secure_backend()
     if backend is None:
@@ -106,7 +126,10 @@ def read_file(path_value: str) -> str:
         raise ConfigError(f"{path} does not exist.") from exc
     if stat.S_IMODE(st.st_mode) & 0o077:
         raise ConfigError(f"{path} is readable by others; chmod 600 it.")
-    secret = path.read_text(encoding="utf-8").strip()
+    try:
+        secret = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:  # a folder, unreadable, not text
+        raise ConfigError(f"Cannot read {path} ({type(exc).__name__}).") from None
     if not secret or "\n" in secret:
         raise ConfigError(f"{path} must hold only the OAuth client secret.")
     return secret

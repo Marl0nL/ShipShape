@@ -200,6 +200,10 @@ def _choose_store(app) -> str:
     return _choose(app, "Store", ("keyring", "file"), "keyring")
 
 
+def _plausible_secret(secret: str) -> bool:
+    return bool(secret) and "\n" not in secret and len(secret) <= 512
+
+
 def missing_scopes(needed, granted) -> list[str]:
     """Scopes in needed that granted lacks; a write scope covers its :read form."""
     return sorted(s for s in needed
@@ -224,16 +228,29 @@ def _setup_oauth(app, store) -> int:
     client_id = _ask(app, "OAuth client id: ")
     if not CLIENT_ID_RE.match(client_id):
         raise FleetError("That does not look like an OAuth client id.")
-    secret = _secret(app, "OAuth client secret (not shown): ")
-    if not secret or "\n" in secret or len(secret) > 512:
-        raise FleetError("That does not look like an OAuth client secret.")
-    store_kind = _choose_store(app)
+    item = secret_store.oauth_item(client_id)
+    secret = secret_store.existing_in_keyring(item)
+    if secret is not None and not _plausible_secret(secret):
+        app.note(f"The keyring item {item} does not hold a plausible secret; not using it.")
+        secret = None
+    reused = False
+    if secret is not None and _choose(
+            app, f"A secret for this client is already in your keyring ({secret_store.SERVICE}"
+            f" / {item}). Use it (it is checked with Tailscale first, never shown)",
+            ("yes", "no"), "yes") == "yes":
+        reused = True
+        store_kind = "keyring"
+    else:
+        secret = _secret(app, "OAuth client secret (not shown): ")
+        if not _plausible_secret(secret):
+            raise FleetError("That does not look like an OAuth client secret.")
+        store_kind = _choose_store(app)
     # Where the secret goes, and the same place recorded in ships.toml (the file
     # path honours FLEETLEDGER_CONFIG_DIR and XDG_CONFIG_HOME).
     secret_path = paths.config_dir() / SECRET_FILE
     api_cfg: dict[str, Any] = {"tailnet": "-", "oauth_client_id": client_id}
     if store_kind == "keyring":
-        api_cfg.update(secret_store="keyring", keyring_item=f"tailscale-oauth:{client_id}")
+        api_cfg.update(secret_store="keyring", keyring_item=item)
     else:
         api_cfg.update(secret_store="file", oauth_secret_file=_tilde(secret_path))
     api_cfg.update(key_expiry_s=600, remove_devices=remove, manage_policy=manage)
@@ -261,8 +278,10 @@ def _setup_oauth(app, store) -> int:
     if manage:
         text, etag = api.policy_text()
 
-    if store_kind == "keyring":
-        backend = secret_store.store_in_keyring(api_cfg["keyring_item"], secret)
+    if reused:
+        kept = f"in your OS keyring, as it was ({secret_store.SERVICE} / {item})"
+    elif store_kind == "keyring":
+        backend = secret_store.store_in_keyring(item, secret)
         kept = f"in your OS keyring ({backend.rsplit('.', 2)[-2]})"
     else:
         paths.private_dir(secret_path.parent)

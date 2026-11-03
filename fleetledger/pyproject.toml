@@ -20,11 +20,16 @@ dependencies = [
 ]
 
 [project.scripts]
-ship-fleet = "fleetledger.cli:main"
+# Through a launcher, so the current folder can never shadow the package
+# (shipfleet_launch.py explains).
+ship-fleet = "shipfleet_launch:main"
 
 [build-system]
 requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["shipfleet_launch"]
 
 [tool.setuptools.packages.find]
 include = ["fleetledger*"]
