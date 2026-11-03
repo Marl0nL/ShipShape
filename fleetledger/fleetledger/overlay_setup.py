@@ -27,7 +27,7 @@ from typing import Any
 from fleetledger import overlay, paths
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
-from fleetledger.overlay import hujson
+from fleetledger.overlay import hujson, secret_store
 from fleetledger.overlay import rules as pol
 from fleetledger.overlay.providers import Check
 from fleetledger.overlay.tsapi import TailscaleAPI
@@ -95,7 +95,7 @@ def setup(args, app) -> int:
                          hint="ship-fleet overlay setup --force replaces it.")
     app.say("Ships can join an overlay network so you reach them from anywhere, with no\n"
             "router ports opened. SSH with each Ship's pinned key stays the only way in.\n")
-    old_secret = (inv.overlay or {}).get("api", {}).get("oauth_secret_file")
+    old_secret = (inv.overlay or {}).get("api")
     provider = _choose(app, "Overlay provider: Tailscale's service, or your own Headscale",
                        ("tailscale", "headscale"), "tailscale")
     if provider == "headscale":
@@ -104,8 +104,9 @@ def setup(args, app) -> int:
         return code
     app.say("\nWhere join keys come from:\n"
             "  oauth  FleetLedger mints a single-use key per Ship with an OAuth client\n"
-            "         whose secret is stored on this computer (0600). Convenient; it can\n"
-            "         also remove destroyed Ships' devices and check your access rules.\n"
+            "         whose secret is kept on this computer (OS keyring, or a 0600 file).\n"
+            "         Convenient; at higher levels it can also remove destroyed Ships'\n"
+            "         devices and manage your access rules.\n"
             "  paste  You make a single-use key in the admin console for each Ship and\n"
             "         paste it. Nothing is stored: the lowest risk, a little more work.\n")
     source = _choose(app, "Key source", ("oauth", "paste"), "oauth")
@@ -126,12 +127,19 @@ def setup(args, app) -> int:
     return _setup_oauth(app, store)
 
 
-def _note_old_secret(app, store, old_secret: str | None) -> None:
+def _note_old_secret(app, store, old_api: dict | None) -> None:
     """After --force: an OAuth secret the new setup no longer uses is worth saying."""
-    current = (store.load().overlay or {}).get("api", {}).get("oauth_secret_file")
-    if old_secret and old_secret != current and paths.expand(old_secret).exists():
-        app.say(f"\nThe OAuth secret in {old_secret} is no longer used: delete it, and revoke "
-                "the client in the admin console.")
+    if not old_api:
+        return
+    current = (store.load().overlay or {}).get("api") or {}
+    if secret_store.where(old_api) == secret_store.where(current):
+        return
+    if old_api.get("secret_store", "file") == "keyring":
+        app.say(f"\nThe OAuth secret in {secret_store.where(old_api)} is no longer used: "
+                "remove it in your keyring app, and revoke the client in the admin console.")
+    elif paths.expand(old_api["oauth_secret_file"]).exists():
+        app.say(f"\nThe OAuth secret in {old_api['oauth_secret_file']} is no longer used: "
+                "delete it, and revoke the client in the admin console.")
 
 
 def _setup_headscale(app, store) -> int:
@@ -175,6 +183,23 @@ LEVELS_TEXT = (
 )
 
 
+def _choose_store(app) -> str:
+    """Where to keep the secret: the OS keyring when a secure, unlocked one is there."""
+    usable, why = secret_store.keyring_usable()
+    app.say("\nWhere to keep the OAuth secret:\n"
+            "  keyring  your OS keyring (GNOME Keyring or KWallet; Keychain on macOS):\n"
+            "           encrypted at rest, unlocked with your login. While it is unlocked,\n"
+            "           any program running as you can read it, agents on this computer\n"
+            "           included: it protects the secret at rest, not from your own\n"
+            "           processes.\n"
+            "  file     a file only you can read (0600). Readable by any program running\n"
+            "           as you, and by anyone who gets a copy of your disk.\n")
+    if not usable:
+        app.say(f"The keyring cannot be used here ({why}); using the file.")
+        return "file"
+    return _choose(app, "Store", ("keyring", "file"), "keyring")
+
+
 def missing_scopes(needed, granted) -> list[str]:
     """Scopes in needed that granted lacks; a write scope covers its :read form."""
     return sorted(s for s in needed
@@ -202,12 +227,16 @@ def _setup_oauth(app, store) -> int:
     secret = _secret(app, "OAuth client secret (not shown): ")
     if not secret or "\n" in secret or len(secret) > 512:
         raise FleetError("That does not look like an OAuth client secret.")
-    # Where the secret goes, and the same path recorded in ships.toml (it honours
-    # FLEETLEDGER_CONFIG_DIR and XDG_CONFIG_HOME).
+    store_kind = _choose_store(app)
+    # Where the secret goes, and the same place recorded in ships.toml (the file
+    # path honours FLEETLEDGER_CONFIG_DIR and XDG_CONFIG_HOME).
     secret_path = paths.config_dir() / SECRET_FILE
-    api_cfg = {"tailnet": "-", "oauth_client_id": client_id,
-               "oauth_secret_file": _tilde(secret_path),
-               "key_expiry_s": 600, "remove_devices": remove, "manage_policy": manage}
+    api_cfg: dict[str, Any] = {"tailnet": "-", "oauth_client_id": client_id}
+    if store_kind == "keyring":
+        api_cfg.update(secret_store="keyring", keyring_item=f"tailscale-oauth:{client_id}")
+    else:
+        api_cfg.update(secret_store="file", oauth_secret_file=_tilde(secret_path))
+    api_cfg.update(key_expiry_s=600, remove_devices=remove, manage_policy=manage)
 
     # Check the credentials before anything is written.
     api = _api(app, api_cfg, secret=lambda: secret)
@@ -231,14 +260,19 @@ def _setup_oauth(app, store) -> int:
     if manage:
         text, etag = api.policy_text()
 
-    paths.private_dir(secret_path.parent)
-    paths.write_private(secret_path, (secret + "\n").encode("utf-8"))
+    if store_kind == "keyring":
+        backend = secret_store.store_in_keyring(api_cfg["keyring_item"], secret)
+        kept = f"in your OS keyring ({backend.rsplit('.', 2)[-2]})"
+    else:
+        paths.private_dir(secret_path.parent)
+        paths.write_private(secret_path, (secret + "\n").encode("utf-8"))
+        kept = f"in {secret_path} (0600)"
     config = {"provider": "tailscale", "tags": ["tag:ship"], "key_source": "tailscale-api",
               "api": api_cfg}
     with store.edit() as ed:
         ed.set_overlay(config)
     app.say(f"\nCredentials work. Saved [overlay] in ships.toml (level {level}); the secret "
-            f"is in {secret_path} (0600).")
+            f"is {kept}.")
 
     if manage:
         provider = overlay.provider(config, api_factory=lambda _cfg: api)
@@ -349,10 +383,13 @@ def check(args, app) -> int:
         items.append(Check("join keys expire", "ok" if expiry <= 3600 else "warn",
                            f"minted keys are single use and expire after {expiry} s"))
         try:
-            overlay.read_secret(config["api"]["oauth_secret_file"])
-            items.append(Check("OAuth secret file", "ok", "present, mode 0600"))
+            secret_store.load(config["api"])
+            items.append(Check("OAuth secret", "ok", "readable in " + secret_store.where(
+                config["api"]) + ("" if config["api"].get("secret_store") == "keyring"
+                                  else ", mode 0600")))
         except FleetError as exc:
-            items.append(Check("OAuth secret file", "fail", exc.message))
+            items.append(Check("OAuth secret", "fail",
+                               exc.message + (f" {exc.hint}" if exc.hint else "")))
     else:
         items.append(Check("join keys", "ok", "pasted one at a time; nothing stored"))
 

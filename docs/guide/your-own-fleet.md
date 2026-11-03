@@ -45,12 +45,20 @@ offers these four:
 | | **Paste** | **OAuth: keys** (default) | **OAuth: keys + devices** | **OAuth: keys + devices + policy** |
 |---|---|---|---|---|
 | Making a Ship's key | you, in the admin console, each time | FleetLedger | FleetLedger | FleetLedger |
-| Stored on your computer | nothing | an OAuth secret (0600) | an OAuth secret (0600) | an OAuth secret (0600) |
+| Stored on your computer | nothing | an OAuth secret, in your OS keyring (or a 0600 file) | the same | the same |
 | Scopes | none | `auth_keys` | + `devices:core` | + `policy_file` |
 | If the secret leaks, someone can | (nothing to leak) | mint `tag:ship` keys: add devices that your rules let reach nothing | also remove or re-tag **any** device in your tailnet, your laptop included: `devices:core` is tailnet-wide, its tags only bind keys. Recovery: an admin re-adds or re-tags them in the console | also rewrite your access rules |
 | Destroying a Ship | prints the step to remove its device | prints the step | removes its device | removes its device |
 | Access rules | you paste them once; `check --policy FILE` checks an export | the same | the same | FleetLedger adds them (diff, then your yes); `check` reads them itself |
 | Choose it if | you want no credential stored | you want hands-off keys (the usual choice) | you destroy Ships often and accept the wider scope | you want FleetLedger to keep the rules in place, and will guard the secret like an admin login |
+
+Where the secret lives: `setup` uses your OS keyring when a secure, unlocked one
+is there (GNOME Keyring or KWallet on Linux, Keychain on macOS), and a 0600 file
+otherwise or if you prefer. The keyring keeps it encrypted at rest; while it is
+unlocked, though, any program running as you can read it, agents on this computer
+included. It protects the secret on a lost or copied disk, not from your own
+processes. If the keyring is locked or gone, FleetLedger says so and how to
+unlock it or switch to the file; it never quietly reads a file instead.
 
 Whatever you pick, revoke the client in the admin console if your computer is
 lost, and run `ship-fleet overlay check` now and then: it tells you if the

@@ -11,7 +11,8 @@ the current docs, see docs/overlay-providers.md for the three levels):
 - policy_file (level 3, overlay.api.manage_policy, opt-in; needs devices:core:read
   and devices:posture_attributes): read, validate and change the tailnet policy.
 
-The client secret is read from its 0600 file for each sign-in. Neither it, the
+The client secret is read for each sign-in from its store (secret_store: the OS
+keyring or a 0600 file). Neither it, the
 access token, nor a minted key is ever printed, logged or put in an exception,
 and errors are raised `from None` so the request (which carries the token) is not
 chained into the traceback.
@@ -20,7 +21,6 @@ chained into the traceback.
 from __future__ import annotations
 
 import json
-import stat
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,8 +28,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fleetledger import paths
-from fleetledger.errors import ConfigError, FleetError
+from fleetledger.errors import FleetError
+from fleetledger.overlay import secret_store
 
 API = "https://api.tailscale.com/api/v2"
 
@@ -41,17 +41,8 @@ def default_opener(request: urllib.request.Request, timeout: float) -> Any:
 
 
 def read_secret(path_value: str) -> str:
-    path = paths.expand(path_value)
-    try:
-        st = path.stat()
-    except FileNotFoundError as exc:
-        raise ConfigError(f"{path} does not exist.") from exc
-    if stat.S_IMODE(st.st_mode) & 0o077:
-        raise ConfigError(f"{path} is readable by others; chmod 600 it.")
-    secret = path.read_text(encoding="utf-8").strip()
-    if not secret or "\n" in secret:
-        raise ConfigError(f"{path} must hold only the OAuth client secret.")
-    return secret
+    """The secret from a 0600 file (kept for callers; see secret_store)."""
+    return secret_store.read_file(path_value)
 
 
 @dataclass(frozen=True)
@@ -66,7 +57,7 @@ class TailscaleAPI:
                  secret: Callable[[], str] | None = None) -> None:
         self.api = api
         self.opener = opener
-        self._secret = secret or (lambda: read_secret(api["oauth_secret_file"]))
+        self._secret = secret or (lambda: secret_store.load(api))
         self._token: str | None = None
         # The scopes the sign-in reported; None when Tailscale did not say.
         self.granted: frozenset[str] | None = None

@@ -1354,7 +1354,7 @@ def test_setup_then_check_finds_the_secret_where_it_was_written(env, home, monke
 
     assert fl_paths.expand(recorded) == home / "config" / "tailscale-oauth"
     code, out, err = env.run("overlay", "check")
-    assert any(line.startswith("OK") and "OAuth secret file" in line
+    assert any(line.startswith("OK") and "OAuth secret" in line
                for line in out.splitlines()), out
 
 
@@ -1406,7 +1406,7 @@ def test_check_fails_on_a_bad_secret_file_or_an_unreadable_policy(env, home):
     (home / "config" / "tailscale-oauth").chmod(0o644)
     code, out, err = env.run("overlay", "check")
     assert code == 1
-    assert _re.search(r"^FAIL\s+OAuth secret file", out, _re.M)
+    assert _re.search(r"^FAIL\s+OAuth secret", out, _re.M)
     assert _re.search(r"^FAIL\s+read the policy", out, _re.M)
 
 
@@ -1426,3 +1426,65 @@ def test_check_matches_stale_devices_by_hostname_too(env, home):
         {"name": "ship-01-1.example-tailnet.ts.net", "hostname": "ship-01", "tags": ["tag:ship"]}]))
     code, out, err = env.run("overlay", "check")
     assert any(line.startswith("OK") and "tailnet devices" in line for line in out.splitlines())
+
+
+# --- the OAuth secret in the OS keyring ---------------------------------------------------
+
+
+def secure_keyring(monkeypatch, locked=False):
+    from fleetledger.overlay import secret_store
+    from test_secret_store import fake_backend
+
+    backend = fake_backend(locked=locked)
+    monkeypatch.setattr(secret_store, "get_keyring", lambda: backend)
+    return backend
+
+
+def test_setup_keeps_the_secret_in_the_keyring_by_default(env, home, monkeypatch):
+    backend = secure_keyring(monkeypatch)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)  # store: default
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    api = env.store.load().overlay["api"]
+    assert api["secret_store"] == "keyring"
+    assert api["keyring_item"] == "tailscale-oauth:kExampleClient1"
+    assert "oauth_secret_file" not in api
+    assert backend.items == {("fleetledger", "tailscale-oauth:kExampleClient1"): OAUTH_SECRET}
+    assert not (home / "config" / "tailscale-oauth").exists()
+    assert OAUTH_SECRET not in env.store.path.read_text() + out + err
+    assert "any program running as you" in out  # the honest trade-off
+    code, out, err = env.run("overlay", "check")
+    assert any(line.startswith("OK") and "OAuth secret" in line and "keyring" in line
+               for line in out.splitlines()), out
+
+
+def test_setup_can_choose_the_file_even_with_a_keyring(env, home, monkeypatch):
+    backend = secure_keyring(monkeypatch)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", "file"], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    assert env.store.load().overlay["api"]["secret_store"] == "file"
+    assert backend.items == {} and (home / "config" / "tailscale-oauth").exists()
+
+
+def test_setup_uses_the_file_when_the_keyring_is_locked(env, home, monkeypatch):
+    secure_keyring(monkeypatch, locked=True)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1"], tailnet=tailnet)  # no store question
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0 and "cannot be used here" in out
+    assert env.store.load().overlay["api"]["secret_store"] == "file"
+
+
+def test_check_fails_plainly_on_a_locked_keyring(env, home, monkeypatch):
+    import re as _re
+
+    secure_keyring(monkeypatch)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    secure_keyring(monkeypatch, locked=True)
+    code, out, err = env.run("overlay", "check")
+    assert code == 1
+    assert _re.search(r"^FAIL\s+OAuth secret .*locked.*Unlock it", out, _re.M), out

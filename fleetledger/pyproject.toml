@@ -8,6 +8,7 @@ requires-python = ">=3.12"
 dependencies = [
   "Jinja2>=3.1.6,<4",
   "jsonschema>=4.26,<5",
+  "keyring>=25.7,<26",
   "pexpect>=4.9,<5",
   "pycdlib>=1.22,<2",
   "PyYAML>=6.0.3,<7",

@@ -78,9 +78,16 @@ your other machines without forwarding router ports
   its recorded node id, never by hostname alone), and policy management
   (`policy_file`: FleetLedger only adds the Ships' rules, after a diff and your
   yes, but the secret could change any rule). `ship-fleet overlay
-  setup` checks the client's scopes before it saves the secret (0600, never in
-  `ships.toml`), and `overlay check` keeps verifying the rules
+  setup` checks the client's scopes before it saves the secret, and `overlay
+  check` keeps verifying the rules
   ([guide/your-own-fleet.md](guide/your-own-fleet.md) compares the choices).
+- **The secret is kept in the OS keyring by default** (Secret Service on Linux,
+  Keychain on macOS; insecure backends such as plaintext or null keyrings are
+  refused), or in a 0600 file. `ships.toml` names the store, never the secret.
+  An unlocked keyring is readable by any process of the same user, agents on
+  this computer included: it protects the secret at rest, not between your own
+  processes. A locked or missing keyring is an error with the way to unlock it
+  or switch stores; reads never fall back to a file.
 - **Cloud Ships** will need another first-contact path:
   [design/cloud-first-contact.md](design/cloud-first-contact.md).
 - **Nothing runs until a Ship joins.** `tailscale` is installed (from its pinned,
@@ -128,7 +135,7 @@ your other machines without forwarding router ports
 | Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet ca init` |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
 | Proxmox API token | your computer: `~/.config/fleetledger/` (0600) | made once by you |
-| Overlay OAuth client secret (optional) | your computer: `~/.config/fleetledger/` (0600) | made once by you; can only mint `tag:ship` keys |
+| Overlay OAuth client secret (optional) | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |
 | Overlay join key | nowhere for long: the Ship's `/run` (tmpfs, root-only) while it joins | pasted, or minted per join; single use, minutes |
 | Ship's overlay node key | the Ship: Tailscale's state in `/var/lib/tailscale` (root) | `tailscale up` |
 | Your own key | your machines | public half put on `agent` by the seed |

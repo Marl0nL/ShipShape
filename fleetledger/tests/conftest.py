@@ -27,6 +27,22 @@ def keygen(path: Path, comment: str) -> Path:
     return path
 
 
+class NoKeyring:
+    """What tests get by default: no usable keyring, so nothing ever reaches a real one."""
+
+    def get_password(self, service, item):
+        raise RuntimeError("no keyring in tests")
+
+    set_password = get_password
+
+
+@pytest.fixture(autouse=True)
+def no_real_keyring(monkeypatch):
+    from fleetledger.overlay import secret_store
+
+    monkeypatch.setattr(secret_store, "get_keyring", lambda: NoKeyring())
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """FleetLedger config/data/runtime dirs under tmp, with throwaway keys."""
