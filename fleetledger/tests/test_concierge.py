@@ -294,12 +294,35 @@ def test_redact_scrubs_accounts_and_ids_after_escapes_are_gone():
 # --- login(): checks against the tag, audit ---------------------------------
 
 
-def ship_side(answers):
+NOTIFIED: list[list[str]] = []  # ship-ctl notify-signin calls the fake Ship received
+
+
+def ship_ctl_side(cmd, notify_data=None):
+    """The fake Ship's ship-ctl: version, and notify-signin telling main and grinder."""
+    from fleetledger.shipctl import KNOWN_CONTRACTS
+
+    verb = cmd[3]
+    base = {"schema": "shipshape.ship-ctl-result/1", "command": verb, "ok": True,
+            "changed": [], "messages": [], "error": None}
+    if verb == "version":
+        return 0, json.dumps({**base, "data": {"tooling": "0.1.0", "commit": "0123456789ab",
+                                               "contracts": dict(KNOWN_CONTRACTS)}}), ""
+    if verb == "notify-signin":
+        NOTIFIED.append(cmd[3:])
+        data = notify_data or {"service": cmd[4], "account": "work@example.com",
+                               "sent": ["main", "grinder"], "skipped": []}
+        return 0, json.dumps({**base, "data": data}), ""
+    raise AssertionError(cmd)
+
+
+def ship_side(answers, notify_data=None):
     """FakeSSH handler: answers by the agent command run (bash -c '<cmd>')."""
 
     def handler(ship, cmd, inp):
         if cmd == ["true"]:
             return 0, b"", ""
+        if cmd[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"]:
+            return ship_ctl_side(cmd, notify_data)
         command = cmd[-1]
         for key, value in answers.items():
             if key in command:
@@ -495,3 +518,57 @@ def test_logout(store, fake_ssh):
     ssh = fake_ssh(ship_side({"gh auth logout --hostname github.com": (0, b"", "")}))
     assert concierge.logout(ssh, inv.ship("ship-01"), provider("github"))
     assert audit.read()[-1]["action"] == "logout"
+
+
+# --- after a sign-in: tell the Ship's core agents (ship-ctl notify-signin) ------
+
+
+def claude_login(store, fake_ssh, monkeypatch, tmp_path, email="work@example.com",
+                 logged_in=True, notify_data=None):
+    NOTIFIED.clear()
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(ship_side({
+        "claude auth status --json": (0, json.dumps({"loggedIn": logged_in, "email": email}), ""),
+    }, notify_data)), store)
+    return concierge.login(ssh, inv, inv.ship("ship-01"), provider("claude"),
+                           Prompter(code=CLAUDE_CODE),
+                           spawner=fake_spawner("claude.txt", monkeypatch, tmp_path))
+
+
+def test_a_good_sign_in_tells_the_core_agents(store, fake_ssh, monkeypatch, tmp_path):
+    result = claude_login(store, fake_ssh, monkeypatch, tmp_path)
+    assert result.outcome == "ok"
+    # Only the service name goes to the Ship: it reads the account itself.
+    assert NOTIFIED == [["notify-signin", "claude", "--json"]]
+    assert "Told main, grinder that Claude Code is signed in." in result.notes
+
+
+@pytest.mark.parametrize("email,logged_in,outcome", [
+    ("you@example.com", True, "wrong-account"), (None, False, "failed")])
+def test_no_notice_unless_the_sign_in_checked_out(store, fake_ssh, monkeypatch, tmp_path,
+                                                  email, logged_in, outcome):
+    result = claude_login(store, fake_ssh, monkeypatch, tmp_path, email, logged_in)
+    assert result.outcome == outcome
+    assert NOTIFIED == []
+
+
+def test_agents_not_told_are_listed(store, fake_ssh, monkeypatch, tmp_path):
+    data = {"service": "claude", "account": "work@example.com", "sent": ["main"],
+            "skipped": [{"name": "grinder", "reason": "waiting-for-permission"}]}
+    result = claude_login(store, fake_ssh, monkeypatch, tmp_path, notify_data=data)
+    assert result.notes[-2:] == ["Told main that Claude Code is signed in.",
+                                 "grinder was not told (waiting-for-permission)."]
+
+
+def test_a_failed_notice_never_fails_the_sign_in(store, fake_ssh, monkeypatch, tmp_path):
+    """An older Ship without notify-signin, say: the sign-in still counts, with a note."""
+    from fleetledger import concierge as concierge_mod
+
+    def old_ship(*args, **kwargs):
+        raise concierge_mod.FleetError("ship-ctl notify-signin failed (usage): invalid choice")
+
+    monkeypatch.setattr(concierge_mod.ShipCtl, "call", old_ship)
+    result = claude_login(store, fake_ssh, monkeypatch, tmp_path)
+    assert result.outcome == "ok"
+    assert result.notes[-1].startswith("The Ship's agents were not told about this sign-in:")
+    assert audit.read()[-1]["outcome"] == "ok"

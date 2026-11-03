@@ -50,7 +50,17 @@ ship-01 claude: WRONG ACCOUNT: claude is you@example.com, the Ship's tags expect
 sign-in columns).
 
 Within a minute of Claude signing in, the Ship starts its autostart agents by
-itself; FleetLedger does nothing more.
+itself. They may start before you have signed in to gcloud or GitHub, and find
+those missing. So after each later sign-in that checks out, FleetLedger has the
+Ship tell its autostart agents, and only those, with one line:
+
+```
+ShipShape: GitHub is now signed in as example-user. Re-check it if you need it.
+```
+
+`ship-fleet login` lists who was told, and any agent that was not (not running,
+or waiting at a permission prompt, which is never typed into). The Ship records
+each notice in its journal: `ship-fleet logs SHIP system`.
 
 ## Remote Control
 

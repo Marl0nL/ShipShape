@@ -117,10 +117,37 @@ it anyway is harmless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
 
+### `ship-ctl notify-signin SERVICE [--json]`
+
+Tells the Ship's core agents that a sign-in has completed. SERVICE is `claude`,
+`gcloud`, `gcloud-adc` or `github`. FleetLedger runs it once a sign-in it ran
+(`ship-fleet login`, the web UI's concierge) checks out with the expected
+account, because agents started before that sign-in may already have found it
+missing.
+
+- **Core agents only:** the `[[autostart]]` entries, matched to live herdr agents
+  as `autostart` matches them. No other agent is ever messaged (a Ship running a
+  firstmate may have many worker agents).
+- **One line**, typed with `herdr agent prompt`:
+  `ShipShape: <service> is now signed in as <account>. Re-check it if you need it.`
+  The account is read on the Ship from the service's own status probe and cut
+  down to letters, digits and `@._+-`. It carries nothing else.
+- **Skipped**, with a reason in `data`: an entry with no live agent
+  (`not-running`), and an agent waiting at a permission prompt
+  (`waiting-for-permission`), since typed text and Enter could answer it.
+  Claude Code queues the line while a turn is running.
+- **Recorded** in the Ship's journal (`ship-ctl logs system`, tag `ship-ctl`).
+- A service that is not signed in sends nothing.
+
+`data`: `{ "service": ..., "account": ... or null, "sent": [names], "skipped":
+[{ "name": ..., "reason": ... }] }`.
+
 ### Reacting to sign-ins
 
-The Ship reacts to sign-ins by itself; FleetLedger triggers nothing after a
-sign-in. Each time the status timer refreshes `/run/shipshape/status.json` (at
+The Ship reacts to sign-ins by itself (below). The only thing FleetLedger adds
+after a sign-in it ran is `notify-signin`, to tell the core agents.
+
+Each time the status timer refreshes `/run/shipshape/status.json` (at
 least every 60 seconds), ship-ctl compares every `auth` service's state with the
 previous refresh:
 
