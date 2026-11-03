@@ -5,6 +5,10 @@ one small storage for seed ISOs, one bridge, a template VM, and an API token
 scoped to those. About 15 minutes, as root on the Proxmox host. Nothing here
 needs repeating per Ship.
 
+`ship-fleet setup` does step 3 for you and prints the commands of steps 1 and
+2 that your host still needs, with the names it found filled in; this runbook
+explains them, and is the way to do it all by hand.
+
 The pool, seed storage, user and VMID (`shipshape`, `shipshape-seeds`,
 `shipshape@pve`, `9000`) are suggestions; the VM disk storage and the bridge are
 whatever your host has. Put the names you use in `ships.toml` afterwards.
@@ -98,6 +102,13 @@ than the Ships you will make (FleetLedger grows it, never shrinks it).
 
 ## 3. On your computer
 
+`ship-fleet setup` asks for the address, the token id and the secret (hidden),
+shows the certificate's fingerprint for you to compare with the one below,
+checks the token, and keeps the secret in your OS keyring (service
+`fleetledger`, item `proxmox-token:<token id>`) or, if you choose, the file
+below. It then fills in `[drivers.proxmox]` from what the token can see. By
+hand:
+
 ```sh
 install -d -m 700 ~/.config/fleetledger
 ( umask 077; cat > ~/.config/fleetledger/proxmox-token )   # paste the secret, then Ctrl-D
@@ -130,8 +141,12 @@ tls_fingerprint = "AB:CD:...:89"     # the SHA-256 fingerprint above
 vmid_range = [9100, 9199]           # VMIDs FleetLedger may use
 ```
 
+To keep the secret in the OS keyring instead of the file, replace `token_file`
+with `token_store = "keyring"` and `keyring_item = "proxmox-token:shipshape@pve!build"`.
+
 The token expires after 90 days: make a new one with the same `pveum user token
-add` and the two `acl modify --tokens` lines, and replace the file.
+add` and the `acl modify --tokens` lines, then run `ship-fleet setup --redo
+hypervisor` (or replace the file).
 
 ## 4. Snapshots and baked images (phase 4, optional)
 

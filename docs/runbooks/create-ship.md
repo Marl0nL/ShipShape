@@ -15,6 +15,15 @@ ship-fleet --version
 ## 2. Set up your fleet (once)
 
 ```sh
+ship-fleet setup
+```
+
+`setup` walks through everything below, plus the certificate authority, Proxmox
+and the overlay, and offers to make a first Ship; it skips what is already done,
+so run it again whenever you like. The rest of this section is what it does, and
+how to do it by hand:
+
+```sh
 ship-fleet init                   # asks for a passphrase for the new admin key
 ssh-add ~/.ssh/shipshape_fleet_ed25519
 ```
