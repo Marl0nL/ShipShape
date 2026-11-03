@@ -60,6 +60,8 @@ class FakeShip:
             raise Unreachable(f"Cannot reach {ship.name}")
         if command == ["true"]:
             return 0, "", ""
+        if command[:1] == ["timeout"]:  # overlay check --probe: /dev/tcp to an address
+            return getattr(self, "probe_rc", 124), "", getattr(self, "probe_err", "")
         if command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"]:
             verb = command[3]
             if verb == "version":
@@ -1050,3 +1052,441 @@ def test_resolving_a_name_is_capped(monkeypatch):
     assert _time.monotonic() - started < 2
     assert cli._resolves("192.0.2.44") is True  # an address needs no lookup
     assert cli._resolves("2001:db8::44") is True
+
+
+# --- overlay setup and check --------------------------------------------------------------
+
+import json as _json  # noqa: E402
+
+from fleetledger.overlay.providers import policy_doc  # noqa: E402
+
+OAUTH_SECRET = "tskey-client-kExample9CNTRL-SETUPSECRET0123456789"
+GOOD_POLICY = _json.dumps(policy_doc(["tag:ship"]), indent=2)
+
+
+class FakeTailscale:
+    def __init__(self, policy=GOOD_POLICY, scopes=("auth_keys", "devices:core",
+                                                   "policy_file:read", "policy_file"),
+                 devices=(), problems=()):
+        self.policy, self.granted_scopes = policy, frozenset(scopes)
+        self._devices, self.problems = list(devices), list(problems)
+        self.set_calls, self.validated, self.secrets_seen = [], [], []
+        self.granted = frozenset()
+        self.used = []  # which device and policy calls were made
+
+    def __call__(self, api_cfg, secret=None):  # the app's overlay_api factory
+        if secret is not None:
+            self.secrets_seen.append(secret())
+        return self
+
+    def token(self):
+        self.granted = self.granted_scopes
+        return "token"
+
+    def devices(self):
+        self.used.append("devices")
+        return self._devices
+
+    def delete_device(self, device_id):
+        pass
+
+    def policy_text(self):
+        self.used.append("policy")
+        return self.policy, '"etag-7"'
+
+    def validate(self, text):
+        self.validated.append(text)
+        return list(self.problems)
+
+    def set_policy(self, text, etag):
+        self.set_calls.append((text, etag))
+
+
+def interactive(env, answers, secret=OAUTH_SECRET, tailnet=None):
+    queue = list(answers)
+    env.app.stdin_isatty = lambda: True
+    env.app.confirm = lambda prompt: queue.pop(0)
+    env.app.ask_secret = lambda prompt: secret
+    env.app.overlay_api = tailnet
+    return queue
+
+
+def written(env, home):
+    text = env.store.path.read_text()
+    secret_file = home / "config" / "tailscale-oauth"
+    return text, secret_file
+
+
+def test_setup_paste(env, home):
+    interactive(env, ["tailscale", "paste"])
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    overlay = env.store.load().overlay
+    assert overlay == {"provider": "tailscale", "tags": ["tag:ship"], "key_source": "prompt"}
+    assert '"tagOwners"' in out and "Settings > Keys" in out
+    assert not (home / "config" / "tailscale-oauth").exists()
+
+
+def test_setup_headscale(env):
+    interactive(env, ["headscale", "https://hs.example.com"])
+    assert env.run("overlay", "setup")[0] == 0
+    overlay = env.store.load().overlay
+    assert overlay["provider"] == "headscale" and overlay["login_server"] == "https://hs.example.com"
+    interactive(env, ["headscale", "http://plain.example.com"])
+    code, out, err = env.run("overlay", "setup", "--force")
+    assert code != 0 and "https://" in err
+
+
+LEVEL_SCOPES = {
+    "keys": ("auth_keys",),
+    "devices": ("auth_keys", "devices:core"),
+    "policy": ("auth_keys", "devices:core", "policy_file"),
+}
+
+
+def level_answers(level, apply="yes"):
+    answers = ["", "", level]  # provider tailscale, key source oauth, the level
+    if level == "policy":
+        answers.append("yes")  # yes, the secret may change access rules
+    answers.append("kExampleClient1")
+    if level == "policy":
+        answers.append(apply)  # apply the merged policy
+    return answers
+
+
+def test_setup_oauth_default_is_keys_only(env, home):
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1"], tailnet=tailnet)  # level: default
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    api = env.store.load().overlay["api"]
+    assert api["remove_devices"] is False and api["manage_policy"] is False
+    assert tailnet.used == []  # no device or policy call at this level
+    ships_toml, secret_file = written(env, home)
+    assert secret_file.read_text().strip() == OAUTH_SECRET
+    assert oct(secret_file.stat().st_mode & 0o777) == "0o600"
+    # The secret is only ever in its file: not in ships.toml, not in any output.
+    assert OAUTH_SECRET not in ships_toml + out + err
+    assert tailnet.secrets_seen == [OAUTH_SECRET]  # checked in memory before saving
+    assert '"tagOwners"' in out and "check --policy FILE" in out
+    assert "EVERY device in the tailnet" in out  # the trade-offs were shown
+
+
+@pytest.mark.parametrize("level", ["keys", "devices", "policy"])
+def test_each_level_needs_exactly_its_scopes(env, home, level):
+    scopes = LEVEL_SCOPES[level]
+    for missing in scopes:
+        tailnet = FakeTailscale(scopes=[s for s in scopes if s != missing], policy="{}")
+        interactive(env, level_answers(level), tailnet=tailnet)
+        code, out, err = env.run("overlay", "setup", "--force")
+        assert code != 0 and missing in err and "Nothing was saved" in err
+        assert env.store.load().overlay is None
+        assert not (home / "config" / "tailscale-oauth").exists()
+    tailnet = FakeTailscale(scopes=scopes, policy="{}")
+    interactive(env, level_answers(level), tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup", "--force")
+    assert code == 0, err
+    api = env.store.load().overlay["api"]
+    assert api["remove_devices"] is (level != "keys")
+    assert api["manage_policy"] is (level == "policy")
+
+
+@pytest.mark.parametrize("extra", ["devices:core", "policy_file", "devices:core:read",
+                                   "policy_file:read"])
+def test_setup_notes_a_client_wider_than_its_level(env, extra):
+    tailnet = FakeTailscale(scopes=("auth_keys", extra))
+    interactive(env, ["", "", "keys", "kExampleClient1"], tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0 and "more than this level uses" in err
+
+
+def test_setup_policy_level_shows_a_diff_and_asks(env):
+    tailnet = FakeTailscale(policy='{\n  // mine\n  "acls": [],\n}\n')
+    interactive(env, level_answers("policy"), tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    assert "can change your tailnet's access rules" in out
+    assert "+++ tailnet policy (with the Ships' rules)" in out
+    ((text, etag),) = tailnet.set_calls
+    assert etag == '"etag-7"' and "// mine" in text  # merged, not overwritten
+    assert tailnet.validated == [text]  # validated before it was sent
+    assert env.store.load().overlay["api"]["manage_policy"] is True
+
+
+def test_setup_policy_level_declined_falls_back_to_devices(env):
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["devices"], policy="{}")
+    interactive(env, ["", "", "policy", "no", "kExampleClient1"], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    api = env.store.load().overlay["api"]
+    assert tailnet.set_calls == [] and api["manage_policy"] is False
+    assert api["remove_devices"] is True
+
+
+def test_setup_policy_level_apply_declined_changes_nothing(env):
+    tailnet = FakeTailscale(policy="{}")
+    interactive(env, level_answers("policy", apply="no"), tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0 and tailnet.set_calls == [] and "Not changed" in out
+
+
+def test_setup_policy_level_refused_by_tailscale_changes_nothing(env):
+    tailnet = FakeTailscale(policy="{}", problems=["test(s) failed"])
+    interactive(env, level_answers("policy")[:-1], tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup")
+    assert code != 0 and "refuses" in err and tailnet.set_calls == []
+
+
+def test_setup_needs_a_terminal_and_force_to_replace(env):
+    code, out, err = env.run("overlay", "setup")
+    assert code != 0 and "terminal" in err
+    with_overlay(env)
+    interactive(env, ["tailscale", "paste"])
+    code, out, err = env.run("overlay", "setup")
+    assert code != 0 and "--force" in err
+
+
+def oauth_overlay(env, home, tailnet, level="policy"):
+    secret = home / "config" / "tailscale-oauth"
+    secret.write_text(OAUTH_SECRET + "\n")
+    secret.chmod(0o600)
+    with_overlay(env, key_source="tailscale-api",
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": str(secret),
+                      "remove_devices": level != "keys", "manage_policy": level == "policy"})
+    env.app.overlay_api = tailnet
+
+
+def test_check_at_the_keys_level_uses_no_device_or_policy_calls(env, home, tmp_path):
+    tailnet = FakeTailscale()
+    oauth_overlay(env, home, tailnet, level="keys")
+    code, out, err = env.run("overlay", "check")
+    assert code == 0 and tailnet.used == [] and "--policy FILE" in out
+    exported = tmp_path / "policy.hujson"
+    exported.write_text(GOOD_POLICY)
+    code, out, err = env.run("overlay", "check", "--policy", str(exported))
+    assert code == 0 and tailnet.used == [] and "Ships cannot start connections" in out
+
+
+def test_check_a_good_tailnet(env, home):
+    oauth_overlay(env, home, FakeTailscale())
+    code, out, err = env.run("overlay", "check")
+    assert code == 0, out
+    assert "FAIL" not in out and "OK" in out
+
+
+def test_check_the_starter_allow_all_policy_fails(env, home):
+    allow_all = '{"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}]}'
+    oauth_overlay(env, home, FakeTailscale(policy=allow_all))
+    code, out, err = env.run("overlay", "check")
+    assert code == 1 and "Ships cannot start connections" in out and "FAIL" in out
+
+
+def test_check_runs_the_ship_tests_through_tailscale(env, home):
+    oauth_overlay(env, home, FakeTailscale(problems=["tag:ship can reach tag:ship:22"]))
+    code, out, err = env.run("overlay", "check")
+    assert code == 1 and "Tailscale runs the Ship tests" in out
+
+
+def test_check_flags_devices_not_in_the_inventory(env, home):
+    oauth_overlay(env, home, FakeTailscale(devices=[
+        {"name": "old-ship.example-tailnet.ts.net", "hostname": "old-ship", "tags": ["tag:ship"]},
+        {"name": "laptop.example-tailnet.ts.net", "hostname": "laptop", "tags": []}]))
+    code, out, err = env.run("overlay", "check")
+    assert "tailnet devices" in out and "old-ship" in out and "laptop" not in out
+    assert any(line.startswith("WARN") and "tailnet devices" in line for line in out.splitlines())
+
+
+def test_check_with_pasted_keys_reads_an_exported_policy(env, tmp_path):
+    with_overlay(env)
+    exported = tmp_path / "policy.hujson"
+    exported.write_text("// exported\n" + GOOD_POLICY)
+    code, out, err = env.run("overlay", "check")
+    assert code == 0 and "SKIP" in out and "--policy FILE" in out
+    code, out, err = env.run("overlay", "check", "--policy", str(exported))
+    assert code == 0 and "your devices reach Ships on port 22" in out
+
+
+@pytest.mark.parametrize("rc, stderr, state", [
+    (124, "", "OK"),  # timed out: the policy dropped it
+    (0, "", "FAIL"),  # connected
+    (1, "bash: connect: Connection refused", "FAIL"),  # reset: the policy let it through
+    (1, "bash: connect: Network is unreachable", "SKIP"),  # cannot tell
+])
+def test_check_probe_tells_blocked_from_allowed(env, home, rc, stderr, state):
+    import re as _re
+
+    oauth_overlay(env, home, FakeTailscale())
+    env.run("overlay", "join", "ship-01")
+    env.app.local_overlay_ips = lambda: ["192.0.2.99"]
+    env.ship.probe_rc, env.ship.probe_err = rc, stderr
+    code, out, err = env.run("overlay", "check", "--probe")
+    probes = [c for _, c in env.ship.calls if c[:1] == ["timeout"]]
+    assert probes and probes[-1][-1] == "192.0.2.99"
+    assert _re.search(rf"^{state}\s+ship-01 cannot reach this computer", out, _re.M), out
+    assert code == (1 if state == "FAIL" else 0)
+
+
+def test_check_probe_that_cannot_run_is_not_a_pass(env, home):
+    import re as _re
+
+    oauth_overlay(env, home, FakeTailscale())
+    env.run("overlay", "join", "ship-01")
+    env.app.local_overlay_ips = lambda: ["192.0.2.99"]
+    real = env.ship.__class__.__call__
+
+    def unreachable(self, ship, command):
+        if command[:1] == ["timeout"]:
+            raise Unreachable("Cannot reach ship-01")
+        return real(self, ship, command)
+
+    env.ship.__class__.__call__ = unreachable
+    try:
+        code, out, err = env.run("overlay", "check", "--probe")
+    finally:
+        env.ship.__class__.__call__ = real
+    assert _re.search(r"^SKIP\s+ship-01 cannot reach this computer", out, _re.M), out
+
+
+def test_setup_then_check_finds_the_secret_where_it_was_written(env, home, monkeypatch):
+    """FLEETLEDGER_CONFIG_DIR (set by the fixture) moves the secret; ships.toml must say so."""
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1"], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    recorded = env.store.load().overlay["api"]["oauth_secret_file"]
+    from fleetledger import paths as fl_paths
+
+    assert fl_paths.expand(recorded) == home / "config" / "tailscale-oauth"
+    code, out, err = env.run("overlay", "check")
+    assert any(line.startswith("OK") and "OAuth secret" in line
+               for line in out.splitlines()), out
+
+
+
+def test_setup_force_replaces_and_says_the_old_secret_is_unused(env, home):
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1"], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    interactive(env, ["tailscale", "paste"])
+    code, out, err = env.run("overlay", "setup", "--force")
+    assert code == 0, err
+    assert env.store.load().overlay["key_source"] == "prompt"
+    assert "no longer used" in out and "tailscale-oauth" in out
+
+
+def test_setup_at_the_devices_level_tries_the_device_list(env):
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["devices"])
+    interactive(env, level_answers("devices"), tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    assert tailnet.used == ["devices"]  # checked by use; never the policy at this level
+
+
+def test_setup_shows_the_tag_owner_before_asking_for_the_client(env):
+    seen = []
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1"], tailnet=tailnet)
+    real = env.app.confirm
+
+    def spy(prompt):
+        seen.append((prompt, env.app.out.getvalue()))
+        return real(prompt)
+
+    env.app.confirm = spy
+    env.run("overlay", "setup")
+    before_client = next(out for prompt, out in seen if "client id" in prompt)
+    assert '"tag:ship": ["autogroup:admin"]' in before_client
+
+
+def test_check_fails_on_a_bad_secret_file_or_an_unreadable_policy(env, home):
+    import re as _re
+
+    class Unreadable(FakeTailscale):
+        def policy_text(self):
+            from fleetledger.errors import FleetError
+
+            raise FleetError("Tailscale API: reading the policy failed (403).")
+
+    oauth_overlay(env, home, Unreadable())
+    (home / "config" / "tailscale-oauth").chmod(0o644)
+    code, out, err = env.run("overlay", "check")
+    assert code == 1
+    assert _re.search(r"^FAIL\s+OAuth secret", out, _re.M)
+    assert _re.search(r"^FAIL\s+read the policy", out, _re.M)
+
+
+@pytest.mark.parametrize("expiry, state", [(600, "OK"), (3600, "OK"), (7200, "WARN")])
+def test_check_wants_keys_that_expire_within_an_hour(env, home, expiry, state):
+    import re as _re
+
+    oauth_overlay(env, home, FakeTailscale())
+    with env.store.edit() as ed:
+        ed.doc["overlay"]["api"]["key_expiry_s"] = expiry
+    code, out, err = env.run("overlay", "check")
+    assert _re.search(rf"^{state}\s+join keys expire", out, _re.M), out
+
+
+def test_check_matches_stale_devices_by_hostname_too(env, home):
+    oauth_overlay(env, home, FakeTailscale(devices=[
+        {"name": "ship-01-1.example-tailnet.ts.net", "hostname": "ship-01", "tags": ["tag:ship"]}]))
+    code, out, err = env.run("overlay", "check")
+    assert any(line.startswith("OK") and "tailnet devices" in line for line in out.splitlines())
+
+
+# --- the OAuth secret in the OS keyring ---------------------------------------------------
+
+
+def secure_keyring(monkeypatch, locked=False):
+    from fleetledger.overlay import secret_store
+    from test_secret_store import fake_backend
+
+    backend = fake_backend(locked=locked)
+    monkeypatch.setattr(secret_store, "get_keyring", lambda: backend)
+    return backend
+
+
+def test_setup_keeps_the_secret_in_the_keyring_by_default(env, home, monkeypatch):
+    backend = secure_keyring(monkeypatch)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)  # store: default
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    api = env.store.load().overlay["api"]
+    assert api["secret_store"] == "keyring"
+    assert api["keyring_item"] == "tailscale-oauth:kExampleClient1"
+    assert "oauth_secret_file" not in api
+    assert backend.items == {("fleetledger", "tailscale-oauth:kExampleClient1"): OAUTH_SECRET}
+    assert not (home / "config" / "tailscale-oauth").exists()
+    assert OAUTH_SECRET not in env.store.path.read_text() + out + err
+    assert "any program running as you" in out  # the honest trade-off
+    code, out, err = env.run("overlay", "check")
+    assert any(line.startswith("OK") and "OAuth secret" in line and "keyring" in line
+               for line in out.splitlines()), out
+
+
+def test_setup_can_choose_the_file_even_with_a_keyring(env, home, monkeypatch):
+    backend = secure_keyring(monkeypatch)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", "file"], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    assert env.store.load().overlay["api"]["secret_store"] == "file"
+    assert backend.items == {} and (home / "config" / "tailscale-oauth").exists()
+
+
+def test_setup_uses_the_file_when_the_keyring_is_locked(env, home, monkeypatch):
+    secure_keyring(monkeypatch, locked=True)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1"], tailnet=tailnet)  # no store question
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0 and "cannot be used here" in out
+    assert env.store.load().overlay["api"]["secret_store"] == "file"
+
+
+def test_check_fails_plainly_on_a_locked_keyring(env, home, monkeypatch):
+    import re as _re
+
+    secure_keyring(monkeypatch)
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    secure_keyring(monkeypatch, locked=True)
+    code, out, err = env.run("overlay", "check")
+    assert code == 1
+    assert _re.search(r"^FAIL\s+OAuth secret .*locked.*Unlock it", out, _re.M), out

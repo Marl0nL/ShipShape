@@ -300,13 +300,23 @@
         "api": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["oauth_client_id", "oauth_secret_file"],
+          "required": ["oauth_client_id"],
           "properties": {
             "tailnet": { "type": "string", "minLength": 1, "default": "-" },
             "oauth_client_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+            "secret_store": {
+              "enum": ["keyring", "file"],
+              "default": "file",
+              "description": "Where the OAuth client secret is kept. keyring: the OS keyring (Secret Service on Linux, Keychain on macOS), item keyring_item under the service \"fleetledger\"; protects it at rest, but an unlocked keyring is readable by any process of the same user. file: oauth_secret_file, mode 0600. ships.toml never holds the secret itself."
+            },
+            "keyring_item": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.:-]{1,160}$",
+              "description": "The keyring item's name (secret_store = keyring)."
+            },
             "oauth_secret_file": {
               "$ref": "#/$defs/path",
-              "description": "File holding only the OAuth client secret, mode 0600."
+              "description": "File holding only the OAuth client secret, mode 0600 (secret_store = file)."
             },
             "key_expiry_s": { "type": "integer", "minimum": 60, "maximum": 86400, "default": 600 },
             "remove_devices": {
@@ -319,7 +329,14 @@
               "default": false,
               "description": "Opt-in: the OAuth client also has the policy_file scope, and `ship-fleet overlay setup` may merge the Ships' rules into the tailnet policy (after showing a diff and asking). The stored secret can then change access rules. Off: FleetLedger only reads and checks the policy."
             }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "secret_store": { "const": "keyring" } }, "required": ["secret_store"] },
+              "then": { "required": ["keyring_item"] },
+              "else": { "required": ["oauth_secret_file"] }
+            }
+          ]
         }
       },
       "allOf": [

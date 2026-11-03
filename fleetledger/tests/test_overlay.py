@@ -196,6 +196,9 @@ def test_api_reads_the_granted_scopes():
     api, _ = client([{"access_token": TOKEN, "scope": "auth_keys devices:core"}])
     api.token()
     assert api.granted == {"auth_keys", "devices:core"}
+    api, _ = client([{"access_token": TOKEN}])
+    api.token()
+    assert api.granted is None  # not said: unknown, not "none"
 
 
 def test_api_lists_and_removes_devices():

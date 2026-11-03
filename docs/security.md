@@ -66,10 +66,30 @@ your other machines without forwarding router ports
   another Ship over the overlay. A policy test guards the Ship-to-Ship rule.
 - **One-off keys, after boot, over SSH.** Each join uses a single-use,
   pre-approved, tagged key that expires in minutes, pasted (read without echo) or
-  minted by FleetLedger with an OAuth client that can only make such keys. It
-  reaches the Ship on stdin over SSH and exists there only in a root-only file
-  under `/run` while `tailscale up` runs. Keys are never in seeds, cloud
-  metadata, command lines, logs, the inventory or status, and nothing keeps a copy.
+  minted by FleetLedger with an OAuth client. It reaches the Ship on stdin over
+  SSH and exists there only in a root-only file under `/run` while `tailscale up`
+  runs. Keys are never in seeds, cloud metadata, command lines, logs, the
+  inventory or status, and nothing keeps a copy.
+- **The OAuth client is as narrow as Tailscale allows.** By default it has only
+  `auth_keys`: it can mint `tag:ship` keys and nothing else. Two opt-in levels
+  add more: device removal on destroy (`devices:core`, which Tailscale grants over
+  the whole tailnet: tags do not limit it, so a leaked secret could then remove
+  or re-tag any device, yours included; FleetLedger itself only removes a device it can tie to the Ship by
+  its recorded node id, never by hostname alone), and policy management
+  (`policy_file`: FleetLedger only adds the Ships' rules, after a diff and your
+  yes, but the secret could change any rule). `ship-fleet overlay
+  setup` checks the client's scopes before it saves the secret, and `overlay
+  check` keeps verifying the rules
+  ([guide/your-own-fleet.md](guide/your-own-fleet.md) compares the choices).
+- **The secret is kept in the OS keyring by default** (Secret Service on Linux,
+  Keychain on macOS; insecure backends such as plaintext or null keyrings are
+  refused), or in a 0600 file. `ships.toml` names the store, never the secret.
+  An unlocked keyring is readable by any process of the same user, agents on
+  this computer included: it protects the secret at rest, not between your own
+  processes. A locked or missing keyring is an error with the way to unlock it
+  or switch stores; reads never fall back to a file.
+- **Cloud Ships** will need another first-contact path:
+  [design/cloud-first-contact.md](design/cloud-first-contact.md).
 - **Nothing runs until a Ship joins.** `tailscale` is installed (from its pinned,
   signature-checked repo) only by `ship-ctl overlay join`, with log upload to
   Tailscale turned off; it is stopped and disabled again on `leave`.
@@ -115,7 +135,7 @@ your other machines without forwarding router ports
 | Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet ca init` |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
 | Proxmox API token | your computer: `~/.config/fleetledger/` (0600) | made once by you |
-| Overlay OAuth client secret (optional) | your computer: `~/.config/fleetledger/` (0600) | made once by you; can only mint `tag:ship` keys |
+| Overlay OAuth client secret (optional) | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |
 | Overlay join key | nowhere for long: the Ship's `/run` (tmpfs, root-only) while it joins | pasted, or minted per join; single use, minutes |
 | Ship's overlay node key | the Ship: Tailscale's state in `/var/lib/tailscale` (root) | `tailscale up` |
 | Your own key | your machines | public half put on `agent` by the seed |

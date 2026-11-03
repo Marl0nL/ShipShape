@@ -70,7 +70,12 @@ def joined(ctx: Context) -> bool:
     return bool(read_state(ctx).get("joined"))
 
 
-def installed() -> bool:
+def installed(ctx: Context) -> bool:
+    """Is the tailscale client installed? In sandbox mode (tests) only a client inside
+    the sandbox counts, so a tailscale on the machine running the tests is never
+    touched."""
+    if ctx.paths.sandbox:
+        return ctx.paths.p("/usr/bin/tailscale").exists()
     return shutil.which("tailscale") is not None
 
 
@@ -103,7 +108,7 @@ def status(ctx: Context, ship: ShipToml) -> dict | None:
     """The status document's overlay object; None when the overlay tooling is absent."""
     record = read_state(ctx)
     is_joined = bool(record.get("joined"))
-    if not installed():
+    if not installed(ctx):
         if not is_joined:
             return None
         live = {"state": "not-installed", "name": None, "addresses": [], "tags": [],
@@ -211,7 +216,7 @@ def _drop_key(path: Path) -> None:
 
 
 def _ensure_installed(ctx: Context) -> list[str]:
-    if installed():
+    if installed(ctx):
         return []
     r = ctx.runner.run(["apt-get", "install", "-y", "-q", "--no-install-recommends", "tailscale"],
                        timeout=600, env={"DEBIAN_FRONTEND": "noninteractive"})
@@ -284,11 +289,11 @@ def join(ctx: Context, ship: ShipToml, *, hostname: str, tags: list[str],
 
 def leave(ctx: Context, ship: ShipToml) -> tuple[list[str], list[str]]:
     """Returns (changed, messages). Callers reset ssh_listen to any first."""
-    if not joined(ctx) and not installed():
+    if not joined(ctx) and not installed(ctx):
         return [], ["This Ship has not joined the overlay."]
     changed: list[str] = []
     messages: list[str] = []
-    if installed():
+    if installed(ctx):
         out = ctx.runner.run(["tailscale", "logout"], timeout=30)
         if not out.ok:
             messages.append("tailscale logout did not succeed; the node may still be listed "
