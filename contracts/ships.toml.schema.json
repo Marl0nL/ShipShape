@@ -311,7 +311,7 @@
             },
             "keyring_item": {
               "type": "string",
-              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "pattern": "^[A-Za-z0-9_.:-]{1,160}$",
               "description": "The keyring item's name (secret_store = keyring)."
             },
             "oauth_secret_file": {
