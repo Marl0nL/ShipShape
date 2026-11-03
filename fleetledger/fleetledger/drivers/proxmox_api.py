@@ -73,9 +73,10 @@ def server_fingerprint(host: str, port: int, timeout: float = 10) -> str:
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE  # we only read the certificate, to show it
+    bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host  # IPv6
     try:
-        with socket.create_connection((host, port), timeout=timeout) as raw, \
-                context.wrap_socket(raw, server_hostname=host) as tls:
+        with socket.create_connection((bare, port), timeout=timeout) as raw, \
+                context.wrap_socket(raw, server_hostname=bare) as tls:
             der = tls.getpeercert(binary_form=True) or b""
     except (OSError, ssl.SSLError) as exc:
         raise ProxmoxError(f"Cannot reach {host}:{port}: {exc}") from exc

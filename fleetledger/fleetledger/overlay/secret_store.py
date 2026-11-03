@@ -115,15 +115,15 @@ def existing_in_keyring(item: str) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
-def store_in_keyring(item: str, secret: str) -> str:
+def store_in_keyring(item: str, secret: str, switch_hint: str = SWITCH_HINT) -> str:
     backend, why = secure_backend()
     if backend is None:
-        raise ConfigError(f"Cannot use the keyring: {why}.", hint=SWITCH_HINT)
+        raise ConfigError(f"Cannot use the keyring: {why}.", hint=switch_hint)
     try:
         backend.set_password(SERVICE, item, secret)
     except Exception as exc:
         raise ConfigError(f"Could not store the secret in the keyring: {_describe(exc)}.",
-                          hint=SWITCH_HINT) from None
+                          hint=switch_hint) from None
     return why
 
 

@@ -81,6 +81,7 @@ class _Setup:
         self.store = app.store_factory()
         self.number = 0
         self.later: list[str] = []  # what is left for the user, said at the end
+        self.hypervisor_ok = True  # False: set up but not working right now
         self.run_cmd = getattr(app, "run_cmd", None) or firstrun._run
         self.run_tty = getattr(app, "run_tty", None) or _run_tty
 
@@ -163,6 +164,8 @@ def _fleet(s: _Setup):
     agent_key = _your_key(s)
     make_fleet(s.app, s.store, s.args.admin_key, [agent_key],
                no_passphrase=s.args.no_passphrase)
+    with s.store.edit() as ed:  # not chosen yet: step 5 asks (manual is the default)
+        ed.set_default("driver", None)
     return s.store.load()
 
 
@@ -265,8 +268,9 @@ def _hypervisor(s: _Setup) -> bool:
             s.app.say(f"  {MARK[item.state]}: {item.name}: {item.detail}")
         s.app.say("To change or repair it: ship-fleet setup --redo hypervisor")
         s.later.append("ship-fleet setup --redo hypervisor   (Proxmox: see above)")
+        s.hypervisor_ok = False
         return True
-    if not redo and driver == "manual" and inv.ships():
+    if not redo and "driver" in inv.defaults and driver == "manual":
         s.app.say("Manual: FleetLedger prints the steps for your hypervisor. To use Proxmox:\n"
                   "  ship-fleet setup --redo hypervisor")
         return True
@@ -311,15 +315,21 @@ def _first_ship(s: _Setup, agent_ok: bool) -> None:
     if ships:
         s.app.say(f"You have {len(ships)} Ship(s): " + ", ".join(x.name for x in ships) + ".")
         return
-    if not agent_ok:
-        s.app.say("Making a Ship needs the admin key in ssh-agent (step 3). Once it is there:\n"
-                  "  ship-fleet new ship-01")
+    if not agent_ok or not s.hypervisor_ok:
+        need = ("the admin key in ssh-agent (step 3)" if not agent_ok
+                else "a working hypervisor (step 5)")
+        s.app.say(f"Making a Ship needs {need}. Once it is there:\n  ship-fleet new ship-01")
         s.later.append("ship-fleet new ship-01, then ship-fleet login ship-01 all")
         return
-    name = s.ask("Make a first Ship now? Its name (ship-01), or skip: ", "ship-01")
-    if name.lower() == "skip":
-        s.later.append("ship-fleet new ship-01, then ship-fleet login ship-01 all")
-        return
+    while True:
+        name = s.ask("Make a first Ship now? Its name (ship-01), or skip: ", "ship-01")
+        if name.lower() == "skip":
+            s.later.append("ship-fleet new ship-01, then ship-fleet login ship-01 all")
+            return
+        if commands.NAME_RE.match(name):
+            break
+        s.app.note("A Ship name is a-z, 0-9 and -, up to 31 characters, starting with a "
+                   "letter or digit.")
     tag = s.ask("A tag for it, e.g. work or personal (none): ")
     parser = cli.build_parser()
     argv = ["new", name] + (["--tag", tag] if tag else [])

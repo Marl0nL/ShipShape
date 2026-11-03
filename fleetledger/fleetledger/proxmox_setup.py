@@ -1,7 +1,8 @@
 """Set up the Proxmox driver from three answers: the address, a token id and its secret.
 
 Everything else (node, pool, storages, bridge, template) is read through the API
-with that token and offered for you to confirm. What the token cannot see or is
+with that token and offered for you to confirm (Enter accepts, even when there
+is only one choice). What the token cannot see or is
 not allowed to do is never guessed: setup prints the exact commands to run as
 root on the Proxmox host, and you run setup again afterwards.
 
@@ -13,10 +14,12 @@ ships.toml.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fleetledger import paths
@@ -28,7 +31,9 @@ from fleetledger.overlay_setup import _ask, _choose, _plausible_secret, _secret,
 SECRET_FILE = "proxmox-token"
 TOKEN_ID_RE = re.compile(r"^[^@!\s]+@[^!\s]+![A-Za-z][A-Za-z0-9_.-]*$")  # as the schema
 HOST_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?)$")
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")  # node and pool, as the schema
+BRIDGE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+KEYRING_ITEM_RE = re.compile(r"^[A-Za-z0-9_.:@!-]{1,200}$")
 
 # What the token needs, per path (docs/runbooks/proxmox-setup.md, step 1).
 ROLES = {
@@ -43,10 +48,23 @@ ROLES = {
 SNAPSHOT_PRIVS = ("VM.Snapshot", "VM.Snapshot.Rollback")
 
 
+def role_privs(role: str, pve_major: int = 9) -> tuple[str, ...]:
+    """A role's privileges for this Proxmox VE: before 9, reading the guest agent
+    (the Ship's address) is VM.Monitor; VM.GuestAgent.Audit is new in 9."""
+    privs = ROLES[role]
+    if pve_major < 9:
+        privs = tuple("VM.Monitor" if p == "VM.GuestAgent.Audit" else p for p in privs)
+    return privs
+
+
 def parse_address(text: str) -> tuple[str, int, str]:
     """host, port and api_url from "host", "host:port" or a URL."""
     value = text.strip()
     value = re.sub(r"^https?://", "", value, flags=re.I).split("/", 1)[0]
+    try:
+        value = f"[{ipaddress.IPv6Address(value)}]"  # a bare IPv6 address
+    except ValueError:
+        pass
     host, port = value, 8006
     match = re.match(r"^(\[[^\]]+\]|[^:]+)(?::(\d+))?$", value)
     if match:
@@ -67,6 +85,7 @@ class Names:
     seeds: str = "shipshape-seeds"
     disk: str = "$DISK_STORAGE"
     bridge: str = "$BRIDGE"
+    pve_major: int = 9
 
     @property
     def user(self) -> str:
@@ -82,19 +101,19 @@ def _q(value: str) -> str:
     return value if value.startswith("$") else shlex.quote(value)
 
 
-def _role_line(role: str) -> list[str]:
+def _role_line(role: str, pve_major: int = 9) -> list[str]:
     if role.startswith("PVE"):
         return []  # built in
-    privs = " ".join(ROLES[role])
+    privs = " ".join(role_privs(role, pve_major))
     return [f'pveum role add {role} --privs "{privs}" 2>/dev/null || '
             f'pveum role modify {role} --privs "{privs}"']
 
 
 def _grant(path: str, role: str, n: Names) -> list[str]:
     target = path if path.startswith("/") and "$" not in path else f'"{path}"'
-    return [*_role_line(role),
+    return [*_role_line(role, n.pve_major),
             f"pveum acl modify {target} --users {_q(n.user)} --roles {role}",
-            f"pveum acl modify {target} --tokens '{n.token_id}' --roles {role}"]
+            f"pveum acl modify {target} --tokens {shlex.quote(n.token_id)} --roles {role}"]
 
 
 def _variables(n: Names) -> list[str]:
@@ -123,7 +142,8 @@ def user_and_token_commands(n: Names) -> list[str]:
 def seed_storage_commands(n: Names, *, grants: bool = True) -> list[str]:
     folder = f"/var/lib/{n.seeds}"
     out = [f"mkdir -p {_q(folder)} && chmod 700 {_q(folder)}",
-           f"pvesm add dir {_q(n.seeds)} --path {_q(folder)} --content iso"]
+           f"pvesm add dir {_q(n.seeds)} --path {_q(folder)} --content iso"
+           "   # if it does not exist yet"]
     if grants:
         out += _grant(f"/storage/{n.seeds}", "ShipShapeSeeds", n)
     return out
@@ -191,7 +211,7 @@ def missing_grants(perms, n: Names) -> list[tuple[str, str, list[str]]]:
                        (f"/storage/{n.seeds}", "ShipShapeSeeds"),
                        (f"/storage/{n.disk}", "ShipShapeDisks"),
                        (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser")):
-        lacking = [p for p in ROLES[role] if p not in effective(perms, path)]
+        lacking = [p for p in role_privs(role, n.pve_major) if p not in effective(perms, path)]
         if lacking:
             out.append((path, role, lacking))
     return out
@@ -212,14 +232,13 @@ def bridges_from(perms) -> list[str]:
 def _pick(app, what: str, options: list[str], preferred: str | None = None) -> str:
     """One of options; Enter takes the preferred (or first) one."""
     default = preferred if preferred in options else options[0]
-    if len(options) == 1:
-        app.say(f"{what}: {default}")
-        return default
-    app.say(f"{what}: " + ", ".join(options))
+    if len(options) > 1:
+        app.say(f"{what}: " + ", ".join(options))
     while True:
         answer = _ask(app, f"{what} ({default}): ", default)
-        if answer in options:
-            return answer
+        for option in options:
+            if answer in (option, option.split()[0]):
+                return option
         app.note(f"Please answer one of: {', '.join(options)}.")
 
 
@@ -268,7 +287,9 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
     if not TOKEN_ID_RE.match(token_id):
         raise FleetError(f"'{token_id}' is not a token id (user@realm!name).")
 
-    secret, reused, store_kind = _token_secret(app, token_id)
+    item = secret_store.proxmox_item(token_id)
+    secret, reused, store_kind, secret_path = _token_secret(
+        app, token_id, old, keyring_ok=bool(KEYRING_ITEM_RE.match(item)))
     config: dict[str, Any] = {"api_url": api_url, "token_id": token_id,
                               "tls_fingerprint": fingerprint}
     api = _api(app, config, lambda: secret)
@@ -281,11 +302,9 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
         raise
     app.say(f"\nThe token works: Proxmox VE {version.get('version', '?')}, "
             "through the pinned certificate.")
-    item = secret_store.proxmox_item(token_id)
-    secret_path = paths.config_dir() / SECRET_FILE
     if store_kind == "keyring":
         if not reused:
-            secret_store.store_in_keyring(item, secret)
+            secret_store.store_in_keyring(item, secret, proxmox_api.TOKEN_SWITCH_HINT)
         config.update(token_store="keyring", keyring_item=item)
         app.say(f"The secret is in your OS keyring ({secret_store.SERVICE} / {item}).")
     else:
@@ -295,7 +314,9 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
         config["token_file"] = _tilde(secret_path)
         app.say(f"The secret is in {secret_path} (0600).")
 
-    return _discover(app, store, api, config, old, versions)
+    match = re.match(r"^(\d+)\.", str(version.get("version", "")))
+    return _discover(app, store, api, config, old, versions,
+                     pve_major=int(match.group(1)) if match else 9)
 
 
 def _pin(app, host: str, port: int, api_url: str, old: Mapping[str, Any]) -> str:
@@ -304,6 +325,10 @@ def _pin(app, host: str, port: int, api_url: str, old: Mapping[str, Any]) -> str
     if old.get("api_url") == api_url and old.get("tls_fingerprint") == fingerprint:
         app.say(f"Certificate: {fingerprint}\n(the one already pinned)")
         return fingerprint
+    if old.get("api_url") == api_url and old.get("tls_fingerprint"):
+        app.say(f"\nWARNING: the server's certificate has changed since it was pinned.\n"
+                f"  pinned: {old['tls_fingerprint']}\n"
+                "If you did not renew it on the host, stop here: something may be in the way.")
     app.say(f"\nThe server's certificate (SHA-256):\n  {fingerprint}\n"
             "Check it on the Proxmox host before trusting it (as root):\n"
             "  openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256\n"
@@ -314,33 +339,46 @@ def _pin(app, host: str, port: int, api_url: str, old: Mapping[str, Any]) -> str
     return fingerprint
 
 
-def _token_secret(app, token_id: str) -> tuple[str, bool, str]:
-    """(secret, reused, store): a secret already stored for this token is offered
-    first (it is checked with the API before anything is saved, never shown)."""
+def _token_secret(app, token_id: str, old: Mapping[str, Any], *, keyring_ok: bool = True
+                  ) -> tuple[str, bool, str, Path]:
+    """(secret, reused, store, file path): a secret already stored for this token
+    is offered first (checked with the API before anything is saved, never shown)."""
     item = secret_store.proxmox_item(token_id)
-    existing = secret_store.existing_in_keyring(item)
-    if existing is not None and _plausible_secret(existing) and _choose(
+    existing = secret_store.existing_in_keyring(item) if keyring_ok else None
+    default_path = paths.config_dir() / SECRET_FILE
+    if existing is not None and _plausible_token(existing) and _choose(
             app, f"A secret for this token is already in your keyring ({secret_store.SERVICE}"
             f" / {item}). Use it (checked with Proxmox first, never shown)",
             ("yes", "no"), "yes") == "yes":
-        return existing, True, "keyring"
-    path = paths.config_dir() / SECRET_FILE
-    if path.exists():
+        return existing, True, "keyring", default_path
+    candidates = [default_path]
+    if old.get("token_file") and old.get("token_id") == token_id:
+        candidates.insert(0, paths.expand(old["token_file"]))
+    for path in dict.fromkeys(candidates):
+        if not path.exists():
+            continue
         try:
             on_disk = proxmox_api.read_token(str(path))
         except FleetError:
-            on_disk = None
-        if on_disk and _choose(app, f"A token secret is already in {_tilde(path)}. Use it "
-                               "(checked with Proxmox first, never shown)",
-                               ("yes", "no"), "yes") == "yes":
-            return on_disk, True, "file"
+            continue
+        if _plausible_token(on_disk) and _choose(
+                app, f"A token secret is already in {_tilde(path)}. Use it (checked with "
+                "Proxmox first, never shown)", ("yes", "no"), "yes") == "yes":
+            return on_disk, True, "file", path
     secret = _secret(app, "Token secret (not shown): ")
-    if not _plausible_secret(secret) or any(c.isspace() for c in secret):
+    if not _plausible_token(secret):
         raise FleetError("That does not look like a Proxmox token secret.")
-    return secret, False, _choose_store(app)
+    return secret, False, _choose_store(app, keyring_ok=keyring_ok), default_path
 
 
-def _choose_store(app) -> str:
+def _plausible_token(secret: str) -> bool:
+    return _plausible_secret(secret) and not any(c.isspace() for c in secret)
+
+
+def _choose_store(app, *, keyring_ok: bool = True) -> str:
+    if not keyring_ok:
+        app.say("This token id cannot name a keyring item; keeping the secret in a 0600 file.")
+        return "file"
     usable, why = secret_store.keyring_usable()
     app.say("\nWhere to keep the token secret:\n"
             "  keyring  your OS keyring (GNOME Keyring or KWallet; Keychain on macOS):\n"
@@ -373,20 +411,23 @@ def _get(api, path: str, **params: Any) -> Any:
 
 
 def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
-              versions: Mapping[str, Any]) -> Result:
-    n = Names(token_id=config["token_id"])
+              versions: Mapping[str, Any], *, pve_major: int = 9) -> Result:
+    n = Names(token_id=config["token_id"], pve_major=pve_major)
     todo: list[tuple[str, list[str]]] = []  # (what is missing, root commands)
 
     # Node.
     nodes = sorted(str(e["node"]) for e in (_get(api, "/nodes") or [])
-                   if e.get("node") and e.get("status", "online") == "online")
+                   if e.get("node") and e.get("status", "online") == "online"
+                   and NAME_RE.match(str(e["node"])))
     if not nodes:
         raise FleetError("The token sees no online Proxmox node.",
                          hint="Check the node is up, and that the token is the one you made.")
     node = _pick(app, "Node", nodes, old.get("node"))
 
     # Pool.
-    pools = sorted(str(e["poolid"]) for e in (_get(api, "/pools") or []) if e.get("poolid"))
+    # (Nested pools, a/b, are not supported: ships.toml takes a plain name.)
+    pools = sorted(str(e["poolid"]) for e in (_get(api, "/pools") or [])
+                   if e.get("poolid") and NAME_RE.match(str(e["poolid"])))
     if pools:
         n.pool = _pick(app, "Pool for Ships", pools, old.get("pool") or "shipshape")
     else:
@@ -426,7 +467,7 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
 
     # Bridge: the token may use the bridges it has SDN.Use on.
     perms = _get(api, "/access/permissions") or {}
-    bridges = bridges_from(perms)
+    bridges = [b for b in bridges_from(perms) if BRIDGE_RE.match(b)]
     if bridges:
         n.bridge = _pick(app, "Network bridge", bridges, old.get("bridge"))
     else:
@@ -444,7 +485,8 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
     if not todo:
         resources = _get(api, "/cluster/resources", type="vm") or []
         templates = sorted((int(e["vmid"]), str(e.get("name", ""))) for e in resources
-                           if e.get("template") and e.get("node") == node and "vmid" in e)
+                           if e.get("template") and e.get("node") == node and "vmid" in e
+                           and e.get("type", "qemu") == "qemu")
         if templates:
             labels = [f"{vmid} ({name})" if name else str(vmid) for vmid, name in templates]
             preferred = next((label for (vmid, name), label in zip(templates, labels, strict=True)
@@ -461,7 +503,8 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
             app.say(f"  - {what}")
         _print_commands(app, "Run these as root on the Proxmox host:",
                         [line for _, lines in todo for line in lines])
-        app.say("Then run ship-fleet setup again: it picks up from here (the token is kept).")
+        app.say("Then run ship-fleet setup again. The token secret, already checked, is "
+                "offered again\nrather than retyped.")
         return Result(False, "missing pieces on the host")
 
     if not set(SNAPSHOT_PRIVS) <= effective(perms, f"/pool/{n.pool}"):
