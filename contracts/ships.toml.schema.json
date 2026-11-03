@@ -275,7 +275,10 @@
       "required": ["provider"],
       "description": "The overlay network Ships join for access off the LAN (phase 5, docs/runbooks/remote-access.md). FleetLedger hands each Ship a one-off key over SSH after boot; keys never go into seeds.",
       "properties": {
-        "provider": { "const": "tailscale", "description": "Tailscale, or Headscale through login_server." },
+        "provider": {
+          "enum": ["tailscale", "headscale"],
+          "description": "tailscale: Tailscale's hosted service (login_server optional, for compatibility). headscale: your own Headscale server at login_server; keys are pasted (key_source prompt). See docs/overlay-providers.md."
+        },
         "login_server": {
           "type": "string",
           "pattern": "^https://[^\\s]+$",
@@ -305,7 +308,12 @@
               "$ref": "#/$defs/path",
               "description": "File holding only the OAuth client secret, mode 0600."
             },
-            "key_expiry_s": { "type": "integer", "minimum": 60, "maximum": 86400, "default": 600 }
+            "key_expiry_s": { "type": "integer", "minimum": 60, "maximum": 86400, "default": 600 },
+            "manage_policy": {
+              "type": "boolean",
+              "default": false,
+              "description": "Opt-in: the OAuth client also has the policy_file scope, and `ship-fleet overlay setup` may merge the Ships' rules into the tailnet policy (after showing a diff and asking). The stored secret can then change access rules. Off: FleetLedger only reads and checks the policy."
+            }
           }
         }
       },
@@ -313,6 +321,14 @@
         {
           "if": { "properties": { "key_source": { "const": "tailscale-api" } }, "required": ["key_source"] },
           "then": { "required": ["api"] }
+        },
+        {
+          "if": { "properties": { "provider": { "const": "headscale" } } },
+          "then": {
+            "required": ["login_server"],
+            "properties": { "key_source": { "const": "prompt" } },
+            "not": { "required": ["api"] }
+          }
         }
       ]
     },

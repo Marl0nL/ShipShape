@@ -29,6 +29,7 @@ tailnet = "-"
 oauth_client_id = "kExampleClient1"
 oauth_secret_file = "~/.config/fleetledger/tailscale-oauth"
 key_expiry_s = 600
+manage_policy = false
 
 [drivers.proxmox]
 api_url = "https://pve.example.com:8006/api2/json"
