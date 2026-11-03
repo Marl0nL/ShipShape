@@ -114,6 +114,7 @@
     "tags": [
       "tag:ship"
     ],
-    "ssh_listen": "overlay"
+    "ssh_listen": "overlay",
+    "node_id": "nExampleNode1CNTRL"
   }
 }

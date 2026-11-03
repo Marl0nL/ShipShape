@@ -309,6 +309,11 @@
               "description": "File holding only the OAuth client secret, mode 0600."
             },
             "key_expiry_s": { "type": "integer", "minimum": 60, "maximum": 86400, "default": 600 },
+            "remove_devices": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether destroy removes the Ship's device through the API (needs devices:core, which Tailscale grants tailnet-wide: a leaked secret could then remove any device). false: destroy prints the admin-console steps instead."
+            },
             "manage_policy": {
               "type": "boolean",
               "default": false,
@@ -491,6 +496,11 @@
         "image": {
           "$ref": "#/$defs/imageRef",
           "description": "The base image the Ship was created from. Absent on Ships made before images existed (stock)."
+        },
+        "overlay_node": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9]{1,64}$",
+          "description": "The overlay node id the Ship joined as (`ship-ctl overlay join`), recorded so its device can be removed by identity, never by name alone."
         },
         "notes": { "type": "string" }
       }

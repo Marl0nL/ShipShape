@@ -213,6 +213,11 @@
               "type": "array",
               "items": { "type": "string", "maxLength": 64 }
             },
+            "node_id": {
+              "type": ["string", "null"],
+              "pattern": "^[A-Za-z0-9]{1,64}$",
+              "description": "The overlay's stable id for this Ship's node (Tailscale's node id), so FleetLedger can tell the Ship's device from any other with the same name. Optional: Ships whose tooling predates it leave it out."
+            },
             "ssh_listen": { "enum": ["any", "overlay"] }
           }
         }
