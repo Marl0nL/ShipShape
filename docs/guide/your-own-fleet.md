@@ -44,15 +44,19 @@ expires in minutes, handed over SSH after boot. The choice is who makes those ke
 |---|---|---|---|
 | Making a Ship's key | you, in the admin console, each time | FleetLedger, automatically | FleetLedger, automatically |
 | Stored on your computer | nothing | an OAuth secret (0600) | an OAuth secret (0600) |
-| What that secret can do | (none) | mint `tag:ship` keys, remove `tag:ship` devices, read the policy | the same, and change the policy |
+| What that secret can do | (none) | mint `tag:ship` keys and read the policy; with device removal on (`devices:core`), also remove **any** device in the tailnet | the same, and change the policy |
 | Access rules | you paste them once; `check --policy` verifies an export | you paste them once; `check` verifies them | FleetLedger adds them (diff, then your yes); `check` verifies them |
-| Destroying a Ship | prints how to remove its device | removes its device | removes its device |
+| Destroying a Ship | prints how to remove its device | removes its device (or prints the steps, if you turned device removal off) | the same |
 | Choose it if | you would rather store no credential, or have few Ships | you want it hands-off (the usual choice) | you also want FleetLedger to keep the rules in place |
 
 How to think about the risk: a stolen pasted key is worth nothing after a few
 minutes. A stolen default-level secret lets someone add `tag:ship` devices (which
-the rules let *your* devices reach, but which cannot reach anything) and remove
-Ship devices: annoying, not a way into your machines. A stolen manage-level
+the rules let *your* devices reach, but which cannot reach anything). If device
+removal is on, it can also remove devices, and not only Ships: Tailscale's
+`devices:core` scope covers the whole tailnet (the tags a client must have only
+bind the keys it makes). That is disruptive, not a way into your machines; if you
+would rather it could not happen, answer no to device removal in `overlay setup`
+(`api.remove_devices = false`) and leave that scope out. A stolen manage-level
 secret can rewrite your access rules, so it is as sensitive as an admin login.
 Whatever you pick, revoke the client in the admin console if your computer is
 lost, and `ship-fleet overlay check` will tell you if the rules drift.

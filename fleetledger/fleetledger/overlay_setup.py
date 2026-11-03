@@ -26,7 +26,7 @@ from typing import Any
 from fleetledger import overlay, paths
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
-from fleetledger.overlay import hujson
+from fleetledger.overlay import hujson, providers
 from fleetledger.overlay import rules as pol
 from fleetledger.overlay.providers import Check
 from fleetledger.overlay.tsapi import TailscaleAPI
@@ -34,7 +34,8 @@ from fleetledger.shipctl import ShipCtl
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$")
-DEFAULT_SCOPES = ("auth_keys", "devices:core", "policy_file:read")
+DEFAULT_SCOPES = ("auth_keys", "policy_file:read")
+REMOVE_SCOPE = "devices:core"
 MANAGE_SCOPE = "policy_file"
 SECRET_FILE = "tailscale-oauth"
 
@@ -135,10 +136,16 @@ def _setup_headscale(app, store) -> int:
 def _setup_oauth(app, store) -> int:
     app.say("\nMake an OAuth client in the admin console (Settings > Trust credentials)\n"
             "with the tag tag:ship and these scopes (names as Tailscale lists them):\n"
-            "  auth_keys, devices:core, policy_file:read,\n"
-            "  and what policy_file:read needs: devices:core:read,\n"
-            "  devices:posture_attributes:read\n"
-            "See docs/overlay-providers.md for what each is for.\n")
+            "  auth_keys, policy_file:read, and what policy_file:read needs:\n"
+            "  devices:core:read, devices:posture_attributes:read\n"
+            "plus devices:core if FleetLedger should remove destroyed Ships' devices\n"
+            "(asked next). See docs/overlay-providers.md for what each is for.\n")
+    default_remove = "yes" if providers.REMOVE_DEVICES_DEFAULT else "no"
+    app.say("Removing destroyed Ships' devices needs devices:core, which Tailscale grants\n"
+            "over every device in the tailnet, not only Ships: a leaked secret could then\n"
+            "remove any of your machines. Without it, destroy prints the steps instead.")
+    remove = _choose(app, "Remove destroyed Ships' devices automatically",
+                     ("yes", "no"), default_remove) == "yes"
     level = _choose(app, "Access level: default (FleetLedger reads and checks your rules), "
                     "or manage (it may also add the Ships' rules)", ("default", "manage"),
                     "default")
@@ -156,12 +163,14 @@ def _setup_oauth(app, store) -> int:
         raise FleetError("That does not look like an OAuth client secret.")
     api_cfg = {"tailnet": "-", "oauth_client_id": client_id,
                "oauth_secret_file": f"~/.config/fleetledger/{SECRET_FILE}",
-               "key_expiry_s": 600, "manage_policy": level == "manage"}
+               "key_expiry_s": 600, "remove_devices": remove,
+               "manage_policy": level == "manage"}
 
     # Check the credentials before anything is written.
     api = _api(app, api_cfg, secret=lambda: secret)
     api.token()
-    wanted = set(DEFAULT_SCOPES) | ({MANAGE_SCOPE} if level == "manage" else set())
+    wanted = (set(DEFAULT_SCOPES) | ({REMOVE_SCOPE} if remove else set())
+              | ({MANAGE_SCOPE} if level == "manage" else set()))
     if api.granted:
         missing = sorted(wanted - api.granted)
         if missing:
@@ -183,7 +192,8 @@ def _setup_oauth(app, store) -> int:
             f"{secret_path} (0600).")
 
     if level == "manage":
-        return _merge_rules(app, api, text, etag, config)
+        provider = overlay.provider(config, api_factory=lambda _cfg: api)
+        return _merge_rules(app, provider, api, text, etag, config)
     _print_policy(app, config)
     app.say("Then: ship-fleet overlay check   (it verifies them now and any time later)")
     return 0
@@ -196,7 +206,7 @@ def _print_policy(app, config: dict) -> None:
     app.say(overlay.policy(config).rstrip() + "\n")
 
 
-def _merge_rules(app, api, text: str, etag: str | None, config: dict) -> int:
+def _merge_rules(app, provider, api, text: str, etag: str | None, config: dict) -> int:
     tags = overlay.tags(config)
     new, added = pol.merge(text, tags)
     if not added:
@@ -214,7 +224,7 @@ def _merge_rules(app, api, text: str, etag: str | None, config: dict) -> int:
         if _ask(app, "Apply these changes to your tailnet policy? Type yes: ").lower() != "yes":
             app.say("Not changed. You can paste the rules yourself (ship-fleet overlay policy).")
             return 0
-        api.set_policy(new, etag)
+        provider.write_policy(new, etag)  # refuses unless manage_policy is on
         app.say("Policy updated.")
     for finding in pol.findings(hujson.parse(new), tags):
         if not finding.ok:

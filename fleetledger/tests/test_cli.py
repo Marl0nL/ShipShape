@@ -1136,7 +1136,7 @@ def test_setup_headscale(env):
 
 def test_setup_oauth_default_level(env, home):
     tailnet = FakeTailscale(scopes=("auth_keys", "devices:core", "policy_file:read"))
-    interactive(env, ["", "", "default", "kExampleClient1"], tailnet=tailnet)
+    interactive(env, ["", "", "", "default", "kExampleClient1"], tailnet=tailnet)  # removal: yes
     code, out, err = env.run("overlay", "setup")
     assert code == 0, err
     overlay = env.store.load().overlay
@@ -1153,9 +1153,19 @@ def test_setup_oauth_default_level(env, home):
     assert '"tagOwners"' in out and "overlay check" in out
 
 
+def test_setup_without_device_removal_needs_no_devices_core(env, home):
+    """Answering no keeps the stored secret to minting keys and reading the policy."""
+    tailnet = FakeTailscale(scopes=("auth_keys", "policy_file:read"))
+    interactive(env, ["", "", "no", "default", "kExampleClient1"], tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    assert env.store.load().overlay["api"]["remove_devices"] is False
+    assert "every device in the tailnet" in out  # the warning was shown
+
+
 def test_setup_oauth_with_missing_scopes_saves_nothing(env, home):
     tailnet = FakeTailscale(scopes=("auth_keys",))
-    interactive(env, ["", "", "default", "kExampleClient1"], tailnet=tailnet)
+    interactive(env, ["", "", "", "default", "kExampleClient1"], tailnet=tailnet)
     code, out, err = env.run("overlay", "setup")
     assert code != 0 and "devices:core" in err and "policy_file:read" in err
     assert env.store.load().overlay is None
@@ -1164,7 +1174,7 @@ def test_setup_oauth_with_missing_scopes_saves_nothing(env, home):
 
 def test_setup_manage_level_shows_a_diff_and_asks(env):
     tailnet = FakeTailscale(policy='{\n  // mine\n  "acls": [],\n}\n')
-    interactive(env, ["", "", "manage", "yes", "kExampleClient1", "yes"], tailnet=tailnet)
+    interactive(env, ["", "", "", "manage", "yes", "kExampleClient1", "yes"], tailnet=tailnet)
     code, out, err = env.run("overlay", "setup")
     assert code == 0, err
     assert "can change your tailnet's access rules" in out
@@ -1177,21 +1187,21 @@ def test_setup_manage_level_shows_a_diff_and_asks(env):
 
 def test_setup_manage_level_declined_keeps_the_default(env):
     tailnet = FakeTailscale(policy="{}")
-    interactive(env, ["", "", "manage", "no", "kExampleClient1"], tailnet=tailnet)
+    interactive(env, ["", "", "", "manage", "no", "kExampleClient1"], tailnet=tailnet)
     assert env.run("overlay", "setup")[0] == 0
     assert tailnet.set_calls == [] and env.store.load().overlay["api"]["manage_policy"] is False
 
 
 def test_setup_manage_level_apply_declined_changes_nothing(env):
     tailnet = FakeTailscale(policy="{}")
-    interactive(env, ["", "", "manage", "yes", "kExampleClient1", "no"], tailnet=tailnet)
+    interactive(env, ["", "", "", "manage", "yes", "kExampleClient1", "no"], tailnet=tailnet)
     code, out, err = env.run("overlay", "setup")
     assert code == 0 and tailnet.set_calls == [] and "Not changed" in out
 
 
 def test_setup_manage_level_refused_by_tailscale_changes_nothing(env):
     tailnet = FakeTailscale(policy="{}", problems=["test(s) failed"])
-    interactive(env, ["", "", "manage", "yes", "kExampleClient1"], tailnet=tailnet)
+    interactive(env, ["", "", "", "manage", "yes", "kExampleClient1"], tailnet=tailnet)
     code, out, err = env.run("overlay", "setup")
     assert code != 0 and "refuses" in err and tailnet.set_calls == []
 
