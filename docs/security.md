@@ -66,10 +66,19 @@ your other machines without forwarding router ports
   another Ship over the overlay. A policy test guards the Ship-to-Ship rule.
 - **One-off keys, after boot, over SSH.** Each join uses a single-use,
   pre-approved, tagged key that expires in minutes, pasted (read without echo) or
-  minted by FleetLedger with an OAuth client that can only make such keys. It
-  reaches the Ship on stdin over SSH and exists there only in a root-only file
-  under `/run` while `tailscale up` runs. Keys are never in seeds, cloud
-  metadata, command lines, logs, the inventory or status, and nothing keeps a copy.
+  minted by FleetLedger with an OAuth client. It reaches the Ship on stdin over
+  SSH and exists there only in a root-only file under `/run` while `tailscale up`
+  runs. Keys are never in seeds, cloud metadata, command lines, logs, the
+  inventory or status, and nothing keeps a copy.
+- **The OAuth client is as narrow as it can be.** At the default level it can
+  mint `tag:ship` keys, remove `tag:ship` devices and read the policy; only the
+  opt-in `manage_policy` level lets it change the policy, and FleetLedger then
+  only adds the Ships' rules after showing a diff and asking. `ship-fleet overlay
+  setup` checks the client's scopes before it saves the secret (0600, never in
+  `ships.toml`), and `overlay check` keeps verifying the rules
+  ([guide/your-own-fleet.md](guide/your-own-fleet.md) compares the choices).
+- **Cloud Ships** will need another first-contact path:
+  [design/cloud-first-contact.md](design/cloud-first-contact.md).
 - **Nothing runs until a Ship joins.** `tailscale` is installed (from its pinned,
   signature-checked repo) only by `ship-ctl overlay join`, with log upload to
   Tailscale turned off; it is stopped and disabled again on `leave`.

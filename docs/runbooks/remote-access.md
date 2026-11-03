@@ -18,6 +18,27 @@ it to the Ship over SSH on stdin. On the Ship it exists only in a root-only file
 under `/run` while `tailscale up` runs. Keys never go into seeds, cloud metadata,
 command lines, logs, `ships.toml`, the audit log or the status document.
 
+## The quick way: `ship-fleet overlay setup`
+
+```sh
+ship-fleet overlay setup    # asks: provider, key source, OAuth client and level
+ship-fleet overlay check    # verifies it, now and whenever you like
+```
+
+`setup` asks for the provider (Tailscale, or your own Headscale) and the key
+source (an OAuth client, or keys you paste), checks the OAuth client's scopes
+with Tailscale before saving anything, writes `[overlay]` to `ships.toml` and the
+client secret to a 0600 file, and prints the access rules to add to your policy.
+With the opt-in `manage` level it adds them itself instead, after showing a diff
+and asking. `check` verifies the setup, the policy (tag owners; your devices
+reach the Ships on port 22; no rule lets a Ship start a connection; the Ship
+tests pass in Tailscale's own engine), the tailnet's Ship devices against the
+inventory, and each Ship's overlay; `--probe` also tries, from each Ship, to open
+a connection to this computer and to another Ship, which must fail.
+
+The steps below are what `setup` does, by hand, and the laptop side.
+[../guide/your-own-fleet.md](../guide/your-own-fleet.md) explains the choices.
+
 ## 1. The tailnet (once)
 
 In the Tailscale admin console (or on your Headscale server):
@@ -147,6 +168,10 @@ traffic through its servers (still end-to-end encrypted) instead.
    ```
 
 ## 5. Check it (acceptance)
+
+`ship-fleet overlay check --probe` covers the tailnet side and the "a Ship
+cannot reach the laptop" probe (run it on the laptop, with the laptop on the
+overlay). By hand:
 
 - On a phone hotspot (not your LAN), `herdr --remote agent@<ship overlay name>`
   attaches, and `ssh` to the Ship succeeds with no host-key prompt.

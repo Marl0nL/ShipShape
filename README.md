@@ -31,6 +31,8 @@ ship-fleet ls
 ship-fleet ui                          # the same in your browser (this computer only)
 ```
 
+New here? Start with [set up your own fleet](docs/guide/your-own-fleet.md).
+
 Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [create a Ship](docs/runbooks/create-ship.md),
 [baked images](docs/runbooks/images.md),
