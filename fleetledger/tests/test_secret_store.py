@@ -33,6 +33,11 @@ def fake_backend(module="keyring.backends.SecretService", name="Keyring", locked
                 raise Locked("Failed to unlock the collection!")
             self.items[(service, item)] = value
 
+        def delete_password(self, service, item):
+            if locked:
+                raise Locked("Failed to unlock the collection!")
+            del self.items[(service, item)]
+
     Backend.__module__, Backend.__name__ = module, name
     return Backend()
 

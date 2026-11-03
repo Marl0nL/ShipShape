@@ -22,7 +22,8 @@ from fleetledger.errors import FleetError
 
 COMMANDS = ("setup", "doctor")
 
-MARK = {"ok": "ok", "warn": "WARN", "missing": "MISSING", "fail": "FAIL", "skip": "-"}
+MARK = {"ok": "ok", "info": "info", "warn": "WARN", "missing": "MISSING", "fail": "FAIL",
+        "skip": "-"}
 REDO = ("hypervisor", "overlay")
 STEPS = ("This computer", "FleetLedger's keys and inventory", "ssh-agent",
          "Certificate authority", "Where Ships run", "Overlay network (optional)",
@@ -62,12 +63,12 @@ def cmd_doctor(args, app) -> int:
     items = firstrun.everything(app, offline=args.offline)
     rows = [[MARK[i.state], i.area, i.name, i.detail] for i in items]
     app.say(table(rows, ["", "AREA", "CHECK", "DETAIL"]))
-    todo = [i for i in items if i.state in ("missing", "fail", "warn") and i.next]
+    todo = [i for i in items if i.state in ("missing", "fail", "warn", "info") and i.next]
     if todo:
         app.say("\nNext:")
         for item in dict.fromkeys(i.next for i in todo):
             app.say(f"  {item}")
-    else:
+    if not any(i.state in ("missing", "fail", "warn") for i in items):
         app.say("\nEverything is in place.")
     return 1 if any(i.state in ("missing", "fail") for i in items) else 0
 
@@ -123,18 +124,23 @@ def cmd_setup(args, app) -> int:
     agent_ok = _agent(s, inv)
     _ca(s)
     if not _hypervisor(s):
+        _left_for_later(s)
         return 1
     _overlay(s)
     _first_ship(s, agent_ok)
 
     app.say("\n== Done ==")
-    if s.later:
-        app.say("Left for later:")
-        for line in s.later:
-            app.say(f"  {line}")
+    _left_for_later(s)
     app.say("ship-fleet doctor shows the state of everything at any time; ship-fleet ls "
             "lists your Ships.")
     return 0
+
+
+def _left_for_later(s: _Setup) -> None:
+    if s.later:
+        s.app.say("Left for later:")
+        for line in s.later:
+            s.app.say(f"  {line}")
 
 
 def _computer(s: _Setup) -> None:

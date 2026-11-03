@@ -26,7 +26,7 @@ from fleetledger.errors import FleetError
 class Item:
     area: str
     name: str
-    state: str  # ok | warn | missing | fail | skip
+    state: str  # ok | info | warn | missing | fail | skip (info: fine, with a next step)
     detail: str = ""
     next: str = ""  # the exact command (or step) that fixes it
 
@@ -252,7 +252,7 @@ def overlay_items(app, inv) -> list[Item]:
 def ships_items(inv) -> list[Item]:
     ships = inv.ships()
     if not ships:
-        return [Item("ships", "Ships", "missing", "none yet", "ship-fleet new ship-01")]
+        return [Item("ships", "Ships", "info", "none yet", "ship-fleet new ship-01")]
     pending = [s.name for s in ships if s.enrolled is None]
     out = [Item("ships", "Ships", "ok", f"{len(ships)} in the inventory")]
     for name in pending:

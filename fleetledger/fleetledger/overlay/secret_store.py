@@ -127,6 +127,17 @@ def store_in_keyring(item: str, secret: str, switch_hint: str = SWITCH_HINT) -> 
     return why
 
 
+def delete_from_keyring(item: str) -> None:
+    backend, why = secure_backend()
+    if backend is None:
+        raise ConfigError(f"Cannot use the keyring: {why}.")
+    try:
+        backend.delete_password(SERVICE, item)
+    except Exception as exc:
+        raise ConfigError(f"Could not remove {item} from the keyring: {_describe(exc)}.") \
+            from None
+
+
 def read_file(path_value: str) -> str:
     path = paths.expand(path_value)
     try:

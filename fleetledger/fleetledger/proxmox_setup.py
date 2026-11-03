@@ -259,10 +259,40 @@ class Result:
     message: str = ""
 
 
+PROGRESS_FILE = "proxmox-setup-progress.json"  # a partial run's address, pin and token id
+
+
+def _progress_path() -> Path:
+    return paths.config_dir() / PROGRESS_FILE
+
+
+def _load_progress() -> dict[str, Any]:
+    """What a partial run confirmed (no secret): kept so the next run does not ask
+    again, and so a certificate that changes in between is noticed."""
+    import json
+
+    try:
+        doc = json.loads(_progress_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    keys = ("api_url", "tls_fingerprint", "token_id")
+    return {k: doc[k] for k in keys if isinstance(doc, dict) and isinstance(doc.get(k), str)}
+
+
+def _save_progress(config: Mapping[str, Any]) -> None:
+    import json
+
+    doc = {k: config[k] for k in ("api_url", "tls_fingerprint", "token_id")}
+    paths.private_dir(_progress_path().parent)
+    paths.write_private(_progress_path(), json.dumps(doc, indent=1).encode("utf-8"))
+
+
 def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
     """The whole Proxmox part of setup. Saves [drivers.proxmox] only when every
     required piece is there; otherwise prints the root commands that add it."""
-    old = inv.driver_config("proxmox") or {}
+    saved = dict(inv.driver_config("proxmox") or {})
+    progress = _load_progress()
+    old = {**saved, **progress}  # a partial run since the last save is the newer word
     app.say("FleetLedger needs three things from you: the Proxmox address, an API token id\n"
             "and its secret. It finds the rest through the API and asks you to confirm.\n")
 
@@ -271,7 +301,8 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
              (f" ({old['api_url']})" if old.get("api_url") else "") + ": ",
              old.get("api_url", "")))
 
-    fingerprint = _pin(app, host, port, api_url, old)
+    fingerprint = _pin(app, host, port, api_url, old,
+                       when="in your last setup run" if progress else "")
 
     app.say("\nThe API token. If you have none yet, press Enter: setup prints the commands\n"
             "that make one (run them as root on the Proxmox host), then stops.")
@@ -288,18 +319,31 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
         raise FleetError(f"'{token_id}' is not a token id (user@realm!name).")
 
     item = secret_store.proxmox_item(token_id)
-    secret, reused, store_kind, secret_path = _token_secret(
-        app, token_id, old, keyring_ok=bool(KEYRING_ITEM_RE.match(item)))
+    keyring_ok = bool(KEYRING_ITEM_RE.match(item))
+    secret, reused, store_kind, secret_path = _token_secret(app, token_id, old,
+                                                            keyring_ok=keyring_ok)
     config: dict[str, Any] = {"api_url": api_url, "token_id": token_id,
                               "tls_fingerprint": fingerprint}
-    api = _api(app, config, lambda: secret)
-    try:
-        version = api.get("/version") or {}
-    except proxmox_api.ProxmoxError as exc:
-        if exc.status == 401:
-            raise FleetError("Proxmox refused the token (401): check the token id and secret. "
-                             "Nothing was saved.") from None
-        raise
+    while True:
+        api = _api(app, config, lambda s=secret: s)
+        try:
+            version = api.get("/version") or {}
+            break
+        except proxmox_api.ProxmoxError as exc:
+            if exc.status != 401:
+                raise
+            if not reused:
+                raise FleetError("Proxmox refused the token (401): check the token id and "
+                                 "secret. Nothing was saved.") from None
+            # A stored secret that no longer works: most likely a new token was made
+            # (they expire). Ask for the new one rather than stopping.
+            app.say("\nProxmox refused the stored secret (an expired or replaced token?). "
+                    "Type the new one.")
+            secret = _secret(app, "Token secret (not shown): ")
+            if not _plausible_token(secret):
+                raise FleetError("That does not look like a Proxmox token secret.") from None
+            reused, store_kind = False, _choose_store(app, keyring_ok=keyring_ok)
+            secret_path = paths.config_dir() / SECRET_FILE
     app.say(f"\nThe token works: Proxmox VE {version.get('version', '?')}, "
             "through the pinned certificate.")
     if store_kind == "keyring":
@@ -315,20 +359,75 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
         app.say(f"The secret is in {secret_path} (0600).")
 
     match = re.match(r"^(\d+)\.", str(version.get("version", "")))
-    return _discover(app, store, api, config, old, versions,
-                     pve_major=int(match.group(1)) if match else 9)
+    result = _discover(app, store, api, config, old, versions,
+                       pve_major=int(match.group(1)) if match else 9)
+    if result.saved:
+        _progress_path().unlink(missing_ok=True)
+        _forget_old_copy(app, saved, config)
+    else:
+        _save_progress(config)
+    return result
 
 
-def _pin(app, host: str, port: int, api_url: str, old: Mapping[str, Any]) -> str:
+def _secret_location(config: Mapping[str, Any]) -> tuple[str, str] | None:
+    if not config.get("token_id"):
+        return None
+    if config.get("token_store", "file") == "keyring":
+        return ("keyring", str(config.get("keyring_item", "")))
+    if config.get("token_file"):
+        return ("file", str(paths.expand(config["token_file"])))
+    return None
+
+
+def _forget_old_copy(app, saved: Mapping[str, Any], config: Mapping[str, Any]) -> None:
+    """After a redo that moved the secret (another store, file or token), offer to
+    remove the copy ships.toml no longer names, so it does not linger unnoticed."""
+    before, after = _secret_location(saved), _secret_location(config)
+    if before is None or before == after:
+        return
+    kind, where = before
+    if kind == "file" and not Path(where).is_file():
+        return
+    if kind == "keyring" and secret_store.existing_in_keyring(where) is None:
+        return
+    label = (f"your keyring ({secret_store.SERVICE} / {where})" if kind == "keyring"
+             else where)
+    if _choose(app, f"The previous token secret is still in {label}, which ships.toml no "
+               "longer uses. Remove it", ("yes", "no"), "yes") != "yes":
+        app.say(f"Kept. It is still in {label}.")
+        return
+    if kind == "file":
+        Path(where).unlink()
+    else:
+        secret_store.delete_from_keyring(where)
+    app.say(f"Removed the previous token secret from {label}.")
+
+
+def _pin(app, host: str, port: int, api_url: str, old: Mapping[str, Any], *,
+         when: str = "") -> str:
     fetch = getattr(app, "cert_fingerprint", None) or proxmox_api.server_fingerprint
     fingerprint = fetch(host, port)
-    if old.get("api_url") == api_url and old.get("tls_fingerprint") == fingerprint:
-        app.say(f"Certificate: {fingerprint}\n(the one already pinned)")
+    pinned = old.get("tls_fingerprint") if old.get("api_url") == api_url else None
+    if pinned == fingerprint:
+        app.say(f"Certificate: {fingerprint}\n(the one you confirmed {when or 'before'})")
         return fingerprint
-    if old.get("api_url") == api_url and old.get("tls_fingerprint"):
-        app.say(f"\nWARNING: the server's certificate has changed since it was pinned.\n"
-                f"  pinned: {old['tls_fingerprint']}\n"
-                "If you did not renew it on the host, stop here: something may be in the way.")
+    if pinned:
+        app.say("\n" + "!" * 72 + "\n"
+                f"The certificate is DIFFERENT from the one you confirmed "
+                f"{when or 'before'}.\n"
+                f"  confirmed before: {pinned}\n"
+                f"  presented now:    {fingerprint}\n"
+                "Either the host's certificate was re-generated (a reinstall, or a new\n"
+                "certificate you installed), or something between you and the host is\n"
+                "intercepting the connection. Only continue if you know it was renewed,\n"
+                "and after checking the new fingerprint on the host:\n"
+                "  openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256\n"
+                + "!" * 72)
+        if _ask(app, "Type yes to pin the NEW certificate (anything else stops; default "
+                "no): ").lower() != "yes":
+            raise FleetError("Not pinned; the pin you confirmed before is unchanged, nothing "
+                             "was sent and nothing was saved.")
+        return fingerprint
     app.say(f"\nThe server's certificate (SHA-256):\n  {fingerprint}\n"
             "Check it on the Proxmox host before trusting it (as root):\n"
             "  openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256\n"
@@ -470,6 +569,17 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
     bridges = [b for b in bridges_from(perms) if BRIDGE_RE.match(b)]
     if bridges:
         n.bridge = _pick(app, "Network bridge", bridges, old.get("bridge"))
+    elif "SDN.Use" in effective(perms, "/sdn/zones/localnetwork/-"):
+        # Granted on a parent path: every bridge is allowed, and the API lists none.
+        app.say("The token may use any bridge (granted on a parent SDN path).")
+        while True:
+            typed = _ask(app, "Network bridge your LAN is on, e.g. vmbr0" +
+                         (f" ({old['bridge']})" if old.get("bridge") else "") + ": ",
+                         old.get("bridge", ""))
+            if BRIDGE_RE.match(typed):
+                n.bridge = typed
+                break
+            app.note("A bridge name: letters, digits, _ . and -, up to 32.")
     else:
         todo.append(("a network bridge the token may use",
                      [*_variables(Names(disk="x")),
@@ -494,8 +604,12 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
                              None)
             template = int(_pick(app, "Template VM", labels, preferred).split()[0])
         else:
-            todo.append(("a template VM (from Ubuntu's signed cloud image, at the pinned build)",
-                         template_commands(n, versions)))
+            vmid = old.get("template_vmid") or 9000
+            todo.append(("a template VM in the pool (from Ubuntu's signed cloud image, at the "
+                         "pinned build)",
+                         [f"pveum pool modify {_q(n.pool)} --vms {vmid}   # if you already made "
+                          "the template: add it to the pool; else, all of this:",
+                          *template_commands(n, versions, vmid)]))
 
     if todo:
         app.say("\nStill missing on the Proxmox host:")

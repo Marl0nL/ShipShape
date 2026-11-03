@@ -61,7 +61,7 @@ class _PinnedConnection(http.client.HTTPSConnection):
                 f"The Proxmox API at {self.host} presented a certificate that does not match "
                 "drivers.proxmox.tls_fingerprint; not sending the token.",
                 hint="If the host's certificate was renewed, check the new fingerprint on the "
-                "host and update ships.toml.",
+                "host, then pin it: ship-fleet setup --redo hypervisor.",
             )
 
 

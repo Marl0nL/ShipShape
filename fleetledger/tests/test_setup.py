@@ -48,6 +48,7 @@ class FakePVE:
         ]
         self.pools = pools if pools is not None else [{"poolid": "shipshape"}]
         self.refuse = refuse
+        self.refused: set[str] = set()  # secrets answered with 401
         self.version = "9.2.11"
         self.secrets_seen: list[str] = []
         self.configs: list[dict] = []
@@ -64,7 +65,7 @@ class FakePVE:
     def get(self, path, **params):
         self.paths.append(path)
         self.secrets_seen.append(self.secret())
-        if self.refuse:
+        if self.refuse or self.secret() in self.refused:
             raise ProxmoxError("Proxmox GET /version failed: 401 authentication failure",
                                status=401)
         routes = {
@@ -355,11 +356,15 @@ def test_missing_pieces_print_exact_commands_and_keep_the_token(fresh):
     fresh.pve = FakePVE()
     fresh.app.proxmox_api = fresh.pve.factory
     fresh.asked.clear()
-    code, out, err = fresh.run(answers=["no", "proxmox", *START,
-                                        "yes",  # use the secret in the keyring
+    code, out, err = fresh.run(answers=["no", "proxmox",
+                                        "", "",  # address and token id: from the last run
+                                        "yes",   # use the secret in the keyring
                                         *FOUND, "", "", "skip"])
     assert code == 0, err
     assert not any("Token secret" in q for q in fresh.asked)
+    assert not any("Type yes" in q for q in fresh.asked)  # the pin, confirmed last run
+    assert "the one you confirmed in your last setup run" in out
+    assert not (fresh.home / "config" / "proxmox-setup-progress.json").exists()
     assert fresh.pve.secrets_seen and set(fresh.pve.secrets_seen) == {TOKEN}
     assert fresh.store.load().driver_config("proxmox")["seed_storage"] == "shipshape-seeds"
 
@@ -441,7 +446,7 @@ def test_redo_hypervisor_keeps_the_pin_when_it_is_unchanged(fresh):
         "yes",          # reuse the keyring secret
         *FOUND, "", "", "skip"])
     assert code == 0, err
-    assert "the one already pinned" in out
+    assert "the one you confirmed before" in out
     assert not any("Type yes" in q for q in fresh.asked)
 
 
@@ -451,7 +456,9 @@ def test_a_changed_certificate_is_said_plainly_and_must_be_confirmed(fresh):
     fresh.app.cert_fingerprint = lambda host, port: ":".join(["66"] * 32)
     fresh.pve.paths.clear()
     code, out, err = fresh.run("--redo", "hypervisor", answers=["no", "proxmox", "", ""])
-    assert code != 0 and "has changed since it was pinned" in out and FPR in out
+    assert code != 0 and "DIFFERENT from the one you confirmed" in out
+    assert FPR in out and ":".join(["66"] * 32) in out  # the old one and the new one
+    assert "intercepting" in out and "default no" in fresh.asked[-1]
     assert fresh.store.path.read_bytes() == before and fresh.pve.paths == []
 
 
@@ -697,3 +704,84 @@ def test_the_api_reads_a_keyring_token_for_each_request(monkeypatch):
     assert api.get("/version") == {"version": "9.2.11"}
     assert sent == [f"PVEAPIToken={TOKEN_ID}={TOKEN}"]
     assert TOKEN not in repr(api)
+
+
+def test_a_changed_certificate_between_partial_runs_is_flagged(fresh):
+    fresh.pve.templates = []
+    assert to_proxmox(fresh, *START, "", *FOUND[:6])[0] == 1  # partial: no template
+    fresh.app.cert_fingerprint = lambda host, port: ":".join(["77"] * 32)
+    code, out, err = fresh.run(answers=["no", "proxmox", "", ""])
+    assert code != 0 and "DIFFERENT from the one you confirmed in your last setup run" in out
+
+
+def test_a_rotated_token_asks_for_the_new_secret_instead_of_stopping(fresh):
+    assert to_proxmox(fresh, *PROXMOX_OK)[0] == 0
+    fresh.pve.refused = {TOKEN}  # the old token was replaced on the host
+    new = "0a1b2c3d-0000-4000-8000-NEWSECRET002"
+    fresh.app.ask_secret = lambda prompt: fresh.asked.append(prompt) or new
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "",
+        "",   # reuse the stored secret: the default, yes (refused: then asked)
+        "",   # store: keyring
+        *FOUND, "", "", "skip"])
+    assert code == 0, err
+    assert "refused the stored secret" in out
+    assert fresh.keyring.items[("fleetledger", "proxmox-token:" + TOKEN_ID)] == new
+    assert new not in out + err
+
+
+@pytest.mark.parametrize("remove", ["yes", "no"])
+def test_a_store_switch_on_redo_offers_to_remove_the_old_copy(fresh, remove):
+    assert to_proxmox(fresh, *START, "file", *FOUND, "", "", "skip")[0] == 0
+    old_file = fresh.home / "config" / "proxmox-token"
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "",
+        "no",       # do not reuse the file's secret: type it again
+        "keyring",  # and keep it in the keyring now
+        *FOUND, "", remove, "", "skip"])
+    assert code == 0, err
+    config = fresh.store.load().driver_config("proxmox")
+    assert config["token_store"] == "keyring" and "token_file" not in config  # nothing stale
+    assert old_file.exists() is (remove == "no")
+
+
+def test_a_bridge_granted_on_a_parent_path_is_typed(fresh):
+    del fresh.pve.perms["/sdn/zones/localnetwork/vmbr0"]
+    fresh.pve.perms["/sdn"] = {"SDN.Use": 1}
+    code, out, err = to_proxmox(fresh, *START, "", *FOUND[:5], "bad bridge!", "vmbr1",
+                                FOUND[6], "", "", "skip")
+    assert code == 0, err
+    assert fresh.store.load().driver_config("proxmox")["bridge"] == "vmbr1"
+    assert "any bridge" in out
+
+
+def test_a_template_outside_the_pool_can_be_added_to_it(fresh):
+    fresh.pve.templates = []
+    code, out, err = to_proxmox(fresh, *START, "", *FOUND[:6])
+    assert code == 1
+    assert "pveum pool modify shipshape --vms 9000" in out
+
+
+def test_missing_rights_on_a_storage_are_reported(fresh):
+    fresh.pve.perms["/storage/local-lvm"] = {"Datastore.Audit": 1}
+    code, out, err = to_proxmox(fresh, *START, "", *FOUND[:6])
+    assert code == 1
+    assert "rights on /storage/local-lvm (Datastore.AllocateSpace)" in out
+    assert "pveum acl modify /storage/local-lvm --tokens 'shipshape@pve!build' " \
+        "--roles ShipShapeDisks" in out
+
+
+def test_an_ssh_add_that_did_not_load_the_key_is_said(fresh):
+    fresh.app.run_tty = lambda argv: fresh.tty.append(list(argv)) or 0  # loads nothing
+    code, out, err = fresh.run(answers=MANUAL[:2] + ["no", "manual", "", ])
+    assert code == 0, err
+    assert "still not in ssh-agent" in err and "Loaded." not in out
+
+
+def test_moving_the_secret_out_of_the_keyring_offers_to_remove_the_item(fresh):
+    assert to_proxmox(fresh, *PROXMOX_OK)[0] == 0
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "", "no", "file", *FOUND, "", "yes", "", "skip"])
+    assert code == 0, err
+    assert fresh.keyring.items == {}
+    assert "token_file" in fresh.store.load().driver_config("proxmox")

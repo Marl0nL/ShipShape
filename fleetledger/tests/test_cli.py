@@ -1593,7 +1593,7 @@ def doctor_rows(out):
     import re as _re
 
     return {m.group(2).strip(): m.group(1) for m in
-            _re.finditer(r"^(ok|WARN|MISSING|FAIL|-)\s+\S+\s+(.+?)\s{2,}", out, _re.M)}
+            _re.finditer(r"^(ok|info|WARN|MISSING|FAIL|-)\s+\S+\s+(.+?)\s{2,}", out, _re.M)}
 
 
 def test_doctor_on_a_fresh_computer_says_run_setup(env, tmp_path, monkeypatch):
@@ -1640,11 +1640,100 @@ def test_doctor_without_an_agent(env, monkeypatch):
     assert doctor_rows(out)["ssh-agent"] == "MISSING" and 'eval "$(ssh-agent)"' in out
 
 
-def test_doctor_flags_empty_pythonpath_entries(env, monkeypatch):
+@pytest.mark.parametrize("value", [":/x", "/x:", "/a::/b"])
+def test_doctor_flags_empty_pythonpath_entries(env, monkeypatch, value):
     doctor_tools(env, monkeypatch)
-    monkeypatch.setenv("PYTHONPATH", "/somewhere:")
+    monkeypatch.setenv("PYTHONPATH", value)
     code, out, err = env.run("doctor", "--offline")
     assert doctor_rows(out)["PYTHONPATH"] == "WARN" and "stray ':'" in out
+
+
+def test_doctor_is_quiet_about_a_clean_pythonpath(env, monkeypatch):
+    doctor_tools(env, monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", "/a:/b")
+    code, out, err = env.run("doctor", "--offline")
+    assert "PYTHONPATH" not in doctor_rows(out)
+
+
+def test_doctor_offline_never_contacts_proxmox(env, home, monkeypatch):
+    doctor_tools(env, monkeypatch)
+    proxmox_inventory(env, home)
+    env.app.proxmox_api = lambda config: (_ for _ in ()).throw(AssertionError("network"))
+    code, out, err = env.run("doctor", "--offline")
+    assert "Traceback" not in err
+    assert doctor_rows(out)["Proxmox API"] == "-" and doctor_rows(out)["Proxmox token"] == "ok"
+
+
+def test_doctor_does_not_take_another_key_for_the_admin_key(env, monkeypatch):
+    import subprocess as _sp
+
+    doctor_tools(env, monkeypatch)
+
+    def run(argv, **kw):
+        if argv[:2] == ["ssh-keygen", "-lf"]:
+            return _sp.CompletedProcess(argv, 0, "256 SHA256:adminFPR x (ED25519)\n", "")
+        return _sp.CompletedProcess(argv, 0, "256 SHA256:otherKEY you (ED25519)\n", "")
+
+    env.app.run_cmd = run
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["ssh-agent"] == "MISSING" and "\n  ssh-add " in out
+
+
+def test_doctor_says_an_agent_that_cannot_be_reached(env, monkeypatch):
+    import subprocess as _sp
+
+    doctor_tools(env, monkeypatch)
+
+    def run(argv, **kw):
+        if argv[:2] == ["ssh-add", "-l"]:
+            return _sp.CompletedProcess(argv, 2, "", "Could not open a connection")
+        return _sp.CompletedProcess(argv, 0, "256 SHA256:adminFPR x (ED25519)\n", "")
+
+    env.app.run_cmd = run
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["ssh-agent"] == "FAIL" and "does not answer" in out
+
+
+def test_doctor_names_missing_ca_and_agent_key_files(env, home, monkeypatch):
+    doctor_tools(env, monkeypatch)
+    with env.store.edit() as ed:
+        ed.set_ca({"host_key": str(home / "keys" / "gone_host_ca"),
+                   "user_key": str(home / "keys" / "gone_user_ca")})
+    (home / "keys" / "you.pub").unlink()
+    code, out, err = env.run("doctor", "--offline")
+    rows = doctor_rows(out)
+    assert rows["certificate authority"] == "FAIL" and "gone_host_ca" in out
+    assert rows["your keys for Ships"] == "FAIL" and "you.pub" in out
+    assert code == 1
+
+
+def test_doctor_lists_each_next_command_once(env, monkeypatch):
+    from fleetledger import firstrun
+
+    items = [firstrun.Item("a", "one", "missing", "x", "ship-fleet setup"),
+             firstrun.Item("b", "two", "fail", "y", "ship-fleet setup")]
+    monkeypatch.setattr(firstrun, "everything", lambda app, offline=False: items)
+    code, out, err = env.run("doctor")
+    assert out.count("\n  ship-fleet setup") == 1 and code == 1
+
+
+def test_doctor_passes_a_set_up_computer_with_no_ships_yet(env, home, monkeypatch):
+    """Ships are the next step, not a failure: exit 0, with ship-fleet new in Next."""
+    from conftest import keygen
+
+    doctor_tools(env, monkeypatch, loaded=True)
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    keygen(home / "keys" / "host_ca", "host-ca")
+    keygen(home / "keys" / "user_ca", "user-ca")
+    with env.store.edit() as ed:
+        for ship in env.store.load().ships():
+            ed.remove_ship(ship.name)
+        ed.set_ca({"host_key": str(home / "keys" / "host_ca"),
+                   "user_key": str(home / "keys" / "user_ca")})
+    code, out, err = env.run("doctor", "--offline")
+    assert code == 0, out
+    assert doctor_rows(out)["Ships"] == "info" and "ship-fleet new ship-01" in out
+    assert "Everything is in place." in out
 
 
 class FakeProxmoxAPI:
@@ -1785,5 +1874,8 @@ def test_doctor_checks_the_oauth_secret_file(env, home, monkeypatch, state, row)
 
 def test_doctor_lists_ships_still_enrolling(env, monkeypatch):
     doctor_tools(env, monkeypatch)
+    with env.store.edit() as ed:
+        ed.mark_enrolled("ship-02", "2026-11-01T00:00:00Z")
     code, out, err = env.run("doctor", "--offline")
+    assert "ship-fleet status ship-02 --wait" not in out  # enrolled: not flagged
     assert "ship-fleet status ship-01 --wait" in out  # the fixture's Ships have no enrolled
