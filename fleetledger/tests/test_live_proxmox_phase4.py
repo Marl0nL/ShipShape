@@ -31,6 +31,22 @@ LIVE = os.environ.get("FLEETLEDGER_LIVE_PROXMOX")
 pytestmark = pytest.mark.skipif(not LIVE, reason="set FLEETLEDGER_LIVE_PROXMOX to run")
 SIZE = {"cores": 2, "memory_mb": 4096, "disk_gb": 20}
 
+# Test stub for ship-provision: the guest agent, so Proxmox can shut the VM down
+# cleanly and report its address (a real Ship gets it from ship-provision).
+STUB_PROVISION = """#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -q
+apt-get install -y -q qemu-guest-agent
+systemctl start qemu-guest-agent
+"""
+
+
+@pytest.fixture
+def stub_repo(fake_repo):
+    (fake_repo.ship_dir / "provision" / "ship-provision").write_text(STUB_PROVISION)
+    return fake_repo
+
 
 @pytest.fixture
 def px():
@@ -38,13 +54,13 @@ def px():
 
 
 @pytest.fixture
-def made(store, fake_repo, px):
-    """A Ship VM cloned from the stock template (its seed only installs nothing)."""
+def made(store, stub_repo, px):
+    """A Ship VM cloned from the stock template; its seed only installs the guest agent."""
     driver = ProxmoxDriver(px)
     name = f"ss-p45-live4-{os.getpid() % 10000}"
     draft = Ship(name=name, id=new_ship_id(), driver="proxmox", names=(f"{name}.local",),
                  host_key="ssh-ed25519 AAAA", tags=("work",), created=now_timestamp())
-    seed = make_seed(store.load(), draft, fake_repo)
+    seed = make_seed(store.load(), draft, stub_repo)
     outcome = driver.create(draft, SeedFile(seed.path, seed.instance_id), SIZE)
     ship = Ship(**{**draft.__dict__, "host_key": seed.host_public_key,
                    "driver_ref": dict(outcome.driver_ref)})
@@ -72,10 +88,12 @@ def test_snapshot_take_list_rollback_delete(made):
             pytest.skip(f"the token lacks snapshot rights (runbook section 4): {exc.message}")
         raise
     assert "live4-first" in [s.name for s in driver.snapshots(ship)]
-    for _ in range(30):  # a clean shutdown needs the guest up: give it time to boot
+    for _ in range(60):  # a clean shutdown needs the guest agent up: let it boot
         if driver.status(ship).addresses:
             break
         time.sleep(10)
+    else:
+        pytest.fail("the guest agent never reported an address")
     assert driver.rollback(ship, "live4-first").done
     assert driver.status(ship).state == "running"
     driver.delete_snapshot(ship, "live4-first")

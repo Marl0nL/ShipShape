@@ -100,6 +100,14 @@ Refused while the image is pinned. It deletes the template through each driver i
 was published to (Proxmox checks the VM is the image's template by name first),
 then the local file. Ships made from it keep running: they are full copies.
 
+## Checked on a real server
+
+On Proxmox VE 9.2 with the phase 4 rights (section 4 of the setup runbook), from a
+QEMU-backend bake: `image publish` took 41 s; `ship-fleet new --on proxmox` from
+the published image reached `needs-sign-in` in 145 s with no UI clicks, and its
+seed ISO was deleted; a snapshot, a change, a rollback and the change was gone;
+`destroy` and `image rm` left nothing in the pool or either storage.
+
 ## Check on real hardware
 
 What the unit tests cannot cover, to run once on a Proxmox server:

@@ -282,9 +282,12 @@ class SSH:
             except (OSError, subprocess.TimeoutExpired):
                 pass
 
-    def exec_interactive(self, ship: Ship, *, user: str, command: Sequence[str] = ()) -> None:
+    def exec_interactive(
+        self, ship: Ship, *, user: str, command: Sequence[str] = (), host: str | None = None
+    ) -> None:
         """Replace this process with an interactive ssh session (ship-fleet ssh)."""
-        argv = self.argv(ship, ship.names[0], command or None, user=user, tty=True, batch=False)
+        argv = self.argv(ship, host or ship.names[0], command or None, user=user, tty=True,
+                         batch=False)
         os.execvp(argv[0], argv)
 
 

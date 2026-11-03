@@ -768,7 +768,10 @@ def cmd_ssh(args, app) -> int:
     ship = inv.ship(args.name)
     remote = args.remote
     user = "fleet" if args.user == "fleet" else "agent"
-    _ssh(app, inv).exec_interactive(ship, user=user, command=remote)
+    # An interactive session cannot fall back name by name as ssh.run does, so dial
+    # the first name that resolves here (the pinned host key is checked either way).
+    host = next((h for h in ship.names if app.resolves(h)), ship.names[0])
+    _ssh(app, inv).exec_interactive(ship, user=user, command=remote, host=host)
     return 0  # not reached: exec replaces this process
 
 

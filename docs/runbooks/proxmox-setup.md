@@ -170,11 +170,13 @@ image_storage = "shipshape-images"
 
 What the token then does with an image: it uploads the qcow2 to
 `shipshape-images`, creates a VM in the pool whose disk imports it
-(`scsi0: <disk storage>:0,import-from=shipshape-images:import/<file>`), turns that
-VM into a template, and deletes the upload. Creating the VM uses rights the role
-already has (`VM.Allocate`, `VM.Config.*` on the pool, `Datastore.AllocateSpace`
-on the disk storage, the bridge). The template leaves out the serial console the
-stock template has, so `VM.Config.HWType` is not needed.
+(`virtio0: <disk storage>:0,import-from=shipshape-images:import/<file>`), turns
+that VM into a template, and deletes the upload. Creating the VM uses rights the
+role already has (`VM.Allocate`, `VM.Config.*` on the pool,
+`Datastore.AllocateSpace` on the disk storage, the bridge). Unlike the stock
+template it has a virtio disk rather than a SCSI controller, and no serial
+console: choosing either would need `VM.Config.HWType`, which the role
+deliberately leaves out.
 
 If you would rather not give these rights, publish images by hand instead:
 `ship-fleet image publish <id> --driver manual` prints the `qm` commands to run
