@@ -1,0 +1,15 @@
+# The OAuth client secret in the OS keyring: ships.toml names the item, never the secret.
+schema = 1
+
+[fleet]
+admin_key = "~/.ssh/shipshape_fleet_ed25519"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+
+[overlay]
+provider = "tailscale"
+key_source = "tailscale-api"
+
+[overlay.api]
+oauth_client_id = "kExampleClient1"
+secret_store = "keyring"
+keyring_item = "tailscale-oauth:kExampleClient1"
