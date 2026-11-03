@@ -16,6 +16,8 @@ COMMANDS = ("overlay",)
 
 def add_parsers(sub, add) -> None:
     p = add(sub, "overlay", "join Ships to the overlay network (access off the LAN)",
+            "  ship-fleet overlay setup           guided, once: provider, key source, checks\n"
+            "  ship-fleet overlay check [--policy FILE] [--probe]\n"
             "  ship-fleet overlay join ship-01 [ship-02 ...] | --tag work\n"
             "  ship-fleet overlay status [ship-01 ...]\n"
             "  ship-fleet overlay leave ship-01\n"
@@ -23,12 +25,24 @@ def add_parsers(sub, add) -> None:
             "Each join uses a one-off auth key, pasted (not shown) or minted through the\n"
             "Tailscale API ([overlay] key_source). Keys never go into seeds or logs.\n"
             "See docs/runbooks/remote-access.md.")
-    p.add_argument("action", choices=("join", "leave", "status", "policy"))
+    p.add_argument("action", choices=("setup", "check", "join", "leave", "status", "policy"))
     p.add_argument("names", nargs="*", metavar="SHIP")
     p.add_argument("--tag", help="every Ship with this tag")
+    p.add_argument("--force", action="store_true", help="setup: replace an existing [overlay]")
+    p.add_argument("--policy", metavar="FILE",
+                   help="check: a policy file exported from the admin console")
+    p.add_argument("--probe", action="store_true",
+                   help="check: from each Ship, try to open a connection to this computer "
+                   "and to another Ship (both must fail)")
 
 
 def cmd_overlay(args, app) -> int:
+    from fleetledger import overlay_setup
+
+    if args.action == "setup":
+        return overlay_setup.setup(args, app)
+    if args.action == "check":
+        return overlay_setup.check(args, app)
     store = app.store_factory()
     inv = store.load()
     config = overlay.settings(inv)

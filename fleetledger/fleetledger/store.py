@@ -191,6 +191,23 @@ class InventoryEditor:
         if not images:
             del self.doc["image"]
 
+    def set_overlay(self, entry: Mapping[str, Any]) -> None:
+        """Create or replace [overlay] (with [overlay.api] when given)."""
+        table = tomlkit.table()
+        for key, value in entry.items():
+            if key == "api":
+                sub = tomlkit.table()
+                for k, v in value.items():
+                    sub[k] = v
+                table["api"] = sub
+            else:
+                table[key] = _item(value)
+        if "overlay" in self.doc:
+            self.doc["overlay"] = table
+        else:
+            self.doc.add(tomlkit.nl())
+            self.doc["overlay"] = table
+
     def set_default(self, key: str, value: Any) -> None:
         """Set defaults.<key>; None removes it."""
         if "defaults" not in self.doc:
