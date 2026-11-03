@@ -19,7 +19,19 @@ for tool in ssh ssh-keygen ssh-keyscan; do
   fi
 done
 
+# An empty PYTHONPATH entry (leading or trailing ':', or '::') means "the current
+# folder". ship-fleet's launcher guards against it, but other Python tools in a
+# ShipShape checkout would still trip over it: say so.
+case ":${PYTHONPATH-}:" in
+  *::*)
+    if [ -n "${PYTHONPATH-}" ]; then
+      echo "install.sh: warning: PYTHONPATH has an empty entry ('$PYTHONPATH'), which Python" >&2
+      echo "  reads as the current folder. Remove the stray ':' (for example in ~/.bashrc)." >&2
+    fi
+    ;;
+esac
+
 pipx install --force --editable "$here"
 echo
 echo "Installed: $(command -v ship-fleet || echo "ship-fleet (add pipx's bin folder to PATH)")"
-echo "Next: ship-fleet init"
+echo "Next: ship-fleet setup"
