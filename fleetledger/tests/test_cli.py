@@ -987,3 +987,19 @@ def test_destroy_with_pasted_keys_says_how_to_remove_the_device(env):
     env.run("new", "ship-04", "--on", "proxmox")
     code, out, err = env.run("destroy", "ship-04", "--yes")
     assert code == 0 and "admin console > Machines" in err
+
+
+def test_resolving_a_name_is_capped(monkeypatch):
+    """An mDNS name nobody answers must not stall `ship-fleet ssh` or `new`."""
+    import time as _time
+
+    def slow(host, port):
+        _time.sleep(5)
+        return []
+
+    monkeypatch.setattr("socket.getaddrinfo", slow)
+    started = _time.monotonic()
+    assert cli._resolves("ship-01.local", timeout=0.2) is False
+    assert _time.monotonic() - started < 2
+    assert cli._resolves("192.0.2.44") is True  # an address needs no lookup
+    assert cli._resolves("2001:db8::44") is True
