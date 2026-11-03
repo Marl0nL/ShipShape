@@ -123,10 +123,15 @@ def fleet(app) -> tuple[list[Item], Any]:
         out.append(Item("fleet", "admin key", "ok", str(admin)))
         held = agent_fingerprints(run)
         fpr = fingerprint(str(public), run)
-        if held is None:
+        if held is None and not os.environ.get("SSH_AUTH_SOCK"):
             out.append(Item("fleet", "ssh-agent", "missing",
                             "no ssh-agent (SSH_AUTH_SOCK is not set)",
                             'eval "$(ssh-agent)" && ssh-add ' + _tilde(admin)))
+        elif held is None:
+            out.append(Item("fleet", "ssh-agent", "fail",
+                            "the ssh-agent named by SSH_AUTH_SOCK does not answer "
+                            "(or ssh-add is missing)",
+                            "ssh-add -l   (shows what is wrong)"))
         elif fpr is None:
             out.append(Item("fleet", "ssh-agent", "fail",
                             f"cannot read the fingerprint of {public} (ssh-keygen -lf failed)",

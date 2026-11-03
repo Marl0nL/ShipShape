@@ -1555,6 +1555,16 @@ def test_the_keyring_names_are_stable():
 # --- ship-fleet doctor ---------------------------------------------------------------------
 
 
+def _no_real_commands(monkeypatch):
+    """Any command doctor runs without going through app.run_cmd fails the test."""
+    from fleetledger import firstrun
+
+    def refuse(argv, **kw):
+        raise AssertionError(f"ran a real command: {argv}")
+
+    monkeypatch.setattr(firstrun, "_run", refuse)
+
+
 def doctor_tools(env, monkeypatch, *, agent=True, loaded=True):
     """Fake ssh-keygen -lf and ssh-add -l (nothing real is asked)."""
     import subprocess as _sp
@@ -1565,6 +1575,7 @@ def doctor_tools(env, monkeypatch, *, agent=True, loaded=True):
         monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
 
     env.commands = []
+    _no_real_commands(monkeypatch)
 
     def run(argv, **kw):
         env.commands.append(list(argv[:2]))
@@ -1689,7 +1700,8 @@ def test_doctor_reports_missing_openssh_tools_instead_of_crashing(env, monkeypat
     env.app.run_cmd = run
     code, out, err = env.run("doctor", "--offline")
     assert code == 1 and "Traceback" not in err
-    assert doctor_rows(out)["ssh-agent"] == "MISSING"
+    assert doctor_rows(out)["ssh-agent"] == "FAIL" and "does not answer" in out
+    assert 'eval "$(ssh-agent)"' not in out  # would start a second agent
 
 
 def test_doctor_reports_a_hung_agent_instead_of_crashing(env, monkeypatch):
@@ -1703,7 +1715,7 @@ def test_doctor_reports_a_hung_agent_instead_of_crashing(env, monkeypatch):
     monkeypatch.setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")
     env.app.run_cmd = run
     code, out, err = env.run("doctor", "--offline")
-    assert code == 1 and doctor_rows(out)["ssh-agent"] == "MISSING"
+    assert code == 1 and doctor_rows(out)["ssh-agent"] == "FAIL"
 
 
 def test_doctor_says_when_the_admin_fingerprint_cannot_be_read(env, monkeypatch):
