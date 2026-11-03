@@ -20,7 +20,8 @@
       "tags": [
         "tag:ship"
       ],
-      "ssh_listen": "any"
+      "ssh_listen": "any",
+      "node_id": "nExampleNode1CNTRL"
     }
   },
   "error": null

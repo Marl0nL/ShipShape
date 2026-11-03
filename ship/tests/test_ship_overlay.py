@@ -42,6 +42,7 @@ def test_join(ov):
     assert overlay["name"] == "ship-01.example-tailnet.ts.net"
     assert overlay["addresses"] == ["192.0.2.10", "fd7a:115c:a1e0::a"]
     assert overlay["tags"] == ["tag:ship"] and overlay["ssh_listen"] == "any"
+    assert overlay["node_id"] == "nExample"  # the node's identity, for removing it later
     (up,) = [c for c in ov.calls("tailscale") if c[1] == "up"]
     assert "--ssh=false" in up and "--accept-dns=false" in up and "--accept-routes=false" in up
     assert "--hostname=ship-01" in up and "--advertise-tags=tag:ship" in up and "--reset" in up

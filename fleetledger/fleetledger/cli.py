@@ -8,9 +8,11 @@ prompts), so each command can be tested without a network or a Ship.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import re
 import socket
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -84,12 +86,30 @@ class App:
         print(text, file=self.err)
 
 
-def _resolves(host: str) -> bool:
+RESOLVE_TIMEOUT = 2.0
+
+
+def _resolves(host: str, timeout: float = RESOLVE_TIMEOUT) -> bool:
+    """Does host resolve here? An address answers at once; a name gets `timeout`
+    seconds, so an mDNS .local name nobody answers does not stall a command."""
     try:
-        socket.getaddrinfo(host, 22)
-    except OSError:
-        return False
-    return True
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    result: list[bool] = []
+
+    def lookup() -> None:
+        try:
+            socket.getaddrinfo(host, 22)
+            result.append(True)
+        except OSError:
+            result.append(False)
+
+    worker = threading.Thread(target=lookup, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return bool(result and result[0])
 
 
 class _TopHelp(argparse.HelpFormatter):

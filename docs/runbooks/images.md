@@ -100,21 +100,18 @@ Refused while the image is pinned. It deletes the template through each driver i
 was published to (Proxmox checks the VM is the image's template by name first),
 then the local file. Ships made from it keep running: they are full copies.
 
-## Checked on a real server
-
-On Proxmox VE 9.2 with the phase 4 rights (section 4 of the setup runbook), from a
-QEMU-backend bake: `image publish` took 41 s; `ship-fleet new --on proxmox` from
-the published image reached `needs-sign-in` in 145 s with no UI clicks, and its
-seed ISO was deleted; a snapshot, a change, a rollback and the change was gone;
-`destroy` and `image rm` left nothing in the pool or either storage.
-
 ## Check on real hardware
 
-What the unit tests cannot cover, to run once on a Proxmox server:
+What the unit tests cannot cover, to run once on a Proxmox server, with what a run
+on Proxmox VE 9.2 (phase 4 rights, a QEMU-backend bake) gave:
 
 - `ship-fleet image build` with each backend you use; the image boots.
-- `image publish` with the phase 4 token rights; `pveum user token permissions`
-  shows nothing new beyond section 4.
+  (qemu backend: checked; virt-customize: not yet.)
+- `image publish` with the phase 4 token rights, and `pveum user token
+  permissions` shows nothing beyond section 4. (41 s; rights as expected.)
 - `ship-fleet new ship-xx --image <id>` reaches `needs-sign-in` within 5 minutes,
-  with no Proxmox UI clicks, and its seed ISO is deleted afterwards.
-- `image rm` deletes the template.
+  with no Proxmox UI clicks, and its seed ISO is deleted afterwards. (145 s.)
+- `snapshot take`, a change, `snapshot rollback`: the change is gone and the Ship
+  comes back on its pinned key. (Checked.)
+- `destroy` and `image rm` leave nothing in the pool or either storage.
+  (Checked.)

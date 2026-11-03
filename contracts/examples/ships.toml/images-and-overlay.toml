@@ -29,6 +29,8 @@ tailnet = "-"
 oauth_client_id = "kExampleClient1"
 oauth_secret_file = "~/.config/fleetledger/tailscale-oauth"
 key_expiry_s = 600
+remove_devices = false
+manage_policy = false
 
 [drivers.proxmox]
 api_url = "https://pve.example.com:8006/api2/json"
@@ -52,3 +54,4 @@ driver_ref = { vmid = 9101 }
 names = ["ship-01.local", "ship-01.example-tailnet.ts.net"]
 host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZXlleGFt ship-01"
 image = "26.04-20261102-3f9a1c2e"
+overlay_node = "nExampleNode1CNTRL"

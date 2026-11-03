@@ -73,6 +73,7 @@ def cmd_overlay(args, app) -> int:
             with store.edit() as ed:
                 ed.set_field(ship.name, "names",
                              overlay.names_with(store.load().ship(ship.name), name))
+                ed.set_field(ship.name, "overlay_node", joined.node_id)
             app.say(f"{ship.name}: on the overlay as {joined.name or '?'} "
                     f"({', '.join(joined.addresses) or 'no address yet'}).")
         if not failed:
@@ -88,10 +89,11 @@ def cmd_overlay(args, app) -> int:
             app.say(f"{ship.name}: {exc.message}")
             failed += 1
             continue
-        if before and before.get("name"):
-            with store.edit() as ed:
+        with store.edit() as ed:
+            if before and before.get("name"):
                 ed.set_field(ship.name, "names",
                              overlay.names_without(store.load().ship(ship.name), before["name"]))
+            ed.set_field(ship.name, "overlay_node", None)
         for message in messages:
             app.say(f"{ship.name}: {message}")
     return 1 if failed else 0
