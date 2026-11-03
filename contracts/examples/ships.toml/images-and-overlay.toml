@@ -29,7 +29,7 @@ tailnet = "-"
 oauth_client_id = "kExampleClient1"
 oauth_secret_file = "~/.config/fleetledger/tailscale-oauth"
 key_expiry_s = 600
-remove_devices = true
+remove_devices = false
 manage_policy = false
 
 [drivers.proxmox]

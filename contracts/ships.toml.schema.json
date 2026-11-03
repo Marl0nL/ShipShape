@@ -311,8 +311,8 @@
             "key_expiry_s": { "type": "integer", "minimum": 60, "maximum": 86400, "default": 600 },
             "remove_devices": {
               "type": "boolean",
-              "default": true,
-              "description": "Whether destroy removes the Ship's device through the API (needs devices:core, which Tailscale grants tailnet-wide: a leaked secret could then remove any device). false: destroy prints the admin-console steps instead."
+              "default": false,
+              "description": "Opt-in: destroy removes the Ship's device through the API. It needs the devices:core scope, which Tailscale grants over the whole tailnet: a leaked secret could then remove any device. Off (the default): the secret only mints keys, and destroy prints the admin-console step to remove the device."
             },
             "manage_policy": {
               "type": "boolean",
