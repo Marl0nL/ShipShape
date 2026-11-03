@@ -22,7 +22,7 @@ from fleetledger import __version__
 from fleetledger.errors import FleetError
 
 COMMANDS = (
-    "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
+    "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "set", "tag", "tools", "update", "reboot", "attention", "pins", "ssh", "logs", "ca",
     "trust", "untrust", "net", "ui", "destroy", "snapshot", "image", "overlay",
 )  # fmt: skip

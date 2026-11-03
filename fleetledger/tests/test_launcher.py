@@ -142,4 +142,4 @@ def test_install_sh_warns_about_empty_pythonpath_entries(tmp_path, value, warned
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert ("empty entry" in out.stderr) is warned
-    assert "ship-fleet init" in out.stdout
+    assert "ship-fleet setup" in out.stdout

@@ -34,35 +34,8 @@ def _ssh(app, inventory):
 
 # --- ca init --------------------------------------------------------------------
 def ca_init(args, app) -> int:
-    store = app.store_factory()
-    inv = store.load()
-    if ca.config(inv) is not None and not args.force:
-        raise FleetError("FleetLedger already has a certificate authority ([ca] in ships.toml).",
-                         hint="`ship-fleet ca show` lists it.")
-    made = []
-    for path_text, comment, what in (
-        (args.host_key, ca.HOST_CA_COMMENT, "host CA"),
-        (args.user_key, ca.USER_CA_COMMENT, "user CA"),
-    ):
-        path = paths.expand(path_text)
-        if path.exists():
-            app.say(f"Using the existing {what} key {path}.")
-            continue
-        paths.private_dir(path.parent)
-        command = ["ssh-keygen", "-t", "ed25519", "-C", comment, "-f", str(path)]
-        if args.no_passphrase:
-            command += ["-N", ""]
-        else:
-            app.note(f"Choose a passphrase for the {what} key (ssh-agent can hold it).")
-        try:
-            subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise FleetError(f"ssh-keygen could not make the {what} key.") from exc
-        made.append(path)
-    entry = {"host_key": args.host_key, "user_key": args.user_key}
-    with store.edit() as ed:
-        ed.set_ca(entry)
-    cfg = ca.require(store.load())
+    cfg = make_ca(app, app.store_factory(), args.host_key, args.user_key,
+                  force=args.force, no_passphrase=args.no_passphrase)
     app.say(f"Host CA {ca.fingerprint(cfg.host_public)}")
     app.say(f"User CA {ca.fingerprint(cfg.user_public)}")
     app.say("Next:")
@@ -70,6 +43,36 @@ def ca_init(args, app) -> int:
     app.say("  ship-fleet ca sign                 # certify every Ship")
     app.say("  ship-fleet trust <machine> --key <its .pub>")
     return 0
+
+
+def make_ca(app, store, host_key: str, user_key: str, *, force: bool = False,
+            no_passphrase: bool = False) -> ca.CAConfig:
+    """The host and user CA keys (each made if missing) and [ca] in ships.toml."""
+    inv = store.load()
+    if ca.config(inv) is not None and not force:
+        raise FleetError("FleetLedger already has a certificate authority ([ca] in ships.toml).",
+                         hint="`ship-fleet ca show` lists it.")
+    for path_text, comment, what in (
+        (host_key, ca.HOST_CA_COMMENT, "host CA"),
+        (user_key, ca.USER_CA_COMMENT, "user CA"),
+    ):
+        path = paths.expand(path_text)
+        if path.exists():
+            app.say(f"Using the existing {what} key {path}.")
+            continue
+        paths.private_dir(path.parent)
+        command = ["ssh-keygen", "-t", "ed25519", "-C", comment, "-f", str(path)]
+        if no_passphrase:
+            command += ["-N", ""]
+        else:
+            app.note(f"Choose a passphrase for the {what} key (ssh-agent can hold it).")
+        try:
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise FleetError(f"ssh-keygen could not make the {what} key.") from exc
+    with store.edit() as ed:
+        ed.set_ca({"host_key": host_key, "user_key": user_key})
+    return ca.require(store.load())
 
 
 # --- ca sign ----------------------------------------------------------------------

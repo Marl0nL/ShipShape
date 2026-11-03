@@ -35,4 +35,4 @@ esac
 pipx install --force --editable "$here"
 echo
 echo "Installed: $(command -v ship-fleet || echo "ship-fleet (add pipx's bin folder to PATH)")"
-echo "Next: ship-fleet init, then ship-fleet doctor to see what is left"
+echo "Next: ship-fleet setup"

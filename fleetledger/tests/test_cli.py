@@ -1596,13 +1596,13 @@ def doctor_rows(out):
             _re.finditer(r"^(ok|WARN|MISSING|FAIL|-)\s+\S+\s+(.+?)\s{2,}", out, _re.M)}
 
 
-def test_doctor_on_a_fresh_computer_says_run_init(env, tmp_path, monkeypatch):
+def test_doctor_on_a_fresh_computer_says_run_setup(env, tmp_path, monkeypatch):
     from fleetledger.store import TomlFileStore
 
     env.app.store_factory = lambda: TomlFileStore(tmp_path / "none" / "ships.toml")
     code, out, err = env.run("doctor")
     assert code == 1
-    assert doctor_rows(out)["inventory"] == "MISSING" and "ship-fleet init" in out
+    assert doctor_rows(out)["inventory"] == "MISSING" and "ship-fleet setup" in out
 
 
 def config_snapshot(folder):
