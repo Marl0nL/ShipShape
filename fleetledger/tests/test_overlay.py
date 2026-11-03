@@ -278,7 +278,8 @@ class FakeTS:
 def api_provider(devices, tags=("tag:ship",)):
     fake = FakeTS(devices)
     config = {"provider": "tailscale", "tags": list(tags), "key_source": "tailscale-api",
-              "api": {"oauth_client_id": "x", "oauth_secret_file": "/unused"}}
+              "api": {"oauth_client_id": "x", "oauth_secret_file": "/unused",
+                      "remove_devices": True}}
     return providers.get(config, api_factory=lambda api: fake), fake
 
 
@@ -352,14 +353,22 @@ def test_remove_devices_off_prints_the_steps():
                       "remove_devices": False}}
     p = providers.get(config, api_factory=lambda api: (_ for _ in ()).throw(AssertionError))
     removal = p.remove(Ship(**{**SHIP.__dict__, "overlay_node": "nShip3"}))
-    assert not removal.done and "remove_devices is off" in removal.messages[0]
+    assert not removal.done and "remove_devices" in removal.messages[0]
     assert fake.deleted == []
 
 
-def test_the_device_removal_default_is_one_constant():
+def test_device_removal_is_off_unless_turned_on():
+    """The product owner's decision: by default the secret only mints keys."""
+    assert providers.REMOVE_DEVICES_DEFAULT is False
     config = {"provider": "tailscale", "key_source": "tailscale-api",
               "api": {"oauth_client_id": "x", "oauth_secret_file": "/unused"}}
-    assert providers.get(config).removes_devices is providers.REMOVE_DEVICES_DEFAULT
+    p = providers.get(config, api_factory=lambda api: (_ for _ in ()).throw(AssertionError))
+    assert p.removes_devices is False
+    ship = Ship(**{**SHIP.__dict__, "names": ("ship-03.ts.example", "ship-03.local"),
+                   "overlay_node": "nShip3"})
+    removal = p.remove(ship)  # never signs in to the API
+    assert not removal.done
+    assert "admin console > Machines > ship-03.ts.example, node id nShip3" in removal.messages[0]
 
 
 def test_writing_the_policy_needs_manage_policy():

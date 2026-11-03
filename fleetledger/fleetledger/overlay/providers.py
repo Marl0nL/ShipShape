@@ -32,7 +32,8 @@ from fleetledger.overlay.tsapi import TailscaleAPI, default_opener
 
 DEFAULT_TAGS = ("tag:ship",)
 # Whether destroy removes a Ship's tailnet device by default (overlay.api.remove_devices).
-REMOVE_DEVICES_DEFAULT = True
+# Off: the stored secret then only mints keys (devices:core is tailnet-wide).
+REMOVE_DEVICES_DEFAULT = False
 
 
 class KeySource(Protocol):
@@ -167,10 +168,15 @@ class TailscaleProvider(OverlayProvider):
     def remove(self, ship: Ship, live: Mapping[str, Any] | None = None) -> Removal:
         if not self.removes_devices:
             why = ("FleetLedger has no API access with pasted keys" if not self.uses_api else
-                   "overlay.api.remove_devices is off")
+                   "device removal is off: overlay.api.remove_devices")
+            live = live or {}
+            shown = live.get("name") or next((n for n in ship.names if "." in n and not
+                                              n.endswith(".local")), ship.name)
+            node = live.get("node_id") or ship.overlay_node
+            ident = f", node id {node}" if node else ""
             return Removal(False, [
-                f"Remove {ship.name} from your tailnet: admin console > Machines > "
-                f"{ship.name} > Remove ({why}).",
+                f"Remove {ship.name}'s device from your tailnet: admin console > Machines > "
+                f"{shown}{ident} > ... > Remove ({why}).",
             ])
         devices, how = self.find_devices(ship, live)
         if not devices:

@@ -961,7 +961,8 @@ class FakeTailnet:
 
 def test_destroy_removes_the_ships_device_from_the_tailnet(env):
     with_overlay(env, key_source="tailscale-api",
-                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused",
+                      "remove_devices": True})
     env.run("new", "ship-04", "--on", "proxmox")
     env.run("overlay", "join", "ship-04")
     assert env.store.load().ship("ship-04").overlay_node == "nship04"  # recorded at join
@@ -984,7 +985,8 @@ def test_destroy_removes_the_ships_device_from_the_tailnet(env):
 
 def test_destroy_removes_the_device_even_if_the_ship_is_unreachable(env):
     with_overlay(env, key_source="tailscale-api",
-                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused",
+                      "remove_devices": True})
     env.run("new", "ship-04", "--on", "proxmox")
     env.run("overlay", "join", "ship-04")
     env.ship.down.add("ship-04")
@@ -998,7 +1000,8 @@ def test_destroy_removes_the_device_even_if_the_ship_is_unreachable(env):
 
 def test_destroy_goes_on_when_the_tailnet_cannot_be_reached(env):
     with_overlay(env, key_source="tailscale-api",
-                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused",
+                      "remove_devices": True})
     env.run("new", "ship-04", "--on", "proxmox")
     env.app.overlay_api = lambda api: FakeTailnet([], fail=True)
     code, out, err = env.run("destroy", "ship-04", "--yes")
@@ -1012,6 +1015,18 @@ def test_overlay_leave_forgets_the_node_id(env):
     assert env.store.load().ship("ship-01").overlay_node == "nship01"
     env.run("overlay", "leave", "ship-01")
     assert env.store.load().ship("ship-01").overlay_node is None
+
+
+def test_destroy_by_default_prints_the_admin_console_step(env):
+    """API keys, device removal not turned on: no API call, the exact step instead."""
+    with_overlay(env, key_source="tailscale-api",
+                 api={"oauth_client_id": "kExampleClient1", "oauth_secret_file": "/unused"})
+    env.run("new", "ship-04", "--on", "proxmox")
+    env.run("overlay", "join", "ship-04")
+    env.app.overlay_api = lambda api: (_ for _ in ()).throw(AssertionError("no API call"))
+    code, out, err = env.run("destroy", "ship-04", "--yes")
+    assert code == 0 and env.driver.destroyed == ["ship-04"]
+    assert "Machines > ship-04.example-tailnet.ts.net, node id nship04" in err
 
 
 def test_destroy_with_pasted_keys_says_how_to_remove_the_device(env):

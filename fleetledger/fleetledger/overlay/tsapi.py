@@ -1,17 +1,15 @@
 """A small client for Tailscale's API, signed in with a scoped OAuth client.
 
 Scopes (Tailscale's "trust credentials" reference; the names are checked against
-the current docs, see docs/overlay-providers.md):
+the current docs, see docs/overlay-providers.md for the three levels):
 
-- auth_keys: make the single-use keys Ships join with;
-- devices:core: find and remove a destroyed Ship's device. Tailscale makes you
-  pick tags for a client with this scope, but the tags only bind the keys it
-  makes: the scope itself reaches every device in the tailnet, so a leaked
-  secret could remove any of them (see overlay.api.remove_devices);
-- policy_file:read (needs devices:core:read and devices:posture_attributes:read):
-  read and validate the tailnet policy, for `overlay check`;
-- policy_file (needs devices:posture_attributes): change the policy, only with
-  overlay.api.manage_policy.
+- auth_keys (level 1, the default): make the single-use keys Ships join with;
+- devices:core (level 2, overlay.api.remove_devices, opt-in): find and remove a
+  destroyed Ship's device. Tailscale makes you pick tags for a client with this
+  scope, but the tags only bind the keys it makes: the scope itself reaches every
+  device in the tailnet, so a leaked secret could remove any of them;
+- policy_file (level 3, overlay.api.manage_policy, opt-in; needs devices:core:read
+  and devices:posture_attributes): read, validate and change the tailnet policy.
 
 The client secret is read from its 0600 file for each sign-in. Neither it, the
 access token, nor a minted key is ever printed, logged or put in an exception,
