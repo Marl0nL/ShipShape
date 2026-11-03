@@ -380,6 +380,16 @@ def test_permissions_propagate_from_parents():
         "Datastore.Audit", "Datastore.AllocateSpace"}
 
 
+def test_a_privilege_that_does_not_propagate_still_counts_where_it_is_granted():
+    """/access/permissions maps each privilege to its propagate flag: 0 means granted
+    here, just not below."""
+    perms = {"/storage": {"Datastore.Audit": 0},
+             "/sdn/zones/localnetwork/vmbr1": {"SDN.Use": 0}}
+    assert proxmox_setup.effective(perms, "/storage") == {"Datastore.Audit"}
+    assert proxmox_setup.effective(perms, "/storage/local-lvm") == set()
+    assert proxmox_setup.bridges_from(perms) == ["vmbr1"]
+
+
 def test_doctor_reads_a_keyring_token(fresh):
     assert to_proxmox(fresh, *PROXMOX_OK)[0] == 0
     fresh.out.seek(0), fresh.out.truncate()

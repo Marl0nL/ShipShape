@@ -173,14 +173,14 @@ def template_commands(n: Names, versions: Mapping[str, Any], vmid: int = 9000) -
 
 
 def effective(perms: Mapping[str, Mapping[str, Any]], path: str) -> set[str]:
-    """Privileges at path: its own and those of its parents (ACLs propagate)."""
-    out: set[str] = set()
+    """Privileges at path, from GET /access/permissions ({path: {privilege:
+    propagate}}): every privilege listed at the path itself, and those of its
+    parents that propagate."""
+    out = set((perms.get(path) or {}).keys())
     parts = path.strip("/").split("/")
-    for i in range(len(parts) + 1):
+    for i in range(len(parts)):
         prefix = "/" + "/".join(parts[:i])
-        for priv, value in (perms.get(prefix) or {}).items():
-            if value:
-                out.add(priv)
+        out.update(priv for priv, propagate in (perms.get(prefix) or {}).items() if propagate)
     return out
 
 
@@ -201,7 +201,7 @@ def bridges_from(perms) -> list[str]:
     found = []
     for path, privs in (perms or {}).items():
         match = re.match(r"^/sdn/zones/localnetwork/([^/]+)$", path)
-        if match and (privs or {}).get("SDN.Use"):
+        if match and "SDN.Use" in (privs or {}):  # the value is "propagate", not "granted"
             found.append(match.group(1))
     return sorted(found)
 
