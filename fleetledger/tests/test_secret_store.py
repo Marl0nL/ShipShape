@@ -33,6 +33,11 @@ def fake_backend(module="keyring.backends.SecretService", name="Keyring", locked
                 raise Locked("Failed to unlock the collection!")
             self.items[(service, item)] = value
 
+        def delete_password(self, service, item):
+            if locked:
+                raise Locked("Failed to unlock the collection!")
+            del self.items[(service, item)]
+
     Backend.__module__, Backend.__name__ = module, name
     return Backend()
 
@@ -182,3 +187,11 @@ def test_a_secret_file_that_cannot_be_read_is_a_plain_error(tmp_path):
     folder.mkdir(mode=0o700)
     with pytest.raises(ConfigError, match="Cannot read"):
         secret_store.read_file(str(folder))
+
+
+@pytest.mark.parametrize("stored", ["", "   \n"])
+def test_an_empty_keyring_item_is_not_a_secret(use, stored):
+    backend = use(fake_backend())
+    backend.items[("fleetledger", "proxmox-token:x@pve!y")] = stored
+    with pytest.raises(ConfigError, match="not in the keyring"):
+        secret_store.read_keyring("proxmox-token:x@pve!y", "Proxmox token", "hint")

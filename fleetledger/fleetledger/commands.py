@@ -123,13 +123,26 @@ def view_json(view: status.ShipView, tags: tuple[str, ...]) -> dict[str, Any]:
 
 def cmd_init(args, app) -> int:
     store = app.store_factory()
+    admin = make_fleet(app, store, args.admin_key, args.agent_key,
+                       no_passphrase=args.no_passphrase)
+    app.say("Next:")
+    app.say(f"  ssh-add {_tilde(admin)}                 # FleetLedger uses ssh-agent")
+    app.say(f"  edit {_tilde(store.path)}   # tags, expected accounts, [drivers.proxmox]")
+    app.say("  ship-fleet new ship-01 --tag work")
+    return 0
+
+
+def make_fleet(app, store, admin_key: str, agent_key_values: list[str], *,
+               no_passphrase: bool = False) -> Path:
+    """The fleet admin key (made if missing) and an empty inventory. Returns the
+    admin key's path."""
     if store.exists():
         raise FleetError(f"FleetLedger is already set up ({store.path}).")
-    admin = paths.expand(args.admin_key)
+    admin = paths.expand(admin_key)
     if not admin.exists():
         paths.private_dir(admin.parent)
         command = ["ssh-keygen", "-t", "ed25519", "-C", "fleetledger-admin", "-f", str(admin)]
-        if args.no_passphrase:
+        if no_passphrase:
             command += ["-N", ""]
         else:
             app.note("Choose a passphrase for the fleet admin key (ssh-agent will hold it).")
@@ -141,7 +154,7 @@ def cmd_init(args, app) -> int:
     public = admin.with_name(admin.name + ".pub")
     cloudinit.read_public_keys(public, "the fleet admin public key")
 
-    agent_keys = [paths.expand(k) for k in args.agent_key]
+    agent_keys = [paths.expand(k) for k in agent_key_values]
     if not agent_keys:
         default = Path.home() / ".ssh" / "id_ed25519.pub"
         if not default.exists():
@@ -154,11 +167,7 @@ def cmd_init(args, app) -> int:
 
     store.create(new_inventory(_tilde(admin), [_tilde(k) for k in agent_keys]))
     app.say(f"Wrote {store.path}.")
-    app.say("Next:")
-    app.say(f"  ssh-add {_tilde(admin)}                 # FleetLedger uses ssh-agent")
-    app.say(f"  edit {_tilde(store.path)}   # tags, expected accounts, [drivers.proxmox]")
-    app.say("  ship-fleet new ship-01 --tag work")
-    return 0
+    return admin
 
 
 # --- new -----------------------------------------------------------------

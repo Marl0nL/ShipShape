@@ -5,8 +5,8 @@ the client pins the SHA-256 fingerprint of the API's certificate (from
 ships.toml). The fingerprint is checked as soon as the TLS connection is up,
 before the request (and with it the token) is sent.
 
-The token secret is read from its file for each client, never logged, and
-never put in an exception or repr.
+The token secret is read from its store (a 0600 file, or the OS keyring) for
+each request, never logged, and never put in an exception or repr.
 """
 
 from __future__ import annotations
@@ -61,8 +61,28 @@ class _PinnedConnection(http.client.HTTPSConnection):
                 f"The Proxmox API at {self.host} presented a certificate that does not match "
                 "drivers.proxmox.tls_fingerprint; not sending the token.",
                 hint="If the host's certificate was renewed, check the new fingerprint on the "
-                "host and update ships.toml.",
+                "host, then pin it: ship-fleet setup --redo hypervisor.",
             )
+
+
+def server_fingerprint(host: str, port: int, timeout: float = 10) -> str:
+    """The SHA-256 fingerprint of the certificate a server presents, to show the
+    user before pinning it. Nothing is sent over the connection."""
+    import socket
+
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE  # we only read the certificate, to show it
+    bare = host[1:-1] if host.startswith("[") and host.endswith("]") else host  # IPv6
+    try:
+        with socket.create_connection((bare, port), timeout=timeout) as raw, \
+                context.wrap_socket(raw, server_hostname=bare) as tls:
+            der = tls.getpeercert(binary_form=True) or b""
+    except (OSError, ssl.SSLError) as exc:
+        raise ProxmoxError(f"Cannot reach {host}:{port}: {exc}") from exc
+    if not der:
+        raise ProxmoxError(f"{host}:{port} presented no certificate.")
+    return cert_fingerprint(der)
 
 
 def read_token(path_value: str) -> str:
@@ -83,6 +103,29 @@ def read_token(path_value: str) -> str:
     return secret
 
 
+TOKEN_SWITCH_HINT = ("To store it again, or keep it in a 0600 file instead: "
+                     "ship-fleet setup --redo hypervisor.")
+
+
+def token_secret(config: Mapping[str, Any]) -> str:
+    """The token secret, from the store ships.toml names (token_store). A keyring
+    error is never answered by reading a file instead."""
+    if config.get("token_store", "file") == "keyring":
+        from fleetledger.overlay import secret_store
+
+        return secret_store.read_keyring(config["keyring_item"], "Proxmox token",
+                                         TOKEN_SWITCH_HINT)
+    if not config.get("token_file"):
+        raise ConfigError("drivers.proxmox has neither token_file nor token_store = keyring.")
+    return read_token(config["token_file"])
+
+
+def token_where(config: Mapping[str, Any]) -> str:
+    if config.get("token_store", "file") == "keyring":
+        return f"the keyring (item {config.get('keyring_item')})"
+    return f"{config.get('token_file')} (0600)"
+
+
 class ProxmoxAPI:
     def __init__(
         self,
@@ -90,13 +133,17 @@ class ProxmoxAPI:
         *,
         timeout: float = 30,
         connection_factory: Callable[..., http.client.HTTPSConnection] | None = None,
+        secret: Callable[[], str] | None = None,
     ) -> None:
         url = urllib.parse.urlsplit(config["api_url"])
         self.host = url.hostname or ""
         self.port = url.port or 8006
         self.base = url.path.rstrip("/")  # /api2/json
         self.token_id = config["token_id"]
-        self._token_file = config["token_file"]
+        # Read for each request, from where ships.toml says (or, during setup, from
+        # memory before anything is stored).
+        stored = dict(config)
+        self._secret = secret or (lambda: token_secret(stored))
         self.fingerprint = config["tls_fingerprint"]
         self.timeout = timeout
         self._factory = connection_factory or _PinnedConnection
@@ -119,7 +166,7 @@ class ProxmoxAPI:
         """Call the API; return its "data" member."""
         url = self.base + path
         headers = {
-            "Authorization": f"PVEAPIToken={self.token_id}={read_token(self._token_file)}",
+            "Authorization": f"PVEAPIToken={self.token_id}={self._secret()}",
             "Accept": "application/json",
         }
         clean = {k: _value(v) for k, v in (params or {}).items() if v is not None}
@@ -247,7 +294,7 @@ class ProxmoxAPI:
             try:
                 conn.putrequest("POST", self.base + api_path)
                 conn.putheader(
-                    "Authorization", f"PVEAPIToken={self.token_id}={read_token(self._token_file)}"
+                    "Authorization", f"PVEAPIToken={self.token_id}={self._secret()}"
                 )
                 conn.putheader("Accept", "application/json")
                 conn.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")

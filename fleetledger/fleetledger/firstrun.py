@@ -1,6 +1,6 @@
 """What a FleetLedger computer needs, checked one piece at a time.
 
-`ship-fleet doctor` prints these checks; `ship-fleet setup` (to come) walks the same list
+`ship-fleet doctor` prints these checks; `ship-fleet setup` walks the same list
 and does what is missing. Every check is read-only: it looks at files, asks
 ssh-agent what it holds, and (unless offline) asks the Proxmox API and the
 local Tailscale. Each result names the exact next command when something is
@@ -26,7 +26,7 @@ from fleetledger.errors import FleetError
 class Item:
     area: str
     name: str
-    state: str  # ok | warn | missing | fail | skip
+    state: str  # ok | info | warn | missing | fail | skip (info: fine, with a next step)
     detail: str = ""
     next: str = ""  # the exact command (or step) that fixes it
 
@@ -104,7 +104,7 @@ def fleet(app) -> tuple[list[Item], Any]:
     store = app.store_factory()
     if not store.exists():
         return [Item("fleet", "inventory", "missing", f"no {store.path}",
-                     "ship-fleet init")], None
+                     "ship-fleet setup")], None
     try:
         inv = store.load()
     except FleetError as exc:
@@ -151,7 +151,7 @@ def fleet(app) -> tuple[list[Item], Any]:
     if not ca:
         out.append(Item("fleet", "certificate authority", "missing",
                         "no [ca]: other machines cannot be trusted with certificates",
-                        "ship-fleet ca init"))
+                        "ship-fleet setup   (or: ship-fleet ca init)"))
     else:
         keys = [paths.expand(ca[k]) for k in ("host_key", "user_key") if k in ca]
         gone = [str(k) for k in keys if not k.exists()]
@@ -181,17 +181,17 @@ def hypervisor(app, inv, *, offline: bool = False) -> list[Item]:
     if not config:
         return [Item("hypervisor", "Proxmox", "missing",
                      "defaults.driver is proxmox but there is no [drivers.proxmox]",
-                     "add it: docs/runbooks/proxmox-setup.md, step 3")]
+                     "ship-fleet setup --redo hypervisor")]
     out = [Item("hypervisor", "Proxmox settings", "ok",
                 f"{config['api_url']} node {config['node']}, pool {config['pool']}")]
-    try:
-        from fleetledger.drivers.proxmox_api import read_token
+    from fleetledger.drivers.proxmox_api import token_secret, token_where
 
-        read_token(config["token_file"])
-        out.append(Item("hypervisor", "Proxmox token", "ok", f"{config['token_file']} (0600)"))
+    try:
+        token_secret(config)
+        out.append(Item("hypervisor", "Proxmox token", "ok", "readable in " + token_where(config)))
     except FleetError as exc:
         out.append(Item("hypervisor", "Proxmox token", "fail", exc.message,
-                        exc.hint or "docs/runbooks/proxmox-setup.md, step 3"))
+                        exc.hint or "ship-fleet setup --redo hypervisor"))
         return out
     if offline:
         out.append(Item("hypervisor", "Proxmox API", "skip", "not checked (--offline)"))
@@ -252,7 +252,7 @@ def overlay_items(app, inv) -> list[Item]:
 def ships_items(inv) -> list[Item]:
     ships = inv.ships()
     if not ships:
-        return [Item("ships", "Ships", "missing", "none yet", "ship-fleet new ship-01")]
+        return [Item("ships", "Ships", "info", "none yet", "ship-fleet new ship-01")]
     pending = [s.name for s in ships if s.enrolled is None]
     out = [Item("ships", "Ships", "ok", f"{len(ships)} in the inventory")]
     for name in pending:

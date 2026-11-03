@@ -17,12 +17,22 @@ can reach from anywhere. Each step links to the runbook with the details.
 
 ## The steps
 
-1. **Hypervisor (once).** [runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md):
-   a pool, a seed storage, a scoped API token and a template. Section 4 adds
-   snapshots and baked images, if you want them.
-2. **FleetLedger (once).** `fleetledger/install.sh`, then `ship-fleet init`
-   ([runbooks/create-ship.md](../runbooks/create-ship.md)). Put your tags and the
-   accounts each tag should use in `~/.config/fleetledger/ships.toml`.
+1. **Install and set up (once).** `fleetledger/install.sh`, then
+   `ship-fleet setup`. It checks this computer, makes FleetLedger's keys and
+   inventory, loads the admin key into ssh-agent, sets up the certificate
+   authority, then asks where Ships run. For Proxmox it needs the address and
+   an API token: it shows the server's certificate fingerprint for you to
+   compare before pinning it, checks the token, keeps it in your OS keyring (or
+   a 0600 file), and finds the node, pool, storages, bridge and template itself.
+   Whatever is missing on the host (the user, token, rights, seed storage or
+   template) comes back as the exact commands to run there as root
+   ([runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md) explains each);
+   run setup again afterwards and it carries on. It then offers the overlay
+   (step 6) and a first Ship (step 4). `ship-fleet doctor` shows where things
+   stand at any time. Put your tags and the accounts each tag should use in
+   `~/.config/fleetledger/ships.toml`.
+2. **Snapshots and baked images (optional).** Section 4 of
+   [runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md) adds the rights.
 3. **A baked image (optional).** `ship-fleet image build`, `image publish`,
    `image use` ([runbooks/images.md](../runbooks/images.md)): new Ships then need
    a few minutes rather than ten.

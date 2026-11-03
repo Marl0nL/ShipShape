@@ -208,6 +208,16 @@ class InventoryEditor:
             self.doc.add(tomlkit.nl())
             self.doc["overlay"] = table
 
+    def set_driver(self, driver_id: str, entry: Mapping[str, Any]) -> None:
+        """Create or replace [drivers.<driver_id>]."""
+        if "drivers" not in self.doc:
+            self.doc.add(tomlkit.nl())
+            self.doc["drivers"] = tomlkit.table(is_super_table=True)
+        table = tomlkit.table()
+        for key, value in entry.items():
+            table[key] = list(value) if isinstance(value, tuple) else value
+        self.doc["drivers"][driver_id] = table
+
     def set_default(self, key: str, value: Any) -> None:
         """Set defaults.<key>; None removes it."""
         if "defaults" not in self.doc:

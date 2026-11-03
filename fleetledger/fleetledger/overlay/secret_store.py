@@ -1,4 +1,5 @@
-"""Where the Tailscale OAuth client secret is kept: the OS keyring, or a 0600 file.
+"""Where the Tailscale OAuth client secret (and the Proxmox API token, through
+read_keyring) is kept: the OS keyring, or a 0600 file.
 
 - keyring (what `ship-fleet overlay setup` offers first when it can): the Python
   keyring library, with a secure backend only (Secret Service on Linux, i.e.
@@ -28,8 +29,16 @@ SERVICE = "fleetledger"
 OAUTH_ITEM_PREFIX = "tailscale-oauth:"
 
 
+PROXMOX_ITEM_PREFIX = "proxmox-token:"
+
+
 def oauth_item(client_id: str) -> str:
     return OAUTH_ITEM_PREFIX + client_id
+
+
+def proxmox_item(token_id: str) -> str:
+    return PROXMOX_ITEM_PREFIX + token_id
+
 
 # Backends that keep secrets encrypted by the OS. Anything else (the fail and null
 # backends, plaintext or "encrypted file" keyrings from keyrings.alt, ...) is refused.
@@ -106,16 +115,27 @@ def existing_in_keyring(item: str) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
-def store_in_keyring(item: str, secret: str) -> str:
+def store_in_keyring(item: str, secret: str, switch_hint: str = SWITCH_HINT) -> str:
     backend, why = secure_backend()
     if backend is None:
-        raise ConfigError(f"Cannot use the keyring: {why}.", hint=SWITCH_HINT)
+        raise ConfigError(f"Cannot use the keyring: {why}.", hint=switch_hint)
     try:
         backend.set_password(SERVICE, item, secret)
     except Exception as exc:
         raise ConfigError(f"Could not store the secret in the keyring: {_describe(exc)}.",
-                          hint=SWITCH_HINT) from None
+                          hint=switch_hint) from None
     return why
+
+
+def delete_from_keyring(item: str) -> None:
+    backend, why = secure_backend()
+    if backend is None:
+        raise ConfigError(f"Cannot use the keyring: {why}.")
+    try:
+        backend.delete_password(SERVICE, item)
+    except Exception as exc:
+        raise ConfigError(f"Could not remove {item} from the keyring: {_describe(exc)}.") \
+            from None
 
 
 def read_file(path_value: str) -> str:
@@ -141,23 +161,29 @@ def where(api: Mapping[str, Any]) -> str:
     return str(api.get("oauth_secret_file"))
 
 
+def read_keyring(item: str, what: str, switch_hint: str) -> str:
+    """A secret from the keyring, with errors that say how to unlock it or switch
+    to the file store. Never falls back to anything else."""
+    backend, why = secure_backend()
+    if backend is None:
+        raise ConfigError(f"The {what} is in the keyring, but {why}.",
+                          hint="Log in to a desktop session with GNOME Keyring or KWallet "
+                          "(Keychain on macOS). " + switch_hint)
+    try:
+        secret = backend.get_password(SERVICE, item)
+    except Exception as exc:
+        raise ConfigError(
+            f"The keyring holding the {what} is locked or unavailable: {_describe(exc)}.",
+            hint="Unlock it (log in to your desktop session, or open your keyring app and "
+            "unlock the login keyring), then try again. " + switch_hint) from None
+    if not secret or not secret.strip():
+        raise ConfigError(f"The {what} is not in the keyring (service {SERVICE}, item {item}).",
+                          hint=switch_hint)
+    return secret.strip()
+
+
 def load(api: Mapping[str, Any]) -> str:
     """The OAuth client secret, from the store ships.toml names. Never falls back."""
     if api.get("secret_store", "file") != "keyring":
         return read_file(api["oauth_secret_file"])
-    backend, why = secure_backend()
-    if backend is None:
-        raise ConfigError(f"The OAuth secret is in the keyring, but {why}.",
-                          hint="Log in to a desktop session with GNOME Keyring or KWallet "
-                          "(Keychain on macOS). " + SWITCH_HINT)
-    try:
-        secret = backend.get_password(SERVICE, api["keyring_item"])
-    except Exception as exc:
-        raise ConfigError(
-            f"The keyring holding the OAuth secret is locked or unavailable: {_describe(exc)}.",
-            hint="Unlock it (log in to your desktop session, or open your keyring app and "
-            "unlock the login keyring), then try again. " + SWITCH_HINT) from None
-    if not secret:
-        raise ConfigError(f"The OAuth secret is not in {where(api)}.",
-                          hint="Run ship-fleet overlay setup --force to store it again.")
-    return secret.strip()
+    return read_keyring(api["keyring_item"], "OAuth secret", SWITCH_HINT)

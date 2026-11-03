@@ -419,7 +419,6 @@
         "disk_storage",
         "bridge",
         "token_id",
-        "token_file",
         "tls_fingerprint"
       ],
       "properties": {
@@ -452,9 +451,19 @@
           "pattern": "^[^@!\\s]+@[^!\\s]+![A-Za-z][A-Za-z0-9_.-]*$",
           "description": "user@realm!tokenname"
         },
+        "token_store": {
+          "enum": ["keyring", "file"],
+          "default": "file",
+          "description": "Where the token secret is kept. keyring: the OS keyring (Secret Service on Linux, Keychain on macOS), item keyring_item under the service \"fleetledger\"; protects it at rest, but an unlocked keyring is readable by any process of the same user. file: token_file, mode 0600. ships.toml never holds the secret itself."
+        },
+        "keyring_item": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.:@!-]{1,200}$",
+          "description": "The keyring item's name (token_store = keyring); `ship-fleet setup` uses proxmox-token:<token_id>."
+        },
         "token_file": {
           "$ref": "#/$defs/path",
-          "description": "File holding only the token secret, mode 0600."
+          "description": "File holding only the token secret, mode 0600 (token_store = file)."
         },
         "tls_fingerprint": {
           "type": "string",
@@ -471,7 +480,14 @@
           "minItems": 2,
           "description": "Optional [first, last] VMIDs FleetLedger may allocate."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "token_store": { "const": "keyring" } }, "required": ["token_store"] },
+          "then": { "required": ["keyring_item"] },
+          "else": { "required": ["token_file"] }
+        }
+      ]
     },
     "shipEntry": {
       "type": "object",

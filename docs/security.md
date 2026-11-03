@@ -104,8 +104,13 @@ your other machines without forwarding router ports
   and the inventory, nothing for Claude, Google or GitHub.
 - **The Proxmox token reaches one pool, one seed storage, the VM disk storage
   and one bridge** ([runbooks/proxmox-setup.md](runbooks/proxmox-setup.md)). Its
-  file must be mode 0600 or FleetLedger refuses it. The API's TLS certificate is
-  pinned by SHA-256, and the pin is checked before the token is sent.
+  secret is kept in the OS keyring (what `ship-fleet setup` offers first) or a
+  file that must be mode 0600, or FleetLedger refuses it; as with the overlay
+  secret, a locked keyring is an error, never a quiet read of a file instead.
+  The API's TLS certificate is pinned by SHA-256 (setup shows the fingerprint
+  for you to compare on the host before pinning it), and the pin is checked
+  before the token is sent. Setup checks the token against the API before it
+  stores it.
 - **Agents run as `agent` with no sudo** unless a Ship turns it on
   (`--agent-sudo`). They can read their own sign-ins and, with Claude Code's
   native installer, replace their own Claude binary; neither reaches beyond
@@ -131,10 +136,10 @@ your other machines without forwarding router ports
 | gcloud user and ADC | the Ship: `~agent/.config/gcloud/` | the concierge |
 | GitHub token | the Ship: `~agent/.config/gh/hosts.yml` (0600) | device code via the concierge |
 | Ship host private key | the Ship: `/etc/ssh`; briefly the seed ISO | generated into the seed; FleetLedger keeps only the public half |
-| Fleet admin key | your computer: `~/.ssh`, passphrase, ssh-agent | `ship-fleet init` |
-| Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet ca init` |
+| Fleet admin key | your computer: `~/.ssh`, passphrase, ssh-agent | `ship-fleet setup` (or `init`) |
+| Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet setup` (or `ca init`) |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
-| Proxmox API token | your computer: `~/.config/fleetledger/` (0600) | made once by you |
+| Proxmox API token | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you on the host; `ship-fleet setup` checks it, then stores it |
 | Overlay OAuth client secret (optional) | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |
 | Overlay join key | nowhere for long: the Ship's `/run` (tmpfs, root-only) while it joins | pasted, or minted per join; single use, minutes |
 | Ship's overlay node key | the Ship: Tailscale's state in `/var/lib/tailscale` (root) | `tailscale up` |

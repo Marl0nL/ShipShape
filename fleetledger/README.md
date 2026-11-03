@@ -2,7 +2,7 @@
 
 ```sh
 fleetledger/install.sh        # pipx install --editable; rerun after dependency or entry point changes
-ship-fleet init               # fleet admin key + empty ~/.config/fleetledger/ships.toml
+ship-fleet setup              # guided first run (safe to run again); ship-fleet doctor checks it
 ship-fleet new ship-01 --tag work
 ship-fleet status ship-01 --wait
 ship-fleet login ship-01 all
@@ -31,7 +31,8 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/images.py` | phase 4 | baked images: fetching and checking Ubuntu's image, ids and manifests, running `ship/image/bake` (`contracts/image.md`) |
 | `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `snapshot` and `image` |
 | `fleetledger/overlay/`, `access.py`, `overlay_setup.py` | phase 5 | the overlay network: providers, one-off keys (pasted, or minted with a Tailscale OAuth client whose secret is in the OS keyring or a 0600 file), `ship-fleet overlay setup|check|join|leave|status|policy` |
-| `fleetledger/firstrun.py`, `setupcmd.py` | first run | the checks behind `ship-fleet doctor` (read-only: what is set up, what is missing, the next command) |
+| `fleetledger/firstrun.py`, `setupcmd.py` | first run | `ship-fleet setup` (the guided first run: each step checks first and skips what is done) and `ship-fleet doctor` (read-only: what is set up, what is missing, the next command); both use the checks in `firstrun.py` |
+| `fleetledger/proxmox_setup.py` | first run | setup's Proxmox step: pins the certificate after showing it, checks the token, finds node, pool, storages, bridge and template through the API, and prints the root commands for anything missing |
 | `shipfleet_launch.py` (next to the package) | | the `ship-fleet` command's entry point: drops the current folder and empty `PYTHONPATH` entries from `sys.path` first, so a ShipShape checkout's outer `fleetledger/` folder can never shadow the package |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |

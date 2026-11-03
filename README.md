@@ -23,10 +23,17 @@ See `docs/architecture.md` and `docs/security.md`.
 
 ```sh
 fleetledger/install.sh                 # installs ship-fleet with pipx
-ship-fleet init                        # fleet admin key + ~/.config/fleetledger/ships.toml
-ssh-add ~/.ssh/shipshape_fleet_ed25519
-ship-fleet new ship-01 --tag work      # seed, VM, provision, enrol
-ship-fleet login ship-01 all           # Claude Code, gcloud + ADC, GitHub
+ship-fleet setup                       # guided: keys, inventory, CA, Proxmox, overlay, a first Ship
+```
+
+That is all. `setup` asks a few questions, skips whatever is already done, and
+can be run again at any time. For Proxmox it needs only the address and an API
+token; anything missing on the host comes back as the exact commands to run
+there. Then, day to day:
+
+```sh
+ship-fleet new ship-02 --tag work      # seed, VM, provision, enrol
+ship-fleet login ship-02 all           # Claude Code, gcloud + ADC, GitHub
 ship-fleet ls
 ship-fleet ui                          # the same in your browser (this computer only)
 ship-fleet doctor                      # what is set up, what is missing, the next command
