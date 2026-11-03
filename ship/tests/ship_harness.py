@@ -38,6 +38,7 @@ FAKE_COMMANDS = [
     "nft",
     "ip",
     "timedatectl",
+    "logger",
 ]
 ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the sandbox
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
@@ -99,6 +100,12 @@ class Ship:
         s = self.scenario()
         s.update(kwargs)
         (self.fake_dir / "scenario.json").write_text(json.dumps(s))
+
+    def homes(self, command: str) -> list[tuple[list[str], str | None]]:
+        """(argv, HOME) for each call of `command`: whose environment it ran in."""
+        path = self.fake_dir / "homes.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return [(r["argv"], r["home"]) for r in rows if r["argv"][0] == command]
 
     def calls(self, command: str | None = None) -> list[list[str]]:
         path = self.fake_dir / "calls.jsonl"

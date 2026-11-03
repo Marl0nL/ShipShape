@@ -15,6 +15,7 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 | `apply.py` | ship.toml -> managed settings, agent settings, herdr config, sudoers, avahi, the unattended-upgrades reboot policy |
 | `languard.py` | the LAN guard: renders, checks (`nft -c`) and loads the `inet shipshape_lan_guard` table, enables its boot unit |
 | `autostart.py` | starts `[[autostart]]` agents that are not running |
+| `notice.py` | `notify-signin`: tells the `[[autostart]]` agents, and no others, that a sign-in has completed |
 | `naming.py` | the Claude session name for each agent (`<prefix>-<agent>`): the one place to change how it is applied |
 | `tools.py` | the catalogue runner (`contracts/tools.md`) |
 | `converge.py` | switches to a new tooling bundle, rolling back on failure |

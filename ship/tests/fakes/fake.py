@@ -95,6 +95,10 @@ def herdr(s: dict, a: list[str]) -> int:
         out({"result": {"type": "agent_info"}})
         return 0
     if a[:2] == ["agent", "prompt"]:
+        if a[2] in h.get("fail_prompt", []):
+            print(json.dumps({"error": {"code": "agent_not_found", "message": "x"}}),
+                  file=sys.stderr)
+            return 1
         h.setdefault("prompts", []).append(a[2:4])
         save(s)
         out({"result": {}})
@@ -331,6 +335,13 @@ def nft(s: dict, a: list[str]) -> int:
     return 2
 
 
+def logger(s: dict, a: list[str]) -> int:
+    """`logger -t TAG -- MESSAGE`: the line is kept, as the journal would."""
+    s.setdefault("logged", []).append({"tag": a[a.index("-t") + 1], "message": a[-1]})
+    save(s)
+    return 0
+
+
 def timedatectl(s: dict, a: list[str]) -> int:
     """`timedatectl show --property=Timezone --value` and `set-timezone ZONE`.
     The cloud image starts on Etc/UTC; `timedatectl_fail` makes both fail."""
@@ -404,6 +415,7 @@ HANDLERS = {
     "nft": nft,
     "ip": ip,
     "timedatectl": timedatectl,
+    "logger": logger,
 }
 
 
@@ -414,6 +426,9 @@ def main() -> int:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with (FAKE / "calls.jsonl").open("a") as fh:
             fh.write(json.dumps([name, *args]) + "\n")
+        # Which user's environment each call ran in (agent=True sets the agent's HOME).
+        with (FAKE / "homes.jsonl").open("a") as fh:
+            fh.write(json.dumps({"argv": [name, *args], "home": os.environ.get("HOME")}) + "\n")
         return HANDLERS[name](load(), args)
 
 

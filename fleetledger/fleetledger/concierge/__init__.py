@@ -18,7 +18,9 @@ from fleetledger.concierge import audit
 from fleetledger.concierge.engine import Child, Flow, FlowResult, Prompter, spawn
 from fleetledger.concierge.providers import Check, Provider
 from fleetledger.concierge.redact import clean
+from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
+from fleetledger.shipctl import ShipCtl
 from fleetledger.ssh import SSH, as_agent
 
 __all__ = ["CheckResult", "LoginResult", "login", "logout", "verify"]
@@ -121,7 +123,33 @@ def login(
         if result.outcome == "failed" and not result.detail:
             result.detail = "The sign-in finished, but the check says it is not signed in."
     audit.record(ship.name, "login", provider.id, result.outcome, result.account)
+    if result.outcome == "ok":
+        result.notes += notify_core_agents(ssh, ship, provider)
     return result
+
+
+# Providers `ship-ctl notify-signin` knows (contracts/ship-ctl.md).
+NOTIFY_SERVICES = ("claude", "gcloud", "gcloud-adc", "github")
+
+
+def notify_core_agents(ssh: SSH, ship: Ship, provider: Provider) -> list[str]:
+    """Tell the Ship's core ([[autostart]]) agents the sign-in is there now.
+
+    Agents started before it may already have looked and found it missing. Only
+    the service name crosses the wire: the Ship reads the account itself. A
+    failure here never fails the sign-in; it comes back as a note.
+    """
+    if provider.id not in NOTIFY_SERVICES:
+        return []
+    try:
+        done = ShipCtl(ssh, ship).call("notify-signin", provider.id, timeout=90)
+    except FleetError as exc:
+        return [f"The Ship's agents were not told about this sign-in: {exc.message}"]
+    sent = done.data.get("sent") or []
+    notes = [f"Told {', '.join(sent)} that {provider.label} is signed in."] if sent else []
+    notes += [f"{s.get('name')} was not told ({s.get('reason')})."
+              for s in done.data.get("skipped") or []]
+    return notes
 
 
 def logout(ssh: SSH, ship: Ship, provider: Provider) -> bool:

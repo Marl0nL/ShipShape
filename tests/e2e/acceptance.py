@@ -48,6 +48,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from e2e_harness import Fleet, log  # noqa: E402
 
+from fleetledger import ops  # noqa: E402
+
 # Token shapes, plus Google's authorization-code shape, that must never appear
 # in a log, history or audit file. (GitHub's and Claude's one-time codes are too
 # plain to search for.)
@@ -335,6 +337,19 @@ def run(fleet: Fleet, name: str) -> None:
     step("Autostart starts each agent in its own mode",
          found["main"]["mode"] == "auto" and found["grinder"]["mode"] == "bypassPermissions",
          f"main {found['main']['mode']}, grinder {found['grinder']['mode']}")
+
+    # Each good sign-in ran ship-ctl notify-signin: recorded in the Ship's journal,
+    # and only ever sent to the core (autostart) agents. Which of them it reached
+    # depends on timing (autostart waits for the Claude sign-in), so not checked.
+    journal = fleet.cli("logs", name, "system", "--lines", "5000").stdout
+    notices = [line for line in journal.splitlines() if "notify-signin: " in line]
+    told = {n.strip() for line in notices
+            for m in re.finditer(r"notice sent to: ([^.]*)\.", line)
+            for n in m.group(1).split(",") if n.strip() and n.strip() != "none"}
+    step("Each sign-in is announced to the core agents only, and recorded on the Ship",
+         all(any(f"notify-signin: {svc} " in line for line in notices)
+             for svc in ("claude", "gcloud", "github")) and told <= {"main", "grinder"},
+         f"{len(notices)} records; told {sorted(told) or 'nobody'}")
     step("With Remote Control on, both sessions show in the Claude app",
          ask(f"Open the Claude app (Code tab). Do two sessions starting with '{name}' show?"))
 
@@ -355,7 +370,7 @@ def run(fleet: Fleet, name: str) -> None:
     view = fleet.wait_for(
         "agents back after the reboot",
         lambda: (v := fleet.status(name)) and trio <= set(agents(v))
-        and v["status"]["herdr"]["last_resume"] and v,
+        and ops._resumed_this_boot(v["status"]) and v,  # not the last boot's record
         timeout=600,
     )
     found = agents(view)

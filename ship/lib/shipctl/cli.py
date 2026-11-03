@@ -22,6 +22,7 @@ from . import (
     languard,
     logs,
     net,
+    notice,
     overlay,
     shiptoml,
     sshtrust,
@@ -99,6 +100,8 @@ def build_parser() -> Parser:
     st.add_argument("pairs", nargs="*", metavar="KEY=VALUE")
     st.add_argument("--file", metavar="-", help="read a complete replacement ship.toml from stdin")
     cmd("autostart", "Start the [[autostart]] agents that are not running.")
+    ns = cmd("notify-signin", "Tell the [[autostart]] agents that a sign-in has completed.")
+    ns.add_argument("service", choices=sorted(notice.SERVICES))
     c = cmd("converge", "Apply a tooling bundle.")
     c.add_argument("--bundle", required=True, metavar="PATH")
     t = cmd("tools", "List, install or check catalogue tools.")
@@ -256,6 +259,12 @@ def cmd_autostart(ctx: Context, args) -> dict:
     return result("autostart", changed=changed, messages=messages, data=data)
 
 
+def cmd_notify_signin(ctx: Context, args) -> dict:
+    ship = shiptoml.load(ctx.paths)
+    data, messages = notice.notify(ctx, ship, args.service)
+    return result("notify-signin", messages=messages, data=data)
+
+
 def cmd_converge(ctx: Context, args) -> dict:
     data = converge.converge(ctx, args.bundle)
     return result("converge", changed=[data["to"]], data=data, messages=[f"Now on {data['to']}."])
@@ -395,6 +404,7 @@ COMMANDS = {
     "apply": cmd_apply,
     "set": cmd_set,
     "autostart": cmd_autostart,
+    "notify-signin": cmd_notify_signin,
     "converge": cmd_converge,
     "tools": cmd_tools,
     "logs": cmd_logs,
