@@ -7,6 +7,7 @@ line.
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -79,6 +80,47 @@ def test_an_agent_at_a_permission_prompt_is_not_typed_into(ship):
     assert doc["data"]["sent"] == ["grinder"]
     assert doc["data"]["skipped"] == [{"name": "main", "reason": "waiting-for-permission"}]
     assert [p[0] for p in prompts(ship)] == ["grinder"]
+
+
+def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
+    """`unknown`, as while ship-resume brings the panes back after a boot."""
+    start_core_agents(ship)
+    s = ship.scenario()
+    for a in s["herdr"]["agents"]:
+        if a["name"] == "grinder":
+            a["agent_status"] = "unknown"
+    ship.set(herdr=s["herdr"])
+    rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
+    assert doc["data"]["sent"] == ["main"]
+    assert doc["data"]["skipped"] == [{"name": "grinder", "reason": "not-ready"}]
+    assert [p[0] for p in prompts(ship)] == ["main"]
+
+
+def test_nothing_is_sent_while_this_boots_resume_is_pending(ship):
+    """Just after a boot, before ship-resume has written this boot's record."""
+    start_core_agents(ship)
+    record = ship.p("/home/agent/.local/state/shipshape/last-resume.json")
+    old = json.loads(record.read_text())
+    record.write_text(json.dumps({**old, "boot_id": "0b6f7e0e-0000-4000-8000-0000000000ff"}))
+    ship.p("/proc/uptime").write_text("40.0 10.0\n")
+    rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
+    assert rc == 0
+    assert doc["data"]["sent"] == []
+    assert doc["data"]["skipped"] == [{"name": "main", "reason": "resume-pending"},
+                                      {"name": "grinder", "reason": "resume-pending"}]
+    assert doc["messages"] == ["This boot's resume is not done yet; no notice sent."]
+    assert prompts(ship) == []
+
+
+def test_the_line_is_typed_as_the_agent_user_and_logged_as_root(ship):
+    """herdr's socket and the agents belong to agent; the journal record is root's."""
+    start_core_agents(ship)
+    ship.ctl("notify-signin", "github", "--json")
+    agent_home = str(ship.p("/home/agent"))
+    typed = [home for argv, home in ship.homes("herdr") if argv[1:3] == ["agent", "prompt"]]
+    assert typed and all(home == agent_home for home in typed)
+    logged = [home for _, home in ship.homes("logger")]
+    assert logged and all(home != agent_home for home in logged)
 
 
 def test_a_working_agent_still_gets_it(ship):

@@ -132,10 +132,15 @@ missing.
   `ShipShape: <service> is now signed in as <account>. Re-check it if you need it.`
   The account is read on the Ship from the service's own status probe and cut
   down to letters, digits and `@._+-`. It carries nothing else.
-- **Skipped**, with a reason in `data`: an entry with no live agent
-  (`not-running`), and an agent waiting at a permission prompt
-  (`waiting-for-permission`), since typed text and Enter could answer it.
-  Claude Code queues the line while a turn is running.
+- **Typed only into an agent herdr reports as `idle`, `working` or `done`.**
+  Claude Code queues the line while a turn is running. Skipped, with a reason
+  in `data`:
+  - an entry with no live agent (`not-running`);
+  - an agent waiting at a permission prompt (`waiting-for-permission`), since
+    typed text and Enter could answer it;
+  - an agent in any other state, such as `unknown` (`not-ready`): its foreground
+    is not known;
+  - every entry while this boot's resume is not done yet (`resume-pending`).
 - **Recorded** in the Ship's journal (`ship-ctl logs system`, tag `ship-ctl`).
 - A service that is not signed in sends nothing.
 

@@ -10,8 +10,11 @@ The core agents are the Ship's [[autostart]] entries, matched to live herdr agen
 the way autostart matches them (name, else the Claude session or pane it
 recorded). Every other agent, such as a firstmate's workers, is never messaged.
 The line names the account, nothing else, and is typed with `herdr agent prompt`,
-which Claude Code queues while a turn is running. An agent waiting at a
-permission prompt is skipped: typed text and Enter could answer that prompt.
+which Claude Code queues while a turn is running. Only an agent herdr reports
+as idle, working or done is typed into: one waiting at a permission prompt
+could have it answered by the text and Enter, and one herdr cannot classify
+(`unknown`, as while ship-resume brings panes back after a boot) has a
+foreground nobody knows. Until this boot's resume is done, nothing is sent.
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ SERVICES = {
     "gcloud-adc": ("gcloud_adc", "Google Application Default Credentials"),
     "github": ("github", "GitHub"),
 }
+# herdr agent states it is safe to type into (Claude Code queues input mid-turn).
+READY_STATES = ("idle", "working", "done")
 # What may appear of an account name in the typed line: no newlines, quotes or
 # control characters, whatever the sign-in tool printed.
 _UNSAFE = re.compile(r"[^A-Za-z0-9@._+-]")
@@ -73,6 +78,11 @@ def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]
         msg = "This Ship has no [[autostart]] agents; no notice sent."
         record(ctx, f"{service}: {msg}")
         return data, [msg]
+    if autostart.resume_pending(ctx):
+        data["skipped"] = [{"name": name, "reason": "resume-pending"} for name in cores]
+        msg = "This boot's resume is not done yet; no notice sent."
+        record(ctx, f"{service}: {msg}")
+        return data, [msg]
     _, live, _ = status.herdr_agents(ctx)
     started = read_json(ctx.paths.state / "autostart.json", {})
     started = started if isinstance(started, dict) else {}
@@ -81,8 +91,12 @@ def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]
         if match is None:
             data["skipped"].append({"name": name, "reason": "not-running"})
             continue
-        if match.get("agent_status") == "blocked":
+        state = match.get("agent_status")
+        if state == "blocked":
             data["skipped"].append({"name": name, "reason": "waiting-for-permission"})
+            continue
+        if state not in READY_STATES:
+            data["skipped"].append({"name": name, "reason": "not-ready"})
             continue
         target = match.get("name") or match.get("pane_id")
         r = ctx.runner.run(["herdr", "agent", "prompt", str(target), line],

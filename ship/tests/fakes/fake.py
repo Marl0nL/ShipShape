@@ -426,6 +426,9 @@ def main() -> int:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with (FAKE / "calls.jsonl").open("a") as fh:
             fh.write(json.dumps([name, *args]) + "\n")
+        # Which user's environment each call ran in (agent=True sets the agent's HOME).
+        with (FAKE / "homes.jsonl").open("a") as fh:
+            fh.write(json.dumps({"argv": [name, *args], "home": os.environ.get("HOME")}) + "\n")
         return HANDLERS[name](load(), args)
 
 
