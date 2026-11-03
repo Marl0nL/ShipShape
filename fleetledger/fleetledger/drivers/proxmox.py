@@ -34,20 +34,24 @@ from fleetledger.drivers.proxmox_api import ProxmoxAPI, ProxmoxError
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Ship
 
-BOOT_DISK = "scsi0"  # the template's disk (plan: "The template, once")
+BOOT_DISK = "scsi0"  # the stock template's disk (plan: "The template, once")
+# A published image's disk. virtio-blk needs no SCSI controller, and choosing a
+# controller type (scsihw) would need VM.Config.HWType, which the token lacks.
+IMAGE_DISK = "virtio0"
+DISK_RE = re.compile(r"^(scsi|virtio|sata)[0-9]{1,2}$")
 SEED_DRIVE = "ide2"
 IMAGE_PREFIX = "shipshape-img-"
 
-# A published image's template: the same hardware as the stock template
-# (docs/runbooks/proxmox-setup.md), minus the serial console, which would need
-# VM.Config.HWType. create() sets cores, memory, network and the seed per Ship.
+# A published image's template: like the stock template
+# (docs/runbooks/proxmox-setup.md), but with a virtio disk and no serial console,
+# since a SCSI controller type or a serial port would need VM.Config.HWType.
+# create() sets cores, memory, network and the seed per Ship.
 TEMPLATE_HW = {
     "ostype": "l26",
     "cores": 2,
     "memory": 2048,
     "cpu": "host",
-    "scsihw": "virtio-scsi-pci",
-    "boot": f"order={BOOT_DISK}",
+    "boot": f"order={IMAGE_DISK}",
     "agent": "enabled=1",
 }
 
@@ -135,6 +139,11 @@ class ProxmoxDriver(Driver):
     ) -> Outcome:
         cfg = self.config
         template = int(image.ref["template_vmid"]) if image else int(cfg["template_vmid"])
+        # Images published through the API boot from virtio0; by hand, like the
+        # stock template, from scsi0.
+        disk = str(image.ref.get("disk", BOOT_DISK)) if image else BOOT_DISK
+        if not DISK_RE.match(disk):
+            raise FleetError(f"Image {image.id} names an odd boot disk {disk!r} in ships.toml.")
         if image is not None and not self.check_name(
             template, template_name(image.id), template=True
         ):
@@ -178,7 +187,7 @@ class ProxmoxDriver(Driver):
                 )
             )
             self._task(
-                self.api.put(self._vm(vmid) + "/resize", disk=BOOT_DISK, size=f"{size['disk_gb']}G")
+                self.api.put(self._vm(vmid) + "/resize", disk=disk, size=f"{size['disk_gb']}G")
             )
             self._task(self.api.post(self._vm(vmid) + "/status/start"))
             messages.append(f"Started VM {vmid}.")
@@ -290,7 +299,11 @@ class ProxmoxDriver(Driver):
         if self.api.get(vm + "/status/current").get("status") == "running":
             # A clean shutdown first, so herdr saves its state; rollback would
             # otherwise stop the VM like a power cut.
-            self._task(self.api.post(vm + "/status/shutdown", timeout=180), timeout=240)
+            # forceStop: if the guest does not finish shutting down in time (no guest
+            # agent, a hung service), stop it anyway: the rollback discards this
+            # state either way, and a half-finished shutdown would hold the VM lock.
+            self._task(self.api.post(vm + "/status/shutdown", timeout=120, forceStop=True),
+                       timeout=240)
             messages.append(f"Shut down {ship.name}.")
         self._task(self.api.post(f"{vm}/snapshot/{name}/rollback", start=True), timeout=1200)
         messages.append(f"Rolled {ship.name} back to {name} and started it.")
@@ -340,7 +353,7 @@ class ProxmoxDriver(Driver):
                     pool=cfg["pool"],
                     description=f"ShipShape image {image.id} (sha256 {image.sha256})",
                     net0=f"virtio,bridge={cfg['bridge']}",
-                    **{BOOT_DISK: f"{cfg['disk_storage']}:0,import-from={volume}"},
+                    **{IMAGE_DISK: f"{cfg['disk_storage']}:0,import-from={volume}"},
                     **TEMPLATE_HW,
                 ),
                 timeout=1800,
@@ -357,7 +370,7 @@ class ProxmoxDriver(Driver):
         return Outcome(
             done=True,
             messages=[f"Published image {image.id} as template VM {vmid} ({name})."],
-            driver_ref={"template_vmid": vmid},
+            driver_ref={"template_vmid": vmid, "disk": IMAGE_DISK},
         )
 
     def remove_image(self, image: PublishedImage) -> Outcome:

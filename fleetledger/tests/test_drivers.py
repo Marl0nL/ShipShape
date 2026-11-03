@@ -388,6 +388,26 @@ def test_create_from_an_image_refuses_a_vm_that_is_not_its_template():
     assert mutating(api) == []
 
 
+@pytest.mark.parametrize("ref, disk", [
+    ({"template_vmid": 9181, "disk": "virtio0"}, "virtio0"),  # published through the API
+    ({"template_vmid": 9181}, "scsi0"),  # published by hand, like the stock template
+])
+def test_create_from_an_image_resizes_its_own_disk(ref, disk):
+    api = FakeAPI(vms={9181: (f"shipshape-img-{IMG}", True)})
+    ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO").create(
+        ship(vmid=9101), SEED, SIZE, PublishedImage(IMG, ref))
+    assert ("PUT", "/nodes/pve/qemu/9101/resize", {"disk": disk, "size": "40G"}) in mutating(api)
+
+
+def test_create_refuses_an_odd_boot_disk():
+    api = FakeAPI(vms={9181: (f"shipshape-img-{IMG}", True)})
+    with pytest.raises(FleetError, match="odd boot disk"):
+        ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO").create(
+            ship(vmid=9101), SEED, SIZE, PublishedImage(IMG, {"template_vmid": 9181,
+                                                              "disk": "efidisk0"}))
+    assert mutating(api) == []
+
+
 def test_create_from_a_published_image_clones_its_template():
     api = FakeAPI(vms={9181: (f"shipshape-img-{IMG}", True)})
     driver = ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO")
@@ -438,6 +458,7 @@ def test_rollback_shuts_down_cleanly_first():
         ("POST", "/nodes/pve/qemu/9101/status/shutdown"),
         ("POST", "/nodes/pve/qemu/9101/snapshot/s1/rollback"),
     ]
+    assert mutating(api)[0][2] == {"timeout": 120, "forceStop": True}  # never stuck locked
     assert mutating(api)[1][2] == {"start": True}
     assert outcome.done
 
@@ -469,7 +490,7 @@ def test_publish_image(tmp_path):
     api = FakeAPI(used={9100})
     driver = ProxmoxDriver(dict(PX, image_storage="shipshape-images"), api=api)
     outcome = driver.publish_image(image_file(tmp_path))
-    assert outcome.done and outcome.driver_ref == {"template_vmid": 9101}
+    assert outcome.done and outcome.driver_ref == {"template_vmid": 9101, "disk": "virtio0"}
     steps = mutating(api)
     assert steps[0][:2] == ("UPLOAD", "/nodes/pve/storage/shipshape-images/upload")
     assert steps[0][2]["name"] == f"shipshape-{IMG}.qcow2"
@@ -479,10 +500,13 @@ def test_publish_image(tmp_path):
     assert params["vmid"] == 9101 and params["pool"] == "shipshape"
     assert params["name"] == f"shipshape-img-{IMG}"
     volume = f"shipshape-images:import/shipshape-{IMG}.qcow2"
-    assert params["scsi0"] == f"local-lvm:0,import-from={volume}"
+    assert params["virtio0"] == f"local-lvm:0,import-from={volume}"
+    assert params["boot"] == "order=virtio0"
     assert params["net0"] == "virtio,bridge=vmbr0" and params["agent"] == "enabled=1"
-    # No serial console: that would need VM.Config.HWType, which the token lacks.
-    assert "serial0" not in params and "vga" not in params
+    # Nothing that needs VM.Config.HWType, which the token lacks (the live server
+    # refused scsihw): no SCSI controller type, no serial console, no display.
+    for needs_hwtype in ("scsihw", "serial0", "vga", "machine", "tablet", "audio0"):
+        assert needs_hwtype not in params
     assert steps[2][:2] == ("POST", "/nodes/pve/qemu/9101/template")
     assert steps[3][:2] == ("DELETE", "/nodes/pve/storage/shipshape-images/content/"
                                       f"shipshape-images:import/shipshape-{IMG}.qcow2")
