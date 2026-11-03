@@ -68,7 +68,8 @@ class TailscaleAPI:
         self.opener = opener
         self._secret = secret or (lambda: read_secret(api["oauth_secret_file"]))
         self._token: str | None = None
-        self.granted: frozenset[str] = frozenset()
+        # The scopes the sign-in reported; None when Tailscale did not say.
+        self.granted: frozenset[str] | None = None
 
     @property
     def tailnet(self) -> str:
@@ -116,7 +117,7 @@ class TailscaleAPI:
                 raise FleetError("Tailscale API: the OAuth sign-in returned no access token.")
             self._token = token
             scope = doc.get("scope")
-            self.granted = frozenset(scope.split()) if isinstance(scope, str) else frozenset()
+            self.granted = frozenset(scope.split()) if isinstance(scope, str) else None
         return self._token
 
     def call(self, method: str, path: str, what: str, *, body: bytes | None = None,

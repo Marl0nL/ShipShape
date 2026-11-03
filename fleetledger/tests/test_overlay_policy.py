@@ -148,3 +148,41 @@ def test_missing_pieces_are_reported():
 def test_a_rule_to_ships_on_another_port_is_not_ssh():
     doc = {"acls": [{"action": "accept", "src": ["autogroup:member"], "dst": ["tag:ship:443"]}]}
     assert not by_name(pol.findings(doc, TAGS))["your devices reach Ships on port 22"].ok
+
+
+@pytest.mark.parametrize("src", ["autogroup:tagged", "autogroup:danger-all", "*", "tag:ship"])
+def test_sources_that_cover_ships_fail(src):
+    doc = {"acls": [{"action": "accept", "src": [src], "dst": ["*:*"]}]}
+    assert not by_name(pol.findings(doc, TAGS))["Ships cannot start connections"].ok
+
+
+def test_a_rule_from_members_to_another_host_is_not_ssh_to_ships():
+    doc = {"acls": [{"action": "accept", "src": ["autogroup:member"], "dst": ["tag:db:22"]}]}
+    assert not by_name(pol.findings(doc, TAGS))["your devices reach Ships on port 22"].ok
+
+
+@pytest.mark.parametrize("rule", [
+    {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:ship:20-30"]},
+    {"action": "accept", "src": ["autogroup:member"], "dst": ["tag:ship:443,22"]},
+])
+def test_port_lists_and_ranges_count(rule):
+    assert by_name(pol.findings({"acls": [rule]}, TAGS))["your devices reach Ships on port 22"].ok
+
+
+@pytest.mark.parametrize("ip, ok", [(["tcp:20-30"], True), (["udp:22"], False),
+                                    (["tcp:443"], False), (["*"], True)])
+def test_grant_ports(ip, ok):
+    doc = {"grants": [{"src": ["autogroup:member"], "dst": ["tag:ship"], "ip": ip}]}
+    assert by_name(pol.findings(doc, TAGS))["your devices reach Ships on port 22"].ok is ok
+
+
+def test_empty_tag_owners_mean_admins():
+    assert by_name(pol.findings({"tagOwners": {"tag:ship": []}}, TAGS))["tag owner tag:ship"].ok
+
+
+def test_merge_with_a_comment_between_key_and_bracket():
+    text = '{\n  "tests": // none yet\n  [\n  ],\n  "acls": /* mine */ [],\n}\n'
+    new, added = pol.merge(text, TAGS)
+    doc = hujson.parse(new)
+    assert doc["tests"] == [{"src": "tag:ship", "deny": ["tag:ship:22"]}]
+    assert "// none yet" in new and "/* mine */" in new and len(added) == 3

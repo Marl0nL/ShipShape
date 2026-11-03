@@ -26,6 +26,9 @@ from fleetledger.overlay import hujson
 MEMBER = "autogroup:member"
 ADMINS = ["autogroup:admin"]
 WIDE_OWNERS = {"autogroup:member", "*", "autogroup:tagged"}
+# Sources that include the Ships: every device, every tagged device, or anything
+# at all (autogroup:danger-all also covers sources outside the tailnet).
+SHIP_COVERING_SOURCES = {"*", "autogroup:tagged", "autogroup:danger-all"}
 
 
 @dataclass(frozen=True)
@@ -54,21 +57,39 @@ def _host(dst: str) -> str:
     return dst.rsplit(":", 1)[0] if ":" in dst and not dst.endswith("]") else dst
 
 
+def _port_spec_covers_22(spec: str) -> bool:
+    """A Tailscale port list: *, 22, 22-80, or several of those comma-separated."""
+    for part in spec.split(","):
+        part = part.strip()
+        if part == "*":
+            return True
+        low, _, high = part.partition("-")
+        try:
+            if int(low) <= 22 <= int(high or low):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _covers_port_22(rule: dict, dst: str) -> bool:
     if rule["kind"] == "acl":
-        ports = dst.rsplit(":", 1)[1] if ":" in dst else "*"
-        return ports == "*" or "22" in ports.split(",")
-    return any(p in ("*", "22", "tcp:22", "tcp:*") for p in rule["ports"] or ["*"])
+        return _port_spec_covers_22(dst.rsplit(":", 1)[1] if ":" in dst else "*")
+    for spec in rule["ports"] or ["*"]:
+        proto, _, ports = spec.rpartition(":")
+        if proto in ("", "tcp", "6") and _port_spec_covers_22(ports):
+            return True
+    return False
 
 
 def ship_sources(doc: dict, tags: list[str]) -> list[dict]:
     """Rules that let a Ship start a connection: their source is a Ship tag or "*"."""
-    return [r for r in _rules(doc) if set(r["src"]) & ({"*"} | set(tags))]
+    return [r for r in _rules(doc) if set(r["src"]) & (SHIP_COVERING_SOURCES | set(tags))]
 
 
 def members_reach_ships(doc: dict, tags: list[str]) -> bool:
     for rule in _rules(doc):
-        if not set(rule["src"]) & {MEMBER, "*"}:
+        if not set(rule["src"]) & {MEMBER, "*", "autogroup:danger-all"}:
             continue
         for dst in rule["dst"]:
             host = _host(dst) if rule["kind"] == "acl" else dst
@@ -94,6 +115,8 @@ def findings(doc: dict, tags: list[str]) -> list[Finding]:
         if who is None:
             out.append(Finding(f"tag owner {tag}", False, f"{tag} has no tagOwners entry; "
                                "Ships cannot join with it."))
+        elif not who:  # Tailscale's shorthand for admins only
+            out.append(Finding(f"tag owner {tag}", True, f"{tag} owned by admins (empty list)"))
         elif set(who) & WIDE_OWNERS:
             out.append(Finding(f"tag owner {tag}", False,
                                f"{tag} is owned by {', '.join(who)}: any member could make "
@@ -107,7 +130,8 @@ def findings(doc: dict, tags: list[str]) -> list[Finding]:
     wide = ship_sources(doc, tags)
     out.append(Finding(
         "Ships cannot start connections", not wide,
-        "no rule has a Ship tag or * as its source" if not wide else
+        "no rule has a Ship tag, *, autogroup:tagged or autogroup:danger-all as its source"
+        if not wide else
         "these rules let Ships reach other devices (a Ship could reach your laptop or "
         "another Ship): " + "; ".join(json.dumps({"src": r["src"], "dst": r["dst"]})
                                      for r in wide[:3])))

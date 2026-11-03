@@ -25,15 +25,18 @@ ship-fleet overlay setup    # asks: provider, key source, OAuth client and level
 ship-fleet overlay check    # verifies it, now and whenever you like
 ```
 
-`setup` asks for the provider (Tailscale, or your own Headscale) and the key
-source (an OAuth client, or keys you paste), checks the OAuth client's scopes
-with Tailscale before saving anything, writes `[overlay]` to `ships.toml` and the
-client secret to a 0600 file, and prints the access rules to add to your policy.
-With the opt-in `manage` level it adds them itself instead, after showing a diff
-and asking. `check` verifies the setup, the policy (tag owners; your devices
+`setup` asks for the provider (Tailscale, or your own Headscale), the key
+source (keys you paste, or an OAuth client) and, for OAuth, how much the stored
+secret may do: `keys` (the default: mint keys only), `devices` (also remove
+destroyed Ships' devices; `devices:core` is tailnet-wide) or `policy` (also add
+the Ships' access rules for you, after a diff and your yes). It checks the
+client's scopes with Tailscale before saving anything, writes `[overlay]` to
+`ships.toml` and the secret to a 0600 file, and prints the access rules to add
+to your policy unless it adds them itself. `check` verifies the setup, the policy (tag owners; your devices
 reach the Ships on port 22; no rule lets a Ship start a connection; the Ship
-tests pass in Tailscale's own engine), the tailnet's Ship devices against the
-inventory, and each Ship's overlay; `--probe` also tries, from each Ship, to open
+tests pass in Tailscale's own engine, at the `policy` level; otherwise from an
+exported file, `--policy FILE`), the tailnet's Ship devices against the
+inventory (from the `devices` level), and each Ship's overlay; `--probe` also tries, from each Ship, to open
 a connection to this computer and to another Ship, which must fail.
 
 The steps below are what `setup` does, by hand, and the laptop side.
@@ -171,14 +174,18 @@ traffic through its servers (still end-to-end encrypted) instead.
 
 `ship-fleet overlay check --probe` covers the tailnet side and the "a Ship
 cannot reach the laptop" probe (run it on the laptop, with the laptop on the
-overlay). By hand:
+overlay). The probe passes only when the attempt times out, which is what a
+policy block looks like; a refused connection fails it, since only a packet the
+policy let through gets refused. By hand:
 
 - On a phone hotspot (not your LAN), `herdr --remote agent@<ship overlay name>`
   attaches, and `ssh` to the Ship succeeds with no host-key prompt.
 - Your router has no forwarded ports for any of this.
 - From a Ship, a connection to your laptop fails:
   `ship-fleet ssh ship-01 -- timeout 5 bash -c 'echo > /dev/tcp/<laptop overlay address>/22'`
-  must fail (the access rules give Ships no destinations).
+  must **time out** (the access rules give Ships no destinations, and Tailscale
+  drops what the rules block). "Connection refused" is a failure too: it means
+  the packet got through the policy and the laptop simply has nothing on port 22.
 - With `ssh_listen=overlay`, `ssh agent@ship-01.local` from the LAN is refused,
   while the overlay name works.
 
@@ -205,5 +212,5 @@ Headscale it prints the server-side steps.
 | Someone on the overlay reaches a Ship | Only SSH is allowed in, and only from your devices (access rules); logins still need your key and the pinned host key |
 | A compromised Ship reaches your laptop or other Ships over the overlay | The access rules give `tag:ship` no destinations at all; a policy test guards it |
 | A leaked join key | Single use, pre-approved only for `tag:ship`, expires in minutes; never stored |
-| A leaked OAuth client secret | At the default level it can only mint `tag:ship` keys (which only get port 22 from your devices). If you turned on device removal it can also remove **any** device in the tailnet, not only Ships (Tailscale does not limit `devices:core` by tag); with policy management it can also change the access rules. Revoke it in the admin console; pasting keys stores no secret at all |
+| A leaked OAuth client secret | At the default level it can only mint `tag:ship` keys (which only get port 22 from your devices). If you turned on device removal it can also remove or re-tag **any** device in the tailnet, yours included, not only Ships (Tailscale does not limit `devices:core` by tag; an admin repairs it in the console); with policy management it can also change the access rules. Revoke it in the admin console; pasting keys stores no secret at all |
 | Tailscale's coordination service | It can add nodes to your tailnet, but not log in to a Ship: SSH keys and pinned host keys are separate from it. Headscale removes this dependency |

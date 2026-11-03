@@ -121,8 +121,19 @@ def top_level_values(text: str) -> dict[str, int]:
             continue
         if c == ":" and depth == 1 and current is not None:
             k = i + 1
-            while k < n and text[k].isspace():
-                k += 1
+            while k < n:  # skip spaces and comments between the colon and the value
+                if text[k].isspace():
+                    k += 1
+                elif text.startswith("//", k):
+                    end = text.find("\n", k)
+                    k = n if end < 0 else end
+                elif text.startswith("/*", k):
+                    end = text.find("*/", k + 2)
+                    if end < 0:
+                        raise HuJSONError("unclosed /* comment")
+                    k = end + 2
+                else:
+                    break
             result[current] = k
             current = None
         if c in "{[":
@@ -151,4 +162,4 @@ def add_key(text: str, key: str, value: str) -> str:
     first = next((i for i, c in _scan(text) if not c.isspace()), None)
     if first is None or text[first] != "{":
         raise HuJSONError("the policy is not an object")
-    return text[:first + 1] + f"\n  {json.dumps(key)}: {value}," + text[first + 1:]
+    return text[:first + 1] + f"\n  {json.dumps(key)}: {value},\n" + text[first + 1:]

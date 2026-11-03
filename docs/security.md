@@ -70,14 +70,14 @@ your other machines without forwarding router ports
   SSH and exists there only in a root-only file under `/run` while `tailscale up`
   runs. Keys are never in seeds, cloud metadata, command lines, logs, the
   inventory or status, and nothing keeps a copy.
-- **The OAuth client is as narrow as Tailscale allows.** At the default level it
-  can mint `tag:ship` keys and read the policy. Device removal on destroy needs
-  `devices:core`, which Tailscale grants over the whole tailnet (tags do not
-  limit it), so a leaked secret could then remove any device; it can be turned
-  off (`api.remove_devices`), and FleetLedger itself only removes a device it can
-  tie to the Ship by its recorded node id, never by hostname alone. Only the
-  opt-in `manage_policy` level lets it change the policy, and FleetLedger then
-  only adds the Ships' rules after showing a diff and asking. `ship-fleet overlay
+- **The OAuth client is as narrow as Tailscale allows.** By default it has only
+  `auth_keys`: it can mint `tag:ship` keys and nothing else. Two opt-in levels
+  add more: device removal on destroy (`devices:core`, which Tailscale grants over
+  the whole tailnet: tags do not limit it, so a leaked secret could then remove
+  or re-tag any device, yours included; FleetLedger itself only removes a device it can tie to the Ship by
+  its recorded node id, never by hostname alone), and policy management
+  (`policy_file`: FleetLedger only adds the Ships' rules, after a diff and your
+  yes, but the secret could change any rule). `ship-fleet overlay
   setup` checks the client's scopes before it saves the secret (0600, never in
   `ships.toml`), and `overlay check` keeps verifying the rules
   ([guide/your-own-fleet.md](guide/your-own-fleet.md) compares the choices).

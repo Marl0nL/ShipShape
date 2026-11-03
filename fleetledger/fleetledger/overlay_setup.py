@@ -21,12 +21,13 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from fleetledger import overlay, paths
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
-from fleetledger.overlay import hujson, providers
+from fleetledger.overlay import hujson
 from fleetledger.overlay import rules as pol
 from fleetledger.overlay.providers import Check
 from fleetledger.overlay.tsapi import TailscaleAPI
@@ -34,9 +35,6 @@ from fleetledger.shipctl import ShipCtl
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$")
-DEFAULT_SCOPES = ("auth_keys", "policy_file:read")
-REMOVE_SCOPE = "devices:core"
-MANAGE_SCOPE = "policy_file"
 SECRET_FILE = "tailscale-oauth"
 
 MANAGE_WARNING = (
@@ -46,6 +44,13 @@ MANAGE_WARNING = (
     "Most people should keep the default: paste the rules once, and `ship-fleet\n"
     "overlay check` keeps verifying them."
 )
+
+
+def _tilde(path) -> str:
+    try:
+        return "~/" + str(path.resolve().relative_to(Path.home().resolve()))
+    except ValueError:
+        return str(path)
 
 
 # --- small prompts --------------------------------------------------------------
@@ -90,10 +95,13 @@ def setup(args, app) -> int:
                          hint="ship-fleet overlay setup --force replaces it.")
     app.say("Ships can join an overlay network so you reach them from anywhere, with no\n"
             "router ports opened. SSH with each Ship's pinned key stays the only way in.\n")
+    old_secret = (inv.overlay or {}).get("api", {}).get("oauth_secret_file")
     provider = _choose(app, "Overlay provider: Tailscale's service, or your own Headscale",
                        ("tailscale", "headscale"), "tailscale")
     if provider == "headscale":
-        return _setup_headscale(app, store)
+        code = _setup_headscale(app, store)
+        _note_old_secret(app, store, old_secret)
+        return code
     app.say("\nWhere join keys come from:\n"
             "  oauth  FleetLedger mints a single-use key per Ship with an OAuth client\n"
             "         whose secret is stored on this computer (0600). Convenient; it can\n"
@@ -113,8 +121,17 @@ def setup(args, app) -> int:
                 "  ship-fleet overlay join SHIP     (it asks for the key; it is not shown)\n"
                 "To check your access rules: export them from the admin console, then\n"
                 "  ship-fleet overlay check --policy FILE")
+        _note_old_secret(app, store, old_secret)
         return 0
     return _setup_oauth(app, store)
+
+
+def _note_old_secret(app, store, old_secret: str | None) -> None:
+    """After --force: an OAuth secret the new setup no longer uses is worth saying."""
+    current = (store.load().overlay or {}).get("api", {}).get("oauth_secret_file")
+    if old_secret and old_secret != current and paths.expand(old_secret).exists():
+        app.say(f"\nThe OAuth secret in {old_secret} is no longer used: delete it, and revoke "
+                "the client in the admin console.")
 
 
 def _setup_headscale(app, store) -> int:
@@ -133,69 +150,102 @@ def _setup_headscale(app, store) -> int:
     return 0
 
 
+LEVELS = {
+    # level: (scopes the client must have, remove_devices, manage_policy)
+    "keys": (("auth_keys",), False, False),
+    "devices": (("auth_keys", "devices:core"), True, False),
+    "policy": (("auth_keys", "devices:core", "policy_file"), True, True),
+}
+DEFAULT_LEVEL = "keys"
+
+LEVELS_TEXT = (
+    "How much the stored OAuth secret may do:\n"
+    "  keys     Mint single-use tag:ship keys, nothing else. If it leaks, someone can\n"
+    "           add devices the rules let reach nothing. Destroy prints the step to\n"
+    "           remove a Ship's device. Scope: auth_keys.\n"
+    "  devices  Also remove a destroyed Ship's device by itself. Needs devices:core,\n"
+    "           which Tailscale grants over EVERY device in the tailnet, not only\n"
+    "           Ships: if the secret leaks, any of your machines could be removed.\n"
+    "           Scopes: auth_keys, devices:core (with the tag tag:ship).\n"
+    "  policy   Also add the Ships' access rules to your policy (diff first, then\n"
+    "           your yes) and read it for checks. The secret can then change your\n"
+    "           access rules: treat it like an admin login. Scopes: auth_keys,\n"
+    "           devices:core, policy_file, devices:core:read,\n"
+    "           devices:posture_attributes.\n"
+)
+
+
+def missing_scopes(needed, granted) -> list[str]:
+    """Scopes in needed that granted lacks; a write scope covers its :read form."""
+    return sorted(s for s in needed
+                  if s not in granted and not (s.endswith(":read") and s[:-5] in granted))
+
+
 def _setup_oauth(app, store) -> int:
-    app.say("\nMake an OAuth client in the admin console (Settings > Trust credentials)\n"
-            "with the tag tag:ship and these scopes (names as Tailscale lists them):\n"
-            "  auth_keys, policy_file:read, and what policy_file:read needs:\n"
-            "  devices:core:read, devices:posture_attributes:read\n"
-            "plus devices:core if FleetLedger should remove destroyed Ships' devices\n"
-            "(asked next). See docs/overlay-providers.md for what each is for.\n")
-    default_remove = "yes" if providers.REMOVE_DEVICES_DEFAULT else "no"
-    app.say("Removing destroyed Ships' devices needs devices:core, which Tailscale grants\n"
-            "over every device in the tailnet, not only Ships: a leaked secret could then\n"
-            "remove any of your machines. Without it, destroy prints the steps instead.")
-    remove = _choose(app, "Remove destroyed Ships' devices automatically",
-                     ("yes", "no"), default_remove) == "yes"
-    level = _choose(app, "Access level: default (FleetLedger reads and checks your rules), "
-                    "or manage (it may also add the Ships' rules)", ("default", "manage"),
-                    "default")
-    if level == "manage":
-        app.say("\n" + MANAGE_WARNING + "\nIt also needs the scopes policy_file and "
-                "devices:posture_attributes.\n")
+    app.say("\nFirst, if your policy has no tag:ship yet, add it to tagOwners (admin console >\n"
+            "Access controls); the console offers only tags that exist:\n"
+            '  "tagOwners": {"tag:ship": ["autogroup:admin"]}\n')
+    app.say("Then make an OAuth client in the admin console (Settings > Trust credentials)\n"
+            "with the tag tag:ship and the scopes of the level you choose (names as\n"
+            "Tailscale lists them; docs/overlay-providers.md has the details).\n")
+    app.say(LEVELS_TEXT)
+    level = _choose(app, "Level", tuple(LEVELS), DEFAULT_LEVEL)
+    if level == "policy":
+        app.say("\n" + MANAGE_WARNING + "\n")
         if _ask(app, "Type yes to let the stored secret change access rules: ").lower() != "yes":
-            app.say("Keeping the default level.")
-            level = "default"
+            app.say("Not that level, then. Using: devices.")
+            level = "devices"
+    scopes, remove, manage = LEVELS[level]
     client_id = _ask(app, "OAuth client id: ")
     if not CLIENT_ID_RE.match(client_id):
         raise FleetError("That does not look like an OAuth client id.")
     secret = _secret(app, "OAuth client secret (not shown): ")
     if not secret or "\n" in secret or len(secret) > 512:
         raise FleetError("That does not look like an OAuth client secret.")
+    # Where the secret goes, and the same path recorded in ships.toml (it honours
+    # FLEETLEDGER_CONFIG_DIR and XDG_CONFIG_HOME).
+    secret_path = paths.config_dir() / SECRET_FILE
     api_cfg = {"tailnet": "-", "oauth_client_id": client_id,
-               "oauth_secret_file": f"~/.config/fleetledger/{SECRET_FILE}",
-               "key_expiry_s": 600, "remove_devices": remove,
-               "manage_policy": level == "manage"}
+               "oauth_secret_file": _tilde(secret_path),
+               "key_expiry_s": 600, "remove_devices": remove, "manage_policy": manage}
 
     # Check the credentials before anything is written.
     api = _api(app, api_cfg, secret=lambda: secret)
     api.token()
-    wanted = (set(DEFAULT_SCOPES) | ({REMOVE_SCOPE} if remove else set())
-              | ({MANAGE_SCOPE} if level == "manage" else set()))
-    if api.granted:
-        missing = sorted(wanted - api.granted)
+    if api.granted is not None:
+        missing = missing_scopes(scopes, api.granted)
         if missing:
-            raise FleetError(f"The OAuth client lacks the scopes: {', '.join(missing)}. "
-                             "Nothing was saved.")
+            granted = ", ".join(sorted(api.granted)) or "none"
+            raise FleetError(f"The OAuth client lacks the scopes: {', '.join(missing)} "
+                             f"(Tailscale says it has: {granted}). Nothing was saved.")
+        extra = sorted({"devices:core", "policy_file"} & api.granted - set(scopes))
+        if extra:
+            app.note(f"Note: the client also has {', '.join(extra)}, more than this level "
+                     "uses. A narrower client keeps a leaked secret less useful.")
     else:
-        app.note("Tailscale did not say which scopes the client has; checking by use.")
-    api.devices()
-    text, etag = api.policy_text()
+        app.note("Tailscale did not say which scopes the client has; checking what this "
+                 "level reads by using it (auth_keys is only tried at the first join).")
+    text = etag = None
+    if remove:
+        api.devices()
+    if manage:
+        text, etag = api.policy_text()
 
-    secret_path = paths.config_dir() / SECRET_FILE
     paths.private_dir(secret_path.parent)
     paths.write_private(secret_path, (secret + "\n").encode("utf-8"))
     config = {"provider": "tailscale", "tags": ["tag:ship"], "key_source": "tailscale-api",
               "api": api_cfg}
     with store.edit() as ed:
         ed.set_overlay(config)
-    app.say(f"\nCredentials work. Saved [overlay] in ships.toml; the secret is in "
-            f"{secret_path} (0600).")
+    app.say(f"\nCredentials work. Saved [overlay] in ships.toml (level {level}); the secret "
+            f"is in {secret_path} (0600).")
 
-    if level == "manage":
+    if manage:
         provider = overlay.provider(config, api_factory=lambda _cfg: api)
-        return _merge_rules(app, provider, api, text, etag, config)
+        return _merge_rules(app, provider, api, text or "{}", etag, config)
     _print_policy(app, config)
-    app.say("Then: ship-fleet overlay check   (it verifies them now and any time later)")
+    app.say("Then export your policy from the admin console and run:\n"
+            "  ship-fleet overlay check --policy FILE")
     return 0
 
 
@@ -208,7 +258,11 @@ def _print_policy(app, config: dict) -> None:
 
 def _merge_rules(app, provider, api, text: str, etag: str | None, config: dict) -> int:
     tags = overlay.tags(config)
-    new, added = pol.merge(text, tags)
+    try:
+        new, added = pol.merge(text, tags)
+    except hujson.HuJSONError as exc:
+        raise FleetError(f"Cannot add the Ships' rules to your policy ({exc}). Paste them "
+                         "yourself: ship-fleet overlay policy") from None
     if not added:
         app.say("Your policy already has the Ships' rules.")
     else:
@@ -251,16 +305,34 @@ def _is_ip(value: str) -> bool:
         return False
 
 
-def _connects(app, inv, ship, ip: str) -> bool | None:
-    """Can the Ship open a TCP connection to ip:22? None if the probe could not run."""
+PROBE_TIMEOUT_RC = 124  # timeout(1) killed the attempt: nothing answered
+
+
+def _probe(app, inv, ship, ip: str) -> tuple[str, str]:
+    """Try, from the Ship, a TCP connection to ip:22. Returns (state, detail):
+
+    - ok: the attempt timed out. On Tailscale a connection the policy blocks is
+      dropped by the destination's packet filter, so it just times out;
+    - fail: it connected, or was refused. A refusal is a reset from the
+      destination's own TCP stack, so the packet got past the policy: the Ship
+      could reach any port that has a listener;
+    - skip: the probe could not run, or failed some other way.
+    """
     if not _is_ip(ip):
-        return None
+        return "skip", f"{ip!r} is not an address"
     probe = ["timeout", "5", "bash", "-c", 'exec 3<>"/dev/tcp/$1/22"', "probe", ip]
     try:
         result = app.ssh_factory(inv).run(ship, probe, timeout=30)
-    except FleetError:
-        return None
-    return result.returncode == 0
+    except FleetError as exc:
+        return "skip", f"probe could not run: {exc.message[:100]}"
+    if result.returncode == 0:
+        return "fail", f"it opened a connection to {ip}:22"
+    if result.returncode == PROBE_TIMEOUT_RC:
+        return "ok", f"{ip}:22 timed out (blocked by the policy)"
+    if "refused" in result.stderr.lower():
+        return "fail", (f"{ip}:22 refused the connection: the packet got through, so the "
+                        "policy lets the Ship reach it (nothing happens to listen on 22)")
+    return "skip", f"probe ended with exit {result.returncode}; could not tell"
 
 
 def check(args, app) -> int:
@@ -286,10 +358,14 @@ def check(args, app) -> int:
 
     # 2. The policy.
     api = _api(app, config["api"]) if uses_api else None
+    # The API is used only for what the chosen level allows (docs/overlay-providers.md):
+    # the policy at the policy level, devices from the device-removal level up.
+    reads_policy = uses_api and bool(config["api"].get("manage_policy"))
+    reads_devices = uses_api and bool(config["api"].get("remove_devices"))
     text = None
     if args.policy:
         text = paths.expand(args.policy).read_text(encoding="utf-8")
-    elif api is not None:
+    elif reads_policy:
         try:
             text, _ = api.policy_text()
         except FleetError as exc:
@@ -307,17 +383,20 @@ def check(args, app) -> int:
         if isinstance(doc, dict):
             for f in pol.findings(doc, tags):
                 items.append(Check(f.name, "ok" if f.ok else f.severity, f.detail))
-            if api is not None:
-                with_tests, _ = pol.merge(text, tags)
+            if reads_policy:
                 try:
+                    with_tests, _ = pol.merge(text, tags)
                     problems = api.validate(with_tests)
                     items.append(Check("Tailscale runs the Ship tests", "fail" if problems
                                        else "ok", "; ".join(problems[:3]) or "they pass"))
                 except FleetError as exc:
                     items.append(Check("Tailscale runs the Ship tests", "fail", exc.message))
+                except hujson.HuJSONError as exc:
+                    items.append(Check("Tailscale runs the Ship tests", "fail",
+                                       f"cannot add the Ship tests to the policy: {exc}"))
 
     # 3. Devices.
-    if api is not None:
+    if reads_devices:
         try:
             devices = [d for d in api.devices() if set(d.get("tags") or []) & set(tags)]
             known = {n for s in inv.ships() for n in s.names} | {s.name for s in inv.ships()}
@@ -355,12 +434,8 @@ def check(args, app) -> int:
                 items.append(Check(f"{ship.name} cannot reach others", "skip",
                                    "nothing to probe (is this computer on the overlay?)"))
             for label, ip in targets:
-                reached = _connects(app, inv, ship, ip)
-                items.append(Check(
-                    f"{ship.name} cannot reach {label}",
-                    "skip" if reached is None else ("fail" if reached else "ok"),
-                    "probe could not run" if reached is None else
-                    (f"it opened a connection to {ip}:22" if reached else f"{ip}:22 refused")))
+                state, detail = _probe(app, inv, ship, ip)
+                items.append(Check(f"{ship.name} cannot reach {label}", state, detail))
 
     rows = [[c.state.upper(), c.name, c.detail] for c in items]
     app.say(table(rows, ["", "CHECK", "DETAIL"]))

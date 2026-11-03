@@ -21,6 +21,10 @@ JOIN = ("overlay", "join", "--hostname", "ship-01", "--tag", "tag:ship", "--json
 def ov(ship):
     bindir = Path(ship.env["PATH"].split(":")[0])
     (bindir / "tailscale").symlink_to(FAKE)  # sshd is faked for every Ship test
+    # What ship-ctl looks for to decide tailscale is installed (inside the sandbox only).
+    marker = ship.p("/usr/bin/tailscale")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("installed (the fake on PATH answers)\n")
     return ship
 
 
@@ -146,6 +150,17 @@ def test_leave_listens_everywhere_first(ov):
     assert ["systemctl", "disable", "--now", "tailscaled"] in calls[logout:]
     assert not ov.p("/var/lib/shipshape/overlay.json").exists()
     assert doc["data"]["overlay"]["joined"] is False
+
+
+def test_a_tailscale_outside_the_sandbox_is_never_used(ship):
+    """The machine running the tests may have a real tailscale; it must not be touched."""
+    import shutil
+
+    code, doc, out = ship.ctl("overlay", "leave", "--json")
+    assert code == 0 and doc["changed"] == []
+    assert not [c for c in ship.calls() if c[0] == "tailscale"]
+    if shutil.which("tailscale", path=ship.env["PATH"]):
+        assert ship.ctl("status", "--json")[1]["overlay"] is None
 
 
 def test_leave_when_never_joined_changes_nothing(ship):

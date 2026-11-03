@@ -54,7 +54,7 @@ setup`:
 | Level | Scopes on the OAuth client | What the stored secret can do | Settings |
 |---|---|---|---|
 | **1. Keys only** (default) | `auth_keys` | mint single-use, pre-approved `tag:ship` keys that expire in 10 minutes; nothing else | (the defaults) |
-| **2. Keys and device removal** | + `devices:core` (Tailscale makes you choose tags, here `tag:ship`) | also remove devices. **This scope is tailnet-wide**: the tags only bind the keys the client makes, not which devices it can see or remove, so a leaked secret could remove *any* device (Tailscale issue 10702 asks for tag-limited clients). FleetLedger itself only removes a device it can tie to the Ship by its recorded node id | `api.remove_devices = true` |
+| **2. Keys and device removal** | + `devices:core` (Tailscale makes you choose tags, here `tag:ship`) | also remove devices. **This scope is tailnet-wide**: the tags only bind the keys the client makes, not which devices it can see, remove or re-tag, so a leaked secret could remove or re-tag *any* device (Tailscale issue 10702 asks for tag-limited clients). FleetLedger itself only removes a device it can tie to the Ship by its recorded node id | `api.remove_devices = true` |
 | **3. Keys, device removal and the policy** | + `policy_file`, which also needs `devices:core:read` and `devices:posture_attributes` | also read and **change your tailnet's access rules**. FleetLedger only adds the Ships' rules, after showing a diff and asking, and `overlay check` reads the policy itself | `api.remove_devices = true`, `api.manage_policy = true` |
 
 At levels 1 and 2, destroy prints the exact admin-console step where needed, and
