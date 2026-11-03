@@ -1490,3 +1490,172 @@ def test_check_fails_plainly_on_a_locked_keyring(env, home, monkeypatch):
     code, out, err = env.run("overlay", "check")
     assert code == 1
     assert _re.search(r"^FAIL\s+OAuth secret .*locked.*Unlock it", out, _re.M), out
+
+
+def test_setup_reuses_a_secret_already_in_the_keyring(env, home, monkeypatch):
+    """The secret was stored by hand under the stable names: setup offers to reuse it,
+    checks it with Tailscale, never asks for it again and never prints it."""
+    backend = secure_keyring(monkeypatch)
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = OAUTH_SECRET
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    asked = []
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)  # reuse: yes
+    env.app.ask_secret = lambda prompt: asked.append(prompt) or "never-asked"
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    assert asked == []  # the secret prompt never came
+    assert tailnet.secrets_seen == [OAUTH_SECRET]  # checked with Tailscale first
+    api = env.store.load().overlay["api"]
+    assert api["secret_store"] == "keyring"
+    assert api["keyring_item"] == "tailscale-oauth:kExampleClient1"
+    assert backend.items == {("fleetledger", "tailscale-oauth:kExampleClient1"): OAUTH_SECRET}
+    assert OAUTH_SECRET not in out + err + env.store.path.read_text()
+
+
+def test_setup_with_an_existing_keyring_secret_can_take_a_new_one(env, monkeypatch):
+    backend = secure_keyring(monkeypatch)
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = "tskey-client-OLD000000"
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", "no", ""], tailnet=tailnet)
+    assert env.run("overlay", "setup")[0] == 0
+    assert tailnet.secrets_seen == [OAUTH_SECRET]
+    assert backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] == OAUTH_SECRET
+
+
+def test_a_reused_secret_that_tailscale_refuses_saves_nothing(env, monkeypatch):
+    backend = secure_keyring(monkeypatch)
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = OAUTH_SECRET
+    tailnet = FakeTailscale(scopes=())  # the stored secret's client lacks auth_keys
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)
+    code, out, err = env.run("overlay", "setup")
+    assert code != 0 and "auth_keys" in err and env.store.load().overlay is None
+
+
+def test_the_keyring_names_are_stable():
+    from fleetledger.overlay import secret_store
+
+    assert secret_store.SERVICE == "fleetledger"
+    assert secret_store.oauth_item("kExampleClient1") == "tailscale-oauth:kExampleClient1"
+
+
+# --- ship-fleet doctor ---------------------------------------------------------------------
+
+
+def doctor_tools(env, monkeypatch, *, agent=True, loaded=True):
+    """Fake ssh-keygen -lf and ssh-add -l (nothing real is asked)."""
+    import subprocess as _sp
+
+    if agent:
+        monkeypatch.setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")
+    else:
+        monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+
+    def run(argv, **kw):
+        if argv[:2] == ["ssh-keygen", "-lf"]:
+            return _sp.CompletedProcess(argv, 0, "256 SHA256:adminFPR fleet-admin (ED25519)\n", "")
+        if argv[:2] == ["ssh-add", "-l"]:
+            line = "256 SHA256:adminFPR fleet-admin (ED25519)\n" if loaded else ""
+            return _sp.CompletedProcess(argv, 0 if loaded else 1, line, "")
+        raise AssertionError(argv)
+
+    env.app.run_cmd = run
+
+
+def doctor_rows(out):
+    import re as _re
+
+    return {m.group(2).strip(): m.group(1) for m in
+            _re.finditer(r"^(ok|WARN|MISSING|FAIL|-)\s+\S+\s+(.+?)\s{2,}", out, _re.M)}
+
+
+def test_doctor_on_a_fresh_computer_says_run_setup(env, tmp_path, monkeypatch):
+    from fleetledger.store import TomlFileStore
+
+    env.app.store_factory = lambda: TomlFileStore(tmp_path / "none" / "ships.toml")
+    code, out, err = env.run("doctor")
+    assert code == 1
+    assert doctor_rows(out)["inventory"] == "MISSING" and "ship-fleet setup" in out
+
+
+def test_doctor_reports_each_piece_and_the_next_command(env, monkeypatch):
+    doctor_tools(env, monkeypatch, loaded=False)
+    before = env.store.path.read_bytes()
+    code, out, err = env.run("doctor", "--offline")
+    rows = doctor_rows(out)
+    assert rows["inventory"] == "ok" and rows["admin key"] == "ok"
+    assert rows["ssh-agent"] == "MISSING" and "ssh-add " in out
+    assert rows["certificate authority"] == "MISSING" and "ship-fleet ca init" in out
+    assert rows["driver"] == "ok"  # manual
+    assert rows["overlay"] == "-"
+    assert code == 1
+    assert env.store.path.read_bytes() == before  # read-only
+
+
+def test_doctor_with_the_admin_key_loaded(env, monkeypatch):
+    doctor_tools(env, monkeypatch, loaded=True)
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["ssh-agent"] == "ok"
+
+
+def test_doctor_without_an_agent(env, monkeypatch):
+    doctor_tools(env, monkeypatch, agent=False)
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["ssh-agent"] == "MISSING" and 'eval "$(ssh-agent)"' in out
+
+
+def test_doctor_flags_empty_pythonpath_entries(env, monkeypatch):
+    doctor_tools(env, monkeypatch)
+    monkeypatch.setenv("PYTHONPATH", "/somewhere:")
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["PYTHONPATH"] == "WARN" and "stray ':'" in out
+
+
+class FakeProxmoxAPI:
+    def __init__(self, template=True, fail=False):
+        self.template, self.fail = template, fail
+
+    def get(self, path, **params):
+        from fleetledger.drivers.proxmox_api import ProxmoxError
+
+        if self.fail:
+            raise ProxmoxError("Cannot reach the Proxmox API at pve.example.com: refused")
+        if path == "/version":
+            return {"version": "9.2.11"}
+        if path.endswith("/config"):
+            return {"name": "shipshape-base", "template": 1} if self.template else {"name": "x"}
+        raise AssertionError(path)
+
+
+def proxmox_inventory(env, home):
+    token = home / "config" / "proxmox-token"
+    token.write_text("00000000-test\n")
+    token.chmod(0o600)
+    with env.store.edit() as ed:
+        ed.doc["defaults"]["driver"] = "proxmox"
+        ed.doc["drivers"] = {"proxmox": {
+            "api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
+            "pool": "shipshape", "template_vmid": 9000, "seed_storage": "shipshape-seeds",
+            "disk_storage": "local-lvm", "bridge": "vmbr0", "token_id": "shipshape@pve!build",
+            "token_file": str(token), "tls_fingerprint": ":".join(["AB"] * 32)}}
+
+
+@pytest.mark.parametrize("api, template_state, api_state", [
+    (FakeProxmoxAPI(), "ok", "ok"),
+    (FakeProxmoxAPI(template=False), "FAIL", "ok"),
+    (FakeProxmoxAPI(fail=True), None, "FAIL"),
+])
+def test_doctor_checks_proxmox(env, home, monkeypatch, api, template_state, api_state):
+    doctor_tools(env, monkeypatch)
+    proxmox_inventory(env, home)
+    env.app.proxmox_api = lambda config: api
+    code, out, err = env.run("doctor")
+    rows = doctor_rows(out)
+    assert rows["Proxmox token"] == "ok" and rows["Proxmox API"] == api_state
+    assert rows.get("template") == template_state
+    assert "00000000-test" not in out + err  # the token is never shown
+
+
+def test_doctor_lists_ships_still_enrolling(env, monkeypatch):
+    doctor_tools(env, monkeypatch)
+    code, out, err = env.run("doctor", "--offline")
+    assert "ship-fleet status ship-01 --wait" in out  # the fixture's Ships have no enrolled

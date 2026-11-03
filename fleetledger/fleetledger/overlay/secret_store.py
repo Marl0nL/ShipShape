@@ -22,7 +22,14 @@ from typing import Any
 from fleetledger import paths
 from fleetledger.errors import ConfigError
 
+# Stable names: people may store the secret by hand before running setup
+# (service fleetledger, item tailscale-oauth:<client id>), and setup reuses it.
 SERVICE = "fleetledger"
+OAUTH_ITEM_PREFIX = "tailscale-oauth:"
+
+
+def oauth_item(client_id: str) -> str:
+    return OAUTH_ITEM_PREFIX + client_id
 
 # Backends that keep secrets encrypted by the OS. Anything else (the fail and null
 # backends, plaintext or "encrypted file" keyrings from keyrings.alt, ...) is refused.
@@ -84,6 +91,19 @@ def _describe(exc: Exception) -> str:
     """The kind of keyring error, never its text: a backend's message could echo
     what it was handed (the secret)."""
     return type(exc).__name__
+
+
+def existing_in_keyring(item: str) -> str | None:
+    """A secret already in a secure, usable keyring under item; None otherwise
+    (no keyring, locked, insecure, or no such item)."""
+    backend, _ = secure_backend()
+    if backend is None:
+        return None
+    try:
+        value = backend.get_password(SERVICE, item)
+    except Exception:
+        return None
+    return value.strip() if value and value.strip() else None
 
 
 def store_in_keyring(item: str, secret: str) -> str:

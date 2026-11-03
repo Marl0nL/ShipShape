@@ -29,6 +29,7 @@ ship-fleet new ship-01 --tag work      # seed, VM, provision, enrol
 ship-fleet login ship-01 all           # Claude Code, gcloud + ADC, GitHub
 ship-fleet ls
 ship-fleet ui                          # the same in your browser (this computer only)
+ship-fleet doctor                      # what is set up, what is missing, the next command
 ```
 
 New here? Start with [set up your own fleet](docs/guide/your-own-fleet.md).
