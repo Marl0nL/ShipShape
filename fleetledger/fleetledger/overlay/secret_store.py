@@ -126,7 +126,10 @@ def read_file(path_value: str) -> str:
         raise ConfigError(f"{path} does not exist.") from exc
     if stat.S_IMODE(st.st_mode) & 0o077:
         raise ConfigError(f"{path} is readable by others; chmod 600 it.")
-    secret = path.read_text(encoding="utf-8").strip()
+    try:
+        secret = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as exc:  # a folder, unreadable, not text
+        raise ConfigError(f"Cannot read {path} ({type(exc).__name__}).") from None
     if not secret or "\n" in secret:
         raise ConfigError(f"{path} must hold only the OAuth client secret.")
     return secret

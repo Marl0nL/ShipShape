@@ -1,6 +1,6 @@
 """What a FleetLedger computer needs, checked one piece at a time.
 
-`ship-fleet doctor` prints these checks; `ship-fleet setup` walks the same list
+`ship-fleet doctor` prints these checks; `ship-fleet setup` (to come) walks the same list
 and does what is missing. Every check is read-only: it looks at files, asks
 ssh-agent what it holds, and (unless offline) asks the Proxmox API and the
 local Tailscale. Each result names the exact next command when something is
@@ -75,8 +75,11 @@ def computer(app) -> list[Item]:
 
 
 def fingerprint(public_key: str, run: Runner = _run) -> str | None:
-    """SHA256 fingerprint of a public key file, via ssh-keygen -lf."""
-    result = run(["ssh-keygen", "-lf", public_key])
+    """SHA256 fingerprint of a public key file, via ssh-keygen -lf; None if that fails."""
+    try:
+        result = run(["ssh-keygen", "-lf", public_key])
+    except (OSError, subprocess.SubprocessError):
+        return None
     parts = (result.stdout or "").split()
     return parts[1] if result.returncode == 0 and len(parts) > 1 else None
 
@@ -85,7 +88,10 @@ def agent_fingerprints(run: Runner = _run) -> list[str] | None:
     """Fingerprints ssh-agent holds; None if there is no agent."""
     if not os.environ.get("SSH_AUTH_SOCK"):
         return None
-    result = run(["ssh-add", "-l"])
+    try:
+        result = run(["ssh-add", "-l"])
+    except (OSError, subprocess.SubprocessError):  # no ssh-add, or the agent hangs
+        return None
     if result.returncode == 2:  # cannot connect to the agent
         return None
     return [line.split()[1] for line in (result.stdout or "").splitlines()
@@ -98,18 +104,21 @@ def fleet(app) -> tuple[list[Item], Any]:
     store = app.store_factory()
     if not store.exists():
         return [Item("fleet", "inventory", "missing", f"no {store.path}",
-                     "ship-fleet setup")], None
+                     "ship-fleet init")], None
     try:
         inv = store.load()
     except FleetError as exc:
         return [Item("fleet", "inventory", "fail", exc.message,
-                     f"fix {store.path} (ship-fleet doctor shows what is wrong)")], None
+                     f"edit {store.path} as the detail says")], None
     out = [Item("fleet", "inventory", "ok", str(store.path))]
 
     admin, public = inv.admin_key, inv.admin_public_key_path
     if not admin.exists() or not public.exists():
-        out.append(Item("fleet", "admin key", "missing", f"no {admin}",
-                        "ship-fleet setup   (makes it, with a passphrase)"))
+        gone = admin if not admin.exists() else public
+        out.append(Item("fleet", "admin key", "missing", f"no {gone}",
+                        f"ssh-keygen -t ed25519 -C fleetledger-admin -f {_tilde(admin)}"
+                        if not admin.exists() else
+                        f"ssh-keygen -y -f {_tilde(admin)} > {_tilde(public)}"))
     else:
         out.append(Item("fleet", "admin key", "ok", str(admin)))
         held = agent_fingerprints(run)
@@ -118,7 +127,11 @@ def fleet(app) -> tuple[list[Item], Any]:
             out.append(Item("fleet", "ssh-agent", "missing",
                             "no ssh-agent (SSH_AUTH_SOCK is not set)",
                             'eval "$(ssh-agent)" && ssh-add ' + _tilde(admin)))
-        elif fpr and fpr in held:
+        elif fpr is None:
+            out.append(Item("fleet", "ssh-agent", "fail",
+                            f"cannot read the fingerprint of {public} (ssh-keygen -lf failed)",
+                            f"ssh-keygen -lf {_tilde(public)}   (shows what is wrong)"))
+        elif fpr in held:
             out.append(Item("fleet", "ssh-agent", "ok", f"holds the admin key ({fpr})"))
         else:
             out.append(Item("fleet", "ssh-agent", "missing", "the admin key is not loaded",
@@ -163,7 +176,7 @@ def hypervisor(app, inv, *, offline: bool = False) -> list[Item]:
     if not config:
         return [Item("hypervisor", "Proxmox", "missing",
                      "defaults.driver is proxmox but there is no [drivers.proxmox]",
-                     "ship-fleet setup")]
+                     "add it: docs/runbooks/proxmox-setup.md, step 3")]
     out = [Item("hypervisor", "Proxmox settings", "ok",
                 f"{config['api_url']} node {config['node']}, pool {config['pool']}")]
     try:
@@ -172,7 +185,8 @@ def hypervisor(app, inv, *, offline: bool = False) -> list[Item]:
         read_token(config["token_file"])
         out.append(Item("hypervisor", "Proxmox token", "ok", f"{config['token_file']} (0600)"))
     except FleetError as exc:
-        out.append(Item("hypervisor", "Proxmox token", "fail", exc.message, "ship-fleet setup"))
+        out.append(Item("hypervisor", "Proxmox token", "fail", exc.message,
+                        exc.hint or "docs/runbooks/proxmox-setup.md, step 3"))
         return out
     if offline:
         out.append(Item("hypervisor", "Proxmox API", "skip", "not checked (--offline)"))

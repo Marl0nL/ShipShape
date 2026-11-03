@@ -74,6 +74,17 @@ def test_clean_sys_path_drops_the_cwd_empty_and_shadowing_entries(tmp_path):
     assert shipfleet_launch.clean_sys_path(path, str(cwd)) == [str(real), "/usr/lib/python3"]
 
 
+def test_the_current_folder_stays_when_it_holds_the_real_package(tmp_path):
+    """A compat-mode editable install puts the project folder on sys.path; standing
+    in it must not hide the package. A relative '' or '.' still goes."""
+    project = tmp_path / "project"
+    (project / "fleetledger").mkdir(parents=True)
+    (project / "fleetledger" / "__init__.py").write_text("")
+    path = ["", ".", str(project), "/usr/lib/python3"]
+    assert shipfleet_launch.clean_sys_path(path, str(project)) == [str(project),
+                                                                   "/usr/lib/python3"]
+
+
 @pytest.fixture
 def saved_modules():
     """Put every fleetledger module back afterwards: the tests below remove them."""
@@ -92,6 +103,16 @@ def test_a_namespace_package_already_imported_is_forgotten(saved_modules):
     sys.modules["fleetledger.cli"] = types.ModuleType("fleetledger.cli")
     shipfleet_launch.forget_namespace_package()
     assert "fleetledger" not in sys.modules and "fleetledger.cli" not in sys.modules
+
+
+def test_main_forgets_an_imported_namespace_package(saved_modules):
+    """main() itself drops a namespace package imported before it ran."""
+    import types
+
+    sys.modules["fleetledger"] = types.ModuleType("fleetledger")
+    with pytest.raises(SystemExit) as exc:
+        shipfleet_launch.main(["--version"])
+    assert exc.value.code == 0
 
 
 def test_the_real_package_is_kept(monkeypatch):
@@ -121,4 +142,4 @@ def test_install_sh_warns_about_empty_pythonpath_entries(tmp_path, value, warned
                          capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert ("empty entry" in out.stderr) is warned
-    assert "ship-fleet setup" in out.stdout
+    assert "ship-fleet init" in out.stdout

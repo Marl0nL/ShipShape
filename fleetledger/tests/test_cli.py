@@ -1509,7 +1509,20 @@ def test_setup_reuses_a_secret_already_in_the_keyring(env, home, monkeypatch):
     assert api["secret_store"] == "keyring"
     assert api["keyring_item"] == "tailscale-oauth:kExampleClient1"
     assert backend.items == {("fleetledger", "tailscale-oauth:kExampleClient1"): OAUTH_SECRET}
+    assert backend.sets == []  # reused as it was, never written again
     assert OAUTH_SECRET not in out + err + env.store.path.read_text()
+
+
+@pytest.mark.parametrize("stored", ["two\nlines", "x" * 513])
+def test_an_implausible_keyring_item_is_not_reused(env, monkeypatch, stored):
+    backend = secure_keyring(monkeypatch)
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = stored
+    tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
+    interactive(env, ["", "", "", "kExampleClient1", ""], tailnet=tailnet)  # store: keyring
+    code, out, err = env.run("overlay", "setup")
+    assert code == 0, err
+    assert "plausible" in err
+    assert tailnet.secrets_seen == [OAUTH_SECRET]  # asked for, and used, a new one
 
 
 def test_setup_with_an_existing_keyring_secret_can_take_a_new_one(env, monkeypatch):
@@ -1536,6 +1549,7 @@ def test_the_keyring_names_are_stable():
 
     assert secret_store.SERVICE == "fleetledger"
     assert secret_store.oauth_item("kExampleClient1") == "tailscale-oauth:kExampleClient1"
+    assert "kExampleClient1" not in secret_store.SERVICE
 
 
 # --- ship-fleet doctor ---------------------------------------------------------------------
@@ -1550,7 +1564,10 @@ def doctor_tools(env, monkeypatch, *, agent=True, loaded=True):
     else:
         monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
 
+    env.commands = []
+
     def run(argv, **kw):
+        env.commands.append(list(argv[:2]))
         if argv[:2] == ["ssh-keygen", "-lf"]:
             return _sp.CompletedProcess(argv, 0, "256 SHA256:adminFPR fleet-admin (ED25519)\n", "")
         if argv[:2] == ["ssh-add", "-l"]:
@@ -1568,18 +1585,25 @@ def doctor_rows(out):
             _re.finditer(r"^(ok|WARN|MISSING|FAIL|-)\s+\S+\s+(.+?)\s{2,}", out, _re.M)}
 
 
-def test_doctor_on_a_fresh_computer_says_run_setup(env, tmp_path, monkeypatch):
+def test_doctor_on_a_fresh_computer_says_run_init(env, tmp_path, monkeypatch):
     from fleetledger.store import TomlFileStore
 
     env.app.store_factory = lambda: TomlFileStore(tmp_path / "none" / "ships.toml")
     code, out, err = env.run("doctor")
     assert code == 1
-    assert doctor_rows(out)["inventory"] == "MISSING" and "ship-fleet setup" in out
+    assert doctor_rows(out)["inventory"] == "MISSING" and "ship-fleet init" in out
 
 
-def test_doctor_reports_each_piece_and_the_next_command(env, monkeypatch):
+def config_snapshot(folder):
+    """Every file under folder: name, bytes and mtime (doctor must change none)."""
+    return {p: (p.read_bytes(), p.stat().st_mtime_ns)
+            for p in sorted(folder.rglob("*")) if p.is_file()}
+
+
+def test_doctor_reports_each_piece_and_the_next_command(env, home, monkeypatch):
     doctor_tools(env, monkeypatch, loaded=False)
-    before = env.store.path.read_bytes()
+    backend = secure_keyring(monkeypatch)
+    before = config_snapshot(home)
     code, out, err = env.run("doctor", "--offline")
     rows = doctor_rows(out)
     assert rows["inventory"] == "ok" and rows["admin key"] == "ok"
@@ -1588,7 +1612,9 @@ def test_doctor_reports_each_piece_and_the_next_command(env, monkeypatch):
     assert rows["driver"] == "ok"  # manual
     assert rows["overlay"] == "-"
     assert code == 1
-    assert env.store.path.read_bytes() == before  # read-only
+    assert config_snapshot(home) == before  # read-only: no file written, touched or added
+    assert backend.sets == []  # nothing stored in the keyring
+    assert env.commands == [["ssh-add", "-l"], ["ssh-keygen", "-lf"]]  # and nothing else run
 
 
 def test_doctor_with_the_admin_key_loaded(env, monkeypatch):
@@ -1653,6 +1679,96 @@ def test_doctor_checks_proxmox(env, home, monkeypatch, api, template_state, api_
     assert rows["Proxmox token"] == "ok" and rows["Proxmox API"] == api_state
     assert rows.get("template") == template_state
     assert "00000000-test" not in out + err  # the token is never shown
+
+
+def test_doctor_reports_missing_openssh_tools_instead_of_crashing(env, monkeypatch):
+    def run(argv, **kw):
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")
+    env.app.run_cmd = run
+    code, out, err = env.run("doctor", "--offline")
+    assert code == 1 and "Traceback" not in err
+    assert doctor_rows(out)["ssh-agent"] == "MISSING"
+
+
+def test_doctor_reports_a_hung_agent_instead_of_crashing(env, monkeypatch):
+    import subprocess as _sp
+
+    def run(argv, **kw):
+        if argv[:2] == ["ssh-add", "-l"]:
+            raise _sp.TimeoutExpired(argv, 10)
+        return _sp.CompletedProcess(argv, 0, "256 SHA256:adminFPR x (ED25519)\n", "")
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")
+    env.app.run_cmd = run
+    code, out, err = env.run("doctor", "--offline")
+    assert code == 1 and doctor_rows(out)["ssh-agent"] == "MISSING"
+
+
+def test_doctor_says_when_the_admin_fingerprint_cannot_be_read(env, monkeypatch):
+    import subprocess as _sp
+
+    def run(argv, **kw):
+        if argv[:2] == ["ssh-keygen", "-lf"]:
+            return _sp.CompletedProcess(argv, 1, "", "not a key")
+        return _sp.CompletedProcess(argv, 0, "256 SHA256:adminFPR x (ED25519)\n", "")
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")
+    env.app.run_cmd = run
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["ssh-agent"] == "FAIL" and "ssh-keygen -lf" in out
+
+
+def test_doctor_reports_an_unreadable_token_file_instead_of_crashing(env, home, monkeypatch):
+    doctor_tools(env, monkeypatch)
+    proxmox_inventory(env, home)
+    token = home / "config" / "proxmox-token"
+    token.unlink()
+    token.mkdir(mode=0o700)  # a folder where the file should be
+    code, out, err = env.run("doctor", "--offline")
+    assert code == 1 and "Traceback" not in err
+    assert doctor_rows(out)["Proxmox token"] == "FAIL" and "Cannot read" in out
+
+
+def keyring_overlay(env, item="tailscale-oauth:kExampleClient1"):
+    with env.store.edit() as ed:
+        ed.set_overlay({"provider": "tailscale", "tags": ["tag:ship"],
+                        "key_source": "tailscale-api",
+                        "api": {"tailnet": "-", "oauth_client_id": "kExampleClient1",
+                                "secret_store": "keyring", "keyring_item": item}})
+
+
+@pytest.mark.parametrize("state, row", [("ok", "ok"), ("locked", "FAIL"), ("absent", "FAIL")])
+def test_doctor_checks_the_oauth_secret_in_the_keyring(env, monkeypatch, state, row):
+    doctor_tools(env, monkeypatch)
+    backend = secure_keyring(monkeypatch, locked=state == "locked")
+    if state == "ok":
+        backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = OAUTH_SECRET
+    keyring_overlay(env)
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["OAuth secret"] == row
+    if state == "locked":
+        assert "Unlock it" in out
+    assert OAUTH_SECRET not in out + err
+    assert backend.sets == []
+
+
+@pytest.mark.parametrize("state, row", [("ok", "ok"), ("open", "FAIL"), ("absent", "FAIL")])
+def test_doctor_checks_the_oauth_secret_file(env, home, monkeypatch, state, row):
+    doctor_tools(env, monkeypatch)
+    secret = home / "config" / "tailscale-oauth"
+    if state != "absent":
+        secret.write_text(OAUTH_SECRET + "\n")
+        secret.chmod(0o600 if state == "ok" else 0o644)
+    with env.store.edit() as ed:
+        ed.set_overlay({"provider": "tailscale", "tags": ["tag:ship"],
+                        "key_source": "tailscale-api",
+                        "api": {"tailnet": "-", "oauth_client_id": "kExampleClient1",
+                                "secret_store": "file", "oauth_secret_file": str(secret)}})
+    code, out, err = env.run("doctor", "--offline")
+    assert doctor_rows(out)["OAuth secret"] == row
+    assert OAUTH_SECRET not in out + err
 
 
 def test_doctor_lists_ships_still_enrolling(env, monkeypatch):

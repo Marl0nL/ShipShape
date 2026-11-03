@@ -24,15 +24,24 @@ def _shadows(entry: str) -> bool:
     return os.path.isdir(folder) and not os.path.isfile(os.path.join(folder, "__init__.py"))
 
 
+def _holds_package(entry: str) -> bool:
+    return os.path.isfile(os.path.join(entry, PACKAGE, "__init__.py"))
+
+
 def clean_sys_path(path: list[str], cwd: str) -> list[str]:
-    """sys.path without the current directory, empty entries and shadowing folders."""
+    """sys.path without the current directory, empty entries and shadowing folders.
+
+    One exception: an absolute entry for the current folder that holds the real
+    package stays (a compat-mode editable install puts the project folder on
+    sys.path, and you may be standing in it)."""
     here = os.path.realpath(cwd)
     kept = []
     for entry in path:
         if entry in ("", os.curdir):
             continue
         try:
-            if os.path.realpath(entry) == here:
+            if os.path.realpath(entry) == here and not (
+                    os.path.isabs(entry) and _holds_package(entry)):
                 continue
         except (OSError, ValueError):
             pass

@@ -200,6 +200,10 @@ def _choose_store(app) -> str:
     return _choose(app, "Store", ("keyring", "file"), "keyring")
 
 
+def _plausible_secret(secret: str) -> bool:
+    return bool(secret) and "\n" not in secret and len(secret) <= 512
+
+
 def missing_scopes(needed, granted) -> list[str]:
     """Scopes in needed that granted lacks; a write scope covers its :read form."""
     return sorted(s for s in needed
@@ -226,6 +230,9 @@ def _setup_oauth(app, store) -> int:
         raise FleetError("That does not look like an OAuth client id.")
     item = secret_store.oauth_item(client_id)
     secret = secret_store.existing_in_keyring(item)
+    if secret is not None and not _plausible_secret(secret):
+        app.note(f"The keyring item {item} does not hold a plausible secret; not using it.")
+        secret = None
     reused = False
     if secret is not None and _choose(
             app, f"A secret for this client is already in your keyring ({secret_store.SERVICE}"
@@ -235,7 +242,7 @@ def _setup_oauth(app, store) -> int:
         store_kind = "keyring"
     else:
         secret = _secret(app, "OAuth client secret (not shown): ")
-        if not secret or "\n" in secret or len(secret) > 512:
+        if not _plausible_secret(secret):
             raise FleetError("That does not look like an OAuth client secret.")
         store_kind = _choose_store(app)
     # Where the secret goes, and the same place recorded in ships.toml (the file

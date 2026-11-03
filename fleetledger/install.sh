@@ -3,7 +3,8 @@
 #
 # Editable on purpose: FleetLedger reads contracts/, versions.toml and the
 # Ship catalogue from the checkout, and packs ship/ into tooling bundles, so
-# `git pull` is all an update needs (rerun this script if dependencies change).
+# `git pull` is all an update needs (rerun this script if dependencies or the
+# command's entry point change).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,4 +35,4 @@ esac
 pipx install --force --editable "$here"
 echo
 echo "Installed: $(command -v ship-fleet || echo "ship-fleet (add pipx's bin folder to PATH)")"
-echo "Next: ship-fleet setup"
+echo "Next: ship-fleet init, then ship-fleet doctor to see what is left"

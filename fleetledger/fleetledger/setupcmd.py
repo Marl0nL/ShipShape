@@ -1,4 +1,4 @@
-"""ship-fleet doctor (and, in the next step, ship-fleet setup): a new user's way in.
+"""ship-fleet doctor: a new user's map of what is set up.
 
 doctor is read-only: it reports what is set up, what is missing, and the exact
 command for each missing piece (firstrun.py holds the checks).
@@ -18,7 +18,7 @@ def add_parsers(sub, add) -> None:
     p = add(sub, "doctor", "show what is set up, what is missing, and the next command",
             "Check this computer, FleetLedger's keys and inventory, the hypervisor, the\n"
             "overlay and the Ships. Read-only: it changes nothing. Each missing piece\n"
-            "comes with the exact command that fixes it (usually: ship-fleet setup).")
+            "comes with the exact command that fixes it.")
     p.add_argument("--offline", action="store_true",
                    help="do not contact the Proxmox API")
 

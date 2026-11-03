@@ -1,7 +1,7 @@
 # fleetledger/: the manager (`ship-fleet`)
 
 ```sh
-fleetledger/install.sh        # pipx install --editable; rerun after dependency changes
+fleetledger/install.sh        # pipx install --editable; rerun after dependency or entry point changes
 ship-fleet init               # fleet admin key + empty ~/.config/fleetledger/ships.toml
 ship-fleet new ship-01 --tag work
 ship-fleet status ship-01 --wait
