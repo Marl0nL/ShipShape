@@ -329,7 +329,7 @@
     or let FleetLedger look after it (step 1, Advanced).</p>
   {% endif %}
   {% if state.ship %}
-    {% include "_setup_ship.html" %}
+    {% with job=state.ship, lines=state.ship.snapshot() %}{% include "_setup_ship.html" %}{% endwith %}
   {% else %}
   <p>A Ship is a VM where your agents work. FleetLedger makes it, waits until it is
     provisioned and checked, and then you sign it in to Claude (and GitHub and Google Cloud

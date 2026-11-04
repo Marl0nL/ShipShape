@@ -177,17 +177,14 @@ def steps(app, state: SetupState) -> tuple[list[Step], Any]:
     out.append(Step("ship", "Your first Ship", "done" if ships else "later",
                     f"{len(ships)} Ship(s): " + ", ".join(s.name for s in ships[:5])
                     if ships else ""))
-    # The first open step is "next"; those after it wait.
+    # The first required step not done is "next"; those after it wait. Optional steps
+    # never hold the next one back.
     seen_open = False
     for step in out:
-        if step.state in ("done", "skipped"):
+        if step.state in ("done", "skipped", "optional"):
             continue
-        if not seen_open and step.state in ("next", "later", "optional"):
-            if step.state == "later":
-                step.state = "next"
-            seen_open = True
-        elif step.state == "next":
-            step.state = "later"
+        step.state = "later" if seen_open else "next"
+        seen_open = True
     return out, inv
 
 

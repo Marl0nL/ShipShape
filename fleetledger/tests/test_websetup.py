@@ -406,6 +406,12 @@ def test_an_overlay_whose_rules_are_not_in_place_saves_nothing(chosen):
     assert "tagOwners" in page(chosen)
 
 
+def test_an_optional_step_does_not_hold_the_next_one_back(chosen):
+    chosen.post("/setup/hypervisor/manual")
+    text = page(chosen)
+    assert re.search(r"Your first Ship</a>\s*<span class=\"pill warn\">next", text)
+
+
 def test_the_overlay_can_be_skipped(chosen):
     chosen.post("/setup/overlay/skip")
     assert re.search(r"\(optional\)</a>\s*<span class=\"pill muted\">skipped", page(chosen))
@@ -421,6 +427,7 @@ def test_the_first_ship_shows_its_progress(chosen):
     chosen.post("/setup/ship", {"name": "-bad"})
     assert "uses a-z" in page(chosen) and not chosen.store.load().ships()
     chosen.post("/setup/ship", {"name": "ship-01", "tag": "work"})
+    assert "Making <strong>ship-01</strong>" in page(chosen) or "ship-01" in page(chosen)
     for _ in range(100):
         response = chosen.get("/setup/ship/progress")
         if "hx-get" not in response.text:

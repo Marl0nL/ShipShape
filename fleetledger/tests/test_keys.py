@@ -239,3 +239,37 @@ def test_ssh_and_signing_load_managed_keys_first(home, monkeypatch, store):
     app.ssh_factory(inv)
     trustcmd._signer(app, inv)
     assert loaded == [inv, inv]
+
+
+@pytest.fixture
+def short_folder():
+    """The short /tmp folder these tests may make: removed again if they made it."""
+    folder = keys.Path("/tmp") / f"fleetledger-{os.getuid()}"
+    existed = folder.exists()
+    yield folder
+    if not existed:
+        os.chmod(folder, 0o700)
+        folder.rmdir()
+
+
+def test_a_runtime_folder_too_long_for_a_socket_uses_a_short_private_one(monkeypatch, tmp_path,
+                                                                         short_folder):
+    deep = tmp_path / ("x" * 60) / ("y" * 60)
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(deep))
+    sock = keys._agent_socket()
+    assert len(str(sock)) <= keys.SOCKET_PATH_MAX
+    assert sock.parent.stat().st_uid == os.getuid()
+    assert stat.S_IMODE(sock.parent.stat().st_mode) == 0o700
+
+
+def test_a_short_folder_someone_else_can_open_is_refused(monkeypatch, tmp_path, short_folder):
+    deep = tmp_path / ("x" * 60) / ("y" * 60)
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(deep))
+    short = short_folder
+    short.mkdir(mode=0o700, exist_ok=True)
+    os.chmod(short, 0o755)
+    try:
+        with pytest.raises(FleetError, match="not a private folder"):
+            keys._agent_socket()
+    finally:
+        os.chmod(short, 0o700)

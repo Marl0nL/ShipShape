@@ -264,21 +264,50 @@ def ensure_agent() -> str:
     process (so every ssh FleetLedger runs uses it) and returns the socket."""
     if _agent_answers(os.environ):
         return os.environ["SSH_AUTH_SOCK"]
-    folder = paths.private_dir(paths.runtime_dir())
-    sock = folder / AGENT_SOCKET
+    sock = _agent_socket()
     env = {**os.environ, "SSH_AUTH_SOCK": str(sock)}
     if not _agent_answers(env):
         sock.unlink(missing_ok=True)
         try:
-            subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
-                           timeout=10, check=True)
+            proc = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True,
+                                  text=True, timeout=10, check=False)
         except (OSError, subprocess.SubprocessError) as exc:
             raise FleetError("Could not start ssh-agent.",
                              hint="Start one yourself: eval \"$(ssh-agent)\"") from exc
+        if proc.returncode != 0:
+            why = (proc.stderr or proc.stdout or "").strip().splitlines()
+            raise FleetError("Could not start ssh-agent" + (f": {why[-1]}" if why else "."),
+                             hint="Start one yourself: eval \"$(ssh-agent)\"")
         if not _agent_answers(env):
             raise FleetError("Started ssh-agent, but it does not answer.")
     os.environ["SSH_AUTH_SOCK"] = str(sock)
     return str(sock)
+
+
+SOCKET_PATH_MAX = 100  # Unix socket paths are limited to about 108 bytes
+
+
+def _agent_socket() -> Path:
+    """FleetLedger's own agent socket: in its private runtime folder, or, when that
+    path is too long for a Unix socket, in a short private folder of yours under
+    /tmp (refused if anyone else owns it or can open it)."""
+    sock = paths.runtime_dir() / AGENT_SOCKET
+    if len(str(sock)) <= SOCKET_PATH_MAX:
+        paths.private_dir(sock.parent)
+        return sock
+    folder = Path("/tmp") / f"fleetledger-{os.getuid()}"
+    try:
+        folder.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    st = folder.lstat()
+    import stat as _stat
+
+    if (not _stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid()
+            or _stat.S_IMODE(st.st_mode) & 0o077):
+        raise FleetError(f"{folder} is not a private folder of yours; not starting ssh-agent "
+                         "there.", hint="Start one yourself: eval \"$(ssh-agent)\"")
+    return folder / AGENT_SOCKET
 
 
 def loaded_fingerprints() -> set[str]:
