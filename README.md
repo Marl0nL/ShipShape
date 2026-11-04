@@ -23,13 +23,19 @@ See `docs/architecture.md` and `docs/security.md`.
 
 ```sh
 fleetledger/install.sh                 # installs ship-fleet with pipx
-ship-fleet setup                       # guided: keys, inventory, CA, Proxmox, overlay, a first Ship
+ship-fleet setup                       # opens the setup page in your browser
 ```
 
-That is all. `setup` asks a few questions, skips whatever is already done, and
-can be run again at any time. For Proxmox it needs only the address and an API
-token; anything missing on the host comes back as the exact commands to run
-there. Then, day to day:
+That is all. The setup page (on `127.0.0.1`, this computer only) starts with
+one choice: a **new fleet**, where FleetLedger makes every key it needs and
+looks after them (you never see, name or type one), or **connecting to keys you
+already have**. Then it asks only for what you alone can give: where Ships run
+(a Proxmox address and API token, with everything else found and filled in,
+and the exact root commands for anything missing; or manual), which of your SSH
+keys may log in to Ships, optionally a Tailscale OAuth client, and a first Ship,
+whose progress it shows live. Each step shows done or next; stop whenever you
+like and come back. No browser on that computer: `ship-fleet setup --text`
+asks the same in the terminal. Then, day to day:
 
 ```sh
 ship-fleet new ship-02 --tag work      # seed, VM, provision, enrol

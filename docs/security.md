@@ -136,8 +136,9 @@ your other machines without forwarding router ports
 | gcloud user and ADC | the Ship: `~agent/.config/gcloud/` | the concierge |
 | GitHub token | the Ship: `~agent/.config/gh/hosts.yml` (0600) | device code via the concierge |
 | Ship host private key | the Ship: `/etc/ssh`; briefly the seed ISO | generated into the seed; FleetLedger keeps only the public half |
-| Fleet admin key | your computer: `~/.ssh`, passphrase, ssh-agent | `ship-fleet setup` (or `init`) |
-| Host and user CA keys | your computer: `~/.ssh`, passphrase, ssh-agent (FleetLedger signs through the agent and never reads them) | `ship-fleet setup` (or `ca init`) |
+| Fleet admin key | your computer: `~/.ssh`, encrypted; by default with a random passphrase FleetLedger keeps in the OS keyring (or a 0600 file) and types into `ssh-add` itself, else a passphrase you chose; held by ssh-agent | `ship-fleet setup` (or `init`) |
+| Host and user CA keys | the same as the admin key (FleetLedger signs through the agent and never reads them) | `ship-fleet setup` (or `ca init`) |
+| Managed keys' passphrases | the OS keyring (`fleetledger` / `key-passphrase:<key file name>`), or `~/.config/fleetledger/key-passphrases/` (0600) | random, made with the key; typed by FleetLedger into a terminal it drives, never on a command line |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
 | Proxmox API token | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you on the host; `ship-fleet setup` checks it, then stores it |
 | Overlay OAuth client secret (optional) | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |
@@ -194,7 +195,10 @@ is removed straight away; it is never written anywhere else.
 link swapped for a cookie, refuses foreign `Host` headers (DNS rebinding), and
 needs a CSRF token and an exact `Origin` on every change and on the live
 terminal's WebSocket. Pasted codes follow the concierge's rules above; request
-logging is off. Details: [web-ui.md](web-ui.md#security).
+logging is off. The setup page takes secrets (the Proxmox token, an OAuth client
+secret, a key's current passphrase) only in POST bodies, sends each straight to
+its check and store, and never echoes, logs or audits them. Details:
+[web-ui.md](web-ui.md#security).
 
 ## Public repository
 

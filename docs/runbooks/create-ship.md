@@ -18,10 +18,12 @@ ship-fleet --version
 ship-fleet setup
 ```
 
-`setup` walks through everything below, plus the certificate authority, Proxmox
-and the overlay, and offers to make a first Ship; it skips what is already done,
-so run it again whenever you like. The rest of this section is what it does, and
-how to do it by hand:
+`setup` opens the setup page in your browser ([web-ui.md](../web-ui.md#first-run-the-setup-page);
+`--text` asks in the terminal). It walks through everything below, plus the
+certificate authority, Proxmox and the overlay, and offers to make a first Ship;
+each step shows done or next, so come back whenever you like. For a new fleet it
+makes and looks after every key itself. The rest of this section is how to do it
+by hand, with passphrases you choose:
 
 ```sh
 ship-fleet init                   # asks for a passphrase for the new admin key
