@@ -77,17 +77,19 @@
           <option value="new"{% if not your_keys %} selected{% endif %}>a new key FleetLedger makes for me</option>
         </select>
       </label>
-      <fieldset>
-        <legend>Passphrases</legend>
-        <label><input type="radio" name="protect" value="no" checked> keep the passphrases these keys have
-          (you load them with <code>ssh-add</code> yourself)</label>
-        <label><input type="radio" name="protect" value="yes"> let FleetLedger look after them: type each
-          current passphrase once (empty if none); FleetLedger re-encrypts the key files with
-          passphrases it keeps, and the keys stay the same</label>
+      <label class="field">Or another public key file <input name="your_key_other" placeholder="~/.ssh/other.pub"></label>
+      <p class="hint">These keys keep the passphrases they have: you load them with
+        <code>ssh-add</code> yourself, as now.</p>
+      <details class="advanced"><summary>Let FleetLedger look after them instead</summary>
+        <p>Type each key's current passphrase once (leave it empty if the key has none).
+          FleetLedger checks each one first, then re-encrypts the key files with passphrases
+          it keeps in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
+          The keys themselves stay the same; their old passphrases no longer open them.</p>
+        <label><input type="checkbox" name="protect" value="yes"> Hand these keys over to FleetLedger</label>
         <label class="field">Admin key passphrase <input type="password" name="admin_passphrase" autocomplete="off"></label>
-        <label class="field">Host CA passphrase <input type="password" name="host_passphrase" autocomplete="off"></label>
-        <label class="field">User CA passphrase <input type="password" name="user_passphrase" autocomplete="off"></label>
-      </fieldset>
+        <label class="field">Host CA passphrase (if you gave the CA keys) <input type="password" name="host_passphrase" autocomplete="off"></label>
+        <label class="field">User CA passphrase (if you gave the CA keys) <input type="password" name="user_passphrase" autocomplete="off"></label>
+      </details>
       <input type="hidden" name="store" value="{{ default_store }}">
       <button type="submit">Use these keys</button>
     </form>

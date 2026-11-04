@@ -52,6 +52,7 @@ class ShipJob:
     done: bool = False
     ok: bool = False
     enrolled: bool = False
+    manual: bool = False  # the manual driver: the person makes the VM from the steps shown
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
 
     def write(self, text: str) -> int:
@@ -208,7 +209,8 @@ def unmanaged_keys(inv) -> list[tuple[str, Path]]:
         out.append(("host CA key", paths.expand(ca["host_key"])))
     if ca.get("user_key"):
         out.append(("user CA key", paths.expand(ca["user_key"])))
-    return [(what, p) for what, p in out if p not in managed and p.exists()]
+    return [(what, p) for what, p in out if p not in managed and p.exists()
+            and p.with_name(p.name + ".pub").exists()]
 
 
 # --- handlers --------------------------------------------------------------------------------
@@ -243,9 +245,15 @@ def _one(fields, key: str) -> str:
 
 
 def _secret_field(fields, key: str) -> str:
-    """A secret as typed (only surrounding whitespace removed); never logged."""
+    """A token or client secret (surrounding whitespace removed); never logged."""
     values = fields.get(key, [])
     return values[0].strip() if len(values) == 1 else ""
+
+
+def _passphrase_field(fields, key: str) -> str:
+    """A key's passphrase exactly as typed (spaces count); never logged."""
+    values = fields.get(key, [])
+    return values[0] if len(values) == 1 else ""
 
 
 async def page(request: Request) -> Response:
@@ -348,7 +356,11 @@ def _new_fleet(app, fields) -> str:
 
 
 def _import_fleet(app, fields, secrets_: dict[str, str]) -> None:
+    """Use keys the person already has. Everything is checked first (paths, public
+    halves, your key, and each passphrase when handing keys over); then ships.toml is
+    written; only then are keys handed over, one by one, each recorded at once."""
     from fleetledger.commands import make_fleet
+    from fleetledger.seed import cloudinit
     from fleetledger.trustcmd import make_ca
 
     store = app.store_factory()
@@ -368,23 +380,26 @@ def _import_fleet(app, fields, secrets_: dict[str, str]) -> None:
         if not path.with_name(path.name + ".pub").is_file():
             raise FleetError(f"{value}: put its public half next to it ({path.name}.pub).")
     your_key, make_yours = _your_key(fields)
+    if not make_yours:
+        cloudinit.read_public_keys(paths.expand(your_key), "your key")
     protect = _one(fields, "protect") == "yes"
     managed = _store_choice(fields)
-    adopted: list[str] = []
-    if protect:
-        for what, value in chosen:
-            keys.adopt(paths.expand(value), secrets_.get(what, ""), managed)
-            adopted.append(value)
+    handing = [(paths.expand(value), secrets_.get(what, ""), value)
+               for what, value in chosen] if protect else []
+    for path, current, _ in handing:  # a wrong passphrase stops here: nothing changed yet
+        keys.check_opens(path, current)
+
     if make_yours and not paths.expand(YOUR_NEW_KEY).exists():
         keys.make(paths.expand(YOUR_NEW_KEY), "shipshape-you", managed)
-        adopted.append(YOUR_NEW_KEY)
     make_fleet(app, store, admin, [your_key])
     with store.edit() as ed:
         ed.set_default("driver", None)
-        if adopted:
-            keys.record(ed, managed, adopted)
+        if make_yours:
+            keys.record(ed, managed, [YOUR_NEW_KEY])
     make_ca(app, store, host_ca or HOST_CA_KEY, user_ca or USER_CA_KEY,
             managed=None if host_ca else managed)
+    if handing:
+        keys.adopt_all(store, handing, managed)
 
 
 async def fleet_new(request: Request) -> Response:
@@ -401,7 +416,7 @@ async def fleet_new(request: Request) -> Response:
 
 async def fleet_import(request: Request) -> Response:
     fields = await _form(request)
-    secrets_ = {what: _secret_field(fields, f"{what}_passphrase")
+    secrets_ = {what: _passphrase_field(fields, f"{what}_passphrase")
                 for what in ("admin", "host", "user")}
     try:
         await run_in_threadpool(_import_fleet, _ui(request).app, fields, secrets_)
@@ -417,19 +432,11 @@ async def fleet_import(request: Request) -> Response:
 def _adopt(app, fields, secrets_: dict[str, str]) -> list[str]:
     store = app.store_factory()
     inv = store.load()
-    managed = _store_choice(fields)
-    current_store, _ = keys.managed(inv)
-    if current_store:
-        managed = current_store
-    taken = []
-    for index, (_what, path) in enumerate(unmanaged_keys(inv)):
-        if _one(fields, f"take_{index}") != "yes":
-            continue
-        keys.adopt(path, secrets_.get(str(index), ""), managed)
-        with store.edit() as ed:
-            keys.record(ed, managed, [_tilde(path)])
-        taken.append(path.name)
-    return taken
+    managed = keys.managed(inv)[0] or _store_choice(fields)  # one store per fleet
+    chosen = [(path, secrets_.get(str(index), ""), _tilde(path))
+              for index, (_what, path) in enumerate(unmanaged_keys(inv))
+              if _one(fields, f"take_{index}") == "yes"]
+    return keys.adopt_all(store, chosen, managed)
 
 
 async def fleet_adopt(request: Request) -> Response:
@@ -438,7 +445,7 @@ async def fleet_adopt(request: Request) -> Response:
         _flash(request, "bad", "Tick the box to confirm: FleetLedger re-encrypts these key "
                "files (the keys themselves stay the same).")
         return _back("fleet")
-    secrets_ = {str(i): _secret_field(fields, f"passphrase_{i}") for i in range(3)}
+    secrets_ = {str(i): _passphrase_field(fields, f"passphrase_{i}") for i in range(3)}
     try:
         taken = await run_in_threadpool(_adopt, _ui(request).app, fields, secrets_)
     except FleetError as exc:
@@ -459,8 +466,9 @@ async def fleet_ca(request: Request) -> Response:
 
     app = _ui(request).app
     try:
-        await run_in_threadpool(make_ca, app, app.store_factory(), HOST_CA_KEY, USER_CA_KEY,
-                                managed=keys.default_store())
+        store = app.store_factory()
+        managed = keys.managed(store.load())[0] or keys.default_store()  # the fleet's store
+        await run_in_threadpool(make_ca, app, store, HOST_CA_KEY, USER_CA_KEY, managed=managed)
     except FleetError as exc:
         _flash(request, "bad", exc.message)
         return _back("fleet")
@@ -833,9 +841,13 @@ async def overlay_skip(request: Request) -> Response:
 # --- the first Ship -------------------------------------------------------------------------
 
 
-def _run_ship(app, job: ShipJob, name: str, tag: str) -> None:
+def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None) -> None:
     from fleetledger import cli, commands
 
+    try:
+        job.manual = app.store_factory().load().defaults.get("driver", "manual") == "manual"
+    except FleetError:
+        pass
     job_app = dataclasses.replace(app, out=job, err=job, stdin_isatty=lambda: False,
                                   confirm=lambda prompt: "")
     try:
@@ -850,6 +862,11 @@ def _run_ship(app, job: ShipJob, name: str, tag: str) -> None:
         job.write(f"Failed: {type(exc).__name__}\n")
     finally:
         job.done = True
+        if on_done is not None:
+            try:
+                on_done([name])  # the dashboard shows the new Ship at once
+            except Exception:  # noqa: BLE001 - the next poll will
+                pass
 
 
 async def ship_start(request: Request) -> Response:
@@ -865,8 +882,8 @@ async def ship_start(request: Request) -> Response:
         return _back("ship")
     job = ShipJob(name)
     state.ship = job
-    threading.Thread(target=_run_ship, args=(ui.app, job, name, tag), name=f"setup-{name}",
-                     daemon=True).start()
+    threading.Thread(target=_run_ship, args=(ui.app, job, name, tag, ui.fleet.poll),
+                     name=f"setup-{name}", daemon=True).start()
     return _back("ship")
 
 

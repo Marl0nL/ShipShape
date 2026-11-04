@@ -58,12 +58,17 @@ to FleetLedger's care. Nothing is deleted or rewritten without a click.
 
 Each is an ordinary OpenSSH ed25519 key, encrypted with a random 256-bit
 passphrase that FleetLedger keeps in your OS keyring (service `fleetledger`,
-item `key-passphrase:<key file name>`), or, where there is no usable keyring, a
+item `key-passphrase:<key file name>-<hash of its path>`), or, where there is no usable keyring, a
 0600 file in `~/.config/fleetledger/key-passphrases/`. FleetLedger types the
 passphrase itself, into `ssh-keygen` and `ssh-add`, through a terminal it
 drives: never on a command line, in the environment, a log or on screen. When a
 command needs the keys, FleetLedger loads them into your ssh-agent, or into one
-of its own (on a socket in its private runtime folder) when none is running.
+of its own when none is running. That agent listens on `agent.sock` in
+FleetLedger's private runtime folder (`$XDG_RUNTIME_DIR/fleetledger/`, or a
+private `/tmp/fleetledger-<your uid>/` when that path is too long for a socket),
+drops the keys after 8 hours (FleetLedger loads them again when it next needs
+them) and keeps running after `ship-fleet` exits, until you log out. To stop it:
+`pkill -u "$USER" -f 'ssh-agent -a .*fleetledger.*/agent.sock'`.
 `ships.toml` lists them under `[fleet.managed_keys]`; `ship-fleet doctor`
 checks each passphrase can be read. What this protects: a copy of the key files
 (a backup, a lost disk) is useless without the keyring. What it does not: any

@@ -138,7 +138,7 @@ your other machines without forwarding router ports
 | Ship host private key | the Ship: `/etc/ssh`; briefly the seed ISO | generated into the seed; FleetLedger keeps only the public half |
 | Fleet admin key | your computer: `~/.ssh`, encrypted; by default with a random passphrase FleetLedger keeps in the OS keyring (or a 0600 file) and types into `ssh-add` itself, else a passphrase you chose; held by ssh-agent | `ship-fleet setup` (or `init`) |
 | Host and user CA keys | the same as the admin key (FleetLedger signs through the agent and never reads them) | `ship-fleet setup` (or `ca init`) |
-| Managed keys' passphrases | the OS keyring (`fleetledger` / `key-passphrase:<key file name>`), or `~/.config/fleetledger/key-passphrases/` (0600) | random, made with the key; typed by FleetLedger into a terminal it drives, never on a command line |
+| Managed keys' passphrases | the OS keyring (`fleetledger` / `key-passphrase:<key file name>-<hash of its path>`), or `~/.config/fleetledger/key-passphrases/` (0600) | random, made with the key; typed by FleetLedger into a terminal it drives, never on a command line |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
 | Proxmox API token | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you on the host; `ship-fleet setup` checks it, then stores it |
 | Overlay OAuth client secret (optional) | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |

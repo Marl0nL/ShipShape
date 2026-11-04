@@ -138,7 +138,7 @@ def delete_from_keyring(item: str) -> None:
             from None
 
 
-def read_file(path_value: str) -> str:
+def read_file(path_value: str, what: str = "the OAuth client secret") -> str:
     path = paths.expand(path_value)
     try:
         st = path.stat()
@@ -151,7 +151,7 @@ def read_file(path_value: str) -> str:
     except (OSError, UnicodeDecodeError) as exc:  # a folder, unreadable, not text
         raise ConfigError(f"Cannot read {path} ({type(exc).__name__}).") from None
     if not secret or "\n" in secret:
-        raise ConfigError(f"{path} must hold only the OAuth client secret.")
+        raise ConfigError(f"{path} must hold only {what}.")
     return secret
 
 

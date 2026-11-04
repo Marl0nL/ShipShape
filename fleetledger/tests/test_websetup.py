@@ -143,7 +143,7 @@ def test_a_new_fleet_makes_and_looks_after_every_key(ws):
     for name in names:
         assert keys.needs_passphrase(ssh / name)  # encrypted
         assert stat.S_IMODE((ssh / name).stat().st_mode) == 0o600
-        assert ("fleetledger", f"key-passphrase:{name}") in ws.ring.items
+        assert ("fleetledger", keys.item(ssh / name)) in ws.ring.items
     assert inv.agent_key_paths == [ssh / "id_ed25519.pub"]
     assert "driver" not in inv.defaults  # chosen in the next step
     text = page(ws)
@@ -166,7 +166,7 @@ def test_the_file_store_when_chosen(ws):
     ws.post("/setup/fleet/new", {"your_key": "~/.ssh/id_ed25519.pub", "store": "file"})
     assert keys.managed(ws.store.load())[0] == "file"
     assert ws.ring.sets == []
-    secret = ws.home / "config" / "key-passphrases" / "shipshape_fleet_ed25519"
+    secret = keys.passphrase_file(ws.user_home / ".ssh" / "shipshape_fleet_ed25519")
     assert stat.S_IMODE(secret.stat().st_mode) == 0o600
 
 
@@ -217,7 +217,7 @@ def test_bringing_keys_can_hand_them_over(ws, tmp_path):
     inv = ws.store.load()
     assert sorted(p.name for p in keys.managed(inv)[1]) == ["admin", "host_ca", "user_ca"]
     for name, public in publics.items():
-        new = ws.ring.items[("fleetledger", f"key-passphrase:{name}")]
+        new = ws.ring.items[("fleetledger", keys.item(other / name))]
         assert keys.public_of(other / name, new) == public  # the same keys
     assert not any("pass admin" in p for p in ws.pages)
 
@@ -232,7 +232,8 @@ def test_a_wrong_passphrase_when_handing_over_changes_nothing(ws, tmp_path):
                                     "admin_passphrase": "wrong one"})
     assert not ws.store.exists() and (other / "admin").read_bytes() == before
     assert ws.ring.sets == []
-    assert "not the key&#39;s passphrase" in page(ws)
+    text = page(ws)
+    assert "does not open admin" in text
 
 
 def test_a_private_key_is_needed_not_a_public_one(ws, tmp_path):
@@ -282,7 +283,7 @@ def test_handing_over_existing_keys_is_opt_in_and_needs_the_box(partway):
     inv = partway.store.load()
     assert admin in keys.managed(inv)[1] and admin.read_bytes() != before
     assert len(keys.managed(inv)[1]) == 1  # only the one ticked
-    new = partway.ring.items[("fleetledger", "key-passphrase:shipshape_fleet_ed25519")]
+    new = partway.ring.items[("fleetledger", keys.item(admin))]
     assert keys.public_of(admin, new) == keys.public_line(admin)
 
 
@@ -452,3 +453,137 @@ def test_ship_fleet_setup_opens_the_web_setup(monkeypatch, store):
     app = cli.App(out=io.StringIO(), err=err, store_factory=lambda: store)
     assert cli.main(["setup", "--redo", "hypervisor"], app) != 0
     assert "--text" in err.getvalue()
+
+
+# --- review fixes -----------------------------------------------------------------------------
+
+
+def test_a_bad_import_hands_nothing_over(ws, tmp_path):
+    """Everything is checked before any key is re-encrypted: here, your key."""
+    other = tmp_path / "other"
+    other.mkdir()
+    _key(other / "admin", "their own")
+    (tmp_path / "garbage.pub").write_text("not a key\n")
+    before = (other / "admin").read_bytes()
+    ws.post("/setup/fleet/import", {"admin_key": str(other / "admin"),
+                                    "your_key_other": str(tmp_path / "garbage.pub"),
+                                    "protect": "yes", "admin_passphrase": "their own"})
+    assert not ws.store.exists() and (other / "admin").read_bytes() == before
+    assert ws.ring.sets == []
+
+
+def test_a_wrong_ca_passphrase_changes_no_key_at_all(ws, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    for name in ("admin", "host_ca", "user_ca"):
+        _key(other / name, f"pass {name}")
+    before = {n: (other / n).read_bytes() for n in ("admin", "host_ca", "user_ca")}
+    ws.post("/setup/fleet/import", {
+        "admin_key": str(other / "admin"), "host_ca_key": str(other / "host_ca"),
+        "user_ca_key": str(other / "user_ca"), "your_key": "~/.ssh/id_ed25519.pub",
+        "protect": "yes", "admin_passphrase": "pass admin", "host_passphrase": "wrong",
+        "user_passphrase": "pass user_ca"})
+    assert {n: (other / n).read_bytes() for n in before} == before
+    assert not ws.store.exists() and "does not open host_ca" in page(ws)
+
+
+def test_one_ca_key_without_the_other_is_refused(ws, tmp_path):
+    _key(tmp_path / "admin")
+    _key(tmp_path / "host_ca")
+    ws.post("/setup/fleet/import", {"admin_key": str(tmp_path / "admin"),
+                                    "host_ca_key": str(tmp_path / "host_ca"),
+                                    "your_key": "~/.ssh/id_ed25519.pub"})
+    assert not ws.store.exists() and "both CA keys, or neither" in page(ws)
+
+
+def test_a_passphrase_is_used_exactly_as_typed(partway):
+    admin = partway.user_home / ".ssh" / "shipshape_fleet_ed25519"
+    admin.unlink()
+    admin.with_name(admin.name + ".pub").unlink()
+    _key(admin, " spaced ")
+    partway.post("/setup/fleet/adopt", {"take_0": "yes", "passphrase_0": " spaced ",
+                                        "confirm": "yes"})
+    assert admin in keys.managed(partway.store.load())[1]
+
+
+def test_a_key_without_its_pub_is_not_offered(partway):
+    pub = partway.user_home / ".ssh" / "shipshape_fleet_ed25519.pub"
+    pub.unlink()
+    text = page(partway)
+    form = text.split('action="/setup/fleet/adopt"')[1].split("</form>")[0]
+    assert "shipshape_fleet_ed25519</code>" not in form  # not offered: no .pub beside it
+    assert "shipshape_host_ca_ed25519</code>" in form
+
+
+def test_the_ca_button_uses_the_fleets_own_store(ws, monkeypatch):
+    ws.post("/setup/fleet/new", {"your_key": "~/.ssh/id_ed25519.pub", "store": "file"})
+    with ws.store.edit() as ed:  # as if the CA had not been made
+        del ed.doc["ca"]
+    for name in ("shipshape_host_ca_ed25519", "shipshape_user_ca_ed25519"):
+        for path in (ws.user_home / ".ssh" / name, ws.user_home / ".ssh" / (name + ".pub")):
+            path.unlink()
+    ws.post("/setup/fleet/ca")
+    inv = ws.store.load()
+    assert inv.doc["ca"] and len(keys.managed(inv)[1]) == 3
+    assert keys.managed(inv)[0] == "file" and ws.ring.sets == []
+
+
+def test_handing_over_uses_the_fleets_own_store(partway):
+    from fleetledger.store import TomlFileStore as _Store
+
+    store = partway.store
+    with store.edit() as ed:
+        keys.record(ed, "file", [])  # this fleet keeps managed passphrases in files
+    assert isinstance(store, _Store)
+    partway.post("/setup/fleet/adopt", {"take_0": "yes", "passphrase_0": "chosen by them",
+                                        "confirm": "yes", "store": "keyring"})
+    assert keys.managed(store.load())[0] == "file" and partway.ring.sets == []
+
+
+def test_an_implausible_token_secret_is_refused_before_anything_is_sent(chosen):
+    chosen.post("/setup/proxmox/address", {"address": "pve.example.com"})
+    chosen.post("/setup/proxmox/token", {"matches": "yes", "token_id": TOKEN_ID,
+                                         "secret": "has a space"})
+    assert chosen.pve.paths == [] and not token_stored(chosen)
+
+
+def test_ship_fleet_ui_on_a_computer_not_set_up_lands_on_setup(home, fake_repo):
+    store = TomlFileStore(home / "config" / "ships.toml")
+    app = cli.App(out=io.StringIO(), err=io.StringIO(), store_factory=lambda: store,
+                  repo_factory=lambda: fake_repo, ssh_factory=lambda inv: None)
+    gate = Gate(PORT)
+    asgi = webapp.create_app(app, gate, fleet=Fleet(app, interval=30),
+                             concierge_=Concierge(app))  # no start page: ship-fleet ui
+    client = TestClient(asgi, base_url=BASE, follow_redirects=False)
+    client.get(f"/login?token={gate.new_token()}")
+    for _ in range(2):  # every time, not just the first
+        response = client.get("/")
+        assert response.status_code == 303 and response.headers["location"] == "/setup"
+
+
+def test_ship_fleet_ui_on_a_set_up_computer_shows_the_fleet(store, fake_repo):
+    app = cli.App(out=io.StringIO(), err=io.StringIO(), store_factory=lambda: store,
+                  repo_factory=lambda: fake_repo, ssh_factory=lambda inv: None)
+    gate = Gate(PORT)
+    asgi = webapp.create_app(app, gate, fleet=Fleet(app, interval=30),
+                             concierge_=Concierge(app))
+    client = TestClient(asgi, base_url=BASE, follow_redirects=False)
+    client.get(f"/login?token={gate.new_token()}")
+    assert client.get("/").status_code == 200
+
+
+def test_a_manual_ship_says_to_make_its_vm_and_the_dashboard_knows_it(chosen):
+    import time
+
+    ui = chosen.client.app.app.state.ui
+    polled = []
+    ui.fleet.poll = lambda names=None: polled.append(names)
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/ship", {"name": "ship-01"})
+    for _ in range(100):
+        response = chosen.get("/setup/ship/progress")
+        if "hx-get" not in response.text:
+            break
+        time.sleep(0.05)
+    assert "seed ISO is written" in response.text and "make its VM" in response.text
+    assert polled == [["ship-01"]]  # the dashboard polled it when the job finished

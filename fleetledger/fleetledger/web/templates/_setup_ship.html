@@ -2,6 +2,9 @@
   <p>{% if not job.done %}Making <strong>{{ job.name }}</strong>: this takes a few minutes
     (up to ten without a baked image). You can leave this page; it carries on.
     {% elif job.enrolled %}<strong>{{ job.name }}</strong> is ready.
+    {% elif job.ok and job.manual %}<strong>{{ job.name }}</strong>'s seed ISO is written.
+    Now make its VM on your hypervisor as shown below; once it has booted,
+    <code>ship-fleet status {{ job.name }} --wait</code> enrols it.
     {% elif job.ok %}<strong>{{ job.name }}</strong> is made; it is still starting up
     (<code>ship-fleet status {{ job.name }} --wait</code>).
     {% else %}Making <strong>{{ job.name }}</strong> did not finish; what happened is below.{% endif %}</p>

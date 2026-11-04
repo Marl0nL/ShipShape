@@ -64,7 +64,7 @@ def test_a_managed_key_is_encrypted_and_its_passphrase_kept_in_the_keyring(
     keys.make(key, "fleetledger-admin", "keyring")
     assert stat.S_IMODE(key.stat().st_mode) == 0o600
     assert keys.needs_passphrase(key)
-    passphrase = ring.items[("fleetledger", "key-passphrase:fleet_admin")]
+    passphrase = ring.items[("fleetledger", keys.item(key))]
     assert len(passphrase) >= 40
     assert keys.public_of(key, passphrase) == keys.public_line(key)
     assert all(passphrase not in " ".join(argv) for argv in spawned)  # never on a command line
@@ -74,7 +74,7 @@ def test_a_managed_key_is_encrypted_and_its_passphrase_kept_in_the_keyring(
 def test_the_file_store_keeps_the_passphrase_in_a_private_file(home, ring, tmp_path):
     key = tmp_path / "ssh" / "fleet_admin"
     keys.make(key, "fleetledger-admin", "file")
-    secret = home / "config" / "key-passphrases" / "fleet_admin"
+    secret = keys.passphrase_file(key)
     assert stat.S_IMODE(secret.stat().st_mode) == 0o600
     assert stat.S_IMODE(secret.parent.stat().st_mode) == 0o700
     assert keys.public_of(key, secret.read_text().strip()) == keys.public_line(key)
@@ -169,7 +169,7 @@ def test_an_existing_key_can_be_taken_over(home, ring, spawned, tmp_path, curren
     _key_with(key, current)
     public = keys.public_line(key)
     keys.adopt(key, current, "keyring")
-    new = ring.items[("fleetledger", "key-passphrase:fleet_admin")]
+    new = ring.items[("fleetledger", keys.item(key))]
     assert keys.public_of(key, new) == public  # the same key, re-encrypted
     if current:
         with pytest.raises(FleetError):
@@ -183,7 +183,7 @@ def test_a_wrong_current_passphrase_changes_nothing(home, ring, tmp_path):
     key = tmp_path / "ssh" / "fleet_admin"
     _key_with(key, "their own passphrase")
     before = key.read_bytes()
-    with pytest.raises(FleetError, match="not the key's passphrase"):
+    with pytest.raises(FleetError, match="does not open fleet_admin"):
         keys.adopt(key, "a wrong guess", "keyring")
     assert key.read_bytes() == before and ring.sets == []
     assert not list(key.parent.glob(".*"))
@@ -221,7 +221,7 @@ def test_doctor_checks_managed_keys_without_loading_them(home, ring, agent, tmp_
     text = out.getvalue()
     assert "managed keys" in text and "loaded into ssh-agent when needed" in text
     assert keys.fingerprint(admin) not in held()  # doctor only looks
-    passphrase = ring.items[("fleetledger", "key-passphrase:admin")]
+    passphrase = ring.items[("fleetledger", keys.item(admin))]
     assert passphrase not in out.getvalue()
     ring.items.clear()
     out.seek(0), out.truncate()
@@ -273,3 +273,81 @@ def test_a_short_folder_someone_else_can_open_is_refused(monkeypatch, tmp_path, 
             keys._agent_socket()
     finally:
         os.chmod(short, 0o700)
+
+
+def test_a_key_comment_that_says_bad_does_not_read_as_a_failure(home, ring, tmp_path):
+    """ssh-keygen -p echoes the key's comment; "me@badger" is not an error."""
+    key = tmp_path / "ssh" / "fleet_admin"
+    key.parent.mkdir()
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-C", "me@badger-failed-incorrect",
+                    "-N", "their own passphrase", "-f", str(key)], check=True)
+    public = keys.public_line(key)
+    keys.adopt(key, "their own passphrase", "keyring")
+    assert keys.public_of(key, ring.items[("fleetledger", keys.item(key))]) == public
+
+
+def test_a_key_without_its_public_half_is_a_plain_error(home, ring, tmp_path):
+    key = tmp_path / "ssh" / "fleet_admin"
+    _key_with(key, "")
+    key.with_name("fleet_admin.pub").unlink()
+    before = key.read_bytes()
+    with pytest.raises(FleetError, match="public half"):
+        keys.adopt(key, "", "keyring")
+    assert key.read_bytes() == before and ring.sets == []
+
+
+def test_keys_with_the_same_file_name_keep_their_own_passphrases(home, ring, tmp_path):
+    one, two = tmp_path / "a" / "id", tmp_path / "b" / "id"
+    keys.make(one, "one", "keyring")
+    keys.make(two, "two", "keyring")
+    assert keys.item(one) != keys.item(two)
+    assert keys.public_of(one, keys.read_passphrase(one, "keyring")) == keys.public_line(one)
+    assert keys.public_of(two, keys.read_passphrase(two, "keyring")) == keys.public_line(two)
+
+
+def test_a_short_folder_owned_by_someone_else_is_refused(monkeypatch, tmp_path):
+    deep = tmp_path / ("x" * 60) / ("y" * 60)
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(deep))
+    other_uid = 4242424
+    monkeypatch.setattr(keys.os, "getuid", lambda: other_uid)
+    folder = keys.Path("/tmp") / f"fleetledger-{other_uid}"
+    try:
+        with pytest.raises(FleetError, match="not a private folder"):
+            keys._agent_socket()  # it exists (made just now) but belongs to the real uid
+    finally:
+        folder.rmdir()
+
+
+def test_handing_over_several_keys_checks_every_passphrase_first(home, ring, tmp_path):
+    one, two = tmp_path / "ssh" / "one", tmp_path / "ssh" / "two"
+    _key_with(one, "first")
+    _key_with(two, "second")
+    before = (one.read_bytes(), two.read_bytes())
+    path = home / "config" / "ships.toml"
+    path.write_text(f'schema = 1\n[fleet]\nadmin_key = "{one}"\nagent_keys = ["{one}.pub"]\n')
+    store = TomlFileStore(path)
+    with pytest.raises(FleetError, match="Nothing was changed"):
+        keys.adopt_all(store, [(one, "first", str(one)), (two, "wrong", str(two))], "keyring")
+    assert (one.read_bytes(), two.read_bytes()) == before and ring.sets == []
+
+
+def test_a_failure_part_way_names_the_keys_already_handed_over(home, ring, monkeypatch,
+                                                               tmp_path):
+    one, two = tmp_path / "ssh" / "one", tmp_path / "ssh" / "two"
+    _key_with(one, "first")
+    _key_with(two, "second")
+    path = home / "config" / "ships.toml"
+    path.write_text(f'schema = 1\n[fleet]\nadmin_key = "{one}"\nagent_keys = ["{one}.pub"]\n')
+    store = TomlFileStore(path)
+    real = keys.adopt
+
+    def adopt(key, current, managed):
+        if key == two:
+            raise FleetError("The disk is full.")
+        real(key, current, managed)
+
+    monkeypatch.setattr(keys, "adopt", adopt)
+    with pytest.raises(FleetError) as exc:
+        keys.adopt_all(store, [(one, "first", str(one)), (two, "second", str(two))], "keyring")
+    assert "Already handed over: one" in exc.value.message and "keyring" in exc.value.message
+    assert keys.managed(store.load())[1] == [one]  # recorded the moment it was handed over

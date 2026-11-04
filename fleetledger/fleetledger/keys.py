@@ -36,7 +36,6 @@ import shutil
 import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any
 
 from fleetledger import paths
 from fleetledger.errors import ConfigError, FleetError
@@ -49,14 +48,30 @@ TIMEOUT = 30
 SWITCH_HINT = ("Unlock your keyring (log in to your desktop session), or load the key yourself: "
                "ssh-add <key>.")
 KEY_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+# What ssh-keygen and ssh-add print when a passphrase does not open a key. Only
+# these: anything they echo back (a key's comment, say "me@badger") must not match.
+FAILED = (r"(?i)(failed to load key|bad passphrase|incorrect passphrase|"
+          r"load key \S+: invalid format)")
+# FleetLedger's own agent (only when none answers) drops keys after this long;
+# FleetLedger loads them again when it next needs them.
+OWN_AGENT_LIFETIME = "8h"
+
+
+def stored_name(key: Path) -> str:
+    """The key's file name and a short hash of its full path: two keys with the same
+    file name in different folders never share a passphrase."""
+    import hashlib
+
+    full = str(paths.expand(key).resolve())
+    return f"{key.name}-{hashlib.sha256(full.encode('utf-8')).hexdigest()[:8]}"
 
 
 def item(key: Path) -> str:
-    return ITEM_PREFIX + key.name
+    return ITEM_PREFIX + stored_name(key)
 
 
 def passphrase_file(key: Path) -> Path:
-    return paths.config_dir() / PASSPHRASE_DIR / key.name
+    return paths.config_dir() / PASSPHRASE_DIR / stored_name(key)
 
 
 def _check_name(key: Path) -> None:
@@ -86,7 +101,7 @@ def store_passphrase(key: Path, passphrase: str, store: str) -> None:
 def read_passphrase(key: Path, store: str) -> str:
     if store == "keyring":
         return secret_store.read_keyring(item(key), f"passphrase for {key.name}", SWITCH_HINT)
-    return secret_store.read_file(str(passphrase_file(key)))
+    return secret_store.read_file(str(passphrase_file(key)), f"the passphrase for {key.name}")
 
 
 def forget_passphrase(key: Path, store: str) -> None:
@@ -148,7 +163,7 @@ def _keygen_rekey(path: Path, old: str, new: str) -> None:
     sent_new = 0
     while True:
         index = child.expect([r"(?i)old passphrase.*:", r"(?i)new passphrase.*:",
-                              r"(?i)same passphrase again.*:", r"(?i)(incorrect|failed|bad)",
+                              r"(?i)same passphrase again.*:", FAILED,
                               pexpect.EOF])
         if index == 0:
             child.sendline(old)
@@ -196,13 +211,15 @@ def adopt(path: Path, current: str, store: str) -> None:
     _check_name(path)
     if not path.is_file():
         raise FleetError(f"{path} is not a key file.")
+    expected = public_line(path)  # its .pub must be there
+    check_opens(path, current)  # the passphrase given opens it, before anything changes
     new = new_passphrase()
     copy = path.with_name(f".{path.name}.adopt-{os.getpid()}")
     shutil.copy2(path, copy)
     os.chmod(copy, 0o600)
     try:
         _keygen_rekey(copy, current, new)
-        if public_of(copy, new) != public_line(path):
+        if public_of(copy, new) != expected:
             raise FleetError("The re-encrypted key does not match the original; nothing was "
                              "changed.")
         store_passphrase(path, new, store)
@@ -212,10 +229,49 @@ def adopt(path: Path, current: str, store: str) -> None:
     copy.rename(path)
 
 
+def adopt_all(store, chosen: list[tuple[Path, str, str]], managed: str) -> list[str]:
+    """Hand several keys over: (path, its passphrase now, the path as ships.toml writes
+    it). Every passphrase is checked first, so a wrong one changes nothing; then each
+    key is taken over and recorded at once, so an interruption never leaves a key
+    re-encrypted but unrecorded. A failure part-way names the keys already handed
+    over and where their passphrases now are."""
+    for path, current, _ in chosen:
+        public_line(path)
+        try:
+            check_opens(path, current)
+        except FleetError as exc:
+            raise FleetError(f"{exc.message} Nothing was changed.") from None
+    done: list[str] = []
+    for path, current, written in chosen:
+        try:
+            adopt(path, current, managed)
+            with store.edit() as ed:
+                record(ed, managed, [written])
+        except FleetError as exc:
+            if done:
+                raise FleetError(f"{exc.message} Already handed over: {', '.join(done)} "
+                                 f"(their passphrases are now in {describe(managed)}).") \
+                    from None
+            raise
+        done.append(path.name)
+    return done
+
+
 def public_line(path: Path) -> str:
     """The key's public half (from path.pub), as "type blob"."""
-    text = path.with_name(path.name + ".pub").read_text(encoding="utf-8").split()
+    pub = path.with_name(path.name + ".pub")
+    try:
+        text = pub.read_text(encoding="utf-8").split()
+    except (OSError, UnicodeDecodeError):
+        raise FleetError(f"{path.name}: its public half ({pub.name}) is missing or unreadable; "
+                         "put it next to the key.") from None
     return " ".join(text[:2])
+
+
+def check_opens(path: Path, passphrase: str) -> None:
+    """Does passphrase open this key, and does it match its .pub? (Nothing changes.)"""
+    if public_of(path, passphrase) != public_line(path):
+        raise FleetError(f"{path.name} does not match its .pub file.")
 
 
 def public_of(path: Path, passphrase: str) -> str:
@@ -226,7 +282,7 @@ def public_of(path: Path, passphrase: str) -> str:
     index = child.expect([r"(?i)passphrase.*:", r"ssh-ed25519 \S+", pexpect.EOF])
     if index == 0:
         child.sendline(passphrase)
-        index = child.expect([r"ssh-ed25519 \S+", r"(?i)(incorrect|failed|bad)", pexpect.EOF])
+        index = child.expect([r"ssh-ed25519 \S+", FAILED, pexpect.EOF])
         if index != 0:
             child.close(force=True)
             raise FleetError(f"The passphrase does not open {path.name}.")
@@ -269,7 +325,8 @@ def ensure_agent() -> str:
     if not _agent_answers(env):
         sock.unlink(missing_ok=True)
         try:
-            proc = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True,
+            proc = subprocess.run(["ssh-agent", "-a", str(sock), "-t", OWN_AGENT_LIFETIME],
+                                  capture_output=True,
                                   text=True, timeout=10, check=False)
         except (OSError, subprocess.SubprocessError) as exc:
             raise FleetError("Could not start ssh-agent.",
@@ -336,7 +393,7 @@ def add_to_agent(path: Path, passphrase: str) -> None:
     index = child.expect([r"(?i)passphrase.*:", pexpect.EOF])
     if index == 0:
         child.sendline(passphrase)
-        if child.expect([r"(?i)identity added", r"(?i)(bad|incorrect|failed)",
+        if child.expect([r"(?i)identity added", FAILED,
                          pexpect.EOF]) == 1:
             child.close(force=True)
             raise FleetError(f"The stored passphrase does not open {path.name}.")
@@ -400,8 +457,3 @@ def describe(store: str) -> str:
     if store == "keyring":
         return "your OS keyring"
     return f"0600 files in {paths.config_dir() / PASSPHRASE_DIR}"
-
-
-def status(inventory) -> dict[str, Any]:
-    store, keys = managed(inventory)
-    return {"store": store, "keys": keys}
