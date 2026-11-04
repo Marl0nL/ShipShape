@@ -58,12 +58,11 @@ class App:
         from fleetledger.concierge.terminal import TerminalPrompter
         from fleetledger.drivers import get_driver
         from fleetledger.repo import Repo
-        from fleetledger.ssh import SSH
         from fleetledger.store import TomlFileStore
 
         self.store_factory = self.store_factory or TomlFileStore
         self.repo_factory = self.repo_factory or Repo.locate
-        self.ssh_factory = self.ssh_factory or SSH
+        self.ssh_factory = self.ssh_factory or _ssh_with_managed_keys
         self.driver_factory = self.driver_factory or get_driver
         self.prompter_factory = self.prompter_factory or (
             lambda ship, label, open_browser: TerminalPrompter(
@@ -84,6 +83,15 @@ class App:
 
     def note(self, text: str) -> None:
         print(text, file=self.err)
+
+
+def _ssh_with_managed_keys(inventory):
+    """SSH to Ships, after loading any keys FleetLedger manages into ssh-agent."""
+    from fleetledger import keys
+    from fleetledger.ssh import SSH
+
+    keys.ensure_loaded(inventory)
+    return SSH(inventory)
 
 
 RESOLVE_TIMEOUT = 2.0
