@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import commands, net, ops
+from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -121,6 +121,8 @@ def make_env() -> Environment:
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
         MODES=commands.MODES,
+        SIGNIN_CHOICES=signins.CHOICES,
+        SIGNIN_LABELS=signins.LABELS,
         SETTINGS=SETTINGS,
         SETTINGS_TEXT=SETTINGS_TEXT,
         human_bytes=net.human_bytes,
@@ -320,6 +322,7 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "workspaces": workspaces,
         "snap": snap,
         **_attach_context(inv, view.ship),
+        "signins_used": signins.used(view.ship),
     }
 
 
@@ -432,6 +435,26 @@ async def ship_agents(request: Request) -> Response:
     _flash_outcome(ui, session, outcome)
     await run_in_threadpool(ui.fleet.poll, [name])
     return back(f"/ships/{name}")
+
+
+async def ship_signins(request: Request) -> Response:
+    """Choose the sign-ins a Ship uses; the ones turned off are signed out there."""
+    ui = ui_of(request)
+    name = _ship_name(request)
+    if not name or name not in ui.fleet.snapshot.by_name:
+        return not_found(request, "No such Ship in the inventory.")
+    fields = await form(request)
+    session = session_of(request)
+    said: list[str] = []
+    try:
+        wanted = signins.check(fields.get("signin", []))
+        ok = await run_in_threadpool(commands.set_signins, ui.app, ui.app.store_factory(),
+                                     name, wanted, said.append)
+    except FleetError as exc:
+        ok, said = False, [exc.message]
+    ui.flash(session, "ok" if ok else "bad", " ".join(said))
+    await run_in_threadpool(ui.fleet.poll, [name])
+    return back(f"/ships/{name}/settings")
 
 
 async def ship_size(request: Request) -> Response:
@@ -796,6 +819,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
         Route("/ships/{name}/size", ship_size, methods=["POST"]),
+        Route("/ships/{name}/signins", ship_signins, methods=["POST"]),
         Route("/attach-here", attach_here, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
         Route("/operations", fleet_operation, methods=["POST"]),

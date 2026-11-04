@@ -1021,6 +1021,16 @@ async def ship_start(request: Request) -> Response:
     except FleetError as exc:
         _flash(request, "bad", exc.message)
         return _back("ship")
+    from fleetledger import signins
+
+    try:
+        chosen = signins.check(fields.get("signin", []) if _one(fields, "signins_shown")
+                               else list(signins.CHOICES))
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("ship")
+    if chosen != list(signins.CHOICES):
+        extra += ["--signins", ",".join(chosen)]
     if _one(fields, "agent_on") == "yes":
         from fleetledger import ops
 

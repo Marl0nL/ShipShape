@@ -573,6 +573,21 @@ def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
     assert len(calls) == 1  # nothing changed: nothing done
 
 
+def test_sign_ins_a_ship_does_not_use_are_off_everywhere(web):
+    web.sign_in()
+    assert 'name="signin" value="gcloud" checked' in web.client.get("/ships/ship-01/settings").text
+    web.post("/ships/ship-01/signins", {"signin": ["claude", "github"]})
+    assert web.store.load().ship("ship-01").signins == ("claude", "github")
+    assert any("gcloud auth revoke" in c[-1] for _, c in web.ship.calls)  # signed out there
+    web.fleet.poll()
+    page = web.client.get("/ships/ship-01").text
+    assert "off (Settings)" in page
+    with pytest.raises(Exception, match="do not use that sign-in"):
+        web.concierge.start(["ship-01"], "gcloud")  # no flow is ever started for it
+    web.post("/ships/ship-01/signins", {"signin": ["claude", "github", "gcloud"]})
+    assert web.store.load().ship("ship-01").signins is None
+
+
 def test_the_attach_command_shown_is_one_that_works_here(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text

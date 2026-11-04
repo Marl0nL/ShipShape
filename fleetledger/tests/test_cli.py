@@ -618,6 +618,32 @@ def test_login_arguments(env):
     assert code == 2 and "Unknown sign-in service" in err
 
 
+def test_a_sign_in_turned_off_is_signed_out_and_never_offered(env):
+    code, out, err = env.run("signins", "ship-01", "--off", "gcloud")
+    assert code == 0, err
+    assert "gcloud auth revoke" in env.ship.calls[-1][1][-1]  # signed out on the Ship
+    assert env.store.load().ship("ship-01").signins == ("claude", "github")
+    assert env.run("signins", "ship-01")[1].split() == ["claude", "on", "gcloud", "off",
+                                                        "github", "on"]
+    calls = len(env.ship.calls)
+    code, _, err = env.run("login", "ship-01", "gcloud")
+    assert code == 1 and "does not use Google Cloud" in err and "--on gcloud" in err
+    assert len(env.ship.calls) == calls and env.argvs == []  # nothing started
+    code, out, err = env.run("login", "--tag", "work", "gcloud")
+    assert code == 0, err
+    assert env.argvs == []  # by tag: skipped where it is off, nothing started
+    _, out, _ = env.run("ls")
+    assert "off" in out
+    assert env.run("signins", "ship-01", "--on", "gcloud")[0] == 0
+    assert env.store.load().ship("ship-01").signins is None  # all again: absent
+
+
+def test_a_new_ship_can_use_fewer_sign_ins(env):
+    assert env.run("new", "ship-17", "--signins", "claude")[0] == 0
+    assert env.store.load().ship("ship-17").signins == ("claude",)
+    assert env.run("new", "ship-18", "--signins", "claude,agy")[0] == 1
+
+
 def test_logout(env):
     code, out, _ = env.run("logout", "ship-01", "github")
     assert code == 0 and "signed out of GitHub" in out

@@ -347,7 +347,7 @@ def ship_entry(ship: Ship) -> dict[str, Any]:
         value = getattr(ship, key)
         if value:
             entry[key] = dict(value)
-    for key in ("tools", "profiles"):
+    for key in ("tools", "profiles", "signins"):
         value = getattr(ship, key)
         if value is not None:
             entry[key] = list(value)

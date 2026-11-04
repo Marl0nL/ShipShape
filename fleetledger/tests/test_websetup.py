@@ -887,3 +887,14 @@ def test_a_silly_size_makes_nothing(chosen, monkeypatch):
     chosen.post("/setup/hypervisor/manual")
     chosen.post("/setup/ship", {"name": "ship-01", "cores": "0"})
     assert "cores: 1 to 128" in page(chosen)
+
+
+def test_the_first_ship_can_use_fewer_sign_ins(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    assert 'name="signin" value="gcloud" checked' in page(chosen)
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "signins_shown": "yes",
+                                            "signin": ["claude", "github"]})
+    assert args.signins == "claude,github"
+    args = _made_with(chosen, monkeypatch, {"name": "ship-02", "signins_shown": "yes",
+                                            "signin": ["claude", "gcloud", "github"]})
+    assert args.signins is None  # all of them: nothing recorded

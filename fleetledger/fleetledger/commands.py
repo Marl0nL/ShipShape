@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fleetledger import concierge, enrol, images, ops, paths, schemas, status
+from fleetledger import concierge, enrol, images, ops, paths, schemas, signins, status
 from fleetledger.catalogue import Catalogue
 from fleetledger.concierge import providers
 from fleetledger.drivers import SeedFile
@@ -64,6 +64,8 @@ AUTH_LABELS = {
 
 
 def auth_cell(view: status.ShipView, service: str) -> str:
+    if service in signins.off_status_keys(view.ship):
+        return "off"  # this Ship does not use it (ship-fleet signins)
     entry = view.auth(service)
     if entry is None:
         return "-"
@@ -233,6 +235,8 @@ def cmd_new(args, app) -> int:
         claude=claude,
         profiles=tuple(args.profile) or None,
         image=image_id,
+        signins=(None if args.signins is None else
+                 tuple(signins.check(args.signins.split(",")))),
     )
     if args.tools is not None or args.no_default_tools:
         base = [] if args.no_default_tools else tools_for(inv, draft, catalogue)
@@ -590,6 +594,15 @@ def cmd_login(args, app) -> int:
     failures = 0
     for ship in ships:
         for provider in chosen:
+            if not signins.provider_on(ship, provider.id):
+                if service != "all" and not args.tag:
+                    choice = signins.choice_of_provider(provider.id)
+                    raise FleetError(f"{ship.name} does not use {signins.LABELS[choice]} (its "
+                                     "sign-ins "
+                                     f"are {', '.join(signins.used(ship)) or 'none'}).",
+                                     hint=f"Turn it on: ship-fleet signins {ship.name} "
+                                     f"--on {choice}")
+                continue  # off on this Ship: no sign-in
             prompter = app.prompter_factory(ship.name, provider.label, args.open)
             options = {"spawner": app.spawner} if app.spawner else {}
             result = concierge.login(ssh, inv, ship, provider, prompter, **options)
@@ -617,6 +630,47 @@ def _report_login(app, result: concierge.LoginResult) -> int:
     for note in result.notes:
         app.say(f"  note: {note}")
     return 0 if result.outcome == "ok" else 1
+
+
+def cmd_signins(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    ship = inv.ship(args.name)
+    if args.only is not None:
+        if args.on or args.off:
+            raise FleetError("Give --only, or --on/--off, not both.")
+        wanted = signins.check(args.only.split(","))
+    elif args.on or args.off:
+        wanted = signins.change(ship, [*(f"+{n}" for n in args.on),
+                                       *(f"-{n}" for n in args.off)])
+    else:
+        for choice in signins.CHOICES:
+            state = "on" if choice in signins.used(ship) else "off"
+            app.say(f"{choice:8} {state}")
+        return 0
+    return 0 if set_signins(app, store, ship.name, wanted, app.say) else 1
+
+
+def set_signins(app, store, name: str, wanted: list[str], say) -> bool:
+    """Record the sign-ins a Ship uses, signing it out of each one turned off."""
+    inv = store.load()
+    ship = inv.ship(name)
+    turned_off = [c for c in signins.used(ship) if c not in wanted]
+    ok = True
+    if turned_off:
+        ssh = _ssh(app, inv)
+        for choice in turned_off:
+            for provider in providers.resolve(list(signins.PROVIDERS[choice][:1])):
+                if concierge.logout(ssh, ship, provider):
+                    say(f"{name}: signed out of {provider.label}; it is off now.")
+                else:
+                    say(f"{name}: signing out of {provider.label} failed; it is off anyway "
+                        f"(retry: ship-fleet logout {name} {provider.id}).")
+                    ok = False
+    with store.edit() as ed:
+        ed.set_field(name, "signins", None if wanted == list(signins.CHOICES) else wanted)
+    say(f"{name} uses: {', '.join(wanted) or 'no sign-ins'}.")
+    return ok
 
 
 def cmd_logout(args, app) -> int:

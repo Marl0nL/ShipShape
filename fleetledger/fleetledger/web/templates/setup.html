@@ -422,6 +422,15 @@
       <p class="hint">Change it later on the Ship's Settings: cores and memory with a
         restart, and the disk can grow (never shrink).</p>
     </fieldset>
+    <fieldset class="ship-signins">
+      <legend>Sign-ins it uses</legend>
+      <input type="hidden" name="signins_shown" value="yes">
+      {% for choice in SIGNIN_CHOICES %}
+      <label><input type="checkbox" name="signin" value="{{ choice }}" checked> {{ SIGNIN_LABELS[choice] }}</label>
+      {% endfor %}
+      <p class="hint">Untick what this Ship never needs: it then gets no sign-in for it
+        (and no credentials). Change it later in the Ship's Settings.</p>
+    </fieldset>
     <fieldset class="ship-agent">
       <label><input type="checkbox" name="agent_on" value="yes" checked> Start a Claude agent
         on it, with Remote Control</label>
