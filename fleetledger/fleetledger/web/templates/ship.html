@@ -183,6 +183,7 @@
       </dl>
     </div>
   </section>
+  {% include "_ship_history.html" %}
   {% if doc.errors %}
   <section><h2>Probe errors</h2><ul>{% for e in doc.errors %}<li class="quiet">{{ e }}</li>{% endfor %}</ul></section>
   {% endif %}

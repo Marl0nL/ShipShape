@@ -1,31 +1,71 @@
+{% from "_macros.html" import sev, sev_icon, sparkline %}
 <div id="fleet" hx-get="/partials/fleet?{% if tag %}tag={{ tag }}&amp;{% endif %}v={{ version }}" hx-trigger="every 5s" hx-swap="outerHTML">
+{% set s = summary %}
+<section class="tiles" aria-label="The fleet at a glance">
+  <div class="tile{% if s.down %} bad{% endif %}">
+    <span class="tile-label">Ships up</span>
+    <span class="tile-value">{{ s.up }}<small> of {{ s.ships }}</small></span>
+    <span class="tile-note">{% if s.down %}{{ sev_icon("critical") }} {{ s.down }} not answering{% elif s.starting %}{{ s.starting }} starting{% else %}all answering{% endif %}</span>
+  </div>
+  <div class="tile{% if s.waiting %} warn{% endif %}">
+    <span class="tile-label">Agents</span>
+    <span class="tile-value">{{ s.agents }}</span>
+    <span class="tile-note">{{ s.working }} working{% if s.waiting %} · {{ sev_icon("warning") }} {{ s.waiting }} waiting for you{% endif %}<br>{{ s.remote_control }} on Remote Control</span>
+  </div>
+  <div class="tile{% if s.levels.critical %} bad{% elif s.levels.warning %} warn{% endif %}">
+    <span class="tile-label">Needs you</span>
+    <span class="tile-value">{{ alerts|length }}</span>
+    <span class="tile-note">{% for level in ("critical", "warning", "notice") %}<span class="sev-count">{{ sev_icon(level) }} {{ s.levels[level] }} {{ level }}</span>{% endfor %}</span>
+  </div>
+  <div class="tile{% if s.signin_expired %} bad{% elif s.signin_missing or s.signin_expiring %} warn{% endif %}">
+    <span class="tile-label">Sign-ins</span>
+    <span class="tile-value">{{ s.signin_expired + s.signin_missing }}<small> to fix</small></span>
+    <span class="tile-note">{{ s.signin_expired }} expired or wrong · {{ s.signin_missing }} missing{% if s.signin_expiring %} · {{ s.signin_expiring }} expiring{% endif %}</span>
+  </div>
+  <div class="tile{% if s.reboots or s.tooling_behind %} warn{% endif %}">
+    <span class="tile-label">Updates</span>
+    <span class="tile-value">{{ s.reboots + s.tooling_behind }}<small> pending</small></span>
+    <span class="tile-note">{{ s.reboots }} reboot{{ "s" if s.reboots != 1 }} · {{ s.tooling_behind }} tooling behind<br>{{ s.os_updates }} OS package{{ "s" if s.os_updates != 1 }} on {{ s.os_update_ships }} Ship{{ "s" if s.os_update_ships != 1 }}</span>
+  </div>
+  <div class="tile{% if s.overlay and (s.overlay.on < s.overlay.total or s.overlay.down) %} warn{% endif %}">
+    <span class="tile-label">Overlay</span>
+    {% if s.overlay %}
+    <span class="tile-value">{{ s.overlay.on }}<small> of {{ s.overlay.total }}</small></span>
+    <span class="tile-note">on Tailscale{% if s.overlay.down %} · {{ s.overlay.down }} down{% endif %}</span>
+    {% else %}
+    <span class="tile-value muted">off</span>
+    <span class="tile-note"><a href="/setup">set it up</a> to reach Ships off the LAN</span>
+    {% endif %}
+  </div>
+</section>
+
 <section class="attention">
-  <h2>Needs attention {% if items or flows_waiting %}<span class="count">{{ items|length + flows_waiting|length }}</span>{% endif %}</h2>
-  {% if not items and not flows_waiting %}
-  <p class="quiet">Nothing needs you.</p>
+  <h2>Needs attention {% if alerts %}<span class="count">{{ alerts|length }}</span>{% endif %}</h2>
+  {% if not alerts %}
+  <p class="all-clear">Nothing needs you. Fair winds.</p>
   {% else %}
-  <ul class="items">
-    {% for f in flows_waiting %}
-    <li class="item high" data-key="signin/{{ f.id }}">
-      <span class="sev high">sign-in</span>
-      <a href="/ships/{{ f.ship }}" class="ship">{{ f.ship }}</a>
-      <span class="msg">{{ f.label }} sign-in is waiting for you.</span>
-      <a class="button" href="/signin?batch={{ f.batch }}">Open</a>
-    </li>
-    {% endfor %}
-    {% for i in items %}
-    <li class="item {{ i.level }}" data-key="{{ i.key }}"{% if i.code == "agent-waiting" %} data-waiting="{{ i.ship }}: {{ i.message }}"{% endif %}>
-      <span class="sev {{ i.level }}">{{ i.code }}</span>
-      <a href="/ships/{{ i.ship }}" class="ship">{{ i.ship }}</a>
-      <span class="msg">{{ i.message }}</span>
-      {% if i.signin %}
-      <form method="post" action="/signin" class="inline">
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="ship" value="{{ i.ship }}">
-        <input type="hidden" name="service" value="{{ i.signin }}">
-        <button type="submit">Sign in</button>
-      </form>
+  <ul class="alerts">
+    {% for a in alerts %}
+    <li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
+      {{ sev(a.level) }}
+      <a href="/ships/{{ a.ship }}" class="ship">{{ a.ship }}</a>
+      <span class="msg">{{ a.message }} <code class="code">{{ a.code }}</code></span>
+      <span class="fix">
+      {% if a.action.kind == "signin" %}
+        <form method="post" action="/signin" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="ship" value="{{ a.ship }}">
+          <input type="hidden" name="service" value="{{ a.action.value }}">
+          <button type="submit">Sign in</button>
+        </form>
+      {% elif a.action.kind == "command" %}
+        <span class="hint">{{ a.action.hint }}</span>
+        <code class="cmd">{{ a.action.value }}</code>
+        <button type="button" class="ghost small" data-copy="{{ a.action.value }}">Copy</button>
+      {% else %}
+        <a class="button ghost" href="{{ a.action.value }}">{{ a.action.label }}</a>
       {% endif %}
+      </span>
     </li>
     {% endfor %}
   </ul>
@@ -56,25 +96,48 @@
   {% if not views %}
   <p class="quiet">No Ships{% if tag %} with tag {{ tag }}{% endif %} yet. Create one with <code>ship-fleet new</code>.</p>
   {% else %}
-  <table class="fleet">
-    <thead><tr><th>Ship</th><th>Tags</th><th>State</th><th>Agents</th><th>Claude</th><th>gcloud</th><th>ADC</th><th>GitHub</th><th>CPU · mem · disk</th><th>Notes</th></tr></thead>
-    <tbody>
+  <div class="cards">
     {% for v in views %}
-    <tr>
-      <td><a href="/ships/{{ v.ship.name }}">{{ v.ship.name }}</a></td>
-      <td>{{ snap.effective_tags(v)|join(", ") or "-" }}</td>
-      <td><span class="pill {{ v.state|pill }}">{{ v.state }}</span></td>
-      <td>{{ agents_cell(v) }}</td>
-      {% for service in AUTH_ORDER %}
-      {% set cell = auth_cell(v, service) %}
-      <td><span class="pill {{ cell|pill }}">{{ cell }}</span></td>
-      {% endfor %}
-      <td class="num">{{ usage_cell(v) }}</td>
-      <td class="notes">{{ notes_cell(v) }}</td>
-    </tr>
+    {% set doc = v.status %}
+    <article class="ship-card state-{{ v.state|pill }}">
+      <header>
+        <a class="ship-name" href="/ships/{{ v.ship.name }}">{{ v.ship.name }}</a>
+        <span class="pill {{ v.state|pill }}">{{ v.state }}</span>
+      </header>
+      <p class="card-meta">{{ snap.effective_tags(v)|join(", ") or "no tags" }}{% if doc %} · up {{ doc.host.uptime_s // 86400 }}d {{ doc.host.uptime_s % 86400 // 3600 }}h{% endif %}</p>
+      <p class="card-agents"><span class="quiet">Agents</span> {{ agents_cell(v) }}{% if doc and doc.claude.remote_control == "on" and doc.herdr.agents %} <span class="quiet">· Remote Control</span>{% endif %}</p>
+      <ul class="auths" aria-label="Sign-ins">
+        {% for service, short in (("claude", "Claude"), ("gcloud", "gcloud"), ("gcloud_adc", "ADC"), ("github", "GitHub")) %}
+        {% set cell = auth_cell(v, service) %}
+        <li class="pill {{ cell|pill }}" title="{{ service }}: {{ cell }}">{{ short }} {{ cell }}</li>
+        {% endfor %}
+      </ul>
+      {% if doc %}
+      {% set spark = sparks.get(v.ship.name) %}
+      <a class="card-metrics" href="/ships/{{ v.ship.name }}" aria-label="{{ v.ship.name }}: CPU, memory and disk ({{ usage_cell(v) }})">
+        {% set cpu = [100, (100 * doc.host.load1 / [1, doc.host.cpus]|max)|round|int]|min %}
+        {% if spark %}
+        {{ sparkline(spark.cpu, "CPU", cpu ~ "%", "s1") }}
+        {{ sparkline(spark.mem, "Mem", doc.host.mem_used_pct|round|int ~ "%", "s2") }}
+        {% else %}
+        <span class="spark"><span class="spark-label">CPU</span><strong class="spark-value">{{ cpu }}%</strong></span>
+        <span class="spark"><span class="spark-label">Mem</span><strong class="spark-value">{{ doc.host.mem_used_pct|round|int }}%</strong></span>
+        {% endif %}
+        {% set disk = doc.host.disk_used_pct %}
+        <span class="spark disk"><span class="spark-label">Disk</span>
+          <svg class="meter" viewBox="0 0 120 10" width="120" height="10" aria-hidden="true">
+            <rect class="track" x="0" y="1" width="120" height="8" rx="3"/>
+            <rect class="mark-fill {{ "crit" if disk >= 90 else "warn" if disk >= 80 else "s3" }}" x="0" y="1" width="{{ [2, disk * 1.2]|max }}" height="8" rx="3"/>
+            <line class="tick-mark" x1="96" x2="96" y1="0" y2="10"/><line class="tick-mark" x1="108" x2="108" y1="0" y2="10"/>
+          </svg>
+          <strong class="spark-value">{{ disk|round|int }}%</strong></span>
+      </a>
+      {% endif %}
+      {% set note = notes_cell(v) %}
+      {% if note %}<p class="card-note">{{ note }}</p>{% endif %}
+    </article>
     {% endfor %}
-    </tbody>
-  </table>
+  </div>
   {% endif %}
 </section>
 </div>

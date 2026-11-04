@@ -8,10 +8,14 @@ last good status from `ls --offline`'s cache is shown, marked as stale.
 
 `version` goes up whenever what the pages show may have changed, so polling
 partials can answer 204 (nothing new) cheaply.
+
+With a `history` (fleetledger.history.History), every poll is also sampled for
+the dashboard's charts.
 """
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
@@ -100,12 +104,14 @@ class Fleet:
         idle_after: float = IDLE_AFTER,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
+        history: Any = None,  # fleetledger.history.History, or None: keep no history
     ) -> None:
         self.app = app
         self.interval = interval
         self.idle_after = idle_after
         self.clock = clock
         self.wall = wall
+        self.history = history
         self._lock = threading.Lock()
         self._poll_lock = threading.Lock()
         self._wake = threading.Event()
@@ -178,8 +184,17 @@ class Fleet:
             else:  # one Ship re-checked: the fleet as a whole is as old as before
                 polled_at = self.snapshot.polled_at or self.wall()
             self._publish(Snapshot(inv, views, polled_at))
+            self._record(fresh)
         if names is None:
             self._renew_this_computer()
+
+    def _record(self, views: list[status.ShipView]) -> None:
+        if self.history is None:
+            return
+        try:
+            self.history.record(views, self.wall())
+        except (OSError, sqlite3.Error):
+            pass  # charts are a convenience; never fail a poll for them
 
     def _renew_this_computer(self) -> None:
         """This computer's certificate, in its last day: renewed, so plain ssh and herdr
