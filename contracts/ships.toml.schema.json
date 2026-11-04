@@ -36,7 +36,7 @@
           "properties": {
             "store": {
               "enum": ["keyring", "file"],
-              "description": "Where the passphrases are kept. keyring: the OS keyring, service \"fleetledger\", item key-passphrase:<key file name>. file: ~/.config/fleetledger/key-passphrases/<key file name>, mode 0600."
+              "description": "Where the passphrases are kept. keyring: the OS keyring, service \"fleetledger\", item key-passphrase:<name>. file: ~/.config/fleetledger/key-passphrases/<name>, mode 0600. <name> is the key's file name, a dash and the first 8 hex digits of the SHA-256 of its full path, so two keys with the same file name in different folders never share a passphrase (a moved key file needs taking over again)."
             },
             "keys": {
               "type": "array",
