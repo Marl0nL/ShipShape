@@ -1,0 +1,18 @@
+<div id="ship-job"{% if not job.done %} hx-get="/setup/ship/progress" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <p>{% if not job.done %}Making <strong>{{ job.name }}</strong>: this takes a few minutes
+    (up to ten without a baked image). You can leave this page; it carries on.
+    {% elif job.enrolled %}<strong>{{ job.name }}</strong> is ready.
+    {% elif job.ok %}<strong>{{ job.name }}</strong> is made; it is still starting up
+    (<code>ship-fleet status {{ job.name }} --wait</code>).
+    {% else %}Making <strong>{{ job.name }}</strong> did not finish; what happened is below.{% endif %}</p>
+  <pre class="log{% if job.done and not job.ok %} bad{% endif %}">{{ lines|join('\n') }}</pre>
+  {% if job.done and job.enrolled %}
+  <form method="post" action="/signin" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ship" value="{{ job.name }}">
+    <input type="hidden" name="service" value="all">
+    <button type="submit">Sign it in</button>
+  </form>
+  <a href="/ships/{{ job.name }}">Open {{ job.name }}</a>
+  {% endif %}
+</div>

@@ -67,7 +67,7 @@ def uvicorn_config(asgi: Any, **kwargs: Any):
 
 
 def serve(app: Any, *, port: int = 0, open_browser: bool = True,
-          interval: float = 30.0) -> int:
+          interval: float = 30.0, start_page: str | None = None) -> int:
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover - a broken install
@@ -78,13 +78,17 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     from fleetledger.web.flows import Concierge
     from fleetledger.web.security import Gate
 
-    app.store_factory().load()  # fail early if FleetLedger is not set up
+    store = app.store_factory()
+    if store.exists():
+        store.load()  # fail early on a broken inventory (none at all: the setup page)
+    else:
+        start_page = "/setup"
     sock = bind(port)
     port = sock.getsockname()[1]
     gate = Gate(port)
     fleet = Fleet(app, interval=interval)
     concierge = Concierge(app, on_finished=lambda ship: fleet.poll([ship]))
-    asgi = create_app(app, gate, fleet=fleet, concierge_=concierge)
+    asgi = create_app(app, gate, fleet=fleet, concierge_=concierge, start_page=start_page)
     server = uvicorn.Server(uvicorn_config(asgi))
 
     link = gate.link(gate.new_token())

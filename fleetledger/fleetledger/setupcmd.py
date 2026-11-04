@@ -16,7 +16,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from fleetledger import ca, firstrun, paths
+from fleetledger import ca, firstrun, keys, paths
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 
@@ -34,19 +34,29 @@ USER_CA_KEY = "~/.ssh/shipshape_user_ca_ed25519"
 
 
 def add_parsers(sub, add) -> None:
-    p = add(sub, "setup", "set everything up, step by step (safe to run again)",
-            "Set up FleetLedger on this computer, one step at a time: checks, the fleet\n"
-            "admin key and inventory, ssh-agent, the certificate authority, Proxmox (or\n"
-            "manual), the overlay network and a first Ship. Each step skips what is\n"
-            "already done, so you can stop and run it again at any point.\n\n"
+    p = add(sub, "setup", "set everything up, step by step, in your browser (safe to run again)",
+            "Set up FleetLedger on this computer: your fleet (FleetLedger makes and looks\n"
+            "after its keys, or you bring your own), where Ships run (Proxmox or manual),\n"
+            "the overlay network and a first Ship. Opens the setup page of the web UI on\n"
+            "127.0.0.1 (this computer only). Each step shows done or next, so you can stop\n"
+            "and come back at any point.\n\n"
             "  ship-fleet setup\n"
-            "  ship-fleet setup --redo hypervisor     change or repair the Proxmox settings")
+            "  ship-fleet setup --text                 in this terminal instead (no browser)\n"
+            "  ship-fleet setup --text --redo hypervisor")
+    p.add_argument("--text", action="store_true",
+                   help="ask in this terminal instead of the browser (headless computers)")
+    p.add_argument("--no-browser", action="store_true",
+                   help="print the setup page's link instead of opening it")
+    p.add_argument("--port", type=int, default=0, help="a fixed port (default: any free one)")
     p.add_argument("--redo", action="append", default=[], choices=REDO,
-                   help="do this step again even though it is set up (repeatable)")
+                   help="--text: do this step again even though it is set up (repeatable)")
     p.add_argument("--admin-key", default=ADMIN_KEY,
-                   help="the fleet admin key, made if missing (first run only)")
+                   help="--text: the fleet admin key, made if missing (first run only)")
+    p.add_argument("--own-passphrases", action="store_true",
+                   help="--text: choose your own passphrases for new keys (default: FleetLedger "
+                   "makes and keeps them)")
     p.add_argument("--no-passphrase", action="store_true",
-                   help="make new keys without a passphrase (not recommended)")
+                   help="--text: make new keys without a passphrase (not recommended)")
 
     p = add(sub, "doctor", "show what is set up, what is missing, and the next command",
             "Check this computer, FleetLedger's keys and inventory, the hypervisor, the\n"
@@ -85,6 +95,10 @@ class _Setup:
         self.hypervisor_ok = True  # False: set up but not working right now
         self.run_cmd = getattr(app, "run_cmd", None) or firstrun._run
         self.run_tty = getattr(app, "run_tty", None) or _run_tty
+        # New keys: FleetLedger makes and keeps their passphrases (keys.py), unless asked.
+        own = getattr(args, "own_passphrases", False) or args.no_passphrase
+        self.managed = None if own else keys.default_store()
+        self.made_yours: str | None = None
 
     def head(self) -> None:
         self.number += 1
@@ -113,6 +127,14 @@ def _run_tty(argv: list[str]) -> int:
 
 
 def cmd_setup(args, app) -> int:
+    if not args.text:
+        if args.redo:
+            raise FleetError("--redo is for the terminal wizard: ship-fleet setup --text --redo "
+                             "...; on the setup page, each step has its own Change button.")
+        from fleetledger.web.server import serve
+
+        return serve(app, port=args.port, open_browser=not args.no_browser,
+                     start_page="/setup")
     if not app.stdin_isatty():
         raise FleetError("setup asks questions; run it in a terminal.",
                          hint="ship-fleet doctor shows what is set up without asking anything.")
@@ -164,14 +186,22 @@ def _fleet(s: _Setup):
         return inv
     from fleetledger.commands import make_fleet
 
-    s.app.say("FleetLedger keeps an inventory of your Ships and logs in to them with its own\n"
-              "key (the fleet admin key, with a passphrase; ssh-agent holds it). You attach\n"
-              "to Ships with a key of your own.")
+    if s.managed:
+        s.app.say("FleetLedger keeps an inventory of your Ships and logs in to them with a key\n"
+                  f"of its own. It makes its keys and keeps their passphrases in "
+                  f"{keys.describe(s.managed)}:\nyou never type them. You attach to Ships with "
+                  "a key of your own.")
+    else:
+        s.app.say("FleetLedger keeps an inventory of your Ships and logs in to them with its "
+                  "own\nkey (the fleet admin key, with a passphrase; ssh-agent holds it). You "
+                  "attach\nto Ships with a key of your own.")
     agent_key = _your_key(s)
     make_fleet(s.app, s.store, s.args.admin_key, [agent_key],
-               no_passphrase=s.args.no_passphrase)
+               no_passphrase=s.args.no_passphrase, managed=s.managed)
     with s.store.edit() as ed:  # not chosen yet: step 5 asks (manual is the default)
         ed.set_default("driver", None)
+        if s.made_yours:
+            keys.record(ed, s.managed, [s.made_yours])
     return s.store.load()
 
 
@@ -180,8 +210,17 @@ def _your_key(s: _Setup) -> str:
     if default.exists():
         answer = s.ask(f"Your public key for attaching to Ships ({_tilde(default)}): ")
         chosen = paths.expand(answer) if answer else default
-    elif s.yes(f"You have no {_tilde(default)}. Make one now (ssh-keygen asks for a "
-               "passphrase)"):
+    elif s.managed and s.yes(f"You have no {_tilde(default)}. Make a key for you now "
+                             "(FleetLedger looks after it)"):
+        from fleetledger.web.setup import YOUR_NEW_KEY
+
+        private = paths.expand(YOUR_NEW_KEY)
+        if not private.exists():
+            keys.make(private, "shipshape-you", s.managed)
+        s.made_yours = YOUR_NEW_KEY
+        chosen = private.with_name(private.name + ".pub")
+    elif not s.managed and s.yes(f"You have no {_tilde(default)}. Make one now (ssh-keygen "
+                                 "asks for a passphrase)"):
         private = default.with_suffix("")
         paths.private_dir(private.parent)
         argv = ["ssh-keygen", "-t", "ed25519", "-f", str(private)]
@@ -201,6 +240,16 @@ def _agent(s: _Setup, inv) -> bool:
     """Is the admin key in ssh-agent (loading it if the user agrees)?"""
     s.head()
     admin, public = inv.admin_key, inv.admin_public_key_path
+    if admin in keys.managed(inv)[1]:
+        try:
+            loaded = keys.ensure_loaded(inv)
+        except FleetError as exc:
+            s.app.note(f"Could not load FleetLedger's keys into ssh-agent: {exc.message}")
+            s.later.append("ship-fleet doctor   (FleetLedger's keys did not load)")
+            return False
+        s.app.say("Loaded FleetLedger's keys into ssh-agent." if loaded else
+                  "ssh-agent already holds FleetLedger's keys.")
+        return True
     held = firstrun.agent_fingerprints(s.run_cmd)
     if held is None:
         s.app.say("No ssh-agent answers in this shell. FleetLedger logs in to Ships through\n"
@@ -243,14 +292,16 @@ def _ca(s: _Setup) -> None:
         return
     s.app.say("FleetLedger can certify Ships' host keys and your machines' keys, so you\n"
               "attach to any Ship from any of your machines without host-key prompts.\n"
-              "It needs two keys of its own, each with a passphrase.")
+              + ("It needs two keys of its own; FleetLedger makes and looks after them."
+                 if s.managed else "It needs two keys of its own, each with a passphrase."))
     if not s.yes("Set up the certificate authority now"):
         s.later.append("ship-fleet ca init")
         return
-    cfg = make_ca(s.app, s.store, HOST_CA_KEY, USER_CA_KEY, no_passphrase=s.args.no_passphrase)
+    cfg = make_ca(s.app, s.store, HOST_CA_KEY, USER_CA_KEY, no_passphrase=s.args.no_passphrase,
+                  managed=s.managed)
     s.app.say(f"Host CA {ca.fingerprint(cfg.host_public)}")
     s.app.say(f"User CA {ca.fingerprint(cfg.user_public)}")
-    if firstrun.agent_fingerprints(s.run_cmd) is not None and s.yes(
+    if not s.managed and firstrun.agent_fingerprints(s.run_cmd) is not None and s.yes(
             "Load the CA keys into ssh-agent too, so signing does not ask again"):
         s.run_tty(["ssh-add", str(paths.expand(HOST_CA_KEY)), str(paths.expand(USER_CA_KEY))])
 

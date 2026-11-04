@@ -1,0 +1,906 @@
+"""The first-run setup in the browser (/setup): the same steps as the terminal
+wizard (setupcmd.py), through the same functions, with room to say what each
+thing is.
+
+The path a newcomer takes asks only for what they alone can give: where Ships
+run (a Proxmox address and token, or manual), which of their SSH keys may log in
+to Ships, optionally a Tailscale OAuth client, and a first Ship. Every key
+FleetLedger itself needs is made and protected by it (keys.py, "managed keys");
+bringing keys from another computer is the one place key choices appear.
+
+Each step shows done or next and can be redone. Secrets typed here (the Proxmox
+token secret, the OAuth client secret, a key's current passphrase) arrive in a
+POST body only, go straight to the check that needs them and then to their
+store, and are never echoed back, flashed, logged or audited.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import re
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import Request
+from starlette.responses import RedirectResponse, Response
+from starlette.routing import Route
+
+from fleetledger import keys, paths
+from fleetledger.errors import FleetError
+
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+ADMIN_KEY = "~/.ssh/shipshape_fleet_ed25519"
+HOST_CA_KEY = "~/.ssh/shipshape_host_ca_ed25519"
+USER_CA_KEY = "~/.ssh/shipshape_user_ca_ed25519"
+YOUR_NEW_KEY = "~/.ssh/shipshape_ed25519"
+STATE_TTL = 30 * 60
+
+TAILSCALE_ACLS = "https://login.tailscale.com/admin/acls/file"
+TAILSCALE_OAUTH = "https://login.tailscale.com/admin/settings/trust-credentials"
+
+
+# --- per-session state (memory only) ------------------------------------------------------
+
+
+@dataclasses.dataclass
+class ShipJob:
+    name: str
+    lines: list[str] = dataclasses.field(default_factory=list)
+    done: bool = False
+    ok: bool = False
+    enrolled: bool = False
+    lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+
+    def write(self, text: str) -> int:
+        from fleetledger.concierge.redact import clean
+
+        with self.lock:
+            for line in clean(text).splitlines():
+                if line.strip():
+                    self.lines.append(line)
+            del self.lines[:-400]
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def snapshot(self) -> list[str]:
+        with self.lock:
+            return list(self.lines)
+
+
+@dataclasses.dataclass
+class SetupState:
+    """One browser session's progress through the wizard. Holds no secret: the
+    Proxmox token is stored (and read back from its store) once it is checked."""
+
+    touched: float = dataclasses.field(default_factory=time.monotonic)
+    proxmox: dict[str, Any] = dataclasses.field(default_factory=dict)
+    overlay_skipped: bool = False
+    overlay_checks: list[tuple[bool, str]] = dataclasses.field(default_factory=list)
+    old_copy: dict[str, Any] | None = None
+    ship: ShipJob | None = None
+
+
+class Setups:
+    def __init__(self) -> None:
+        self._states: dict[str, SetupState] = {}
+        self._lock = threading.Lock()
+
+    def get(self, session_id: str) -> SetupState:
+        now = time.monotonic()
+        with self._lock:
+            for sid in [s for s, st in self._states.items() if now - st.touched > STATE_TTL
+                        and (st.ship is None or st.ship.done)]:
+                del self._states[sid]
+            state = self._states.setdefault(session_id, SetupState())
+            state.touched = now
+            return state
+
+
+# --- what is done ----------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class Step:
+    key: str
+    title: str
+    state: str  # done | next | later | optional | skipped
+    summary: str
+
+
+def _inventory(app):
+    store = app.store_factory()
+    if not store.exists():
+        return store, None, None
+    try:
+        return store, store.load(), None
+    except FleetError as exc:
+        return store, None, exc.message
+
+
+def your_key_choices() -> list[Path]:
+    """Public keys in ~/.ssh that look like a person's own (not FleetLedger's)."""
+    folder = Path.home() / ".ssh"
+    found = []
+    for pub in sorted(folder.glob("*.pub")) if folder.is_dir() else []:
+        if pub.name.endswith("-cert.pub") or pub.name.startswith("shipshape_fleet") \
+                or "_ca_" in pub.name:
+            continue
+        try:
+            first = pub.read_text(encoding="utf-8").split()[:1]
+        except (OSError, UnicodeDecodeError):
+            continue
+        if first and first[0].startswith(("ssh-ed25519", "ecdsa-", "ssh-rsa", "sk-")):
+            found.append(pub)
+    preferred = folder / "id_ed25519.pub"
+    return sorted(found, key=lambda p: (p != preferred, p.name))
+
+
+def steps(app, state: SetupState) -> tuple[list[Step], Any]:
+    store, inv, error = _inventory(app)
+    out = []
+    if inv is None:
+        out.append(Step("fleet", "Your fleet", "next",
+                        error or "Not set up yet: start here."))
+    else:
+        has_ca = bool(inv.doc.get("ca"))
+        store_kind, managed = keys.managed(inv)
+        how = ("FleetLedger looks after its keys" if inv.admin_key in managed
+               else "keys protected by passphrases you chose")
+        out.append(Step("fleet", "Your fleet", "done" if has_ca else "next",
+                        f"Set up; {how}." if has_ca else
+                        "Set up, but there is no certificate authority yet."))
+    driver = (inv.defaults.get("driver") if inv is not None and "driver" in inv.defaults
+              else None)
+    if inv is None:
+        out.append(Step("hypervisor", "Where Ships run", "later", ""))
+    elif driver == "proxmox" and inv.driver_config("proxmox"):
+        out.append(Step("hypervisor", "Where Ships run", "done",
+                        f"Proxmox at {inv.driver_config('proxmox')['api_url']}."))
+    elif driver == "manual":
+        out.append(Step("hypervisor", "Where Ships run", "done",
+                        "Manual: FleetLedger prints the steps for your hypervisor."))
+    else:
+        out.append(Step("hypervisor", "Where Ships run", "next", "Not chosen yet."))
+    if inv is not None and inv.overlay:
+        out.append(Step("overlay", "Reach Ships from anywhere (optional)", "done",
+                        f"{inv.overlay.get('provider', 'tailscale')} is set up."))
+    else:
+        out.append(Step("overlay", "Reach Ships from anywhere (optional)",
+                        "skipped" if state.overlay_skipped else "optional",
+                        "Skipped for now." if state.overlay_skipped else ""))
+    ships = inv.ships() if inv is not None else []
+    out.append(Step("ship", "Your first Ship", "done" if ships else "later",
+                    f"{len(ships)} Ship(s): " + ", ".join(s.name for s in ships[:5])
+                    if ships else ""))
+    # The first open step is "next"; those after it wait.
+    seen_open = False
+    for step in out:
+        if step.state in ("done", "skipped"):
+            continue
+        if not seen_open and step.state in ("next", "later", "optional"):
+            if step.state == "later":
+                step.state = "next"
+            seen_open = True
+        elif step.state == "next":
+            step.state = "later"
+    return out, inv
+
+
+def agent_holds_admin(inv) -> bool | None:
+    """Does ssh-agent hold the admin key? None when there is no agent to ask."""
+    from fleetledger import firstrun
+
+    held = firstrun.agent_fingerprints()
+    if held is None:
+        return None
+    fpr = firstrun.fingerprint(str(inv.admin_public_key_path))
+    return bool(fpr and fpr in held)
+
+
+def unmanaged_keys(inv) -> list[tuple[str, Path]]:
+    """(what, path) of FleetLedger's keys that keep a passphrase you chose."""
+    _store, managed = keys.managed(inv)
+    out = [("fleet admin key", inv.admin_key)]
+    ca = inv.doc.get("ca") or {}
+    if ca.get("host_key"):
+        out.append(("host CA key", paths.expand(ca["host_key"])))
+    if ca.get("user_key"):
+        out.append(("user CA key", paths.expand(ca["user_key"])))
+    return [(what, p) for what, p in out if p not in managed and p.exists()]
+
+
+# --- handlers --------------------------------------------------------------------------------
+
+
+def _ui(request: Request):
+    return request.app.state.ui
+
+
+def _state(request: Request) -> SetupState:
+    ui = _ui(request)
+    return ui.setups.get(request.scope["state"]["session"].id)
+
+
+def _flash(request: Request, kind: str, text: str) -> None:
+    _ui(request).flash(request.scope["state"]["session"], kind, text)
+
+
+def _back(anchor: str = "") -> RedirectResponse:
+    return RedirectResponse("/setup" + (f"#{anchor}" if anchor else ""), status_code=303)
+
+
+async def _form(request: Request) -> dict[str, list[str]]:
+    from fleetledger.web.app import form
+
+    return await form(request)
+
+
+def _one(fields, key: str) -> str:
+    values = fields.get(key, [])
+    return values[0].strip() if len(values) == 1 else ""
+
+
+def _secret_field(fields, key: str) -> str:
+    """A secret as typed (only surrounding whitespace removed); never logged."""
+    values = fields.get(key, [])
+    return values[0].strip() if len(values) == 1 else ""
+
+
+async def page(request: Request) -> Response:
+    from fleetledger.web.app import render
+
+    ui = _ui(request)
+    state = _state(request)
+    found_steps, inv = await run_in_threadpool(steps, ui.app, state)
+    context: dict[str, Any] = {"steps": found_steps, "inv": inv, "state": state,
+                               "inventory_path": _tilde(ui.app.store_factory().path),
+                               "TAILSCALE_ACLS": TAILSCALE_ACLS,
+                               "TAILSCALE_OAUTH": TAILSCALE_OAUTH}
+    usable, why = await run_in_threadpool(_keyring_usable)
+    context.update(keyring_usable=usable, keyring_why=why,
+                   default_store="keyring" if usable else "file")
+    if inv is None:
+        context["your_keys"] = [_tilde(p) for p in await run_in_threadpool(your_key_choices)]
+    else:
+        context["unmanaged"] = [(what, _tilde(p)) for what, p in
+                                await run_in_threadpool(unmanaged_keys, inv)]
+        context["agent_ok"] = await run_in_threadpool(agent_holds_admin, inv)
+        context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
+        context["policy"] = _policy_text()
+    from fleetledger import proxmox_setup
+
+    context["px"] = state.proxmox
+    context["token_commands"] = proxmox_setup.user_and_token_commands(proxmox_setup.Names())
+    return render(request, "setup.html", **context)
+
+
+def _keyring_usable() -> tuple[bool, str]:
+    from fleetledger.overlay import secret_store
+
+    return secret_store.keyring_usable()
+
+
+def _policy_text() -> str:
+    from fleetledger import overlay
+
+    return overlay.policy({"provider": "tailscale", "tags": ["tag:ship"]}).rstrip()
+
+
+def _tilde(path) -> str:
+    try:
+        return "~/" + str(Path(path).resolve().relative_to(Path.home().resolve()))
+    except ValueError:
+        return str(path)
+
+
+def _store_choice(fields) -> str:
+    chosen = _one(fields, "store")
+    if chosen in ("keyring", "file"):
+        return chosen
+    return keys.default_store()
+
+
+def _your_key(fields) -> tuple[str, bool]:
+    """(the public key path to let in, whether FleetLedger must make it)."""
+    choice = _one(fields, "your_key")
+    other = _one(fields, "your_key_other")
+    if other:
+        choice = other
+    if choice == "new":
+        return YOUR_NEW_KEY + ".pub", True
+    if not choice:
+        raise FleetError("Choose the SSH key that may log in to your Ships.")
+    path = paths.expand(choice)
+    if not path.name.endswith(".pub") or path.name.endswith("-cert.pub") or not path.is_file():
+        raise FleetError(f"{choice} is not a public key file (.pub).")
+    return choice, False
+
+
+def _new_fleet(app, fields) -> str:
+    from fleetledger.commands import make_fleet
+    from fleetledger.trustcmd import make_ca
+
+    store = app.store_factory()
+    if store.exists():
+        raise FleetError("FleetLedger is already set up here.")
+    managed = _store_choice(fields)
+    admin = _one(fields, "admin_key") or ADMIN_KEY
+    host_ca = _one(fields, "host_ca_key") or HOST_CA_KEY
+    user_ca = _one(fields, "user_ca_key") or USER_CA_KEY
+    for path in (admin, host_ca, user_ca):
+        if paths.expand(path).exists():
+            raise FleetError(f"{path} already exists. To use keys you already have, choose "
+                             "\"Connect to an existing fleet or keys\".")
+    your_key, make_yours = _your_key(fields)
+    if make_yours:
+        private = paths.expand(YOUR_NEW_KEY)
+        if not private.exists():
+            keys.make(private, "shipshape-you", managed)
+    make_fleet(app, store, admin, [your_key], managed=managed)
+    with store.edit() as ed:
+        ed.set_default("driver", None)  # chosen in the next step
+        if make_yours:
+            keys.record(ed, managed, [YOUR_NEW_KEY])
+    make_ca(app, store, host_ca, user_ca, managed=managed)
+    return managed
+
+
+def _import_fleet(app, fields, secrets_: dict[str, str]) -> None:
+    from fleetledger.commands import make_fleet
+    from fleetledger.trustcmd import make_ca
+
+    store = app.store_factory()
+    if store.exists():
+        raise FleetError("FleetLedger is already set up here.")
+    admin = _one(fields, "admin_key")
+    host_ca, user_ca = _one(fields, "host_ca_key"), _one(fields, "user_ca_key")
+    if not admin:
+        raise FleetError("Give the path of the fleet admin key (the private key file).")
+    if bool(host_ca) != bool(user_ca):
+        raise FleetError("Give both CA keys, or neither (FleetLedger then makes new ones).")
+    chosen = [("admin", admin)] + ([("host", host_ca), ("user", user_ca)] if host_ca else [])
+    for _what, value in chosen:
+        path = paths.expand(value)
+        if not path.is_file() or path.name.endswith(".pub"):
+            raise FleetError(f"{value} is not a private key file.")
+        if not path.with_name(path.name + ".pub").is_file():
+            raise FleetError(f"{value}: put its public half next to it ({path.name}.pub).")
+    your_key, make_yours = _your_key(fields)
+    protect = _one(fields, "protect") == "yes"
+    managed = _store_choice(fields)
+    adopted: list[str] = []
+    if protect:
+        for what, value in chosen:
+            keys.adopt(paths.expand(value), secrets_.get(what, ""), managed)
+            adopted.append(value)
+    if make_yours and not paths.expand(YOUR_NEW_KEY).exists():
+        keys.make(paths.expand(YOUR_NEW_KEY), "shipshape-you", managed)
+        adopted.append(YOUR_NEW_KEY)
+    make_fleet(app, store, admin, [your_key])
+    with store.edit() as ed:
+        ed.set_default("driver", None)
+        if adopted:
+            keys.record(ed, managed, adopted)
+    make_ca(app, store, host_ca or HOST_CA_KEY, user_ca or USER_CA_KEY,
+            managed=None if host_ca else managed)
+
+
+async def fleet_new(request: Request) -> Response:
+    fields = await _form(request)
+    try:
+        managed = await run_in_threadpool(_new_fleet, _ui(request).app, fields)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("fleet")
+    _flash(request, "ok", f"Your fleet is set up. FleetLedger made its keys and keeps their "
+           f"passphrases in {keys.describe(managed)}.")
+    return _back("hypervisor")
+
+
+async def fleet_import(request: Request) -> Response:
+    fields = await _form(request)
+    secrets_ = {what: _secret_field(fields, f"{what}_passphrase")
+                for what in ("admin", "host", "user")}
+    try:
+        await run_in_threadpool(_import_fleet, _ui(request).app, fields, secrets_)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("fleet")
+    finally:
+        secrets_.clear()
+    _flash(request, "ok", "Your fleet is set up with the keys you brought.")
+    return _back("hypervisor")
+
+
+def _adopt(app, fields, secrets_: dict[str, str]) -> list[str]:
+    store = app.store_factory()
+    inv = store.load()
+    managed = _store_choice(fields)
+    current_store, _ = keys.managed(inv)
+    if current_store:
+        managed = current_store
+    taken = []
+    for index, (_what, path) in enumerate(unmanaged_keys(inv)):
+        if _one(fields, f"take_{index}") != "yes":
+            continue
+        keys.adopt(path, secrets_.get(str(index), ""), managed)
+        with store.edit() as ed:
+            keys.record(ed, managed, [_tilde(path)])
+        taken.append(path.name)
+    return taken
+
+
+async def fleet_adopt(request: Request) -> Response:
+    fields = await _form(request)
+    if _one(fields, "confirm") != "yes":
+        _flash(request, "bad", "Tick the box to confirm: FleetLedger re-encrypts these key "
+               "files (the keys themselves stay the same).")
+        return _back("fleet")
+    secrets_ = {str(i): _secret_field(fields, f"passphrase_{i}") for i in range(3)}
+    try:
+        taken = await run_in_threadpool(_adopt, _ui(request).app, fields, secrets_)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("fleet")
+    finally:
+        secrets_.clear()
+    if taken:
+        _flash(request, "ok", "FleetLedger now looks after " + ", ".join(taken) +
+               ". Their old passphrases no longer open them.")
+    else:
+        _flash(request, "muted", "Nothing chosen.")
+    return _back("fleet")
+
+
+async def fleet_ca(request: Request) -> Response:
+    from fleetledger.trustcmd import make_ca
+
+    app = _ui(request).app
+    try:
+        await run_in_threadpool(make_ca, app, app.store_factory(), HOST_CA_KEY, USER_CA_KEY,
+                                managed=keys.default_store())
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("fleet")
+    _flash(request, "ok", "Made the certificate authority.")
+    return _back("hypervisor")
+
+
+async def load_keys(request: Request) -> Response:
+    app = _ui(request).app
+    try:
+        inv = app.store_factory().load()
+        loaded = await run_in_threadpool(keys.ensure_loaded, inv)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("ship")
+    _flash(request, "ok", ("Loaded " + ", ".join(loaded) + " into ssh-agent.") if loaded
+           else "ssh-agent already holds FleetLedger's keys.")
+    return _back("ship")
+
+
+# --- the hypervisor ------------------------------------------------------------------------
+
+
+async def hypervisor_manual(request: Request) -> Response:
+    app = _ui(request).app
+    with app.store_factory().edit() as ed:
+        ed.set_default("driver", "manual")
+    _state(request).proxmox.clear()
+    _flash(request, "ok", "Manual: for each new Ship, FleetLedger writes its seed ISO and "
+           "prints the steps to make the VM.")
+    return _back("overlay")
+
+
+async def proxmox_start(request: Request) -> Response:
+    _state(request).proxmox = {"stage": "address"}
+    return _back("hypervisor")
+
+
+async def proxmox_cancel(request: Request) -> Response:
+    _state(request).proxmox.clear()
+    return _back("hypervisor")
+
+
+def _old_proxmox(app) -> dict[str, Any]:
+    from fleetledger import proxmox_setup
+
+    store = app.store_factory()
+    saved = dict(store.load().driver_config("proxmox") or {}) if store.exists() else {}
+    return {**saved, **proxmox_setup._load_progress()}
+
+
+async def proxmox_address(request: Request) -> Response:
+    from fleetledger import proxmox_setup
+    from fleetledger.drivers import proxmox_api
+
+    app = _ui(request).app
+    state = _state(request)
+    fields = await _form(request)
+    try:
+        host, port, api_url = proxmox_setup.parse_address(_one(fields, "address"))
+        fetch = getattr(app, "cert_fingerprint", None) or proxmox_api.server_fingerprint
+        fingerprint = await run_in_threadpool(fetch, host, port)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("hypervisor")
+    old = await run_in_threadpool(_old_proxmox, app)
+    pinned = old.get("tls_fingerprint") if old.get("api_url") == api_url else None
+    state.proxmox = {"stage": "token", "api_url": api_url, "host": host, "port": port,
+                     "fingerprint": fingerprint, "pinned": pinned,
+                     "token_id": old.get("token_id", "")}
+    return _back("hypervisor")
+
+
+def _check_token(app, px: dict[str, Any], token_id: str, secret: str, reuse: bool,
+                 store_kind: str) -> dict[str, Any]:
+    """Check the token through the pin, store it, and find what it can see."""
+    from fleetledger import proxmox_setup
+    from fleetledger.drivers import proxmox_api
+    from fleetledger.overlay import secret_store
+
+    if not proxmox_setup.TOKEN_ID_RE.match(token_id):
+        raise FleetError(f"'{token_id}' is not a token id (user@realm!name).")
+    item = secret_store.proxmox_item(token_id)
+    config: dict[str, Any] = {"api_url": px["api_url"], "token_id": token_id,
+                              "tls_fingerprint": px["fingerprint"]}
+    old = _old_proxmox(app)
+    reused_path = None
+    if reuse:
+        existing = secret_store.existing_in_keyring(item)
+        if existing is not None:
+            secret, store_kind = existing, "keyring"
+        else:
+            candidates = [paths.config_dir() / proxmox_setup.SECRET_FILE]
+            if old.get("token_file") and old.get("token_id") == token_id:
+                candidates.insert(0, paths.expand(old["token_file"]))
+            for path in candidates:
+                try:
+                    secret, store_kind, reused_path = (
+                        proxmox_api.read_token(str(path)), "file", path)
+                    break
+                except FleetError:
+                    continue
+            else:
+                raise FleetError("No stored secret for this token; type it in.")
+    if not proxmox_setup._plausible_token(secret):
+        raise FleetError("That does not look like a Proxmox token secret.")
+    if store_kind == "keyring" and not proxmox_setup.KEYRING_ITEM_RE.match(item):
+        store_kind = "file"
+    api = proxmox_setup._api(app, config, lambda: secret)
+    try:
+        version = api.get("/version") or {}
+    except proxmox_api.ProxmoxError as exc:
+        if exc.status == 401:
+            raise FleetError("Proxmox refused the token (401): check the token id and "
+                             "secret. Nothing was saved.") from None
+        raise
+    where = proxmox_setup.keep_secret(config, secret, store_kind, reused=reuse,
+                                      secret_path=reused_path)
+    proxmox_setup._save_progress(config)
+    match = re.match(r"^(\d+)\.", str(version.get("version", "")))
+    pve_major = int(match.group(1)) if match else 9
+    nodes = proxmox_setup.list_nodes(api)
+    node = old.get("node") if old.get("node") in nodes else nodes[0]
+    return {"stage": "choose", "config": config, "where": where,
+            "version": version.get("version", "?"), "pve_major": pve_major,
+            "nodes": nodes, "old": {k: v for k, v in old.items() if k != "token_file"},
+            **_find(app, config, node, pve_major, old)}
+
+
+def _find(app, config, node: str, pve_major: int, old) -> dict[str, Any]:
+    from fleetledger import proxmox_setup
+    from fleetledger.drivers.proxmox_api import ProxmoxAPI
+
+    factory = getattr(app, "proxmox_api", None)
+    api = factory(config) if factory else ProxmoxAPI(config)  # reads the stored secret
+    found = proxmox_setup.find(api, node, pve_major)
+    proposed = proxmox_setup.defaults(found, old)
+    return {"node": node, "found": found, "proposed": proposed}
+
+
+def _problems(app, px: dict[str, Any], chosen: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    from fleetledger import proxmox_setup
+
+    found = px["found"]
+    n = proxmox_setup.Names(token_id=px["config"]["token_id"], pve_major=px["pve_major"])
+    if chosen.get("pool"):
+        n.pool = chosen["pool"]
+    if chosen.get("disk_storage"):
+        n.disk = chosen["disk_storage"]
+    if chosen.get("seed_storage"):
+        n.seeds = chosen["seed_storage"]
+    if chosen.get("bridge"):
+        n.bridge = chosen["bridge"]
+    return proxmox_setup.problems(found, n, app.repo_factory().versions, px["old"])
+
+
+async def proxmox_token(request: Request) -> Response:
+    app = _ui(request).app
+    state = _state(request)
+    px = state.proxmox
+    fields = await _form(request)
+    if px.get("stage") != "token":
+        return _back("hypervisor")
+    if _one(fields, "matches") != "yes" or (px.get("pinned") and
+                                           _one(fields, "changed_ok") != "yes"):
+        _flash(request, "bad", "Not pinned: confirm the fingerprint matches the one on the "
+               "host. Nothing was sent to it.")
+        return _back("hypervisor")
+    secret = _secret_field(fields, "secret")
+    reuse = not secret  # empty: the secret already stored for this token (checked first)
+    try:
+        result = await run_in_threadpool(_check_token, app, px, _one(fields, "token_id"),
+                                         secret, reuse, _store_choice(fields))
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("hypervisor")
+    finally:
+        secret = ""
+    state.proxmox = result
+    state.proxmox["problems"] = await run_in_threadpool(_problems, app, result,
+                                                        result["proposed"])
+    _flash(request, "ok", f"The token works (Proxmox VE {result['version']}); its secret is "
+           f"in {result['where']}.")
+    return _back("hypervisor")
+
+
+def _chosen(fields, px) -> dict[str, Any]:
+    """The posted choices, each one of what the token can see (or typed, for a bridge
+    granted on a parent path)."""
+    from fleetledger import proxmox_setup
+
+    found = px["found"]
+    chosen: dict[str, Any] = {}
+
+    def pick(key: str, options) -> None:
+        value = _one(fields, key)
+        if value:
+            if value not in options:
+                raise FleetError(f"{key}: not one of the choices.")
+            chosen[key] = value
+
+    pick("pool", found.pools)
+    pick("disk_storage", found.disks)
+    pick("seed_storage", found.seed_options(chosen.get("disk_storage")))
+    pick("image_storage", ["", *found.uploads])
+    bridge = _one(fields, "bridge")
+    if bridge:
+        if bridge not in found.bridges and not (found.any_bridge and
+                                                proxmox_setup.BRIDGE_RE.match(bridge)):
+            raise FleetError("bridge: not one of the choices.")
+        chosen["bridge"] = bridge
+    template = _one(fields, "template_vmid")
+    if template:
+        if template not in [str(v) for v, _ in found.templates]:
+            raise FleetError("template: not one of the choices.")
+        chosen["template_vmid"] = int(template)
+    vmids = _one(fields, "vmid_range")
+    if vmids:
+        match = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", vmids)
+        if not match or not 100 <= int(match.group(1)) <= int(match.group(2)):
+            raise FleetError("VM ids: two numbers, first-last, both 100 or more.")
+        chosen["vmid_range"] = [int(match.group(1)), int(match.group(2))]
+    return {**{k: v for k, v in px["proposed"].items() if v is not None}, **chosen}
+
+
+async def proxmox_recheck(request: Request) -> Response:
+    app = _ui(request).app
+    px = _state(request).proxmox
+    if px.get("stage") != "choose":
+        return _back("hypervisor")
+    fields = await _form(request)
+    node = _one(fields, "node")
+    node = node if node in px["nodes"] else px["node"]
+    try:
+        px.update(await run_in_threadpool(_find, app, px["config"], node, px["pve_major"],
+                                          px["old"]))
+        px["problems"] = await run_in_threadpool(_problems, app, px, px["proposed"])
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+    return _back("hypervisor")
+
+
+def _save_proxmox(app, px, chosen) -> None:
+    from fleetledger import proxmox_setup
+    from fleetledger.drivers import proxmox_api
+
+    todo = _problems(app, px, chosen)
+    if todo:
+        raise FleetError("Still missing on the Proxmox host: " +
+                         "; ".join(what for what, _ in todo) + ".")
+    config = {**px["config"], "node": px["node"],
+              **{k: chosen.get(k) for k in ("pool", "template_vmid", "seed_storage",
+                                            "disk_storage", "bridge", "image_storage",
+                                            "vmid_range")}}
+    if not config.get("image_storage"):
+        config.pop("image_storage", None)
+    # The connection test, through the stored secret and the pin, before saving.
+    factory = getattr(app, "proxmox_api", None)
+    api = factory(config) if factory else proxmox_api.ProxmoxAPI(config)
+    api.get("/version")
+    proxmox_setup.save(app.store_factory(), config)
+
+
+async def proxmox_save(request: Request) -> Response:
+    from fleetledger import proxmox_setup
+
+    app = _ui(request).app
+    state = _state(request)
+    px = state.proxmox
+    if px.get("stage") != "choose":
+        return _back("hypervisor")
+    fields = await _form(request)
+    saved_before = dict(px["old"])
+    try:
+        chosen = _chosen(fields, px)
+        await run_in_threadpool(_save_proxmox, app, px, chosen)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        px["problems"] = await run_in_threadpool(_problems, app, px, px["proposed"])
+        return _back("hypervisor")
+    before = proxmox_setup._secret_location(saved_before)
+    after = proxmox_setup._secret_location(px["config"])
+    state.proxmox = {}
+    state.old_copy = ({"kind": before[0], "where": before[1]}
+                      if before and after and before != after else None)
+    _flash(request, "ok", "Connected and saved: new Ships are made on Proxmox.")
+    return _back("overlay")
+
+
+async def proxmox_forget_old(request: Request) -> Response:
+    from fleetledger.overlay import secret_store
+
+    state = _state(request)
+    old = state.old_copy
+    fields = await _form(request)
+    if old and _one(fields, "confirm") == "yes":
+        try:
+            if old["kind"] == "file":
+                Path(old["where"]).unlink(missing_ok=True)
+            else:
+                secret_store.delete_from_keyring(old["where"])
+            _flash(request, "ok", "Removed the previous token secret.")
+        except (FleetError, OSError):
+            _flash(request, "bad", "Could not remove the previous token secret.")
+    state.old_copy = None
+    return _back("hypervisor")
+
+
+# --- the overlay ------------------------------------------------------------------------------
+
+
+def _connect_overlay(app, fields, secret: str) -> list[tuple[bool, str]]:
+    from fleetledger import overlay_setup
+    from fleetledger.overlay import secret_store
+
+    store = app.store_factory()
+    client_id = _one(fields, "client_id")
+    level = _one(fields, "level") or overlay_setup.DEFAULT_LEVEL
+    reused = False
+    store_kind = _store_choice(fields)
+    if not secret and overlay_setup.CLIENT_ID_RE.match(client_id):
+        existing = secret_store.existing_in_keyring(secret_store.oauth_item(client_id))
+        if existing is not None and overlay_setup._plausible_secret(existing):
+            secret, reused, store_kind = existing, True, "keyring"
+    if not secret:
+        raise FleetError("Paste the OAuth client secret (or store it in your keyring first).")
+    checks: list[tuple[bool, str]] = []
+    # Check the tag rules first, with a key made and deleted at once; then save.
+    api_cfg = {"tailnet": "-", "oauth_client_id": client_id}
+    probe = overlay_setup._api(app, api_cfg, secret=lambda: secret)
+    probe.token()
+    checks.append((True, "The OAuth client signs in."))
+    try:
+        probe.try_key(["tag:ship"])
+    except FleetError as exc:
+        raise FleetError("The client signs in, but cannot make keys for tag:ship: check "
+                         "step 1 (tag:ship in tagOwners) and step 2 (the client has the "
+                         f"tag:ship tag and Auth Keys: Write). Tailscale said: {exc.message}"
+                         ) from None
+    checks.append((True, "It can make tag:ship keys (your access rules own the tag)."))
+    done = overlay_setup.connect_oauth(app, store, client_id=client_id, secret=secret,
+                                       reused=reused, store_kind=store_kind, level=level)
+    checks.append((True, f"Its scopes fit the level ({level}); the secret is {done.kept}."))
+    checks.extend((True, note) for note in done.notes)
+    return checks
+
+
+async def overlay_save(request: Request) -> Response:
+    app = _ui(request).app
+    state = _state(request)
+    fields = await _form(request)
+    secret = _secret_field(fields, "secret")
+    try:
+        state.overlay_checks = await run_in_threadpool(_connect_overlay, app, fields, secret)
+    except FleetError as exc:
+        state.overlay_checks = []
+        _flash(request, "bad", exc.message)
+        return _back("overlay")
+    finally:
+        secret = ""
+    _flash(request, "ok", "The overlay is set up. Each new Ship joins it after it enrols.")
+    return _back("ship")
+
+
+async def overlay_skip(request: Request) -> Response:
+    _state(request).overlay_skipped = True
+    return _back("ship")
+
+
+# --- the first Ship -------------------------------------------------------------------------
+
+
+def _run_ship(app, job: ShipJob, name: str, tag: str) -> None:
+    from fleetledger import cli, commands
+
+    job_app = dataclasses.replace(app, out=job, err=job, stdin_isatty=lambda: False,
+                                  confirm=lambda prompt: "")
+    try:
+        args = cli.build_parser().parse_args(["new", name, *(["--tag", tag] if tag else [])])
+        code = commands.cmd_new(args, job_app)
+        job.ok = code == 0
+        ship = app.store_factory().load().ship(name)
+        job.enrolled = ship.enrolled is not None
+    except FleetError as exc:
+        job.write(f"ship-fleet: {exc.message}\n" + (f"  {exc.hint}\n" if exc.hint else ""))
+    except Exception as exc:  # noqa: BLE001 - shown on the page; the UI keeps running
+        job.write(f"Failed: {type(exc).__name__}\n")
+    finally:
+        job.done = True
+
+
+async def ship_start(request: Request) -> Response:
+    ui = _ui(request)
+    state = _state(request)
+    fields = await _form(request)
+    name, tag = _one(fields, "name") or "ship-01", _one(fields, "tag")
+    if not NAME_RE.match(name) or (tag and not NAME_RE.match(tag)):
+        _flash(request, "bad", "A Ship name (and tag) uses a-z, 0-9 and -, up to 31 "
+               "characters.")
+        return _back("ship")
+    if state.ship is not None and not state.ship.done:
+        return _back("ship")
+    job = ShipJob(name)
+    state.ship = job
+    threading.Thread(target=_run_ship, args=(ui.app, job, name, tag), name=f"setup-{name}",
+                     daemon=True).start()
+    return _back("ship")
+
+
+async def ship_progress(request: Request) -> Response:
+    from fleetledger.web.app import partial
+
+    state = _state(request)
+    if state.ship is None:
+        return Response(status_code=286)
+    # The finished card has no polling attributes, so swapping it in stops the polling.
+    return partial(request, "_setup_ship.html", job=state.ship, lines=state.ship.snapshot())
+
+
+def routes() -> list[Route]:
+    return [
+        Route("/setup", page),
+        Route("/setup/fleet/new", fleet_new, methods=["POST"]),
+        Route("/setup/fleet/import", fleet_import, methods=["POST"]),
+        Route("/setup/fleet/adopt", fleet_adopt, methods=["POST"]),
+        Route("/setup/fleet/ca", fleet_ca, methods=["POST"]),
+        Route("/setup/keys/load", load_keys, methods=["POST"]),
+        Route("/setup/hypervisor/manual", hypervisor_manual, methods=["POST"]),
+        Route("/setup/proxmox/start", proxmox_start, methods=["POST"]),
+        Route("/setup/proxmox/cancel", proxmox_cancel, methods=["POST"]),
+        Route("/setup/proxmox/address", proxmox_address, methods=["POST"]),
+        Route("/setup/proxmox/token", proxmox_token, methods=["POST"]),
+        Route("/setup/proxmox/recheck", proxmox_recheck, methods=["POST"]),
+        Route("/setup/proxmox/save", proxmox_save, methods=["POST"]),
+        Route("/setup/proxmox/forget-old", proxmox_forget_old, methods=["POST"]),
+        Route("/setup/overlay", overlay_save, methods=["POST"]),
+        Route("/setup/overlay/skip", overlay_skip, methods=["POST"]),
+        Route("/setup/ship", ship_start, methods=["POST"]),
+        Route("/setup/ship/progress", ship_progress),
+    ]
