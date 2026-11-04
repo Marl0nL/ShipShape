@@ -383,7 +383,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--print-cert", action="store_true", help="print only the certificate")
     p.add_argument("--install", action="store_true",
                    help="also install the bundle here (this is the machine)")
-    p.add_argument("--no-herdr", action="store_true", help="install: skip herdr saved machines")
+    p.add_argument("--no-herdr", action="store_true",
+                   help="install, --this-computer: skip herdr saved machines")
 
     p = _add(sub, "untrust", "revoke a machine's certificates on every Ship")
     p.add_argument("machine")

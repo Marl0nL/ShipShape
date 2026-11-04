@@ -240,6 +240,8 @@ def cmd_trust(args, app) -> int:
     inv = store.load()
     cfg = ca.require(inv)
     if args.this_computer:
+        if args.no_herdr:
+            app.herdr = False
         return 0 if trust_this_computer(app, store, app.say) else 1
     name = args.machine
     if not name:
