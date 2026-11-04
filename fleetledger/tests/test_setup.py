@@ -144,7 +144,7 @@ def fresh(home, fake_repo, monkeypatch, tmp_path):
     def run(*argv, answers=()):
         s.answers[:] = list(answers)
         s.out.seek(0), s.out.truncate(), s.err.seek(0), s.err.truncate()
-        code = cli.main(["setup", "--no-passphrase", *argv], s.app)
+        code = cli.main(["setup", "--text", "--no-passphrase", *argv], s.app)
         return code, s.out.getvalue(), s.err.getvalue()
 
     s.run = run
@@ -626,7 +626,7 @@ def test_the_first_ship_is_offered_once_the_rest_is_done(env, monkeypatch):  # n
     env.app.confirm = lambda prompt: answers.pop(0)
     env.app.run_cmd = run_cmd
     env.app.run_tty = lambda argv: pytest.fail(f"ran {argv}")
-    code, out, err = env.run("setup")
+    code, out, err = env.run("setup", "--text")
     assert code == 0, err
     assert answers == []
     ship = env.store.load().ship("ship-05")

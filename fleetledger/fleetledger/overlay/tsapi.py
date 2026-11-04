@@ -143,6 +143,23 @@ class TailscaleAPI:
             raise FleetError("Tailscale API: no key in the answer.")
         return key
 
+    def try_key(self, tags: list[str]) -> None:
+        """Make a key, then delete it at once: proves the client may make keys for
+        these tags (so the policy's tagOwners and the client's tags are right)."""
+        body = json.dumps({
+            "capabilities": {"devices": {"create": {
+                "reusable": False, "ephemeral": True, "preauthorized": False, "tags": tags,
+            }}},
+            "expirySeconds": 60,
+            "description": "fleetledger setup check",
+        }).encode()
+        answer = self.call("POST", f"/tailnet/{self.tailnet}/keys", "making a test key",
+                           body=body, content_type="application/json")
+        doc = self._json(answer, "making a test key")
+        key_id = doc.get("id") if isinstance(doc, dict) else None
+        if isinstance(key_id, str) and key_id.isalnum():
+            self.call("DELETE", f"/tailnet/{self.tailnet}/keys/{key_id}", "deleting the test key")
+
     # --- devices ----------------------------------------------------------------
     def devices(self) -> list[dict]:
         doc = self._json(self.call("GET", f"/tailnet/{self.tailnet}/devices",

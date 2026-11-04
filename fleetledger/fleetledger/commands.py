@@ -133,13 +133,22 @@ def cmd_init(args, app) -> int:
 
 
 def make_fleet(app, store, admin_key: str, agent_key_values: list[str], *,
-               no_passphrase: bool = False) -> Path:
+               no_passphrase: bool = False, managed: str | None = None) -> Path:
     """The fleet admin key (made if missing) and an empty inventory. Returns the
-    admin key's path."""
+    admin key's path. managed (keyring | file): FleetLedger makes the key with a
+    random passphrase it keeps there (keys.py), and records it as managed."""
+    from fleetledger import keys
+
     if store.exists():
         raise FleetError(f"FleetLedger is already set up ({store.path}).")
     admin = paths.expand(admin_key)
-    if not admin.exists():
+    made_managed = False
+    if not admin.exists() and managed:
+        keys.make(admin, "fleetledger-admin", managed)
+        made_managed = True
+        app.say(f"Made the fleet admin key {admin} (FleetLedger keeps its passphrase in "
+                f"{keys.describe(managed)}).")
+    elif not admin.exists():
         paths.private_dir(admin.parent)
         command = ["ssh-keygen", "-t", "ed25519", "-C", "fleetledger-admin", "-f", str(admin)]
         if no_passphrase:
@@ -166,6 +175,9 @@ def make_fleet(app, store, admin_key: str, agent_key_values: list[str], *,
         cloudinit.read_public_keys(key, "an agent key")
 
     store.create(new_inventory(_tilde(admin), [_tilde(k) for k in agent_keys]))
+    if made_managed:
+        with store.edit() as ed:
+            keys.record(ed, managed, [_tilde(admin)])
     app.say(f"Wrote {store.path}.")
     return admin
 

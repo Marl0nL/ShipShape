@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% block title %}Set up · FleetLedger{% endblock %}
+{% block body %}
+<h1>Set up FleetLedger</h1>
+<p class="hint">
+  A few steps, each saved as you go: stop at any point and come back to this page (or run
+  <code>ship-fleet setup</code> again) to carry on. Nothing here leaves this computer
+  except what you send to your own Proxmox and Tailscale.
+</p>
+
+<ol class="steps">
+  {% for step in steps %}
+  <li class="step {{ step.state }}"><a href="#{{ step.key }}">{{ step.title }}</a>
+    <span class="pill {{ {'done': 'good', 'next': 'warn', 'skipped': 'muted'}.get(step.state, 'muted') }}">{{ {'done': 'done', 'next': 'next', 'later': 'later', 'optional': 'optional', 'skipped': 'skipped'}[step.state] }}</span>
+    {% if step.summary %}<span class="quiet">{{ step.summary }}</span>{% endif %}</li>
+  {% endfor %}
+</ol>
+
+{# --- 1. your fleet ---------------------------------------------------------------- #}
+<section id="fleet" class="setup-step">
+<h2>1. Your fleet</h2>
+{% if inv is none %}
+<div class="choices">
+  <article class="choice recommended">
+    <h3>New fleet <span class="pill good">recommended</span></h3>
+    <p>FleetLedger creates every key it needs (its own login key for Ships and a small
+      certificate authority) and looks after them: they are locked with passphrases only
+      FleetLedger knows, kept in {{ 'your OS keyring' if keyring_usable else 'a private file' }},
+      and loaded into ssh-agent when needed. You never see, name or type them.</p>
+    <form method="post" action="/setup/fleet/new">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field">Ships will let you log in with
+        <select name="your_key">
+          {% for k in your_keys %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+          <option value="new"{% if not your_keys %} selected{% endif %}>a new key FleetLedger makes for me</option>
+        </select>
+      </label>
+      <p class="hint">Your own SSH key: each Ship puts its public half on its <code>agent</code>
+        user, so <code>ssh</code>, <code>herdr --remote</code> and <code>ship-fleet ssh</code>
+        let you in. Its private half never leaves this computer.
+        {% if your_keys %}Found in <code>~/.ssh</code>.{% else %}None found in <code>~/.ssh</code>.{% endif %}</p>
+      <details class="advanced"><summary>Advanced</summary>
+        <fieldset>
+          <legend>Where the key passphrases are kept</legend>
+          <label><input type="radio" name="store" value="keyring"{% if keyring_usable %} checked{% else %} disabled{% endif %}>
+            your OS keyring: encrypted, unlocked with your login{% if not keyring_usable %} (not usable here: {{ keyring_why }}){% endif %}</label>
+          <label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}>
+            a file only you can read (0600)</label>
+          <p class="hint">Either way, any program running as you can read them while you are
+            logged in, as it can use ssh-agent; the keyring also protects them on a lost or
+            copied disk.</p>
+        </fieldset>
+        <label class="field">Or another public key file <input name="your_key_other" placeholder="~/.ssh/other.pub"></label>
+        <label class="field">Fleet admin key <input name="admin_key" placeholder="{{ '~/.ssh/shipshape_fleet_ed25519' }}"></label>
+        <label class="field">Host CA key <input name="host_ca_key" placeholder="~/.ssh/shipshape_host_ca_ed25519"></label>
+        <label class="field">User CA key <input name="user_ca_key" placeholder="~/.ssh/shipshape_user_ca_ed25519"></label>
+      </details>
+      <button type="submit">Create my fleet</button>
+    </form>
+  </article>
+
+  <article class="choice">
+    <h3>Connect to an existing fleet or keys</h3>
+    <p>Use the fleet admin key and CA keys you already have, from another computer for
+      example. FleetLedger uses them where they are.</p>
+    <details><summary>Use my keys</summary>
+    <form method="post" action="/setup/fleet/import" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="field">Fleet admin key (private key file) <input name="admin_key" required placeholder="~/.ssh/shipshape_fleet_ed25519"></label>
+      <label class="field">Host CA key <input name="host_ca_key" placeholder="~/.ssh/shipshape_host_ca_ed25519"></label>
+      <label class="field">User CA key <input name="user_ca_key" placeholder="~/.ssh/shipshape_user_ca_ed25519"></label>
+      <p class="hint">Leave both CA keys empty and FleetLedger makes new ones (and looks after them).
+        Each key's <code>.pub</code> must sit next to it.</p>
+      <label class="field">Ships will let you log in with
+        <select name="your_key">
+          {% for k in your_keys %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+          <option value="new"{% if not your_keys %} selected{% endif %}>a new key FleetLedger makes for me</option>
+        </select>
+      </label>
+      <label class="field">Or another public key file <input name="your_key_other" placeholder="~/.ssh/other.pub"></label>
+      <p class="hint">These keys keep the passphrases they have: you load them with
+        <code>ssh-add</code> yourself, as now.</p>
+      <details class="advanced"><summary>Let FleetLedger look after them instead</summary>
+        <p>Type each key's current passphrase once (leave it empty if the key has none).
+          FleetLedger checks each one first, then re-encrypts the key files with passphrases
+          it keeps in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
+          The keys themselves stay the same; their old passphrases no longer open them.</p>
+        <label><input type="checkbox" name="protect" value="yes"> Hand these keys over to FleetLedger</label>
+        <label class="field">Admin key passphrase <input type="password" name="admin_passphrase" autocomplete="off"></label>
+        <label class="field">Host CA passphrase (if you gave the CA keys) <input type="password" name="host_passphrase" autocomplete="off"></label>
+        <label class="field">User CA passphrase (if you gave the CA keys) <input type="password" name="user_passphrase" autocomplete="off"></label>
+      </details>
+      <input type="hidden" name="store" value="{{ default_store }}">
+      <button type="submit">Use these keys</button>
+    </form>
+    </details>
+  </article>
+</div>
+{% else %}
+<p>Set up: inventory <code>{{ inventory_path }}</code>,
+  fleet admin key <code>{{ inv.doc.fleet.admin_key }}</code>,
+  your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.
+  {% if admin_managed %}FleetLedger looks after its keys.{% endif %}</p>
+{% if not inv.doc.ca %}
+<form method="post" action="/setup/fleet/ca" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <span>No certificate authority yet: it lets you reach every Ship from any of your machines
+    without host-key prompts.</span>
+  <button type="submit">Make it</button>
+</form>
+{% endif %}
+{% if unmanaged %}
+<details class="advanced"><summary>Let FleetLedger look after these keys (optional)</summary>
+  <p>These keys keep passphrases you chose, so you load them with <code>ssh-add</code>
+    yourself. FleetLedger can take them over: type each current passphrase once, and it
+    re-encrypts the key file with a passphrase it keeps in
+    {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys themselves stay
+    the same (Ships, certificates and trusted machines keep working); the old passphrase no
+    longer opens the file. Nothing changes unless you tick the box.</p>
+  <form method="post" action="/setup/fleet/adopt" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for what, path in unmanaged %}
+    <div class="adopt-row">
+      <label><input type="checkbox" name="take_{{ loop.index0 }}" value="yes"> {{ what }} <code>{{ path }}</code></label>
+      <label class="field">its passphrase now <input type="password" name="passphrase_{{ loop.index0 }}" autocomplete="off"></label>
+    </div>
+    {% endfor %}
+    <input type="hidden" name="store" value="{{ default_store }}">
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes"> Re-encrypt the ticked key files</label>
+    <button type="submit">Let FleetLedger look after them</button>
+  </form>
+</details>
+{% endif %}
+{% endif %}
+</section>
+
+{% if inv is not none %}
+{# --- 2. where Ships run ------------------------------------------------------------ #}
+<section id="hypervisor" class="setup-step">
+<h2>2. Where Ships run</h2>
+{% set hyper = steps[1] %}
+{% if px.stage == 'token' %}
+  <p>FleetLedger talks to Proxmox's API at <code>{{ px.api_url }}</code>.</p>
+  {% if px.pinned %}
+  <div class="warning">
+    <strong>The certificate is DIFFERENT from the one you confirmed before.</strong>
+    <dl><dt>confirmed before</dt><dd><code>{{ px.pinned }}</code></dd>
+        <dt>presented now</dt><dd><code>{{ px.fingerprint }}</code></dd></dl>
+    <p>Either the host's certificate was re-generated (a reinstall, or a certificate you
+      installed), or something between you and the host is intercepting the connection.
+      Only continue if you know it was renewed, after checking the new fingerprint on the
+      host.</p>
+  </div>
+  {% endif %}
+  <form method="post" action="/setup/proxmox/token" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p>The server's certificate (SHA-256):<br><code class="fingerprint">{{ px.fingerprint }}</code></p>
+    <p class="hint">Compare it with the one on the Proxmox host (as root), so you know you are
+      talking to your host:
+      <code>openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256</code>
+      <button type="button" class="ghost" data-copy="openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256">Copy</button>
+      (or the web interface: the node, then System, then Certificates).</p>
+    <label class="confirm"><input type="checkbox" name="matches" value="yes"> It matches: pin it</label>
+    {% if px.pinned %}<label class="confirm"><input type="checkbox" name="changed_ok" value="yes"> I know the host's certificate was renewed</label>{% endif %}
+    <label class="field">API token id <input name="token_id" value="{{ px.token_id }}" placeholder="shipshape@pve!build" required></label>
+    <label class="field">Token secret <input type="password" name="secret" autocomplete="off"></label>
+    <p class="hint">A Proxmox API token that may manage one pool of VMs, and nothing else.
+      FleetLedger uses it to create, start and remove Ships. It is checked against the API
+      (through the pinned certificate) before it is kept, in
+      {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
+      {% if px.token_id %}Leave the secret empty to use the one already stored for this token.{% endif %}</p>
+    <details class="advanced"><summary>No token yet?</summary>
+      <p>Run these as root on the Proxmox host (they make the user, its roles and a token
+        scoped to the pool; change the two names at the top first). The token's secret is
+        printed once: paste it above.</p>
+      <pre class="log">{{ token_commands|join('\n') }}</pre>
+      <button type="button" class="ghost" data-copy="{{ token_commands|join('\n') }}">Copy</button>
+    </details>
+    <details class="advanced"><summary>Advanced</summary>
+      <label><input type="radio" name="store" value="keyring"{% if keyring_usable %} checked{% else %} disabled{% endif %}> keep the secret in your OS keyring</label>
+      <label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}> in a file only you can read (0600)</label>
+    </details>
+    <button type="submit">Check the token</button>
+  </form>
+  <form method="post" action="/setup/proxmox/cancel" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="ghost">Cancel</button></form>
+{% elif px.stage == 'choose' %}
+  <p>The token works: Proxmox VE {{ px.version }}, node <code>{{ px.node }}</code>. Its
+    secret is in {{ px.where }}. This is what it can see, pre-filled:</p>
+  {% if px.problems %}
+  <div class="warning">
+    <p><strong>Still missing on the Proxmox host:</strong></p>
+    <ul>{% for what, _ in px.problems %}<li>{{ what }}</li>{% endfor %}</ul>
+    <p>Run these as root on the Proxmox host, then check again. Nothing is saved until
+      everything is there.</p>
+    {% set lines = [] %}{% for _, ls in px.problems %}{% for l in ls %}{% set _ = lines.append(l) %}{% endfor %}{% endfor %}
+    <pre class="log">{{ lines|join('\n') }}</pre>
+    <button type="button" class="ghost" data-copy="{{ lines|join('\n') }}">Copy</button>
+  </div>
+  <form method="post" action="/setup/proxmox/recheck" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="node" value="{{ px.node }}">
+    <button type="submit">Check again</button>
+  </form>
+  {% else %}
+  <form method="post" action="/setup/proxmox/save">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="settings">
+      <label>Pool for Ships<select name="pool">{% for p in px.found.pools %}<option{% if p == px.proposed.pool %} selected{% endif %}>{{ p }}</option>{% endfor %}</select></label>
+      <label>Storage for VM disks<select name="disk_storage">{% for s in px.found.disks %}<option{% if s == px.proposed.disk_storage %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+      <label>Storage for seed ISOs<select name="seed_storage">{% for s in px.found.seed_options(px.proposed.disk_storage) %}<option{% if s == px.proposed.seed_storage %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+      <label>Network bridge
+        {% if px.found.bridges %}<select name="bridge">{% for b in px.found.bridges %}<option{% if b == px.proposed.bridge %} selected{% endif %}>{{ b }}</option>{% endfor %}</select>
+        {% else %}<input name="bridge" value="{{ px.proposed.bridge or '' }}" placeholder="vmbr0" required>{% endif %}</label>
+      <label>Template VM<select name="template_vmid">{% for vmid, name in px.found.templates %}<option value="{{ vmid }}"{% if vmid == px.proposed.template_vmid %} selected{% endif %}>{{ vmid }}{% if name %} ({{ name }}){% endif %}</option>{% endfor %}</select></label>
+    </div>
+    <p class="hint">The pool holds the Ships' VMs; the seed storage holds each new Ship's
+      first-boot settings (with its host key) until it enrols, so it is one that holds only
+      ISOs; the template is the VM each Ship is cloned from.</p>
+    <details class="advanced"><summary>Advanced</summary>
+      <div class="settings">
+        <label>Storage for baked image uploads (optional)<select name="image_storage"><option value="">none</option>{% for s in px.found.uploads %}<option{% if s == px.proposed.image_storage %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+        <label>VM ids FleetLedger may use<input name="vmid_range" placeholder="e.g. 9100-9199 (any free one)"></label>
+      </div>
+    </details>
+    <button type="submit">Test the connection and save</button>
+  </form>
+  {% endif %}
+  {% if px.nodes|length > 1 %}
+  <form method="post" action="/setup/proxmox/recheck" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Node<select name="node">{% for n in px.nodes %}<option{% if n == px.node %} selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
+    <button type="submit" class="ghost">Use this node</button>
+  </form>
+  {% endif %}
+  <form method="post" action="/setup/proxmox/cancel" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="ghost">Cancel</button></form>
+{% elif px.stage == 'address' or hyper.state != 'done' %}
+  <p>FleetLedger can create, start and remove Ships for you on <strong>Proxmox VE</strong>,
+    through an API token that may touch one pool of VMs. With any other hypervisor, choose
+    manual: FleetLedger writes each Ship's first-boot ISO and prints the steps.</p>
+  <form method="post" action="/setup/proxmox/address" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Proxmox address <input name="address" placeholder="pve.example.com or 192.0.2.10:8006" required></label>
+    <button type="submit">Connect</button>
+  </form>
+  <form method="post" action="/setup/hypervisor/manual" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="ghost">Manual instead</button>
+  </form>
+{% else %}
+  <p>{{ hyper.summary }}</p>
+  <form method="post" action="/setup/proxmox/start" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="ghost">{{ 'Change the Proxmox settings' if inv.defaults.driver == 'proxmox' else 'Switch to Proxmox' }}</button>
+  </form>
+  {% if inv.defaults.driver == 'proxmox' %}
+  <form method="post" action="/setup/hypervisor/manual" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="ghost">Use manual instead</button>
+  </form>
+  {% endif %}
+{% endif %}
+{% if state.old_copy %}
+  <form method="post" action="/setup/proxmox/forget-old" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <span>The previous token secret is still in {{ 'your keyring' if state.old_copy.kind == 'keyring' else state.old_copy.where }}, which FleetLedger no longer uses.</span>
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes"> remove it</label>
+    <button type="submit" class="ghost">OK</button>
+  </form>
+{% endif %}
+</section>
+
+{# --- 3. the overlay --------------------------------------------------------------- #}
+<section id="overlay" class="setup-step">
+<h2>3. Reach Ships from anywhere <span class="quiet">(optional)</span></h2>
+{% if inv.overlay %}
+  <p>{{ steps[2].summary }} New Ships join it once they enrol.</p>
+  {% if state.overlay_checks %}<ul class="checks">{% for ok, text in state.overlay_checks %}<li class="{{ 'good' if ok else 'bad' }}">{{ text }}</li>{% endfor %}</ul>{% endif %}
+{% else %}
+  <p>With Tailscale, you reach your Ships from anywhere (a phone hotspot, say) with no ports
+    opened on your router; SSH with each Ship's pinned key is still the only way in.
+    FleetLedger makes each Ship a single-use key with an OAuth client that may do only
+    that. You can do this later.</p>
+  <ol class="howto">
+    <li>In <a href="{{ TAILSCALE_ACLS }}" target="_blank" rel="noopener">Access controls</a>,
+      add these pieces to your policy (or replace Tailscale's starter policy, which lets
+      everything reach everything) and save.
+      <button type="button" class="ghost" data-copy="{{ policy }}">Copy the rules</button>
+      <details><summary>Show them</summary><pre class="log">{{ policy }}</pre></details>
+      <span class="hint">They let your own devices reach Ships on port 22, and nothing reach
+        your devices from a Ship.</span></li>
+    <li>In <a href="{{ TAILSCALE_OAUTH }}" target="_blank" rel="noopener">Trust credentials</a>,
+      make an OAuth client: Auth Keys, Write; tag <code>tag:ship</code>. Copy its client id
+      and secret.</li>
+    <li>Paste them here. FleetLedger checks the client signs in, can make <code>tag:ship</code>
+      keys (which shows step 1 worked), and has the right scopes, before saving anything.</li>
+  </ol>
+  <form method="post" action="/setup/overlay" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">OAuth client id <input name="client_id" required></label>
+    <label class="field">Client secret <input type="password" name="secret" autocomplete="off"></label>
+    <p class="hint">Kept in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
+      If you already put it in your keyring (service <code>fleetledger</code>, item
+      <code>tailscale-oauth:&lt;client id&gt;</code>), leave this empty.</p>
+    <details class="advanced"><summary>Advanced</summary>
+      <label><input type="radio" name="level" value="keys" checked> keys only (Auth Keys: Write)</label>
+      <label><input type="radio" name="level" value="devices"> also remove destroyed Ships' devices (adds devices:core, which can change any device in your tailnet)</label>
+      <label><input type="radio" name="store" value="keyring"{% if keyring_usable %} checked{% else %} disabled{% endif %}> keep the secret in your OS keyring</label>
+      <label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}> in a file only you can read (0600)</label>
+      <p class="hint">Headscale, pasted keys and the policy level: <code>ship-fleet overlay setup</code>.</p>
+    </details>
+    <button type="submit">Check and save</button>
+  </form>
+  {% if not state.overlay_skipped %}
+  <form method="post" action="/setup/overlay/skip" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="ghost">Skip for now</button>
+  </form>
+  {% endif %}
+{% endif %}
+</section>
+
+{# --- 4. the first Ship ------------------------------------------------------------- #}
+<section id="ship" class="setup-step">
+<h2>4. Your first Ship</h2>
+{% if steps[3].state == 'done' and not state.ship %}
+  <p>{{ steps[3].summary }} <a href="/">Go to your fleet</a>.</p>
+{% elif steps[1].state != 'done' %}
+  <p class="quiet">Once you have chosen where Ships run.</p>
+{% else %}
+  {% if not admin_managed and agent_ok is not true %}
+  <p class="warning">Making a Ship needs your fleet admin key in ssh-agent, and it keeps a
+    passphrase you chose. In a terminal: <code>ssh-add {{ inv.doc.fleet.admin_key }}</code>,
+    or let FleetLedger look after it (step 1, Advanced).</p>
+  {% endif %}
+  {% if state.ship %}
+    {% with job=state.ship, lines=state.ship.snapshot() %}{% include "_setup_ship.html" %}{% endwith %}
+  {% else %}
+  <p>A Ship is a VM where your agents work. FleetLedger makes it, waits until it is
+    provisioned and checked, and then you sign it in to Claude (and GitHub and Google Cloud
+    if you use them).</p>
+  <form method="post" action="/setup/ship" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Name <input name="name" value="ship-01" pattern="[a-z0-9][a-z0-9-]{0,30}" required></label>
+    <label>Tag <input name="tag" placeholder="e.g. work (optional)" pattern="[a-z0-9][a-z0-9-]{0,30}"></label>
+    <button type="submit">Make it</button>
+  </form>
+  {% endif %}
+{% endif %}
+</section>
+{% endif %}
+{% endblock %}

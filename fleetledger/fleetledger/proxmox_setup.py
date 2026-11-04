@@ -346,27 +346,38 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
             secret_path = paths.config_dir() / SECRET_FILE
     app.say(f"\nThe token works: Proxmox VE {version.get('version', '?')}, "
             "through the pinned certificate.")
-    if store_kind == "keyring":
-        if not reused:
-            secret_store.store_in_keyring(item, secret, proxmox_api.TOKEN_SWITCH_HINT)
-        config.update(token_store="keyring", keyring_item=item)
-        app.say(f"The secret is in your OS keyring ({secret_store.SERVICE} / {item}).")
-    else:
-        if not reused:
-            paths.private_dir(secret_path.parent)
-            paths.write_private(secret_path, (secret + "\n").encode("utf-8"))
-        config["token_file"] = _tilde(secret_path)
-        app.say(f"The secret is in {secret_path} (0600).")
+    where = keep_secret(config, secret, store_kind, reused=reused, secret_path=secret_path)
+    app.say(f"The secret is in {where}.")
 
     match = re.match(r"^(\d+)\.", str(version.get("version", "")))
     result = _discover(app, store, api, config, old, versions,
                        pve_major=int(match.group(1)) if match else 9)
     if result.saved:
-        _progress_path().unlink(missing_ok=True)
         _forget_old_copy(app, saved, config)
     else:
         _save_progress(config)
     return result
+
+
+def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused: bool = False,
+                secret_path: Path | None = None) -> str:
+    """Store a checked token secret (unless reused from there) and record where in
+    config. Returns where, in words."""
+    item = secret_store.proxmox_item(config["token_id"])
+    if store_kind == "keyring":
+        if not reused:
+            secret_store.store_in_keyring(item, secret, proxmox_api.TOKEN_SWITCH_HINT)
+        config.update(token_store="keyring", keyring_item=item)
+        config.pop("token_file", None)
+        return f"your OS keyring ({secret_store.SERVICE} / {item})"
+    path = secret_path or paths.config_dir() / SECRET_FILE
+    if not reused:
+        paths.private_dir(path.parent)
+        paths.write_private(path, (secret + "\n").encode("utf-8"))
+    config["token_file"] = _tilde(path)
+    config.pop("token_store", None)
+    config.pop("keyring_item", None)
+    return f"{path} (0600)"
 
 
 def _secret_location(config: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -509,67 +520,160 @@ def _get(api, path: str, **params: Any) -> Any:
         raise
 
 
-def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
-              versions: Mapping[str, Any], *, pve_major: int = 9) -> Result:
-    n = Names(token_id=config["token_id"], pve_major=pve_major)
-    todo: list[tuple[str, list[str]]] = []  # (what is missing, root commands)
+@dataclass
+class Found:
+    """What the token can see on one node: everything setup offers to choose from."""
 
-    # Node.
+    node: str
+    pools: list[str]
+    disks: list[str]       # storages for VM disks (content "images")
+    isos: dict[str, bool]  # ISO storages -> holds nothing else (only those may hold seeds)
+    uploads: list[str]     # storages for baked image uploads (content "import")
+    bridges: list[str]     # bridges the token has SDN.Use on
+    any_bridge: bool       # SDN.Use granted on a parent path: any bridge, none listed
+    templates: list[tuple[int, str]]  # (vmid, name) of template VMs on the node
+    perms: dict[str, Any]
+    pve_major: int = 9
+
+    def seed_options(self, disk: str | None) -> list[str]:
+        return sorted(s for s, only_iso in self.isos.items() if only_iso and s != disk)
+
+
+def list_nodes(api) -> list[str]:
     nodes = sorted(str(e["node"]) for e in (_get(api, "/nodes") or [])
                    if e.get("node") and e.get("status", "online") == "online"
                    and NAME_RE.match(str(e["node"])))
     if not nodes:
         raise FleetError("The token sees no online Proxmox node.",
                          hint="Check the node is up, and that the token is the one you made.")
-    node = _pick(app, "Node", nodes, old.get("node"))
+    return nodes
 
-    # Pool.
+
+def find(api, node: str, pve_major: int = 9) -> Found:
+    """Read what the token can see (GETs only; a 403 reads as "cannot see it")."""
     # (Nested pools, a/b, are not supported: ships.toml takes a plain name.)
     pools = sorted(str(e["poolid"]) for e in (_get(api, "/pools") or [])
                    if e.get("poolid") and NAME_RE.match(str(e["poolid"])))
-    if pools:
-        n.pool = _pick(app, "Pool for Ships", pools, old.get("pool") or "shipshape")
-    else:
+    storages = [e for e in (_get(api, f"/nodes/{node}/storage") or [])
+                if e.get("storage") and e.get("enabled", 1) and e.get("active", 1)]
+    perms = _get(api, "/access/permissions") or {}
+    resources = _get(api, "/cluster/resources", type="vm") or []
+    return Found(
+        node=node,
+        pools=pools,
+        disks=sorted(e["storage"] for e in storages if "images" in _content(e)),
+        isos={e["storage"]: _content(e) - {""} == {"iso"}
+              for e in storages if "iso" in _content(e)},
+        uploads=sorted(e["storage"] for e in storages if "import" in _content(e)),
+        bridges=[b for b in bridges_from(perms) if BRIDGE_RE.match(b)],
+        any_bridge="SDN.Use" in effective(perms, "/sdn/zones/localnetwork/-"),
+        templates=sorted((int(e["vmid"]), str(e.get("name", ""))) for e in resources
+                         if e.get("template") and e.get("node") == node and "vmid" in e
+                         and e.get("type", "qemu") == "qemu"),
+        perms=perms,
+        pve_major=pve_major,
+    )
+
+
+def defaults(found: Found, old: Mapping[str, Any]) -> dict[str, Any]:
+    """The values setup proposes: what ships.toml had, else the likeliest."""
+    def prefer(options, *wanted):
+        for value in wanted:
+            if value in options:
+                return value
+        return options[0] if options else None
+
+    disk = prefer(found.disks, old.get("disk_storage"))
+    seeds = found.seed_options(disk)
+    template = prefer([v for v, _ in found.templates], old.get("template_vmid"),
+                      *[v for v, name in found.templates if name == "shipshape-base"])
+    return {
+        "pool": prefer(found.pools, old.get("pool"), "shipshape"),
+        "disk_storage": disk,
+        "seed_storage": prefer(seeds, old.get("seed_storage"),
+                               *[s for s in seeds if "seed" in s]),
+        "image_storage": prefer(found.uploads, old.get("image_storage")),
+        "bridge": prefer(found.bridges, old.get("bridge")) or (
+            old.get("bridge") if found.any_bridge else None),
+        "template_vmid": template,
+    }
+
+
+def problems(found: Found, n: Names, versions: Mapping[str, Any],
+             old: Mapping[str, Any]) -> list[tuple[str, list[str]]]:
+    """(what is missing, the root commands that add it), for the names chosen in n."""
+    todo: list[tuple[str, list[str]]] = []
+    if not found.pools:
         todo.append(("a pool the token can use", [
             f'pveum pool add {_q(n.pool)} --comment "ShipShape Ships"   # if it does not exist',
             *_grant(f"/pool/{n.pool}", "ShipShapeVM", n)]))
-
-    # Storages.
-    storages = [e for e in (_get(api, f"/nodes/{node}/storage") or [])
-                if e.get("storage") and e.get("enabled", 1) and e.get("active", 1)]
-    disks = sorted(e["storage"] for e in storages if "images" in _content(e))
-    seeds = sorted(e["storage"] for e in storages if "iso" in _content(e))
-    uploads = sorted(e["storage"] for e in storages if "import" in _content(e))
-    if disks:
-        n.disk = _pick(app, "Storage for VM disks", disks, old.get("disk_storage"))
-    else:
+    if not found.disks:
         todo.append(("a VM disk storage the token can use (pvesm status lists them)",
                      [*_variables(Names(bridge="x")),
                       *_grant("/storage/$DISK_STORAGE", "ShipShapeDisks", n)]))
     # Seeds hold each new Ship's host key until it enrols, and the token may delete
     # there: only a storage that holds nothing but ISOs will do.
-    seed_options = [s for s in seeds if s != n.disk and _content(
-        next(e for e in storages if e["storage"] == s)) - {""} == {"iso"}]
-    if seed_options:
-        preferred = old.get("seed_storage") or next(
-            (s for s in seed_options if "seed" in s), None)
-        n.seeds = _pick(app, "Storage for seed ISOs", seed_options, preferred)
-    else:
+    if not found.seed_options(n.disk if found.disks else None):
         todo.append(("a storage only for seed ISOs (it holds each new Ship's host key until "
                      "it enrols, so keep it apart)", seed_storage_commands(n)))
-    image_storage = None
-    if uploads:
-        options = ["none", *uploads]
-        choice = _pick(app, "Storage for baked image uploads (optional)", options,
-                       old.get("image_storage") or uploads[0])
-        image_storage = None if choice == "none" else choice
+    if not found.bridges and not found.any_bridge:
+        todo.append(("a network bridge the token may use",
+                     [*_variables(Names(disk="x")),
+                      *_grant("/sdn/zones/localnetwork/$BRIDGE", "PVESDNUser", n)]))
+    if not todo:
+        for path, role, lacking in missing_grants(found.perms, n):
+            todo.append((f"rights on {path} ({', '.join(lacking)})", _grant(path, role, n)))
+    if not todo and not found.templates:
+        vmid = old.get("template_vmid") or 9000
+        todo.append(("a template VM in the pool (from Ubuntu's signed cloud image, at the "
+                     "pinned build)",
+                     [f"pveum pool modify {_q(n.pool)} --vms {vmid}   # if you already made "
+                      "the template: add it to the pool; else, all of this:",
+                      *template_commands(n, versions, vmid)]))
+    return todo
 
-    # Bridge: the token may use the bridges it has SDN.Use on.
-    perms = _get(api, "/access/permissions") or {}
-    bridges = [b for b in bridges_from(perms) if BRIDGE_RE.match(b)]
-    if bridges:
-        n.bridge = _pick(app, "Network bridge", bridges, old.get("bridge"))
-    elif "SDN.Use" in effective(perms, "/sdn/zones/localnetwork/-"):
+
+def snapshot_hint(found: Found, pool: str) -> str | None:
+    if set(SNAPSHOT_PRIVS) <= effective(found.perms, f"/pool/{pool}"):
+        return None
+    return f'pveum role modify ShipShapeVM --append 1 --privs "{" ".join(SNAPSHOT_PRIVS)}"'
+
+
+ORDER = ("api_url", "node", "pool", "template_vmid", "seed_storage", "disk_storage", "bridge",
+         "image_storage", "token_id", "token_store", "keyring_item", "token_file",
+         "tls_fingerprint", "vmid_range")
+
+
+def save(store, config: Mapping[str, Any]) -> None:
+    """[drivers.proxmox] (complete) and defaults.driver = proxmox, in one edit."""
+    ordered = {k: config[k] for k in ORDER if config.get(k) is not None}
+    with store.edit() as ed:
+        ed.set_driver("proxmox", ordered)
+        ed.set_default("driver", "proxmox")
+    _progress_path().unlink(missing_ok=True)
+
+
+def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
+              versions: Mapping[str, Any], *, pve_major: int = 9) -> Result:
+    n = Names(token_id=config["token_id"], pve_major=pve_major)
+    node = _pick(app, "Node", list_nodes(api), old.get("node"))
+    found = find(api, node, pve_major)
+    proposed = defaults(found, old)
+    if found.pools:
+        n.pool = _pick(app, "Pool for Ships", found.pools, proposed["pool"])
+    if found.disks:
+        n.disk = _pick(app, "Storage for VM disks", found.disks, proposed["disk_storage"])
+    seeds = found.seed_options(n.disk if found.disks else None)
+    if seeds:
+        n.seeds = _pick(app, "Storage for seed ISOs", seeds, proposed["seed_storage"])
+    image_storage = None
+    if found.uploads:
+        choice = _pick(app, "Storage for baked image uploads (optional)",
+                       ["none", *found.uploads], proposed["image_storage"])
+        image_storage = None if choice == "none" else choice
+    if found.bridges:
+        n.bridge = _pick(app, "Network bridge", found.bridges, proposed["bridge"])
+    elif found.any_bridge:
         # Granted on a parent path: every bridge is allowed, and the API lists none.
         app.say("The token may use any bridge (granted on a parent SDN path).")
         while True:
@@ -580,37 +684,8 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
                 n.bridge = typed
                 break
             app.note("A bridge name: letters, digits, _ . and -, up to 32.")
-    else:
-        todo.append(("a network bridge the token may use",
-                     [*_variables(Names(disk="x")),
-                      *_grant("/sdn/zones/localnetwork/$BRIDGE", "PVESDNUser", n)]))
 
-    # The rights on what was found.
-    if not todo:
-        for path, role, lacking in missing_grants(perms, n):
-            todo.append((f"rights on {path} ({', '.join(lacking)})", _grant(path, role, n)))
-
-    # Template.
-    template = None
-    if not todo:
-        resources = _get(api, "/cluster/resources", type="vm") or []
-        templates = sorted((int(e["vmid"]), str(e.get("name", ""))) for e in resources
-                           if e.get("template") and e.get("node") == node and "vmid" in e
-                           and e.get("type", "qemu") == "qemu")
-        if templates:
-            labels = [f"{vmid} ({name})" if name else str(vmid) for vmid, name in templates]
-            preferred = next((label for (vmid, name), label in zip(templates, labels, strict=True)
-                              if vmid == old.get("template_vmid") or name == "shipshape-base"),
-                             None)
-            template = int(_pick(app, "Template VM", labels, preferred).split()[0])
-        else:
-            vmid = old.get("template_vmid") or 9000
-            todo.append(("a template VM in the pool (from Ubuntu's signed cloud image, at the "
-                         "pinned build)",
-                         [f"pveum pool modify {_q(n.pool)} --vms {vmid}   # if you already made "
-                          "the template: add it to the pool; else, all of this:",
-                          *template_commands(n, versions, vmid)]))
-
+    todo = problems(found, n, versions, old)
     if todo:
         app.say("\nStill missing on the Proxmox host:")
         for what, _ in todo:
@@ -621,24 +696,21 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
                 "offered again\nrather than retyped.")
         return Result(False, "missing pieces on the host")
 
-    if not set(SNAPSHOT_PRIVS) <= effective(perms, f"/pool/{n.pool}"):
-        app.say("\nOptional: snapshots need two more rights (ship-fleet snapshot); on the host:\n"
-                f'  pveum role modify ShipShapeVM --append 1 --privs "{" ".join(SNAPSHOT_PRIVS)}"')
+    labels = [f"{vmid} ({name})" if name else str(vmid) for vmid, name in found.templates]
+    preferred = next((label for label in labels
+                      if label.split()[0] == str(proposed["template_vmid"])), None)
+    template = int(_pick(app, "Template VM", labels, preferred).split()[0])
+
+    hint = snapshot_hint(found, n.pool)
+    if hint:
+        app.say("\nOptional: snapshots need two more rights (ship-fleet snapshot); on the "
+                f"host:\n  {hint}")
 
     vmid_range = _vmid_range(app, old.get("vmid_range"))
     config.update(node=node, pool=n.pool, template_vmid=template, seed_storage=n.seeds,
-                  disk_storage=n.disk, bridge=n.bridge)
-    if image_storage:
-        config["image_storage"] = image_storage
-    if vmid_range:
-        config["vmid_range"] = vmid_range
-    ordered = {k: config[k] for k in (
-        "api_url", "node", "pool", "template_vmid", "seed_storage", "disk_storage", "bridge",
-        "image_storage", "token_id", "token_store", "keyring_item", "token_file",
-        "tls_fingerprint", "vmid_range") if k in config}
-    with store.edit() as ed:
-        ed.set_driver("proxmox", ordered)
-        ed.set_default("driver", "proxmox")
+                  disk_storage=n.disk, bridge=n.bridge, image_storage=image_storage,
+                  vmid_range=vmid_range)
+    save(store, config)
     app.say("\nSaved [drivers.proxmox] in ships.toml; new Ships are made on Proxmox.")
     return Result(True)
 

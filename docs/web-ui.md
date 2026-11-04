@@ -1,8 +1,81 @@
 # The web UI (`ship-fleet ui`)
 
-FleetLedger's dashboard and login concierge, in your browser, on your own
-computer only. The CLI stays complete: everything the UI does, a `ship-fleet`
-command does too, and the UI runs the same code.
+FleetLedger's setup, dashboard and login concierge, in your browser, on your
+own computer only. The CLI stays complete: everything the UI does, a
+`ship-fleet` command does too, and the UI runs the same code.
+
+## First run: the setup page
+
+```sh
+ship-fleet setup              # opens the setup page (Ctrl-C to stop)
+ship-fleet setup --no-browser # prints the link instead
+ship-fleet setup --text       # the same steps in the terminal (no browser here)
+```
+
+`ship-fleet ui` on a computer that is not set up opens the same page, and it is
+always under **Setup** in the menu. It starts with one choice:
+
+- **New fleet (recommended).** FleetLedger makes every key it needs (its admin
+  key, which logs in to Ships, and the host and user CA keys) and looks after
+  them; see "Keys FleetLedger looks after" below. The only key question is which
+  of your SSH keys may log in to Ships: your `~/.ssh/id_ed25519.pub` (or another
+  found there) is proposed, or FleetLedger makes one for you.
+- **Connect to an existing fleet or keys.** Use the admin and CA keys you
+  already have, from another computer say, where they are. They keep their
+  passphrases (you load them with `ssh-add`), unless you hand them over:
+  type each current passphrase once and FleetLedger re-encrypts the files with
+  passphrases it keeps. The keys themselves stay the same.
+
+Then, each step showing **done** or **next**:
+
+1. **Where Ships run.** For Proxmox: the address; the server's certificate
+   fingerprint, shown with the command to compare it on the host, then pinned
+   when you tick that it matches; the API token id and secret, checked through
+   the pin before anything is stored. FleetLedger then finds the node, pool,
+   storages, bridge and template the token can see and fills them in. Anything
+   missing on the host comes back as the exact root commands, with a copy
+   button and a **Check again**; nothing is saved until everything is there, and
+   a last connection test runs before saving. A certificate that differs from
+   the one you confirmed before is flagged, with both fingerprints, and needs its
+   own tick. Or manual: FleetLedger writes each Ship's first-boot ISO and prints
+   the steps.
+2. **Reach Ships from anywhere (optional).** Links to the two Tailscale admin
+   pages, the access rules with a copy button, then the OAuth client's id and
+   secret. Before saving, FleetLedger checks the client signs in, can make a
+   `tag:ship` key (made and deleted at once, which shows the rules are in
+   place), and has the scopes of the level. **Skip for now** is fine.
+3. **Your first Ship.** Name and tag; its progress shows live (seed, clone,
+   start, enrol, certificate), then **Sign it in** takes you to the concierge.
+
+Each step has a collapsed **Advanced** section for the rest (where secrets are
+kept, key file locations, other Proxmox storages, the VM ids FleetLedger may
+use, the overlay level). A computer part-way through, from the terminal wizard
+or an older setup, shows its finished steps as done and can change any of them
+(manual to Proxmox, say); keys you chose passphrases for are offered, opt-in,
+to FleetLedger's care. Nothing is deleted or rewritten without a click.
+
+### Keys FleetLedger looks after
+
+Each is an ordinary OpenSSH ed25519 key, encrypted with a random 256-bit
+passphrase that FleetLedger keeps in your OS keyring (service `fleetledger`,
+item `key-passphrase:<key file name>-<hash of its path>`), or, where there is no usable keyring, a
+0600 file in `~/.config/fleetledger/key-passphrases/`. FleetLedger types the
+passphrase itself, into `ssh-keygen` and `ssh-add`, through a terminal it
+drives: never on a command line, in the environment, a log or on screen. When a
+command needs the keys, FleetLedger loads them into your ssh-agent, or into one
+of its own when none is running. That agent listens on `agent.sock` in
+FleetLedger's private runtime folder (`$XDG_RUNTIME_DIR/fleetledger/`, or a
+private `/tmp/fleetledger-<your uid>/` when that path is too long for a socket),
+drops the keys after 8 hours (FleetLedger loads them again when it next needs
+them) and keeps running after `ship-fleet` exits, until you log out. To stop it:
+`pkill -u "$USER" -f 'ssh-agent -a .*fleetledger.*/agent.sock'`.
+`ships.toml` lists them under `[fleet.managed_keys]`; `ship-fleet doctor`
+checks each passphrase can be read. What this protects: a copy of the key files
+(a backup, a lost disk) is useless without the keyring. What it does not: any
+program running as you while the keyring is unlocked can read the passphrases,
+as it can use ssh-agent.
+
+## Every day
 
 ```sh
 ship-fleet ui                 # opens your browser; Ctrl-C to stop
@@ -100,6 +173,11 @@ Following Jupyter's model, adapted to "one person, one computer":
   loads anything from the network.
 - **Text from Ships is text.** Everything a Ship reports is HTML-escaped. A
   sign-in link is shown as a link only if it is a plain `https://` address.
+- **Setup's secrets.** The Proxmox token secret, an OAuth client secret and a
+  key's current passphrase are typed into password fields and arrive in a POST
+  body only. Each goes straight to its check and then to its store; none is put
+  in a URL, echoed back, flashed, logged or audited, and the server keeps none in
+  memory after the request.
 - **No secrets kept or logged.** Request logging is off (so the token link is
   never logged). The pasted code goes from the form straight to the engine
   through a one-slot queue; it is never stored on the sign-in, echoed to a page,
@@ -123,6 +201,7 @@ and htmx for polling; no front-end build.
 | File | Purpose |
 |---|---|
 | `security.py` | the gate: Host, link token, sessions, CSRF, Origin, headers |
+| `setup.py` | the setup page: the same steps as `ship-fleet setup --text`, through the same functions (keys.py, proxmox_setup.py, overlay_setup.py) |
 | `server.py` | `ship-fleet ui`: binding, the link, uvicorn (access log off) |
 | `app.py` | routes and pages |
 | `fleet.py` | the background poller; Needs attention from `ops.attention` |
@@ -131,4 +210,6 @@ and htmx for polling; no front-end build.
 | `network.py` | the Network tab and page over `fleetledger/net.py` (shared with `ship-fleet net`), plus the status `net` digest |
 
 Tests: `fleetledger/tests/test_web.py` (the gate's every check, pages, actions,
-and real sign-in sessions in a terminal driven through the browser routes).
+and real sign-in sessions in a terminal driven through the browser routes) and
+`test_websetup.py` (the setup page, with real OpenSSH keys, a fake keyring, a
+fake Proxmox and a fake Tailscale).

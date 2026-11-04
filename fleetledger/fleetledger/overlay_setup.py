@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -224,7 +225,6 @@ def _setup_oauth(app, store) -> int:
         if _ask(app, "Type yes to let the stored secret change access rules: ").lower() != "yes":
             app.say("Not that level, then. Using: devices.")
             level = "devices"
-    scopes, remove, manage = LEVELS[level]
     client_id = _ask(app, "OAuth client id: ")
     if not CLIENT_ID_RE.match(client_id):
         raise FleetError("That does not look like an OAuth client id.")
@@ -245,6 +245,49 @@ def _setup_oauth(app, store) -> int:
         if not _plausible_secret(secret):
             raise FleetError("That does not look like an OAuth client secret.")
         store_kind = _choose_store(app)
+    done = connect_oauth(app, store, client_id=client_id, secret=secret, reused=reused,
+                         store_kind=store_kind, level=level)
+    for note in done.notes:
+        app.note(note)
+    config, api, kept, manage = done.config, done.api, done.kept, done.manage
+    text, etag = done.policy_text, done.etag
+    app.say(f"\nCredentials work. Saved [overlay] in ships.toml (level {level}); the secret "
+            f"is {kept}.")
+
+    if manage:
+        provider = overlay.provider(config, api_factory=lambda _cfg: api)
+        return _merge_rules(app, provider, api, text or "{}", etag, config)
+    _print_policy(app, config)
+    app.say("Then export your policy from the admin console and run:\n"
+            "  ship-fleet overlay check --policy FILE")
+    return 0
+
+
+@dataclass
+class Connected:
+    config: dict
+    api: Any
+    kept: str
+    manage: bool
+    policy_text: str | None
+    etag: str | None
+    notes: list[str]
+
+
+def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, store_kind: str,
+                  level: str) -> Connected:
+    """Check an OAuth client with Tailscale (sign-in, scopes, what the level reads),
+    then keep the secret (unless reused from the keyring) and save [overlay].
+    Nothing is written before the checks pass. Shared by the terminal and the
+    web setup."""
+    if level not in LEVELS:
+        raise FleetError(f"Unknown level {level!r}.")
+    if not CLIENT_ID_RE.match(client_id):
+        raise FleetError("That does not look like an OAuth client id.")
+    if not _plausible_secret(secret):
+        raise FleetError("That does not look like an OAuth client secret.")
+    scopes, remove, manage = LEVELS[level]
+    item = secret_store.oauth_item(client_id)
     # Where the secret goes, and the same place recorded in ships.toml (the file
     # path honours FLEETLEDGER_CONFIG_DIR and XDG_CONFIG_HOME).
     secret_path = paths.config_dir() / SECRET_FILE
@@ -255,7 +298,7 @@ def _setup_oauth(app, store) -> int:
         api_cfg.update(secret_store="file", oauth_secret_file=_tilde(secret_path))
     api_cfg.update(key_expiry_s=600, remove_devices=remove, manage_policy=manage)
 
-    # Check the credentials before anything is written.
+    notes: list[str] = []
     api = _api(app, api_cfg, secret=lambda: secret)
     api.token()
     if api.granted is not None:
@@ -267,11 +310,11 @@ def _setup_oauth(app, store) -> int:
         wider = {"devices:core", "devices:core:read", "policy_file", "policy_file:read"}
         extra = sorted(wider & api.granted - set(scopes))
         if extra:
-            app.note(f"Note: the client also has {', '.join(extra)}, more than this level "
-                     "uses. A narrower client keeps a leaked secret less useful.")
+            notes.append(f"Note: the client also has {', '.join(extra)}, more than this level "
+                         "uses. A narrower client keeps a leaked secret less useful.")
     else:
-        app.note("Tailscale did not say which scopes the client has; checking what this "
-                 "level reads by using it (auth_keys is only tried at the first join).")
+        notes.append("Tailscale did not say which scopes the client has; checking what this "
+                     "level reads by using it (auth_keys is only tried at the first join).")
     text = etag = None
     if remove:
         api.devices()
@@ -291,16 +334,7 @@ def _setup_oauth(app, store) -> int:
               "api": api_cfg}
     with store.edit() as ed:
         ed.set_overlay(config)
-    app.say(f"\nCredentials work. Saved [overlay] in ships.toml (level {level}); the secret "
-            f"is {kept}.")
-
-    if manage:
-        provider = overlay.provider(config, api_factory=lambda _cfg: api)
-        return _merge_rules(app, provider, api, text or "{}", etag, config)
-    _print_policy(app, config)
-    app.say("Then export your policy from the admin console and run:\n"
-            "  ship-fleet overlay check --policy FILE")
-    return 0
+    return Connected(config, api, kept, manage, text, etag, notes)
 
 
 def _print_policy(app, config: dict) -> None:

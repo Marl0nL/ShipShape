@@ -24,8 +24,15 @@ from fleetledger.inventory import Inventory, Ship, now_timestamp
 from fleetledger.shipctl import ShipCtl, ShipCtlError
 
 
-def _signer(app) -> ca.Signer:
-    return getattr(app, "signer", None) or ca.Signer()
+def _signer(app, inventory=None) -> ca.Signer:
+    signer = getattr(app, "signer", None)
+    if signer is not None:
+        return signer
+    if inventory is not None:  # managed CA keys go into ssh-agent first (keys.py)
+        from fleetledger import keys
+
+        keys.ensure_loaded(inventory)
+    return ca.Signer()
 
 
 def _ssh(app, inventory):
@@ -46,9 +53,13 @@ def ca_init(args, app) -> int:
 
 
 def make_ca(app, store, host_key: str, user_key: str, *, force: bool = False,
-            no_passphrase: bool = False) -> ca.CAConfig:
-    """The host and user CA keys (each made if missing) and [ca] in ships.toml."""
+            no_passphrase: bool = False, managed: str | None = None) -> ca.CAConfig:
+    """The host and user CA keys (each made if missing) and [ca] in ships.toml.
+    managed (keyring | file): made with random passphrases FleetLedger keeps."""
+    from fleetledger import keys
+
     inv = store.load()
+    made: list[str] = []
     if ca.config(inv) is not None and not force:
         raise FleetError("FleetLedger already has a certificate authority ([ca] in ships.toml).",
                          hint="`ship-fleet ca show` lists it.")
@@ -59,6 +70,10 @@ def make_ca(app, store, host_key: str, user_key: str, *, force: bool = False,
         path = paths.expand(path_text)
         if path.exists():
             app.say(f"Using the existing {what} key {path}.")
+            continue
+        if managed:
+            keys.make(path, comment, managed)
+            made.append(path_text)
             continue
         paths.private_dir(path.parent)
         command = ["ssh-keygen", "-t", "ed25519", "-C", comment, "-f", str(path)]
@@ -72,6 +87,8 @@ def make_ca(app, store, host_key: str, user_key: str, *, force: bool = False,
             raise FleetError(f"ssh-keygen could not make the {what} key.") from exc
     with store.edit() as ed:
         ed.set_ca({"host_key": host_key, "user_key": user_key})
+        if made:
+            keys.record(ed, managed, made)
     return ca.require(store.load())
 
 
@@ -100,7 +117,7 @@ def certify(app, inv: Inventory, ship: Ship, *, force: bool = False,
                          hint=f"Update it first: ship-fleet update {ship.name}.")
     if not (force or judged.needs_cert or judged.trust_behind):
         return [f"{ship.name}: up to date."]
-    cert = ca.sign_host(_signer(app), cfg, ship) if (force or judged.needs_cert) else None
+    cert = ca.sign_host(_signer(app, inv), cfg, ship) if (force or judged.needs_cert) else None
     doc = ca.trust_document(cfg, krl, cert)
     ctl = ShipCtl(ssh, ship)
     info = ctl.ensure_compatible()
@@ -256,7 +273,7 @@ def cmd_trust(args, app) -> int:
             inv = _change_scope(app, store, inv, existing, list(dict.fromkeys(args.scope)),
                                 say=say)
     m = ca.machine(inv, name)
-    cert, serial, until = ca.sign_user(_signer(app), cfg, m, hours=args.hours)
+    cert, serial, until = ca.sign_user(_signer(app, inv), cfg, m, hours=args.hours)
     with store.edit() as ed:
         ed.set_machine_field(name, "last_serial", serial)
         ed.set_machine_field(name, "last_valid_before", ca.stamp(until))

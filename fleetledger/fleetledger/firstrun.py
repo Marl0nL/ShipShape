@@ -119,6 +119,9 @@ def fleet(app) -> tuple[list[Item], Any]:
                         f"ssh-keygen -t ed25519 -C fleetledger-admin -f {_tilde(admin)}"
                         if not admin.exists() else
                         f"ssh-keygen -y -f {_tilde(admin)} > {_tilde(public)}"))
+    elif admin in _managed(inv)[1]:
+        out.append(Item("fleet", "admin key", "ok", str(admin)))
+        out.extend(_managed_items(inv))
     else:
         out.append(Item("fleet", "admin key", "ok", str(admin)))
         held = agent_fingerprints(run)
@@ -159,6 +162,34 @@ def fleet(app) -> tuple[list[Item], Any]:
                         ("missing key files: " + ", ".join(gone)) if gone else "host and user CA",
                         "ship-fleet ca init --force" if gone else ""))
     return out, inv
+
+
+def _managed(inv):
+    from fleetledger import keys
+
+    return keys.managed(inv)
+
+
+def _managed_items(inv) -> list[Item]:
+    """Keys FleetLedger looks after: can it read each passphrase? (It loads them into
+    ssh-agent itself when needed, so the agent is not checked.) Read-only."""
+    from fleetledger import keys
+
+    store, managed = keys.managed(inv)
+    problems = []
+    for key in managed:
+        if not key.exists():
+            problems.append(Item("fleet", "managed keys", "fail", f"{key} is gone",
+                                 "ship-fleet setup   (or restore it from a backup)"))
+            continue
+        try:
+            keys.read_passphrase(key, store)
+        except FleetError as exc:
+            problems.append(Item("fleet", "managed keys", "fail",
+                                 f"{key.name}: {exc.message}", exc.hint or "ship-fleet setup"))
+    return problems or [Item("fleet", "managed keys", "ok",
+                             f"{len(managed)} key(s); passphrases in {keys.describe(store)}; "
+                             "loaded into ssh-agent when needed")]
 
 
 def _tilde(path) -> str:

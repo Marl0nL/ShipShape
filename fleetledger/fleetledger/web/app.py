@@ -32,7 +32,7 @@ from fleetledger import commands, net, ops
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, network
+from fleetledger.web import actions, network, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.security import Gate, GateMiddleware, Session
@@ -72,6 +72,9 @@ class UI:
     concierge: Concierge
     operations: actions.Operations
     env: Environment
+    setups: Any = None  # web.setup.Setups: each session's progress through /setup
+    start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
+    started: set[str] = dataclasses.field(default_factory=set)
     flashes: dict[str, list[tuple[str, str]]] = dataclasses.field(default_factory=dict)
 
     def flash(self, session: Session, kind: str, text: str) -> None:
@@ -229,6 +232,11 @@ def _tag_param(request: Request) -> str | None:
 
 async def home(request: Request) -> Response:
     ui = ui_of(request)
+    session = session_of(request)
+    first = session.id not in ui.started
+    ui.started.add(session.id)
+    if not ui.app.store_factory().exists() or (first and ui.start_page):
+        return RedirectResponse(ui.start_page or "/setup", status_code=303)
     ui.fleet.touch()
     return render(request, "fleet.html", tags=ui.fleet.snapshot.tags(),
                   **_fleet_context(ui, _tag_param(request)))
@@ -636,7 +644,8 @@ async def audit_page(request: Request) -> Response:
 
 
 def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
-               concierge_: Concierge | None = None) -> Starlette:
+               concierge_: Concierge | None = None, start_page: str | None = None
+               ) -> Starlette:
     """The ASGI app behind the gate. `app` is a cli.App (the outside world)."""
     fleet = fleet or Fleet(app)
     concierge_ = concierge_ or Concierge(
@@ -665,10 +674,12 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/flows/{flow}/terminal", flow_terminal),
         WebSocketRoute("/flows/{flow}/ws", flow_socket),
         Route("/audit", audit_page),
+        *setup.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)
     operations = actions.Operations(app, on_finished=fleet.poll)
     web.state.ui = UI(app=app, gate=gate, fleet=fleet, concierge=concierge_,
-                      operations=operations, env=make_env())
+                      operations=operations, env=make_env(), setups=setup.Setups(),
+                      start_page=start_page)
     return GateMiddleware(web, gate)
