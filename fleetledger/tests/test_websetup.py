@@ -868,3 +868,22 @@ def test_the_first_ship_lets_this_computer_attach(chosen, monkeypatch):
         time.sleep(0.05)
     assert trusted == [True]
     assert "<code>herdr --remote ship-01</code>" in response.text
+
+
+def test_the_first_ship_can_be_sized(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    text = page(chosen)
+    assert 'name="cores" type="number" min="1" max="128" value="4"' in text  # the defaults
+    assert 'name="memory_gb" type="number" min="1" max="1024" value="8"' in text
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "cores": "8", "memory_gb": "16",
+                                            "disk_gb": "80"})
+    assert (args.cores, args.memory_mb, args.disk_gb) == (8, 16384, 80)
+
+
+def test_a_silly_size_makes_nothing(chosen, monkeypatch):
+    from fleetledger import commands
+
+    monkeypatch.setattr(commands, "cmd_new", lambda args, app: pytest.fail("made"))
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/ship", {"name": "ship-01", "cores": "0"})
+    assert "cores: 1 to 128" in page(chosen)

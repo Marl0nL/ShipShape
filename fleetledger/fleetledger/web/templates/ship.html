@@ -244,6 +244,23 @@
     </form>
   </section>
   <section>
+    <h2>Size</h2>
+    {% set size = snap.inventory.effective_size(ship) %}
+    <form method="post" action="/ships/{{ ship.name }}/size" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>CPU cores <input name="cores" type="number" min="1" max="128" value="{{ size.cores }}"></label>
+      <label>Memory (GB) <input name="memory_gb" type="number" min="1" max="1024" value="{{ size.memory_mb // 1024 }}"></label>
+      <label>Disk (GB) <input name="disk_gb" type="number" min="{{ size.disk_gb }}" max="16384" value="{{ size.disk_gb }}"></label>
+      <label class="confirm"><input type="checkbox" name="restart" value="yes"> restart it now</label>
+      <button type="submit">Resize</button>
+    </form>
+    <p class="hint">Cores and memory change when the VM next restarts through the hypervisor
+      (tick "restart it now", or stop and start it); a reboot from inside the Ship does not
+      apply them. The disk can grow but never shrink: it grows at once, and the Ship's
+      filesystem fills it at its next boot. A restart stops its agents for a minute; they
+      start again on their own.</p>
+  </section>
+  <section>
     <h2>Tags</h2>
     <form method="post" action="/ships/{{ ship.name }}/tags" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">

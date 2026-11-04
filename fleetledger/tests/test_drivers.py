@@ -50,6 +50,7 @@ class FakeAPI:
         self.vms = vms or {}
         self.snaps = list(snapshots)
         self.tasks = 0
+        self.config_extra = {}  # more of a VM's config (disks, boot order), for resize
 
     def _task(self, method, path, params):
         self.calls.append((method, path, params))
@@ -73,7 +74,8 @@ class FakeAPI:
                 raise ProxmoxError(f"Configuration file '{vmid}.conf' does not exist", status=500)
             if name == "403":
                 raise ProxmoxError("Permission check failed (VM.Audit)", status=403)
-            return {"name": name, "template": 1} if template else {"name": name}
+            base = {"name": name, "template": 1} if template else {"name": name}
+            return {**base, **self.config_extra}
         if path.endswith("/snapshot"):
             return [*self.snaps, {"name": "current", "description": "You are here!"}]
         if path.endswith("/agent/network-get-interfaces"):
@@ -569,3 +571,44 @@ def test_drivers_without_snapshots_say_so():
                  lambda: bare.publish_image(ImageFile(IMG, Path("x"), "0" * 64, 1))):
         with pytest.raises(NotSupported):
             call()
+
+
+# --- resize ----------------------------------------------------------------------
+
+
+def test_boot_disk_and_its_size():
+    from fleetledger.drivers.proxmox import boot_disk
+
+    config = {"boot": "order=scsi0;ide2;net0", "ide2": "seeds:iso/x.iso,media=cdrom",
+              "scsi0": "local-lvm:vm-9101-disk-0,size=40G", "virtio1": "x,size=2T"}
+    assert boot_disk(config) == ("scsi0", 40)
+    assert boot_disk({"virtio0": "x,size=20480M"}) == ("virtio0", 20)
+    assert boot_disk({"ide2": "x,media=cdrom"}) == (None, None)
+
+
+def test_resize_grows_the_disk_and_sets_cores_and_memory():
+    api = FakeAPI()
+    api.config_extra = {"boot": "order=scsi0", "scsi0": "local-lvm:vm-9101-disk-0,size=40G"}
+    out = ProxmoxDriver(PX, api=api).resize(ship(vmid=9101), {"cores": 8, "memory_mb": 16384,
+                                                             "disk_gb": 80})
+    assert ("PUT", "/nodes/pve/qemu/9101/resize", {"disk": "scsi0", "size": "80G"}) in api.calls
+    assert ("POST", "/nodes/pve/qemu/9101/config", {"cores": 8, "memory": 16384}) in api.calls
+    text = " ".join(out.messages)
+    assert "next boot" in text and "restarts through Proxmox" in text
+
+
+def test_a_disk_never_shrinks():
+    api = FakeAPI()
+    api.config_extra = {"scsi0": "local-lvm:vm-9101-disk-0,size=40G"}
+    with pytest.raises(FleetError, match="Disks only grow"):
+        ProxmoxDriver(PX, api=api).resize(ship(vmid=9101), {"disk_gb": 20})
+    assert mutating(api) == []
+    ProxmoxDriver(PX, api=api).resize(ship(vmid=9101), {"disk_gb": 40})
+    assert mutating(api) == []  # the same size: nothing to do
+
+
+def test_resize_checks_the_name_first():
+    api = FakeAPI(vms={9101: ("other", False)})
+    with pytest.raises(NotOurs):
+        ProxmoxDriver(PX, api=api).resize(ship(vmid=9101), {"cores": 8})
+    assert mutating(api) == []

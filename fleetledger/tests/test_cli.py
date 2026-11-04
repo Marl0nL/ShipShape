@@ -384,6 +384,25 @@ def test_new_proxmox_says_what_the_first_boot_is_doing(env, monkeypatch):
     assert "ship-12: unreachable" not in err and "ship-12: error" not in err
 
 
+def test_resize_through_the_driver_and_recorded(env):
+    sized = []
+    env.driver.resize = lambda ship, size: sized.append(size) or Outcome(
+        done=True, messages=["Set 8 cores."])
+    rebooted = []
+    env.driver.reboot = lambda ship: rebooted.append(ship.name) or Outcome(
+        done=True, messages=["Rebooted."])
+    env.run("new", "ship-16", "--driver", "proxmox")
+    code, out, err = env.run("resize", "ship-16", "--cores", "8", "--restart")
+    assert code == 0, err
+    assert sized == [{"cores": 8}] and rebooted == ["ship-16"]
+    assert env.store.load().ship("ship-16").size["cores"] == 8
+    assert env.run("resize", "ship-16", "--cores", "0")[0] == 1  # refused before the driver
+    assert env.run("resize", "ship-16")[0] == 1
+    assert sized == [{"cores": 8}]
+    code, _, _ = env.run("resize", "ship-01", "--disk-gb", "80", "--record-only")
+    assert code == 0 and env.store.load().ship("ship-01").size["disk_gb"] == 80
+
+
 def test_new_proxmox_keeps_names_that_resolve(env):
     env.app.resolves = lambda host: host == "ship-06.local"
     assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0

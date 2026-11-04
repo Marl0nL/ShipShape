@@ -434,6 +434,33 @@ async def ship_agents(request: Request) -> Response:
     return back(f"/ships/{name}")
 
 
+async def ship_size(request: Request) -> Response:
+    """Resize a Ship (cores, memory, a disk that only grows), optionally restarting it."""
+    from fleetledger import lifecycle
+
+    ui = ui_of(request)
+    name = _ship_name(request)
+    if not name or name not in ui.fleet.snapshot.by_name:
+        return not_found(request, "No such Ship in the inventory.")
+    fields = await form(request)
+    session = session_of(request)
+    try:
+        size = setup.size_from_form(fields)
+        current = ui.app.store_factory().load()
+        before = current.effective_size(current.ship(name))
+        size = {k: v for k, v in size.items() if v != before.get(k)}
+        if not size:
+            ui.flash(session, "muted", "Nothing to change.")
+            return back(f"/ships/{name}/settings")
+        said = await run_in_threadpool(lifecycle.resize, ui.app, ui.app.store_factory(), name,
+                                       size, restart=one(fields, "restart") == "yes")
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(f"/ships/{name}/settings")
+    ui.flash(session, "ok", " ".join(said))
+    return back(f"/ships/{name}/settings")
+
+
 async def attach_here(request: Request) -> Response:
     """Trust this computer (your key) so plain ssh and herdr --remote reach Ships."""
     from fleetledger import trustcmd
@@ -768,6 +795,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/settings", ship_settings, methods=["POST"]),
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
+        Route("/ships/{name}/size", ship_size, methods=["POST"]),
         Route("/attach-here", attach_here, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
         Route("/operations", fleet_operation, methods=["POST"]),

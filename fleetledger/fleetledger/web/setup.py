@@ -283,6 +283,7 @@ async def page(request: Request) -> Response:
         context["desktop_agent"] = keys.desktop_agent_preloads()
         context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
         context["policy"] = _policy_text()
+        context["size"] = inv.effective_size()
     from fleetledger import proxmox_setup
 
     context["px"] = state.proxmox
@@ -981,6 +982,30 @@ def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None,
                 pass
 
 
+def size_from_form(fields) -> dict[str, int]:
+    """cores / memory_mb / disk_gb from a form (memory typed in GB), checked."""
+    from fleetledger.lifecycle import check_size
+
+    def number(key: str) -> int | None:
+        value = _one(fields, key).strip()
+        if not value:
+            return None
+        if not value.isdigit():
+            raise FleetError(f"{key.replace('_', ' ')}: a whole number.")
+        return int(value)
+
+    memory_gb = number("memory_gb")
+    return check_size({"cores": number("cores"), "disk_gb": number("disk_gb"),
+                       "memory_mb": memory_gb * 1024 if memory_gb is not None else None})
+
+
+def _size_args(fields) -> list[str]:
+    """--cores / --memory-mb / --disk-gb for ship-fleet new, from the form."""
+    flags = {"cores": "--cores", "memory_mb": "--memory-mb", "disk_gb": "--disk-gb"}
+    return [arg for key, value in size_from_form(fields).items()
+            for arg in (flags[key], str(value))]
+
+
 async def ship_start(request: Request) -> Response:
     ui = _ui(request)
     state = _state(request)
@@ -991,6 +1016,11 @@ async def ship_start(request: Request) -> Response:
                "characters.")
         return _back("ship")
     extra: list[str] = []
+    try:
+        extra += _size_args(fields)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("ship")
     if _one(fields, "agent_on") == "yes":
         from fleetledger import ops
 

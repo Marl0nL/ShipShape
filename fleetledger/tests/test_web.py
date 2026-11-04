@@ -557,6 +557,22 @@ def test_an_agent_can_be_added_from_the_ship_page(web):
     assert len(web.ship.calls) == before  # refused before reaching the Ship
 
 
+def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
+    from fleetledger import lifecycle
+
+    calls = []
+    monkeypatch.setattr(lifecycle, "resize", lambda app, store, name, size, restart=False:
+                        calls.append((name, size, restart)) or ["Set 8 cores."])
+    web.sign_in()
+    text = web.client.get("/ships/ship-01/settings").text
+    assert "never shrink" in text and 'name="disk_gb" type="number" min="40"' in text
+    web.post("/ships/ship-01/size", {"cores": "8", "memory_gb": "8", "disk_gb": "40",
+                                     "restart": "yes"})
+    assert calls == [("ship-01", {"cores": 8}, True)]  # only what changed
+    web.post("/ships/ship-01/size", {"cores": "4", "memory_gb": "8", "disk_gb": "40"})
+    assert len(calls) == 1  # nothing changed: nothing done
+
+
 def test_the_attach_command_shown_is_one_that_works_here(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
