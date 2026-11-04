@@ -54,6 +54,7 @@ class ShipJob:
     enrolled: bool = False
     manual: bool = False  # the manual driver: the person makes the VM from the steps shown
     still_starting: bool = False  # made, but its first boot outlasted the wait
+    attach_here: bool = False  # this computer can ssh / herdr --remote to it
     lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
 
     def write(self, text: str) -> int:
@@ -941,7 +942,8 @@ async def overlay_skip(request: Request) -> Response:
 # --- the first Ship -------------------------------------------------------------------------
 
 
-def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None) -> None:
+def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None,
+              extra: list[str] | None = None) -> None:
     from fleetledger import cli, commands
     from fleetledger.enrol import StillStarting
 
@@ -952,11 +954,17 @@ def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None) -> None:
     job_app = dataclasses.replace(app, out=job, err=job, stdin_isatty=lambda: False,
                                   confirm=lambda prompt: "")
     try:
-        args = cli.build_parser().parse_args(["new", name, *(["--tag", tag] if tag else [])])
+        args = cli.build_parser().parse_args(["new", name, *(["--tag", tag] if tag else []),
+                                              *(extra or [])])
         code = commands.cmd_new(args, job_app)
         job.ok = code == 0
         ship = app.store_factory().load().ship(name)
         job.enrolled = ship.enrolled is not None
+        if job.enrolled:  # so `ssh <ship>` and `herdr --remote <ship>` work here at once
+            from fleetledger import trustcmd
+
+            job.attach_here = trustcmd.trust_this_computer(
+                job_app, app.store_factory(), lambda line: job.write(line + "\n"))
     except StillStarting as exc:
         job.still_starting = True
         job.write(f"{exc.message}\n")
@@ -982,11 +990,24 @@ async def ship_start(request: Request) -> Response:
         _flash(request, "bad", "A Ship name (and tag) uses a-z, 0-9 and -, up to 31 "
                "characters.")
         return _back("ship")
+    extra: list[str] = []
+    if _one(fields, "agent_on") == "yes":
+        from fleetledger import ops
+
+        agent, cwd = _one(fields, "agent") or "main", _one(fields, "cwd") or "~/work"
+        try:
+            ops.parse_autostart_change("autostart.add", f"{agent}:{cwd}")
+        except FleetError as exc:
+            _flash(request, "bad", exc.message)
+            return _back("ship")
+        extra += ["--autostart", f"{agent}:{cwd}"]
+    if _one(fields, "overlay") != "yes":
+        extra.append("--no-overlay")
     if state.ship is not None and not state.ship.done:
         return _back("ship")
     job = ShipJob(name)
     state.ship = job
-    threading.Thread(target=_run_ship, args=(ui.app, job, name, tag, ui.fleet.poll),
+    threading.Thread(target=_run_ship, args=(ui.app, job, name, tag, ui.fleet.poll, extra),
                      name=f"setup-{name}", daemon=True).start()
     return _back("ship")
 

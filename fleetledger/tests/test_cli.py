@@ -622,6 +622,23 @@ def test_set(env):
     assert env.run("set", "ship-01", "remote_control")[0] == 1
 
 
+def test_set_adds_an_agent_and_starts_it(env):
+    code, out, err = env.run("set", "ship-01", "autostart.add=main:~/work",
+                             "autostart.add=docs:~/docs:plan")
+    assert code == 0, err
+    verbs = [c[3:] for _, c in env.ship.calls[-2:]]
+    assert verbs[0] == ["set", "autostart.add=main:~/work", "autostart.add=docs:~/docs:plan",
+                        "--json"]
+    assert verbs[1][0] == "autostart"  # started now (once Claude is signed in)
+    assert env.run("set", "ship-01", "autostart.remove=docs")[0] == 0
+    assert env.ship.calls[-1][1][3:] == ["set", "autostart.remove=docs", "--json"]
+    for bad in ("autostart.add=Main:~/work", "autostart.add=main:work",
+                "autostart.add=main", "autostart.remove=../x"):
+        calls = len(env.ship.calls)
+        assert env.run("set", "ship-01", bad)[0] == 1
+        assert len(env.ship.calls) == calls  # refused before reaching the Ship
+
+
 def test_tag(env):
     code, out, _ = env.run("tag", "ship-01")
     assert out.strip() == "work"
@@ -906,6 +923,33 @@ def test_overlay_leave_drops_the_overlay_name(env):
     code, out, err = env.run("overlay", "leave", "ship-01")
     assert code == 0, err
     assert env.store.load().ship("ship-01").names == ("ship-01.local",)
+
+
+def test_a_new_ship_joins_the_overlay_once_it_enrols(env):
+    with_overlay(env)
+    code, out, err = env.run("new", "ship-13", "--driver", "proxmox")
+    assert code == 0, err
+    joins = [c for name, c in env.ship.calls if name == "ship-13" and "join" in c]
+    assert len(joins) == 1
+    ship = env.store.load().ship("ship-13")
+    assert ship.names[0] == "ship-13.example-tailnet.ts.net"  # the preferred name
+    assert "on the overlay as" in out
+
+
+def test_a_new_ship_can_stay_off_the_overlay(env):
+    with_overlay(env)
+    code, out, err = env.run("new", "ship-14", "--driver", "proxmox", "--no-overlay")
+    assert code == 0, err
+    assert not [c for name, c in env.ship.calls if name == "ship-14" and "join" in c]
+
+
+def test_a_failed_join_does_not_fail_the_new_ship(env):
+    with_overlay(env)
+    env.ship.overlay_fails = True
+    code, out, err = env.run("new", "ship-15", "--driver", "proxmox")
+    assert code == 0, err
+    assert env.store.load().ship("ship-15").enrolled
+    assert "not on the overlay yet" in out and "ship-fleet overlay join ship-15" in out
 
 
 def test_overlay_needs_its_section(env):

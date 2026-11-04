@@ -392,6 +392,20 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Name <input name="name" value="ship-01" pattern="[a-z0-9][a-z0-9-]{0,30}" required></label>
     <label>Tag <input name="tag" placeholder="e.g. work (optional)" pattern="[a-z0-9][a-z0-9-]{0,30}"></label>
+    <fieldset class="ship-agent">
+      <label><input type="checkbox" name="agent_on" value="yes" checked> Start a Claude agent
+        on it, with Remote Control</label>
+      <label>named <input name="agent" value="main" pattern="[a-z][a-z0-9_-]{0,31}"></label>
+      <label>working in <input name="cwd" value="~/work"></label>
+      <p class="hint">It starts once you sign the Ship in to Claude (the next step), and on
+        every boot. With Remote Control on, it shows in the Claude app (phone, desktop or
+        claude.ai) under your account, so you can talk to it from anywhere. Add more later
+        on the Ship's page.</p>
+    </fieldset>
+    {% if inv.overlay %}
+    <label><input type="checkbox" name="overlay" value="yes" checked> Join the overlay
+      ({{ inv.overlay.provider|capitalize }}) once it is up, so you reach it from anywhere</label>
+    {% endif %}
     <button type="submit">Make it</button>
   </form>
   {% endif %}

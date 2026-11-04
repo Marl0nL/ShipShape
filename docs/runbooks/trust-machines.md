@@ -95,15 +95,23 @@ It installs into `~/.ssh/shipshape/`:
 - the certificate;
 - a `known_hosts` with one `@cert-authority` line, limited to the Ships' names
   (plus `@revoked` lines for host keys FleetLedger replaced);
-- an SSH config with one `Host` block per Ship: `User agent`, the certificate,
-  `ForwardAgent no`, and certificate-only host keys.
+- an SSH config with one `Host` block per Ship: `HostName` the first of the
+  Ship's names that resolves on the FleetLedger computer (a `.local` name with no
+  mDNS there falls through to its overlay name or recorded address), `User
+  agent`, the certificate, `ForwardAgent no`, and certificate-only host keys.
 
 It puts `Include ~/.ssh/shipshape/config` at the top of `~/.ssh/config`. Then
 it runs `herdr machine add <ship> --label <ship> --remote-session default` for
 each Ship herdr does not know yet.
 
-If the machine is the FleetLedger computer itself, `ship-fleet trust desktop
---key ~/.ssh/shipshape/id_ed25519.pub --install` does all of this in place.
+If the machine is the FleetLedger computer itself, `ship-fleet trust
+--this-computer` does all of this in place, with your own key (the first of
+`fleet.agent_keys` whose private half is here) and scope `all`. The web setup
+does it after the first Ship, and the Ship page offers it. Once this computer is
+trusted, every Ship that enrols refreshes its bundle (a new certificate, the new
+Ship in its SSH config and in herdr). Which machine entry is this computer is
+kept in `~/.config/fleetledger/this-computer.json`. (`ship-fleet trust desktop
+--key ~/.ssh/shipshape/id_ed25519.pub --install` still works for another key.)
 
 Then, on that machine:
 

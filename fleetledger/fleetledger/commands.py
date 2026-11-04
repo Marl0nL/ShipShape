@@ -280,7 +280,7 @@ def cmd_new(args, app) -> int:
         app.say(f"\nWhen it has booted: ship-fleet status {name} --wait")
         return 0
     _reachable_name(app, store, driver, name)
-    return _enrol(app, store, name)
+    return _enrol(app, store, name, overlay=not args.no_overlay)
 
 
 def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None:
@@ -332,7 +332,7 @@ def _first_boot_phase(view) -> str:
     return view.state
 
 
-def _enrol(app, store, name: str, say=None) -> int:
+def _enrol(app, store, name: str, say=None, overlay: bool = True) -> int:
     say = say or app.say
     inv = store.load()
     ship = inv.ship(name)
@@ -358,6 +358,10 @@ def _enrol(app, store, name: str, say=None) -> int:
         say("Then remove the seed (it holds the Ship's private host key):")
         for line in result.instructions:
             say(f"  {line}")
+    if overlay:
+        from fleetledger.access import join_after_enrol
+
+        join_after_enrol(app, store, name, say)  # before certifying: its overlay name too
     after_enrol(app, store, name, say)
     say(f"Next: ship-fleet login {name} all")
     return 0

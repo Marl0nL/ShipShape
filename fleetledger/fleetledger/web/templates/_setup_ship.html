@@ -3,7 +3,11 @@
     (ten or more without a baked image), most of it the first boot. While it boots it
     does not answer for a while: that is expected, and FleetLedger keeps trying. You can
     leave this page; it carries on.
-    {% elif job.enrolled %}<strong>{{ job.name }}</strong> is ready.
+    {% elif job.enrolled %}<strong>{{ job.name }}</strong> is ready. Next, sign it in to
+    Claude: its agent then starts and shows in the Claude app.
+    {% if job.attach_here %}Attach from here with <code>herdr --remote {{ job.name }}</code>
+    or <code>ssh {{ job.name }}</code>.{% else %}Attach with
+    <code>ship-fleet ssh {{ job.name }}</code>.{% endif %}
     {% elif job.ok and job.manual %}<strong>{{ job.name }}</strong>'s seed ISO is written.
     Now make its VM on your hypervisor as shown below; once it has booted,
     <code>ship-fleet status {{ job.name }} --wait</code> enrols it.

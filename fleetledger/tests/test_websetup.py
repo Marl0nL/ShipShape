@@ -63,7 +63,7 @@ def ws(home, fake_repo, monkeypatch, tmp_path):
     tailnet = Tailnet(scopes=LEVEL_SCOPES["keys"])
     app = cli.App(out=io.StringIO(), err=io.StringIO(), store_factory=lambda: store,
                   repo_factory=lambda: fake_repo, stdin_isatty=lambda: False,
-                  sleep=lambda s: None, ssh_factory=lambda inv: None)
+                  sleep=lambda s: None, ssh_factory=lambda inv: None, herdr=False)
     app.proxmox_api = pve.factory
     app.cert_fingerprint = lambda host, port: FPR
     app.overlay_api = tailnet
@@ -721,8 +721,9 @@ def test_a_first_boot_that_outlasts_the_wait_is_still_starting_not_an_error(chos
                                                                             monkeypatch):
     import time
 
-    from fleetledger import commands
     from fleetledger.enrol import StillStarting
+
+    from fleetledger import commands
 
     def slow(args, app):
         app.note("ship-01: first boot: cloud-init is installing (the slow part)")
@@ -774,3 +775,50 @@ def test_the_same_certificate_again_is_known_not_flagged(chosen):
     assert 'name="changed_ok"' not in text
     to_choices(chosen)  # no renewal box needed
     assert "Test the connection and save" in page(chosen)
+
+
+# --- the first Ship: an agent, and the overlay -------------------------------------------------
+
+
+def _made_with(env, monkeypatch, data):
+    import time
+
+    from fleetledger import commands
+
+    seen = []
+    monkeypatch.setattr(commands, "cmd_new", lambda args, app: seen.append(args) or 0)
+    env.post("/setup/ship", data)
+    for _ in range(100):
+        if seen and "hx-get" not in env.get("/setup/ship/progress").text:
+            break
+        time.sleep(0.05)
+    return seen[0]
+
+
+def test_the_first_ship_starts_an_agent_with_remote_control_by_default(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    text = page(chosen)
+    assert 'name="agent_on" value="yes" checked' in text and 'name="agent" value="main"' in text
+    assert "shows in the Claude app" in text
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "agent_on": "yes",
+                                            "agent": "main", "cwd": "~/work"})
+    assert args.autostart == ["main:~/work"]
+    assert args.no_overlay  # no overlay set up: nothing to join
+
+
+def test_the_first_ship_can_go_without_an_agent_and_joins_the_overlay(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/overlay", {"client_id": "kExampleClient1", "secret": OAUTH_SECRET})
+    assert 'name="overlay" value="yes" checked' in page(chosen)
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "overlay": "yes"})
+    assert args.autostart == [] and not args.no_overlay
+
+
+def test_a_bad_agent_name_makes_nothing(chosen, monkeypatch):
+    from fleetledger import commands
+
+    monkeypatch.setattr(commands, "cmd_new", lambda args, app: pytest.fail("made"))
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/ship", {"name": "ship-01", "agent_on": "yes", "agent": "Main",
+                                "cwd": "~/work"})
+    assert "a name of a-z" in page(chosen)

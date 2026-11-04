@@ -73,7 +73,8 @@ Useful options (`ship-fleet new --help` lists them all):
 | Option | Effect |
 |---|---|
 | `--mode bypassPermissions` | new agents start in bypass, with no warning dialog (implies `--allow-bypass`); the default is `auto` |
-| `--autostart main:~/work/main:auto` | an agent started at boot and resumed after reboots, each in its mode (repeatable); each starts with a first prompt, "Get oriented and ready to work." unless you choose one with `--autostart-prompt` |
+| `--autostart main:~/work/main:auto` | an agent started at boot and resumed after reboots, each in its mode (repeatable); each starts with a first prompt, "Get oriented and ready to work." unless you choose one with `--autostart-prompt`. Add one later with `ship-fleet set ship-01 autostart.add=main:~/work` (started at once, once Claude is signed in), or on the Ship's page; `autostart.remove=main` stops starting it |
+| `--no-overlay` | with `[overlay]` set up, do not join it after enrolling (it joins by default) |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
 | `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults) |

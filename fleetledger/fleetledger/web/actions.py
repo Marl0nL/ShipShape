@@ -106,6 +106,44 @@ class Operation:
         return self.done and self.error is None and all(o.ok for o in self.outcomes)
 
 
+class _NoTerminal:
+    """The app, with no terminal to paste a key into (a browser has none). A wrapper,
+    not a copy: options set on the app (an API factory, say) come along."""
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    def stdin_isatty(self) -> bool:
+        return False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._app, name)
+
+
+def _join(app: Any, ships, event) -> list[ops.Outcome]:
+    """Join Ships to the overlay from the browser (keys from the API: no terminal)."""
+    from fleetledger import access, trustcmd
+
+    quiet = _NoTerminal(app)
+    store = app.store_factory()
+    results = []
+    for ship in ships:
+        said: list[str] = []
+        try:
+            access.join_one(quiet, store, ship.name, say=said.append)
+            ok, summary = True, "on the overlay"
+        except FleetError as exc:
+            ok, summary = False, f"not joined: {exc.message}"
+        for line in said:
+            event(ship.name, line.removeprefix(f"{ship.name}: "))
+        results.append(ops.Outcome(ship.name, ok, summary, said))
+    try:  # this computer's SSH config now prefers the overlay names
+        trustcmd.trust_this_computer(quiet, store, lambda line: event("*", line), create=False)
+    except FleetError:
+        pass
+    return results
+
+
 class Operations:
     """Update and reboot runs started from the browser."""
 
@@ -130,10 +168,10 @@ class Operations:
             return any(not o.done and set(o.ships) & set(ships) for o in self._ops)
 
     def start(self, kind: str, ships: list[str]) -> Operation:
-        if kind not in ("update", "reboot"):
+        if kind not in ("update", "reboot", "join"):
             raise FleetError(f"Unknown operation '{kind}'.")
         if self.busy(ships):
-            raise FleetError("An update or reboot is already running on one of those Ships.")
+            raise FleetError("An operation is already running on one of those Ships.")
         op = Operation(next(self._ids), kind, list(ships))
         with self._lock:
             self._ops.append(op)
@@ -155,7 +193,9 @@ class Operations:
             ships = [inv.ship(name) for name in op.ships]
             # In the background, so wait: the outcome then says whether each
             # Ship came back with its agents in their modes, as the CLI does.
-            if op.kind == "update":
+            if op.kind == "join":
+                results = _join(self.app, ships, event)
+            elif op.kind == "update":
                 results = ops.update(fleet, ships, reboot_policy="auto", wait=True,
                                      on_event=event)
             else:

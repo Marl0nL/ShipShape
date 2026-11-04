@@ -535,3 +535,101 @@ def test_ca_init_makes_two_keys(env, tmp_path):  # noqa: F811
     assert (host.with_suffix(".pub")).read_text().split()[2] == "shipshape-host-ca"
     assert ca.fingerprint((user.parent / "user_ca.pub").read_text()) in out
     assert env.run("ca", "init")[0] == 1  # already set up
+
+
+# --- dialling, and this computer ------------------------------------------------------
+
+
+def test_a_bundle_dials_the_first_name_that_resolves(cakeys, ship_key):
+    ship, _ = ship_key
+    assert ca.dial_name(ship, lambda n: n == "ship-01.example.net") == "ship-01.example.net"
+    assert ca.dial_name(ship, lambda n: False) == ship.names[0]  # nothing resolves: as before
+    conf = ca.ssh_config_text("laptop", [ship], "~/.ssh/x",
+                              {"ship-01": "ship-01.example.net"})
+    assert "  HostName ship-01.example.net\n" in conf
+
+
+def test_trust_writes_the_name_that_resolves_here(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.app.resolves = lambda host: host == "ship-02.example.net"
+    code, _, err = caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+                             "--out", str(tmp_path / "b"))
+    assert code == 0, err
+    config = (tmp_path / "b" / "config").read_text()
+    # ship-02.local does not resolve here; its other name does. ship-01 has only the one.
+    assert "Host ship-02\n  HostName ship-02.example.net\n" in config
+    assert "Host ship-01\n  HostName ship-01.local\n" in config
+
+
+@pytest.fixture
+def here(caenv, tmp_path, monkeypatch):
+    """A scratch home for this computer's SSH config; herdr is never run."""
+    home = tmp_path / "userhome"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    caenv.app.herdr = False
+    caenv.home_dir = home
+    return caenv
+
+
+def test_this_computer_is_trusted_with_your_key_and_installed_here(here):
+    from fleetledger import trustcmd
+
+    code, out, err = here.run("trust", "--this-computer")
+    assert code == 0, err
+    inv = here.store.load()
+    marker = trustcmd.this_computer()
+    m = ca.machine(inv, marker["machine"])
+    you = Path(inv.agent_key_paths[0])
+    assert m.scope == ("all",) and ca._blob(m.public_key) == ca._blob(you.read_text())
+    assert marker["identity"] == str(you.with_suffix(""))  # its private half, here
+    ssh_dir = here.home_dir / ".ssh"
+    assert (ssh_dir / "config").read_text().splitlines()[0] == (
+        f"Include {ssh_dir}/shipshape/config")
+    config = (ssh_dir / "shipshape" / "config").read_text()
+    assert "Host ship-01\n" in config and "Host ship-02\n" in config
+    assert f"IdentityFile {you.with_suffix('')}" in config
+    assert "can attach: ssh ship-01, herdr --remote ship-01" in out
+    assert trustcmd.attaches_here(inv, inv.ship("ship-01"))
+    # Again: the same machine entry, renewed, never a second one.
+    assert here.run("trust", "--this-computer")[0] == 0
+    assert [x.name for x in ca.machines(here.store.load())] == [m.name]
+
+
+def test_after_enrolling_this_computers_config_is_refreshed_only_if_trusted(here):
+    from fleetledger import trustcmd
+
+    said = []
+    assert trustcmd.trust_this_computer(here.app, here.store, said.append,
+                                        create=False) is False
+    assert said == [] and not (here.home_dir / ".ssh" / "shipshape").exists()
+    here.run("trust", "--this-computer")
+    serial = ca.machine(here.store.load(), trustcmd.this_computer()["machine"]).last_serial
+    trustcmd.after_enrol(here.app, here.store, "ship-01", said.append)
+    assert ca.machine(here.store.load(),
+                      trustcmd.this_computer()["machine"]).last_serial != serial  # renewed
+
+
+def test_this_computer_without_your_private_key_says_so(here):
+    from fleetledger import trustcmd
+
+    inv = here.store.load()
+    inv.agent_key_paths[0].with_suffix("").unlink()
+    code, out, _ = here.run("trust", "--this-computer")
+    assert code == 1 and "private half is not here" in out
+    assert trustcmd.this_computer() is None
+
+
+def test_joining_the_overlay_re_signs_the_host_certificate_with_its_overlay_name(caenv):
+    from test_cli import with_overlay
+
+    with_overlay(caenv)
+    code, out, err = caenv.run("overlay", "join", "ship-01")
+    assert code == 0, err
+    sent = dict(caenv.trusted)["ship-01"]
+    cert_file = Path(caenv.cakeys.host_key).parent / "joined-cert.pub"
+    cert_file.write_text(sent["host_certificate"] + "\n")
+    text = subprocess.run(["ssh-keygen", "-L", "-f", str(cert_file)], capture_output=True,
+                          text=True).stdout
+    assert "ship-01.example-tailnet.ts.net" in text and "ship-01.local" in text
+    assert "re-signed with its overlay name" in out

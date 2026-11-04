@@ -33,7 +33,7 @@ import secrets
 import shlex
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -596,7 +596,15 @@ def known_hosts_text(ca: CAConfig, ships: Iterable[Ship]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def ssh_config_text(machine_name: str, ships: Iterable[Ship], identity: str) -> str:
+def dial_name(ship: Ship, resolves) -> str:
+    """The name to dial a Ship by from here: the first of its names that resolves on
+    this computer (an address always does), else its first name. A .local name with
+    no mDNS resolution here falls through to the address recorded when it started."""
+    return next((n for n in ship.names if resolves(n)), ship.names[0])
+
+
+def ssh_config_text(machine_name: str, ships: Iterable[Ship], identity: str,
+                    hostnames: Mapping[str, str] | None = None) -> str:
     base = BUNDLE_DIR_ON_MACHINE
     out = [
         f"# ShipShape Ships for {machine_name} (written by ship-fleet trust).",
@@ -606,7 +614,7 @@ def ssh_config_text(machine_name: str, ships: Iterable[Ship], identity: str) -> 
         out += [
             "",
             f"Host {ship.name}",
-            f"  HostName {ship.names[0]}",
+            f"  HostName {(hostnames or {}).get(ship.name, ship.names[0])}",
             "  User agent",
             f"  IdentityFile {identity}",
             f"  CertificateFile {base}/{machine_name}-cert.pub",
@@ -698,12 +706,13 @@ def write_bundle(
     ships: Sequence[Ship],
     identity: str,
     valid_before: datetime,
+    hostnames: Mapping[str, str] | None = None,
 ) -> Bundle:
     paths.private_dir(folder)
     files = {
         f"{machine_name}-cert.pub": cert + "\n",
         "known_hosts": known_hosts_text(ca, ships),
-        "config": ssh_config_text(machine_name, ships, identity),
+        "config": ssh_config_text(machine_name, ships, identity, hostnames),
         "install.sh": install_script(machine_name, [s.name for s in ships], identity),
         "bundle.json": json.dumps({
             "schema": "shipshape.trust-bundle/1",
