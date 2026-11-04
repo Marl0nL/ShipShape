@@ -115,6 +115,47 @@ def existing_in_keyring(item: str) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
+def stored_names(prefix: str) -> list[str] | None:
+    """What is already in the keyring under FleetLedger's service with this prefix (the
+    part after it: token ids, client ids), so setup can offer it instead of asking again.
+
+    Read from the items' attributes only: no secret is read. None where that cannot be
+    told (no usable keyring, or a backend with no way to list, such as macOS Keychain).
+    """
+    backend, _ = secure_backend()
+    if backend is None:
+        return None
+    try:
+        names = _item_names(backend)
+    except Exception:  # locked, D-Bus gone, ...: unknown, not "none"
+        return None
+    if names is None:
+        return None
+    return sorted({n[len(prefix):] for n in names
+                   if isinstance(n, str) and n.startswith(prefix) and len(n) > len(prefix)})
+
+
+def _item_names(backend: Any) -> list[str] | None:
+    kind = _name(backend)
+    if kind == "keyring.backends.SecretService.Keyring":
+        username = backend.schemes[backend.scheme]["username"]
+        collection = backend.get_preferred_collection()
+        try:
+            return [item.get_attributes().get(username)
+                    for item in collection.search_items(backend._query(SERVICE))]
+        finally:
+            close = getattr(getattr(collection, "connection", None), "close", None)
+            if close is not None:
+                close()
+    if kind == "keyring.backends.libsecret.Keyring":
+        from gi.repository import Secret
+
+        items = Secret.password_search_sync(backend.schema, backend._query(SERVICE),
+                                            Secret.SearchFlags.ALL, None)
+        return [item.get_attributes().get("username") for item in items]
+    return None
+
+
 def store_in_keyring(item: str, secret: str, switch_hint: str = SWITCH_HINT) -> str:
     backend, why = secure_backend()
     if backend is None:

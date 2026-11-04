@@ -411,25 +411,61 @@ def managed(inventory) -> tuple[str | None, list[Path]]:
     return str(table.get("store")), [paths.expand(k) for k in table.get("keys", [])]
 
 
+# Keys this process put in an agent: (agent socket, fingerprint) -> when. An agent's
+# own list cannot be trusted on its own: GNOME's agent (gcr-ssh-agent, and the older
+# gnome-keyring one) lists every key in ~/.ssh that has a .pub, loaded or not, and
+# when one is used it asks for the key's passphrase in a desktop prompt. For a
+# managed key nobody knows that passphrase, so FleetLedger adds its keys itself
+# rather than trusting the list, and only skips a key it added a short while ago
+# that is still listed.
+_ADDED: dict[tuple[str, str], float] = {}
+ADDED_FRESH = 10 * 60  # seconds
+
+
+def _agent_id(sock: str) -> str:
+    try:
+        return os.path.realpath(sock)
+    except OSError:
+        return sock
+
+
+def desktop_agent_preloads() -> bool:
+    """Is SSH_AUTH_SOCK GNOME's agent, which lists every key in ~/.ssh with a .pub
+    whether or not it holds it (and prompts for the passphrase when one is used)?
+    Told from the socket's place: <runtime dir>/keyring/ssh or <runtime dir>/gcr/ssh."""
+    sock = os.environ.get("SSH_AUTH_SOCK")
+    if not sock:
+        return False
+    real = Path(_agent_id(sock))
+    return real.name == "ssh" and real.parent.name in ("keyring", "gcr")
+
+
 def ensure_loaded(inventory, wanted: Iterable[Path] | None = None) -> list[str]:
     """Load the managed keys (or those of wanted that are managed) into ssh-agent,
-    if they are not there yet. Returns the names of the keys it loaded."""
+    unless this process added them a short while ago and the agent still lists
+    them. Returns the names of the keys it loaded."""
+    import time
+
     store, keys = managed(inventory)
     if store is None:
         return []
     chosen = [k for k in keys if wanted is None or k in {Path(w) for w in wanted}]
     if not chosen:
         return []
-    ensure_agent()
+    agent = _agent_id(ensure_agent())
     held = loaded_fingerprints()
+    now = time.monotonic()
     loaded = []
     for key in chosen:
         fpr = fingerprint(key)
-        if fpr is not None and fpr in held:
+        added = _ADDED.get((agent, fpr or ""))
+        if fpr is not None and fpr in held and added is not None and now - added < ADDED_FRESH:
             continue
         if not key.exists():
             raise ConfigError(f"The managed key {key} is gone.")
         add_to_agent(key, read_passphrase(key, store))
+        if fpr is not None:
+            _ADDED[(agent, fpr)] = now
         loaded.append(key.name)
     return loaded
 

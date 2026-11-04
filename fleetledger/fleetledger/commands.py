@@ -293,6 +293,7 @@ def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None
     """
     ship = store.load().ship(name)
     waited = 0.0
+    app.note(f"{name}: booting; waiting for the hypervisor to report its address.")
     while True:
         addresses = driver.status(ship).addresses
         if addresses:
@@ -314,19 +315,43 @@ def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None
              "\"Names\").")
 
 
+HEARTBEAT = 60  # seconds between "still ..." lines while a Ship's first boot runs
+
+
+def _first_boot_phase(view) -> str:
+    """What a status poll during the first boot means, in words. Not answering (or
+    refusing the admin key before cloud-init has set it up) is normal for a while."""
+    if view.state == "unreachable":
+        return "not answering yet: still booting"
+    if view.state == "provisioning":
+        return "first boot: cloud-init is installing (the slow part)"
+    if view.state == "error":
+        return f"{view.message or 'an error'} (it may still be starting; still trying)"
+    if view.state == "invalid":
+        return f"{view.message or 'an unexpected answer'} (still trying)"
+    return view.state
+
+
 def _enrol(app, store, name: str, say=None) -> int:
     say = say or app.say
     inv = store.load()
     ship = inv.ship(name)
     driver = app.driver_factory(inv, ship.driver)
-    last = {"state": None}
+    started = app.clock()
+    last = {"said": None, "at": started}
 
     def progress(view):
-        if view.state != last["state"]:
-            last["state"] = view.state
-            app.note(f"{name}: {view.state}")
+        said = _first_boot_phase(view)
+        now = app.clock()
+        if said != last["said"]:
+            last["said"], last["at"] = said, now
+            app.note(f"{name}: {said}")
+        elif now - last["at"] >= HEARTBEAT:
+            last["at"] = now
+            app.note(f"{name}: still waiting, {(now - started) / 60:.0f} min so far")
 
-    result = enrol.enrol(store, _ssh(app, inv), driver, ship, on_update=progress)
+    result = enrol.enrol(store, _ssh(app, inv), driver, ship, on_update=progress,
+                         sleep=app.sleep, clock=app.clock)
     for message in result.messages:
         say(message)
     if result.instructions:

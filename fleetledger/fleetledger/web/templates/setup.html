@@ -78,18 +78,31 @@
         </select>
       </label>
       <label class="field">Or another public key file <input name="your_key_other" placeholder="~/.ssh/other.pub"></label>
-      <p class="hint">These keys keep the passphrases they have: you load them with
-        <code>ssh-add</code> yourself, as now.</p>
-      <details class="advanced"><summary>Let FleetLedger look after them instead</summary>
-        <p>Type each key's current passphrase once (leave it empty if the key has none).
-          FleetLedger checks each one first, then re-encrypts the key files with passphrases
-          it keeps in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
-          The keys themselves stay the same; their old passphrases no longer open them.</p>
-        <label><input type="checkbox" name="protect" value="yes"> Hand these keys over to FleetLedger</label>
-        <label class="field">Admin key passphrase <input type="password" name="admin_passphrase" autocomplete="off"></label>
-        <label class="field">Host CA passphrase (if you gave the CA keys) <input type="password" name="host_passphrase" autocomplete="off"></label>
-        <label class="field">User CA passphrase (if you gave the CA keys) <input type="password" name="user_passphrase" autocomplete="off"></label>
-      </details>
+      <fieldset class="passphrase-choice">
+        <legend>Who looks after these keys' passphrases?</legend>
+        <label class="option"><input type="radio" name="protect" value="yes" required>
+          <strong>FleetLedger</strong> <span class="pill good">recommended: no prompts</span><br>
+          <span class="hint">Type each key's passphrase once, below. FleetLedger checks each
+            one, then re-encrypts the key files here with passphrases it keeps in
+            {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}, and
+            loads them into ssh-agent itself whenever it needs them: you are never asked
+            for them again. The keys stay the same (Ships and certificates keep working);
+            their old passphrases no longer open these files (copies on other computers
+            keep theirs).</span></label>
+        <label class="option"><input type="radio" name="protect" value="no" required>
+          <strong>I do</strong><br>
+          <span class="hint">The keys keep the passphrases they have. Before FleetLedger
+            makes or manages a Ship, you load the admin key yourself
+            (<code>ssh-add</code>); if it is not loaded, you are asked for its passphrase,
+            on a desktop often in a pop-up, each time FleetLedger connects to a Ship.</span></label>
+        <div class="passphrases">
+          <p class="hint">Their passphrases now (for FleetLedger looking after them; leave
+            one empty if that key has none):</p>
+          <label class="field">Admin key passphrase <input type="password" name="admin_passphrase" autocomplete="off"></label>
+          <label class="field">Host CA passphrase (if you gave the CA keys) <input type="password" name="host_passphrase" autocomplete="off"></label>
+          <label class="field">User CA passphrase (if you gave the CA keys) <input type="password" name="user_passphrase" autocomplete="off"></label>
+        </div>
+      </fieldset>
       <input type="hidden" name="store" value="{{ default_store }}">
       <button type="submit">Use these keys</button>
     </form>
@@ -110,13 +123,15 @@
 </form>
 {% endif %}
 {% if unmanaged %}
-<details class="advanced"><summary>Let FleetLedger look after these keys (optional)</summary>
-  <p>These keys keep passphrases you chose, so you load them with <code>ssh-add</code>
-    yourself. FleetLedger can take them over: type each current passphrase once, and it
-    re-encrypts the key file with a passphrase it keeps in
-    {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys themselves stay
-    the same (Ships, certificates and trusted machines keep working); the old passphrase no
-    longer opens the file. Nothing changes unless you tick the box.</p>
+<div class="warning adopt">
+  <p><strong>You look after these keys' passphrases.</strong> FleetLedger needs the admin
+    key loaded in ssh-agent whenever it connects to a Ship; when it is not, you are asked
+    for its passphrase{% if desktop_agent %}, in a desktop pop-up from your keyring, each
+    time{% endif %}. Let FleetLedger look after them instead and you are not asked again:
+    type each current passphrase once, and it re-encrypts the key file with a passphrase it
+    keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys
+    themselves stay the same (Ships, certificates and trusted machines keep working); the
+    old passphrase no longer opens the file. Nothing changes unless you tick the boxes.</p>
   <form method="post" action="/setup/fleet/adopt" autocomplete="off">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     {% for what, path in unmanaged %}
@@ -129,7 +144,7 @@
     <label class="confirm"><input type="checkbox" name="confirm" value="yes"> Re-encrypt the ticked key files</label>
     <button type="submit">Let FleetLedger look after them</button>
   </form>
-</details>
+</div>
 {% endif %}
 {% endif %}
 </section>
@@ -160,15 +175,35 @@
       <code>openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256</code>
       <button type="button" class="ghost" data-copy="openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256">Copy</button>
       (or the web interface: the node, then System, then Certificates).</p>
-    <label class="confirm"><input type="checkbox" name="matches" value="yes"> It matches: pin it</label>
+    {% if px.known %}<p class="notice">This is the certificate you confirmed before.</p>{% endif %}
+    <label class="confirm"><input type="checkbox" name="matches" value="yes"{% if px.known %} checked{% endif %}> It matches: pin it</label>
     {% if px.pinned %}<label class="confirm"><input type="checkbox" name="changed_ok" value="yes"> I know the host's certificate was renewed</label>{% endif %}
-    <label class="field">API token id <input name="token_id" value="{{ px.token_id }}" placeholder="shipshape@pve!build" required></label>
-    <label class="field">Token secret <input type="password" name="secret" autocomplete="off"></label>
+    {% if px_here.in_keyring %}
+    <p class="notice">This token's secret is already in your keyring: leave the secret
+      empty to use it (it is checked with Proxmox first, never shown).</p>
+    {% elif px_here.file and px_here.token_id %}
+    <p class="notice">A token secret is already on this computer, in
+      <code>{{ px_here.file }}</code>: leave the secret empty to use it (it is checked with
+      Proxmox first, never shown).</p>
+    {% elif px_here.file %}
+    <p class="notice">A token secret is already on this computer, in
+      <code>{{ px_here.file }}</code>: type its token id and leave the secret empty (it is
+      checked with Proxmox first, never shown). No need for a new token.</p>
+    {% elif px_here.token_ids %}
+    <p class="notice">Your keyring already holds a secret for
+      {% for t in px_here.token_ids %}<code>{{ t }}</code>{{ ', ' if not loop.last }}{% endfor %}:
+      type that token id and leave the secret empty.</p>
+    {% endif %}
+    <label class="field">API token id <input name="token_id" value="{{ px_here.token_id }}" placeholder="e.g. shipshape@pve!build" list="known-token-ids" required></label>
+    {% if px_here.token_ids %}<datalist id="known-token-ids">{% for t in px_here.token_ids %}<option value="{{ t }}">{% endfor %}</datalist>{% endif %}
+    <label class="field">Token secret <input type="password" name="secret" autocomplete="off"{% if px_here.in_keyring or px_here.file %} placeholder="already stored: leave empty"{% endif %}></label>
     <p class="hint">A Proxmox API token that may manage one pool of VMs, and nothing else.
       FleetLedger uses it to create, start and remove Ships. It is checked against the API
       (through the pinned certificate) before it is kept, in
       {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
-      {% if px.token_id %}Leave the secret empty to use the one already stored for this token.{% endif %}</p>
+      {% if not (px_here.in_keyring or px_here.file) %}If its secret is already stored
+      (in your keyring, or in <code>~/.config/fleetledger/proxmox-token</code>), leave the
+      secret empty.{% endif %}</p>
     <details class="advanced"><summary>No token yet?</summary>
       <p>Run these as root on the Proxmox host (they make the user, its roles and a token
         scoped to the pool; change the two names at the top first). The token's secret is
@@ -215,11 +250,13 @@
     </div>
     <p class="hint">The pool holds the Ships' VMs; the seed storage holds each new Ship's
       first-boot settings (with its host key) until it enrols, so it is one that holds only
-      ISOs; the template is the VM each Ship is cloned from.</p>
+      ISOs; the template is the VM each Ship is cloned from. New Ships get VM ids
+      {{ px.proposed.vmid_range|join('-') if px.proposed.vmid_range else '(any free one)' }},
+      away from your own VMs (Advanced to change).</p>
     <details class="advanced"><summary>Advanced</summary>
       <div class="settings">
         <label>Storage for baked image uploads (optional)<select name="image_storage"><option value="">none</option>{% for s in px.found.uploads %}<option{% if s == px.proposed.image_storage %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
-        <label>VM ids FleetLedger may use<input name="vmid_range" placeholder="e.g. 9100-9199 (any free one)"></label>
+        <label>VM ids FleetLedger may use<input name="vmid_range" value="{{ px.proposed.vmid_range|join('-') if px.proposed.vmid_range else '' }}" placeholder="e.g. 9100-9199, or any"></label>
       </div>
     </details>
     <button type="submit">Test the connection and save</button>
@@ -239,7 +276,7 @@
     manual: FleetLedger writes each Ship's first-boot ISO and prints the steps.</p>
   <form method="post" action="/setup/proxmox/address" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Proxmox address <input name="address" placeholder="pve.example.com or 192.0.2.10:8006" required></label>
+    <label>Proxmox address <input name="address" value="{{ px_here.address if px_here else '' }}" placeholder="e.g. pve.example.com or 192.0.2.10:8006" required></label>
     <button type="submit">Connect</button>
   </form>
   <form method="post" action="/setup/hypervisor/manual" class="inline">
@@ -295,11 +332,24 @@
   </ol>
   <form method="post" action="/setup/overlay" autocomplete="off">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="field">OAuth client id <input name="client_id" required></label>
-    <label class="field">Client secret <input type="password" name="secret" autocomplete="off"></label>
+    {% if overlay_here.client_ids %}
+    <p class="notice">Your keyring already holds the secret of OAuth client
+      {% for c in overlay_here.client_ids %}<code>{{ c }}</code>{{ ', ' if not loop.last }}{% endfor %}:
+      {{ 'its id is filled in below; ' if overlay_here.client_id }}leave the secret empty to
+      use it (it is checked with Tailscale first, never shown). No need for a new client.</p>
+    {% elif overlay_here.file %}
+    <p class="notice">An OAuth client secret is already on this computer, in
+      <code>{{ overlay_here.file }}</code>{% if overlay_here.file_client %} (client
+      <code>{{ overlay_here.file_client }}</code>){% endif %}: leave the secret empty to use it
+      (it is checked with Tailscale first, never shown).</p>
+    {% endif %}
+    <label class="field">OAuth client id <input name="client_id" value="{{ overlay_here.client_id }}" placeholder="e.g. kExample123CNTRL" list="known-client-ids" required></label>
+    {% if overlay_here.client_ids %}<datalist id="known-client-ids">{% for c in overlay_here.client_ids %}<option value="{{ c }}">{% endfor %}</datalist>{% endif %}
+    <label class="field">Client secret <input type="password" name="secret" autocomplete="off"{% if overlay_here.client_ids or overlay_here.file %} placeholder="already stored: leave empty"{% endif %}></label>
     <p class="hint">Kept in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
-      If you already put it in your keyring (service <code>fleetledger</code>, item
-      <code>tailscale-oauth:&lt;client id&gt;</code>), leave this empty.</p>
+      {% if not (overlay_here.client_ids or overlay_here.file) %}If you already put it in
+      your keyring (service <code>fleetledger</code>, item
+      <code>tailscale-oauth:&lt;client id&gt;</code>), leave this empty.{% endif %}</p>
     <details class="advanced"><summary>Advanced</summary>
       <label><input type="radio" name="level" value="keys" checked> keys only (Auth Keys: Write)</label>
       <label><input type="radio" name="level" value="devices"> also remove destroyed Ships' devices (adds devices:core, which can change any device in your tailnet)</label>
@@ -327,8 +377,10 @@
 {% else %}
   {% if not admin_managed and agent_ok is not true %}
   <p class="warning">Making a Ship needs your fleet admin key in ssh-agent, and it keeps a
-    passphrase you chose. In a terminal: <code>ssh-add {{ inv.doc.fleet.admin_key }}</code>,
-    or let FleetLedger look after it (step 1, Advanced).</p>
+    passphrase you chose{% if desktop_agent %}: your desktop's keyring will ask for it in a
+    pop-up each time FleetLedger connects, unless it is loaded{% endif %}. In a terminal:
+    <code>ssh-add {{ inv.doc.fleet.admin_key }}</code>, or let FleetLedger look after it
+    (step 1) and you are not asked again.</p>
   {% endif %}
   {% if state.ship %}
     {% with job=state.ship, lines=state.ship.snapshot() %}{% include "_setup_ship.html" %}{% endwith %}

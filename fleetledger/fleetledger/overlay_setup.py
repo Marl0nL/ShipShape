@@ -321,8 +321,10 @@ def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, stor
     if manage:
         text, etag = api.policy_text()
 
-    if reused:
+    if reused and store_kind == "keyring":
         kept = f"in your OS keyring, as it was ({secret_store.SERVICE} / {item})"
+    elif reused:
+        kept = f"in {secret_path} (0600), as it was"
     elif store_kind == "keyring":
         backend = secret_store.store_in_keyring(item, secret)
         kept = f"in your OS keyring ({backend.rsplit('.', 2)[-2]})"

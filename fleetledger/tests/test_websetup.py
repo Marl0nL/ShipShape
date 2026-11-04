@@ -200,7 +200,9 @@ def test_bringing_keys_keeps_their_passphrases_by_default(ws, tmp_path):
     inv = ws.store.load()
     assert inv.admin_key == other / "admin" and keys.managed(inv) == (None, [])
     assert {n: (other / n).read_bytes() for n in before} == before  # untouched
-    assert "Let FleetLedger look after these keys" in page(ws)  # offered, opt-in
+    text = page(ws)
+    assert "You look after these keys' passphrases" in text  # said, and offered
+    assert "Let FleetLedger look after them</button>" in text
 
 
 def test_bringing_keys_can_hand_them_over(ws, tmp_path):
@@ -587,3 +589,188 @@ def test_a_manual_ship_says_to_make_its_vm_and_the_dashboard_knows_it(chosen):
         time.sleep(0.05)
     assert "seed ISO is written" in response.text and "make its VM" in response.text
     assert polled == [["ship-01"]]  # the dashboard polled it when the job finished
+
+
+# --- what is already on this computer is offered, never asked again --------------------------
+
+
+def test_a_token_secret_already_on_this_computer_is_offered_up_front(chosen):
+    """Made before ships.toml existed, so no token id is recorded anywhere."""
+    secret_file = chosen.home / "config" / "proxmox-token"
+    secret_file.write_text(TOKEN + "\n")
+    secret_file.chmod(0o600)
+    chosen.post("/setup/proxmox/address", {"address": "pve.example.com"})
+    text = page(chosen)
+    assert "A token secret is already on this computer" in text
+    assert "type its token id and leave the secret empty" in text
+    assert 'name="token_id" value=""' in text  # nothing that only looks filled in
+    assert 'placeholder="e.g. shipshape@pve!build"' in text
+    chosen.post("/setup/proxmox/token", {"matches": "yes", "token_id": TOKEN_ID})
+    assert set(chosen.pve.secrets_seen) == {TOKEN}
+    assert "Test the connection and save" in page(chosen)
+    assert TOKEN not in "".join(chosen.pages)
+
+
+def test_nothing_stored_says_nothing_is_stored(chosen):
+    chosen.post("/setup/proxmox/address", {"address": "pve.example.com"})
+    text = page(chosen)
+    assert "already on this computer" not in text and "already in your keyring" not in text
+    assert "If its secret is already stored" in text
+
+
+def test_a_token_secret_in_the_keyring_fills_in_its_token_id(chosen):
+    chosen.ring.items[("fleetledger", "proxmox-token:" + TOKEN_ID)] = TOKEN
+    chosen.post("/setup/proxmox/address", {"address": "pve.example.com"})
+    text = page(chosen)
+    assert "This token's secret is already in your keyring" in text
+    assert f'name="token_id" value="{TOKEN_ID}"' in text
+    chosen.post("/setup/proxmox/token", {"matches": "yes", "token_id": TOKEN_ID})
+    assert set(chosen.pve.secrets_seen) == {TOKEN}
+    assert "Test the connection and save" in page(chosen)
+    assert TOKEN not in "".join(chosen.pages)
+
+
+def test_the_saved_address_is_filled_in(chosen):
+    to_choices(chosen)
+    chosen.post("/setup/proxmox/save", {})
+    chosen.post("/setup/proxmox/start")
+    assert 'name="address" value="pve.example.com"' in page(chosen)
+
+
+def test_an_oauth_secret_already_in_the_keyring_is_offered(chosen):
+    chosen.ring.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = OAUTH_SECRET
+    chosen.post("/setup/hypervisor/manual")
+    text = page(chosen)
+    assert "Your keyring already holds the secret of OAuth client" in text
+    assert 'name="client_id" value="kExampleClient1"' in text
+    sets = list(chosen.ring.sets)
+    chosen.post("/setup/overlay", {"client_id": "kExampleClient1"})
+    assert chosen.store.load().overlay["api"]["secret_store"] == "keyring"
+    assert chosen.ring.sets == sets  # used as it was, not stored again
+    assert OAUTH_SECRET not in "".join(chosen.pages)
+
+
+def test_an_oauth_secret_file_already_here_is_offered_for_its_own_client(chosen):
+    secret_file = chosen.home / "config" / "tailscale-oauth"
+    secret_file.write_text(OAUTH_SECRET + "\n")
+    secret_file.chmod(0o600)
+    chosen.post("/setup/hypervisor/manual")
+    text = page(chosen)
+    assert "An OAuth client secret is already on this computer" in text
+    assert 'name="client_id" value="kExample9CNTRL"' in text  # named by the secret
+    chosen.post("/setup/overlay", {"client_id": "kSomeOtherClient"})
+    assert chosen.store.load().overlay is None  # not another client's secret
+    chosen.post("/setup/overlay", {"client_id": "kExample9CNTRL"})
+    api = chosen.store.load().overlay["api"]
+    assert api["secret_store"] == "file" and secret_file.read_text().strip() == OAUTH_SECRET
+    assert "as it was" in page(chosen)
+    assert OAUTH_SECRET not in "".join(chosen.pages)
+
+
+# --- who looks after the passphrases of keys you bring ----------------------------------------
+
+
+def test_bringing_keys_asks_plainly_who_looks_after_their_passphrases(ws, tmp_path):
+    text = page(ws)
+    assert "Who looks after these keys' passphrases?" in text
+    before = text.split("<summary>Use my keys</summary>")[1].split("Who looks after")[0]
+    assert "<details" not in before  # in the open, not in a collapsed section
+    assert "recommended: no prompts" in text and "you are asked for its passphrase" in text
+    other = tmp_path / "other"
+    other.mkdir()
+    _key(other / "admin", "theirs")
+    ws.post("/setup/fleet/import", {"admin_key": str(other / "admin"),
+                                    "your_key": "~/.ssh/id_ed25519.pub"})
+    assert not ws.store.exists() and "Choose who looks after" in page(ws)
+
+
+def _agent_at(sock):
+    out = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
+                         check=True, timeout=10).stdout
+    return int(out.split("SSH_AGENT_PID=")[1].split(";")[0])
+
+
+@pytest.mark.parametrize("gnome", [True, False])
+def test_gnomes_agent_listing_your_key_is_not_taken_as_loaded(partway, tmp_path, monkeypatch,
+                                                               gnome):
+    """GNOME's agent lists every ~/.ssh key with a .pub whether it holds it or not, and
+    asks for the passphrase in a pop-up when one is used: the page cannot tell, so it
+    says so. (A real agent here, holding the key, stands in for that list.)"""
+    import os
+    import signal
+
+    folder = tmp_path / ("keyring" if gnome else "agent")
+    folder.mkdir(mode=0o700)
+    sock = folder / ("ssh" if gnome else "agent.sock")
+    pid = _agent_at(sock)
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+    try:
+        keys.add_to_agent(partway.user_home / ".ssh" / "shipshape_fleet_ed25519",
+                          "chosen by them")
+        text = page(partway)
+    finally:
+        os.kill(pid, signal.SIGTERM)
+    assert ("Making a Ship needs your fleet admin key" in text) is gnome
+    assert ("pop-up" in text) is gnome
+
+
+# --- the first Ship's wait -------------------------------------------------------------------
+
+
+def test_a_first_boot_that_outlasts_the_wait_is_still_starting_not_an_error(chosen,
+                                                                            monkeypatch):
+    import time
+
+    from fleetledger import commands
+    from fleetledger.enrol import StillStarting
+
+    def slow(args, app):
+        app.note("ship-01: first boot: cloud-init is installing (the slow part)")
+        raise StillStarting("ship-01 did not finish provisioning within 30 minutes (last "
+                            "state: provisioning). It may still be starting.")
+
+    monkeypatch.setattr(commands, "cmd_new", slow)
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/ship", {"name": "ship-01"})
+    for _ in range(100):
+        response = chosen.get("/setup/ship/progress")
+        if "hx-get" not in response.text:
+            break
+        time.sleep(0.05)
+    assert "still starting up" in response.text
+    assert "ship-fleet status ship-01 --wait" in response.text
+    assert "log bad" not in response.text and "did not finish;" not in response.text
+
+
+# --- VM ids -----------------------------------------------------------------------------------
+
+
+def test_ships_get_vm_ids_away_from_your_own_by_default(chosen):
+    to_choices(chosen)
+    text = page(chosen)
+    assert 'name="vmid_range" value="9100-9199"' in text
+    chosen.post("/setup/proxmox/save", {})
+    assert chosen.store.load().driver_config("proxmox")["vmid_range"] == [9100, 9199]
+
+
+def test_any_free_vm_id_is_still_a_choice(chosen):
+    to_choices(chosen)
+    chosen.post("/setup/proxmox/save", {"vmid_range": "any"})
+    assert "vmid_range" not in chosen.store.load().driver_config("proxmox")
+    chosen.post("/setup/proxmox/start")
+    to_choices(chosen)
+    chosen.post("/setup/proxmox/save", {"vmid_range": "50-60"})
+    assert "both 100 or more" in page(chosen)
+
+
+def test_the_same_certificate_again_is_known_not_flagged(chosen):
+    to_choices(chosen)
+    chosen.post("/setup/proxmox/save", {})
+    chosen.post("/setup/proxmox/start")
+    chosen.post("/setup/proxmox/address", {"address": "pve.example.com"})
+    text = page(chosen)
+    assert "DIFFERENT" not in text and "This is the certificate you confirmed before" in text
+    assert 'name="matches" value="yes" checked' in text
+    assert 'name="changed_ok"' not in text
+    to_choices(chosen)  # no renewal box needed
+    assert "Test the connection and save" in page(chosen)

@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import re
 import stat
 import sys
 import tomllib
@@ -13,6 +14,7 @@ import yaml
 from fleetledger.concierge import engine
 from fleetledger.drivers import get_driver
 from fleetledger.drivers.base import Outcome
+from fleetledger.errors import FleetError
 from fleetledger.scan import Announcement
 from fleetledger.seed import hostkey, iso
 from fleetledger.ssh import SSH, Result, Unreachable
@@ -351,6 +353,35 @@ def test_new_proxmox_waits_and_enrols(env, home):
     assert env.driver.finished == ["ship-04"]
     assert not list((home / "data" / "seeds").glob("*.iso"))
     assert "ship-04 is enrolled." in out and "ship-fleet login ship-04 all" in out
+
+
+def test_new_proxmox_says_what_the_first_boot_is_doing(env, monkeypatch):
+    """A first boot is minutes of not answering, then of refusing the admin key until
+    cloud-init has set it up: each is said in words, with a line now and then, and
+    none of it ends the wait."""
+    ticks = iter(range(0, 10**6, 20))  # each look at the clock: 20 s on
+    env.app.clock = lambda: next(ticks)
+    polls = []
+    real = type(env.ship).__call__
+
+    def booting(self, ship, command):
+        if command[-2:] == ["status", "--json"]:
+            polls.append(command)
+            if len(polls) <= 6:
+                raise Unreachable(f"Cannot reach {ship.name}: connection refused")
+            if len(polls) == 7:
+                raise FleetError(f"{ship.name} (192.0.2.44) refused FleetLedger's admin key.")
+        return real(self, ship, command)
+
+    monkeypatch.setattr(type(env.ship), "__call__", booting)
+    code, out, err = env.run("new", "ship-12", "--driver", "proxmox")
+    assert code == 0, err
+    assert env.store.load().ship("ship-12").enrolled
+    assert "ship-12: not answering yet: still booting" in err
+    assert re.search(r"ship-12: still waiting, \d+ min so far", err)
+    assert ("refused FleetLedger's admin key. (it may still be starting; still trying)"
+            in err)
+    assert "ship-12: unreachable" not in err and "ship-12: error" not in err
 
 
 def test_new_proxmox_keeps_names_that_resolve(env):
