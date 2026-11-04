@@ -202,3 +202,40 @@ def test_record_lists_each_key_once(home, tmp_path):
                                                          "keys": ["~/.ssh/a"]}
     with pytest.raises(FleetError, match="same store"), store.edit() as ed:
         keys.record(ed, "file", ["~/.ssh/c"])
+
+
+def test_doctor_checks_managed_keys_without_loading_them(home, ring, agent, tmp_path,
+                                                          fake_repo):
+    import io
+
+    from fleetledger import cli
+
+    admin = tmp_path / "ssh" / "admin"
+    keys.make(admin, "admin", "keyring")
+    inventory_with(home, tmp_path, "keyring", admin)
+    store = TomlFileStore(home / "config" / "ships.toml")
+    out = io.StringIO()
+    app = cli.App(out=out, err=io.StringIO(), store_factory=lambda: store,
+                  repo_factory=lambda: fake_repo)
+    cli.main(["doctor", "--offline"], app)
+    text = out.getvalue()
+    assert "managed keys" in text and "loaded into ssh-agent when needed" in text
+    assert keys.fingerprint(admin) not in held()  # doctor only looks
+    passphrase = ring.items[("fleetledger", "key-passphrase:admin")]
+    assert passphrase not in out.getvalue()
+    ring.items.clear()
+    out.seek(0), out.truncate()
+    assert cli.main(["doctor", "--offline"], app) == 1
+    assert "not in the keyring" in out.getvalue()
+
+
+def test_ssh_and_signing_load_managed_keys_first(home, monkeypatch, store):
+    from fleetledger import cli, trustcmd
+
+    loaded = []
+    monkeypatch.setattr(keys, "ensure_loaded", lambda inv, wanted=None: loaded.append(inv))
+    app = cli.App(store_factory=lambda: store)
+    inv = store.load()
+    app.ssh_factory(inv)
+    trustcmd._signer(app, inv)
+    assert loaded == [inv, inv]
