@@ -310,6 +310,25 @@ def test_session_prefix_change_says_running_sessions_keep_names(ship):
     assert not any("/rename" in m for m in doc["messages"])
 
 
+def test_set_adds_and_removes_an_autostart_agent(ship):
+    rc, doc, _ = ship.ctl("set", "autostart.add=extra:~/work", "autostart.add=docs:~/d:plan",
+                          "--json")
+    assert rc == 0, doc["error"]
+    toml = tomllib.loads(ship.p("/etc/shipshape/ship.toml").read_text())
+    assert {"name": "extra", "cwd": "~/work"} in toml["autostart"]
+    assert {"name": "docs", "cwd": "~/d", "mode": "plan"} in toml["autostart"]
+    rc, doc, _ = ship.ctl("set", "autostart.add=extra:~/other", "--json")
+    assert rc != 0 and "already exists" in doc["error"]["message"]
+    rc, doc, _ = ship.ctl("set", "autostart.remove=docs", "--json")
+    assert rc == 0, doc
+    toml = tomllib.loads(ship.p("/etc/shipshape/ship.toml").read_text())
+    assert "docs" not in [e["name"] for e in toml["autostart"]]
+    rc, doc, _ = ship.ctl("set", "autostart.remove=nobody", "--json")
+    assert rc != 0 and "no autostart agent" in doc["error"]["message"]
+    rc, doc, _ = ship.ctl("set", "autostart.add=bad:relative/path", "--json")
+    assert rc == 4  # the schema refuses a cwd that is not ~/ or /
+
+
 def test_set_disallowing_bypass(ship):
     ship.write_toml(
         'schema = 1\n[ship]\nname = "ship-01"\nid = "7c9e6679-7425-40de-944b-e07fc1f90ae7"\n'

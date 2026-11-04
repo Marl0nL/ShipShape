@@ -95,6 +95,10 @@ atomically, then runs `apply`.
   `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
   `network.lan_guard_allow` (comma-separated; empty clears it),
   `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`. Booleans are `true` or `false`.
+- `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
+  that name); `autostart.remove=NAME` drops one (refused if none has it; a running
+  agent keeps running until it is stopped or the Ship reboots). Run `autostart`
+  afterwards to start a new one at once.
 - `network.ssh_listen=overlay` is refused with `overlay-not-joined` (exit 1, no
   change) unless the Ship has joined the overlay and knows its overlay addresses.
 - `--file -` reads a complete replacement `ship.toml` on stdin. Its `ship.name`

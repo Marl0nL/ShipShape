@@ -164,6 +164,31 @@ def _coerce(key: str, kind: str, raw: str) -> object:
     return raw
 
 
+AUTOSTART_KEYS = ("autostart.add", "autostart.remove")
+
+
+def _autostart_change(doc: dict, key: str, raw: str) -> None:
+    """autostart.add=NAME:CWD[:MODE] adds an [[autostart]] agent (ship-ctl autostart then
+    starts it); autostart.remove=NAME drops one (a running agent keeps running)."""
+    from . import PERMISSION_MODES
+
+    entries = doc.setdefault("autostart", [])
+    if key == "autostart.remove":
+        kept = [e for e in entries if e.get("name") != raw]
+        if len(kept) == len(entries):
+            raise CtlError("usage", f"no autostart agent named {raw!r}")
+        doc["autostart"] = kept
+        return
+    parts = raw.split(":")
+    mode = parts.pop() if len(parts) > 2 and parts[-1] in PERMISSION_MODES else None
+    name, cwd = parts[0], ":".join(parts[1:])
+    if not name or not cwd:
+        raise CtlError("usage", "autostart.add=NAME:CWD[:MODE]")
+    if any(e.get("name") == name for e in entries):
+        raise CtlError("usage", f"an autostart agent named {name!r} already exists")
+    entries.append({"name": name, "cwd": cwd, **({"mode": mode} if mode else {})})
+
+
 def cmd_set(ctx: Context, args) -> dict:
     current = shiptoml.load(ctx.paths)
     if args.file is not None:
@@ -178,8 +203,12 @@ def cmd_set(ctx: Context, args) -> dict:
         new = json.loads(json.dumps(current.doc))
         for pair in args.pairs:
             key, sep, raw = pair.partition("=")
+            if sep and key in AUTOSTART_KEYS:
+                _autostart_change(new, key, raw)
+                continue
             if not sep or key not in SET_KEYS:
-                raise CtlError("usage", f"cannot set {key!r}; keys: {', '.join(SET_KEYS)}")
+                raise CtlError("usage", f"cannot set {key!r}; keys: "
+                               f"{', '.join([*SET_KEYS, *AUTOSTART_KEYS])}")
             table, field = key.split(".")
             new.setdefault(table, {})[field] = _coerce(key, SET_KEYS[key], raw)
         errors = shiptoml.check(new, ctx.paths)
