@@ -47,34 +47,19 @@ TAILSCALE_OAUTH = "https://login.tailscale.com/admin/settings/trust-credentials"
 # --- per-session state (memory only) ------------------------------------------------------
 
 
-@dataclasses.dataclass
-class ShipJob:
-    name: str
-    lines: list[str] = dataclasses.field(default_factory=list)
-    done: bool = False
-    ok: bool = False
-    enrolled: bool = False
-    manual: bool = False  # the manual driver: the person makes the VM from the steps shown
-    still_starting: bool = False  # made, but its first boot outlasted the wait
-    attach_here: bool = False  # this computer can ssh / herdr --remote to it
-    lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+class SetupShipView:
+    """The first Ship's job (web.jobs), as the setup page words it."""
 
-    def write(self, text: str) -> int:
-        from fleetledger.concierge.redact import clean
-
-        with self.lock:
-            for line in clean(text).splitlines():
-                if line.strip():
-                    self.lines.append(line)
-            del self.lines[:-400]
-        return len(text)
-
-    def flush(self) -> None:
-        pass
+    def __init__(self, job) -> None:
+        self.job = job
+        self.name = job.ships[0]
+        self.done = job.done
+        self.ok = bool(job.ok)
+        for key in ("enrolled", "manual", "still_starting", "attach_here"):
+            setattr(self, key, bool(job.result.get(key)))
 
     def snapshot(self) -> list[str]:
-        with self.lock:
-            return list(self.lines)
+        return self.job.snapshot()
 
 
 @dataclasses.dataclass
@@ -87,7 +72,7 @@ class SetupState:
     overlay_skipped: bool = False
     overlay_checks: list[tuple[bool, str]] = dataclasses.field(default_factory=list)
     old_copy: dict[str, Any] | None = None
-    ship: ShipJob | None = None
+    ship: int | None = None  # the first Ship's job id (web.jobs)
 
 
 class Setups:
@@ -98,8 +83,9 @@ class Setups:
     def get(self, session_id: str) -> SetupState:
         now = time.monotonic()
         with self._lock:
-            for sid in [s for s, st in self._states.items() if now - st.touched > STATE_TTL
-                        and (st.ship is None or st.ship.done)]:
+            # A running first Ship carries on in the job registry (web.jobs): the
+            # session's state can go.
+            for sid in [s for s, st in self._states.items() if now - st.touched > STATE_TTL]:
                 del self._states[sid]
             state = self._states.setdefault(session_id, SetupState())
             state.touched = now
@@ -259,6 +245,7 @@ async def page(request: Request) -> Response:
     state = _state(request)
     found_steps, inv = await run_in_threadpool(steps, ui.app, state)
     context: dict[str, Any] = {"steps": found_steps, "inv": inv, "state": state,
+                               "setup_job": setup_job(ui, state),
                                "inventory_path": _tilde(ui.app.store_factory().path),
                                "TAILSCALE_ACLS": TAILSCALE_ACLS,
                                "TAILSCALE_OAUTH": TAILSCALE_OAUTH}
@@ -981,43 +968,38 @@ async def overlay_skip(request: Request) -> Response:
 # --- the first Ship -------------------------------------------------------------------------
 
 
-def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None,
-              extra: list[str] | None = None) -> None:
-    from fleetledger import cli, commands
+def _make_ship(app, name: str, tag: str, extra: list[str]):
+    """The first Ship's job: `ship-fleet new` itself (web.jobs.run_cli), then this
+    computer trusted so `ssh <ship>` and `herdr --remote <ship>` work at once."""
+    from fleetledger import trustcmd
     from fleetledger.enrol import StillStarting
+    from fleetledger.web.jobs import BrowserApp, run_cli
 
-    try:
-        job.manual = app.store_factory().load().defaults.get("driver", "manual") == "manual"
-    except FleetError:
-        pass
-    job_app = dataclasses.replace(app, out=job, err=job, stdin_isatty=lambda: False,
-                                  confirm=lambda prompt: "")
-    try:
-        args = cli.build_parser().parse_args(["new", name, *(["--tag", tag] if tag else []),
-                                              *(extra or [])])
-        code = commands.cmd_new(args, job_app)
+    def run(job) -> None:
+        try:
+            job.result["manual"] = app.store_factory().load().defaults.get(
+                "driver", "manual") == "manual"
+        except FleetError:
+            pass
+        code = run_cli(app, ["new", name, *(["--tag", tag] if tag else []), *extra], job)
+        job.result["still_starting"] = code == StillStarting.exit_code
+        try:
+            ship = app.store_factory().load().ship(name)
+        except FleetError:
+            ship = None
+        job.result["enrolled"] = bool(ship is not None and ship.enrolled)
+        if job.result["enrolled"]:
+            job.result["attach_here"] = trustcmd.trust_this_computer(
+                BrowserApp(app, job), app.store_factory(), job.say)
         job.ok = code == 0
-        ship = app.store_factory().load().ship(name)
-        job.enrolled = ship.enrolled is not None
-        if job.enrolled:  # so `ssh <ship>` and `herdr --remote <ship>` work here at once
-            from fleetledger import trustcmd
 
-            job.attach_here = trustcmd.trust_this_computer(
-                job_app, app.store_factory(), lambda line: job.write(line + "\n"))
-    except StillStarting as exc:
-        job.still_starting = True
-        job.write(f"{exc.message}\n")
-    except FleetError as exc:
-        job.write(f"ship-fleet: {exc.message}\n" + (f"  {exc.hint}\n" if exc.hint else ""))
-    except Exception as exc:  # noqa: BLE001 - shown on the page; the UI keeps running
-        job.write(f"Failed: {type(exc).__name__}\n")
-    finally:
-        job.done = True
-        if on_done is not None:
-            try:
-                on_done([name])  # the dashboard shows the new Ship at once
-            except Exception:  # noqa: BLE001 - the next poll will
-                pass
+    return run
+
+
+def setup_job(ui, state):
+    """The session's first-Ship job, as the page shows it (None: not started)."""
+    job = ui.jobs.get(state.ship) if state.ship is not None else None
+    return SetupShipView(job) if job is not None else None
 
 
 def size_from_form(fields) -> dict[str, int]:
@@ -1082,23 +1064,27 @@ async def ship_start(request: Request) -> Response:
         extra += ["--autostart", f"{agent}:{cwd}", *(["--repo", repo] if repo else [])]
     if _one(fields, "overlay") != "yes":
         extra.append("--no-overlay")
-    if state.ship is not None and not state.ship.done:
+    current = setup_job(ui, state)
+    if current is not None and not current.done:
         return _back("ship")
-    job = ShipJob(name)
-    state.ship = job
-    threading.Thread(target=_run_ship, args=(ui.app, job, name, tag, ui.fleet.poll, extra),
-                     name=f"setup-{name}", daemon=True).start()
+    try:
+        job = ui.jobs.start("create", [name], _make_ship(ui.app, name, tag, extra),
+                            f"Make {name}")
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("ship")
+    state.ship = job.id
     return _back("ship")
 
 
 async def ship_progress(request: Request) -> Response:
     from fleetledger.web.app import partial
 
-    state = _state(request)
-    if state.ship is None:
+    job = setup_job(_ui(request), _state(request))
+    if job is None:
         return Response(status_code=286)
     # The finished card has no polling attributes, so swapping it in stops the polling.
-    return partial(request, "_setup_ship.html", job=state.ship, lines=state.ship.snapshot())
+    return partial(request, "_setup_ship.html", job=job, lines=job.snapshot())
 
 
 def routes() -> list[Route]:

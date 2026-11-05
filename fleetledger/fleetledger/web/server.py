@@ -77,6 +77,7 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     from fleetledger.web.app import create_app
     from fleetledger.web.fleet import Fleet
     from fleetledger.web.flows import Concierge
+    from fleetledger.web.jobs import Jobs
     from fleetledger.web.security import Gate
 
     store = app.store_factory()
@@ -89,7 +90,9 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     gate = Gate(port)
     fleet = Fleet(app, interval=interval, history=History())
     concierge = Concierge(app, on_finished=lambda ship: fleet.poll([ship]))
-    asgi = create_app(app, gate, fleet=fleet, concierge_=concierge, start_page=start_page)
+    jobs = Jobs(app, on_finished=lambda ships: fleet.poll(ships))
+    asgi = create_app(app, gate, fleet=fleet, concierge_=concierge, start_page=start_page,
+                      jobs=jobs)
     server = uvicorn.Server(uvicorn_config(asgi))
 
     link = gate.link(gate.new_token())
@@ -118,6 +121,11 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     try:
         server.run(sockets=[sock])
     finally:
+        for job in jobs.stop():  # cut short: say what to do about each
+            app.note(f"Stopped while running: {job.title} ({', '.join(job.ships)}). "
+                     + ("Its Ship is in the inventory but not enrolled: open the UI "
+                        "again to finish enrolling it, or destroy it."
+                        if job.kind == "create" else "Check its Ships once the UI is back."))
         concierge.cancel_all()
         fleet.stop()
         if opened is not None:

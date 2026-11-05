@@ -29,7 +29,10 @@ class Enrolment:
 
 
 class StillStarting(FleetError):
-    """The Ship did not finish its first boot in time: it may well still be starting."""
+    """The Ship did not finish its first boot in time: it may well still be starting.
+    Its own exit code (EX_TEMPFAIL: try again later), so a caller can tell it apart."""
+
+    exit_code = 75
 
 
 def wait_for_provisioning(

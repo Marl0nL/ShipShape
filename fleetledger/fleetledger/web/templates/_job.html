@@ -1,0 +1,13 @@
+{# One background job (web.jobs): its progress while it runs, its outcome once done. #}
+<article class="flow job {{ ("ok" if job.ok else "failed") if job.done else "working" }}" id="job-{{ job.id }}"
+  {% if not job.done %}hx-get="/jobs/{{ job.id }}?v={{ job.version }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <header><strong>{{ job.title }}</strong> · {{ job.ships|join(", ") }}
+    <span class="pill {{ (("ok" if job.ok else "failed") if job.done else "working")|pill }}">{{ ("done" if job.ok else "failed") if job.done else "running" }}</span>
+    <span class="when">started {{ clock(job.started) }}</span></header>
+  {% if job.error %}<p class="flash bad">{{ job.error }}</p>{% endif %}
+  {% for o in job.outcomes %}
+  <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
+  {% endfor %}
+  {% set lines = job.snapshot() %}
+  {% if lines and (not job.done or not job.outcomes) %}<pre class="log{% if job.done and not job.ok %} bad{% endif %}">{{ lines|join("\n") }}</pre>{% endif %}
+</article>
