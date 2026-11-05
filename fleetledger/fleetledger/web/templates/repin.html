@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Re-pin {{ name }} · FleetLedger{% endblock %}
+{% block body %}
+<h1>Re-pin {{ name }}'s host key</h1>
+<section class="setup-step">
+  <p>{{ host }} presents the host key</p>
+  <p class="fingerprint"><code>{{ fingerprint }}</code></p>
+  <p class="quiet">Pinned now: {% if pinned %}<code>{{ pinned }}</code>{% else %}a key FleetLedger cannot read{% endif %}</p>
+  {% if same %}
+  <p>That is the key FleetLedger already trusts: there is nothing to re-pin.</p>
+  <a class="button ghost" href="/ships/{{ name }}">Back to {{ name }}</a>
+  {% else %}
+  <p>Re-pin only for a Ship you rebuilt: compare the new key with the fingerprint
+    cloud-init printed on {{ name }}'s VM console. A key that changed when you did not
+    rebuild it may be someone else answering as {{ name }}.{% if ca %} Its old key is
+    revoked, so trusted machines refuse it.{% endif %}</p>
+  <form method="post" action="/ships/{{ name }}/repin/confirm" class="inline"
+    data-confirm-title="Re-pin {{ name }}?"
+    data-confirm="Only if {{ fingerprint }} is the fingerprint on {{ name }}'s VM console: FleetLedger then trusts this key for {{ name }}, and no longer the old one."
+    data-confirm-action="Re-pin {{ name }}" data-confirm-danger>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
+    <label class="confirm"><input type="checkbox" name="matches" value="yes" data-confirm-field> it matches</label>
+    <button type="submit" class="ghost danger" title="ship-fleet adopt {{ name }} --replace --fingerprint {{ fingerprint }}">It matches: re-pin {{ name }}</button>
+  </form>
+  <a class="button ghost" href="/ships/{{ name }}">It does not match</a>
+  {% endif %}
+</section>
+{% endblock %}

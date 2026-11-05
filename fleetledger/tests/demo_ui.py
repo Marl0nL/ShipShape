@@ -324,6 +324,28 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
     return doc
 
 
+def demo_browse(timeout: float) -> list:
+    """What `ship-fleet scan` hears in the demo: no network, two announcements."""
+    from fleetledger.scan import Announcement
+
+    return [Announcement("ship-01", "ship-01.example.invalid", 22, ("192.0.2.11",),
+                         {"name": "ship-01", "id": ship_id(1)}),
+            Announcement("ship-08", "ship-08.example.invalid", 22, ("192.0.2.18",),
+                         {"name": "ship-08"})]
+
+
+_DEMO_KEYS: dict[str, str] = {}
+
+
+def demo_keyscan(host: str) -> str:
+    """A made-up host key per host, the same each time (no ssh-keyscan, no network)."""
+    from fleetledger.seed import hostkey
+
+    if host not in _DEMO_KEYS:
+        _DEMO_KEYS[host] = " ".join(hostkey.generate(host.split(".")[0]).public.split()[:2])
+    return _DEMO_KEYS[host]
+
+
 def make_ssh(inventory):
     from fleetledger.ssh import SSH, Result, Unreachable
 
@@ -430,7 +452,7 @@ def main() -> int:
     seed_history()
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
                   ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
-                  stdin_isatty=lambda: False)
+                  stdin_isatty=lambda: False, browse=demo_browse, keyscan=demo_keyscan)
     from fleetledger import ca
 
     app.signer = ca.Signer(agent_keys=lambda: set())  # the demo CA's keys; never ssh-agent

@@ -33,7 +33,16 @@ from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, dashboard, network, settings, setup, snapshots, trust
+from fleetledger.web import (
+    actions,
+    adopt,
+    dashboard,
+    network,
+    settings,
+    setup,
+    snapshots,
+    trust,
+)
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -968,6 +977,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
         *snapshots.routes(),
+        *adopt.routes(),
         *settings.routes(),
         *trust.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
