@@ -278,7 +278,7 @@ pre.log.bad { color: var(--term-bad); }
 .signout { margin-top: 8px; }
 
 /* --- sign-ins and operations ------------------------------------------------------------ */
-.flows { display: flex; flex-direction: column; gap: 10px; }
+.flows, section.activity, section.ship-jobs { display: flex; flex-direction: column; gap: 10px; }
 article.flow { border: 1px solid var(--line-strong); padding: 10px 14px; box-shadow: var(--shadow); }
 article.flow.link, article.flow.code, article.flow.live-offered { border-color: var(--warn-mark);
   box-shadow: 0 0 0 1px var(--warn-mark) inset, var(--shadow); }

@@ -51,6 +51,33 @@ def test_two_starts_on_the_same_ship_at_once_exactly_one_wins():
     wait(registry.start("reboot", ["ship-01"], lambda job: None))  # free again
 
 
+class CountingLock:
+    """A lock that counts how often it is taken."""
+
+    def __init__(self):
+        self.lock, self.taken = threading.Lock(), 0
+
+    def __enter__(self):
+        self.lock.acquire()
+        self.taken += 1
+        return self
+
+    def __exit__(self, *exc):
+        self.lock.release()
+
+
+def test_start_checks_and_inserts_under_one_lock():
+    """The race above rarely loses even with two locks taken (check, then insert), so
+    say the property itself: starting on a free Ship takes the registry's lock once."""
+    registry = Jobs(app=None)
+    registry._lock = counting = CountingLock()
+    release = threading.Event()
+    job = registry.start("update", ["ship-01"], lambda job: release.wait(5))
+    assert counting.taken == 1
+    release.set()
+    wait(job)
+
+
 def test_finished_jobs_are_pruned_to_the_last_twenty():
     registry = Jobs(app=None)
     for n in range(25):
@@ -69,11 +96,16 @@ def test_versions_move_and_stop_refuses_new_jobs():
     registry = Jobs(app=None)
     release = threading.Event()
     before = registry.version
-    job = registry.start("update", ["ship-01"], lambda job: (job.say("step"), release.wait(5)))
+    said = threading.Event()
+    job = registry.start("update", ["ship-01"],
+                         lambda job: (said.wait(5), job.say("step"), release.wait(5)))
+    job_before = job.version
+    said.set()
     for _ in range(100):
         if job.snapshot():
             break
         time.sleep(0.01)
+    assert job.version > job_before  # a line moves the job's own version: the card redraws
     assert registry.version > before
     assert registry.stop() == [job]  # cut short: the server says so
     with pytest.raises(FleetError, match="stopping"):
@@ -101,7 +133,9 @@ def test_every_way_a_job_ends_frees_its_ships():
     assert job.ok is False
     job = wait(registry.start("update", ["ship-01"], lambda j: 0))
     assert job.ok is True
-    assert finished == [["ship-01"]] * 5 and not registry.busy(["ship-01"])
+    assert wait(registry.start("update", ["ship-01"], lambda j: True)).ok is True
+    assert wait(registry.start("update", ["ship-01"], lambda j: False)).ok is False
+    assert finished == [["ship-01"]] * 7 and not registry.busy(["ship-01"])
 
 
 def test_job_output_is_cleaned_of_terminal_codes():

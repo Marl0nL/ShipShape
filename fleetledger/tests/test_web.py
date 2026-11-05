@@ -810,6 +810,8 @@ def test_update_and_reboot_run_the_shared_operations_in_the_background(web, monk
     assert calls[1][:2] == ("reboot", ["ship-01"]) and calls[1][2]["wait"] is True
     page = web.client.get("/partials/fleet").text
     assert "did not come back" in page and "agent main did not come back" in page
+    assert web.app_ui.jobs.recent()[0].ok is False  # a Ship that failed: not "done"
+    assert web.app_ui.jobs.recent()[1].ok is True
     web.post("/operations", {"operation": "rm", "ship": "ship-01", "confirm": "yes"})
     assert len(calls) == 2
 

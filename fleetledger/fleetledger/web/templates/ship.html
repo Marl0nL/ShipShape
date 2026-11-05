@@ -224,9 +224,9 @@
     {% for op in ("update", "reboot") %}
     <form method="post" action="/operations" class="inline"
       {% if op == "update" %}
-      data-confirm="FleetLedger copies this checkout's tooling to {{ ship.name }} and converges it; agents keep running. If its herdr changed it reboots, and its agents resume in their modes. Progress shows on the Fleet page."
+      data-confirm="FleetLedger copies this checkout's tooling to {{ ship.name }} and converges it; agents keep running. If its herdr changed it reboots, and its agents resume in their modes. Progress shows below."
       {% else %}
-      data-confirm="{{ ship.name }} restarts and is out of reach for a minute or two. herdr saves every agent first and resumes it in its mode afterwards. Progress shows on the Fleet page."
+      data-confirm="{{ ship.name }} restarts and is out of reach for a minute or two. herdr saves every agent first and resumes it in its mode afterwards. Progress shows below."
       data-confirm-danger
       {% endif %}>
       <input type="hidden" name="csrf" value="{{ csrf }}">
