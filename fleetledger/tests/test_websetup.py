@@ -589,6 +589,10 @@ def test_a_manual_ship_says_to_make_its_vm_and_the_dashboard_knows_it(chosen):
         time.sleep(0.05)
     assert "seed ISO is written" in response.text and "make its VM" in response.text
     assert polled == [["ship-01"]]  # the dashboard polled it when the job finished
+    from fleetledger.concierge import audit
+
+    made = [(e["ship"], e["action"], e["outcome"]) for e in audit.read()]
+    assert made == [("ship-01", "create", "steps")]  # through the UI, as from the CLI
 
 
 # --- what is already on this computer is offered, never asked again --------------------------

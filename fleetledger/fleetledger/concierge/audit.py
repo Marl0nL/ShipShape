@@ -1,14 +1,23 @@
-"""The concierge's audit log: who, what, when, and the outcome. Never a secret.
+"""The audit log: who, what, when, and the outcome. Never a secret.
 
 One JSON object per line in ~/.local/share/fleetledger/audit.log (mode 0600):
 time, Ship, action, service, outcome and the account now signed in. No codes,
-links, tokens or terminal output are ever written here.
+links, tokens, paths or terminal output are ever written here.
+
+Actions: sign-ins and sign-outs (login, logout; service: the provider), and
+changes to Ships, from the command functions so the CLI and the web UI both
+record them: create and destroy (service: the driver), forget, snapshot-rollback
+and snapshot-delete (service: the snapshot's name), re-pin (service: host-key),
+and untrust (Ship "-", service: the machine's name). Outcome: ok, failed, or
+steps (the manual driver: the person does it by hand).
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from fleetledger import paths
 from fleetledger.inventory import now_timestamp
@@ -40,3 +49,16 @@ def read() -> list[dict]:
     except FileNotFoundError:
         return []
     return [json.loads(line) for line in lines if line.strip()]
+
+
+@contextmanager
+def recorded(ship: str, action: str, service: str) -> Iterator[dict]:
+    """Record a change to a Ship once it is done: ok, or failed if it raised. The
+    caller may set result["outcome"] (steps: the manual driver's instructions)."""
+    result = {"outcome": "ok"}
+    try:
+        yield result
+    except BaseException:
+        record(ship, action, service, "failed")
+        raise
+    record(ship, action, service, result["outcome"])
