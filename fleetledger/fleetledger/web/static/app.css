@@ -434,3 +434,22 @@ details.table-view summary { font-size: 12px; }
   body, header.top { background: none; color: #000; }
   header.top::after, .tile::before { display: none; }
 }
+
+/* confirmations (app.js): a native <dialog> in place of the "sure" tick boxes */
+[hidden] { display: none !important; }
+dialog.confirm-dialog { max-width: min(34em, calc(100vw - 32px)); padding: 0; color: var(--ink);
+  background: url("/static/paper.svg"), var(--panel); background-size: 300px 300px, auto;
+  border: 1px solid var(--line-strong); border-top: 4px solid var(--brass-lo);
+  border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, .45); }
+dialog.confirm-dialog.danger { border-top-color: var(--bad-mark); }
+dialog.confirm-dialog::backdrop { background: rgba(20, 12, 6, .6); }
+dialog.confirm-dialog form { padding: 4px 20px 16px; }
+dialog.confirm-dialog h2 { font-size: 19px; margin: 14px 0 8px; }
+dialog.confirm-dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
+.confirm-buttons { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.confirm-buttons button { font-size: 14px; padding: 6px 16px; }
+.confirm-buttons button.danger { background: var(--bad-mark); border-color: var(--bad-mark); color: #fff; }
+@media (prefers-color-scheme: dark) {
+  dialog.confirm-dialog { background: var(--panel); }
+  .confirm-buttons button.danger { color: #1d0f0f; }
+}
