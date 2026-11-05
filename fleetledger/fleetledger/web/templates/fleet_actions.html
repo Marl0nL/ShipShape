@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{# /fleet/actions (web.fleetactions): update, a setting, tools or a log, for every Ship
+   or every Ship with a tag (chosen at the top, so each dialog can say how many). #}
+{% block title %}Every Ship · FleetLedger{% endblock %}
+{% block body %}
+{% set value, every, n = (targets|selectattr(0, "equalto", chosen)|first) or targets[0] %}
+{% if unknown_tag %}{% set value, every, n = "none", "no Ships", 0 %}{% endif %}
+{% set ships = n ~ " Ship" ~ ("s" if n != 1 else "") %}
+<h1>Act on {{ every }}</h1>
+<section class="toolbar">
+  <div class="filter">
+    <span>Ships</span>
+    {% for v, label, count in targets %}
+    <a href="/fleet/actions{% if v != 'all' %}?tag={{ v[4:] }}{% endif %}" class="chip{% if v == value %} on{% endif %}"{% if v == value %} aria-current="true"{% endif %}>{{ label }} ({{ count }})</a>
+    {% endfor %}
+  </div>
+</section>
+{% if unknown_tag %}
+<p class="flash bad">No Ships with tag '{{ unknown_tag }}'. Choose every Ship or a tag above.</p>
+{% else %}
+<p class="hint">The same Ships <code>ship-fleet</code> picks with {% if value == "all" %}<code>all</code>{% else %}<code>--tag {{ value[4:] }}</code>{% endif %}. Each action runs in the background with one result per Ship. Each Ship's own page has the same actions for one Ship.</p>
+{% endif %}
+
+{% if fleet_jobs %}
+<section class="activity">
+  {% for job in fleet_jobs %}{% include "_job.html" %}{% endfor %}
+</section>
+{% endif %}
+
+{% if not unknown_tag %}
+<div class="fleet-actions">
+<section class="setup-step">
+  <h2>Update</h2>
+  <form method="post" action="/fleet/actions/update" class="settings"
+    data-confirm-title="Update {{ every }}?"
+    data-confirm="FleetLedger copies this checkout's tooling to {{ ships }} and converges each one; agents keep running. Reboots: {value:reboot}. Progress shows on this page."
+    data-confirm-action="Update {{ ships }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ships" value="{{ value }}">
+    <label>Reboot
+      <select name="reboot">
+        {% for p, said in (("auto", "auto: only when herdr changed"), ("always", "always"), ("never", "never")) %}<option value="{{ p }}">{{ said }}</option>{% endfor %}
+      </select></label>
+    <label class="inline-check"><input type="checkbox" name="force" value="yes"> converge even a Ship already on this tooling</label>
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" title="ship-fleet update {% if value != 'all' %}--tag {{ value[4:] }} {% endif %}--reboot POLICY [--force]">Update {{ ships }}</button>
+  </form>
+</section>
+
+<section class="setup-step">
+  <h2>Change a setting</h2>
+  <p class="hint">Every field starts "(unchanged)": only what you choose is sent, to each Ship
+    (<code>ship-fleet set</code>). SSH listening is set per Ship, on its Settings tab.</p>
+  <form method="post" action="/fleet/actions/set" class="settings"
+    data-confirm-title="Change {{ ships }}?"
+    data-confirm="FleetLedger sets what you chose on {{ ships }} ({{ every }}), one after another; a Ship that does not answer is listed as failed."
+    data-confirm-action="Apply to {{ ships }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ships" value="{{ value }}">
+    {% for title, fields in GROUPS %}
+    {% for f in fields %}
+    <label>{{ f.label }} <span class="quiet">({{ title }})</span>
+      {% if f.choices %}
+      <select name="{{ f.key }}">
+        <option value="">(unchanged)</option>
+        {% for v, text in f.choices %}<option value="{{ v }}">{{ text }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <input type="text" name="{{ f.key }}" maxlength="400" autocomplete="off" spellcheck="false" placeholder="(unchanged)"{% if f.hint %} title="{{ f.hint }}"{% endif %}>
+      {% endif %}
+    </label>
+    {% endfor %}
+    {% endfor %}
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" title="ship-fleet set {% if value != 'all' %}--tag {{ value[4:] }} {% endif %}KEY=VALUE ...">Apply to {{ ships }}</button>
+  </form>
+</section>
+
+<section class="setup-step">
+  <h2>Tools</h2>
+  {% if tools %}
+  <p class="hint">Tick tools from the catalogue, then add them to (or remove them from) {{ every }} (<code>ship-fleet tools add|remove</code>).</p>
+  {% for action, label in (("add", "Add"), ("remove", "Remove")) %}
+  <form method="post" action="/fleet/actions/tools" class="tools-form"
+    data-confirm-title="{{ label }} {n} tool{s} {{ 'on' if action == 'add' else 'from' }} {{ ships }}?"
+    data-confirm="{{ 'Each Ship installs the ticked tools; it may take a while.' if action == 'add' else 'Each Ship removes the ticked tools, and what they installed.' }} For {{ every }}: {{ ships }}."
+    data-confirm-count="input[name='tool']"
+    data-confirm-none="Tick the tools to {{ action }} first."
+    data-confirm-action="{{ label }} {{ 'on' if action == 'add' else 'from' }} {{ ships }}"{% if action == "remove" %} data-confirm-danger{% endif %}>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ships" value="{{ value }}">
+    <input type="hidden" name="do" value="{{ action }}">
+    <fieldset class="scopes">
+      <legend>{{ label }}</legend>
+      {% for id, description, _state in tools %}
+      <label title="{{ description }}"><input type="checkbox" name="tool" value="{{ id }}"> {{ id }}</label>
+      {% endfor %}
+    </fieldset>
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" class="{{ 'ghost danger' if action == 'remove' else '' }}" title="ship-fleet tools {{ action }} --tag TAG ID ...">{{ label }} {{ "on" if action == "add" else "from" }} {{ ships }}</button>
+  </form>
+  {% endfor %}
+  {% else %}
+  <p class="quiet">No tool catalogue here (it is read from the ShipShape checkout).</p>
+  {% endif %}
+</section>
+
+<section class="setup-step">
+  <h2>Logs</h2>
+  <form method="post" action="/fleet/actions/logs" class="settings">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ships" value="{{ value }}">
+    <label>Log <select name="source">{% for s in sources %}<option>{{ s }}</option>{% endfor %}</select></label>
+    <label>Lines (the last) <select name="lines">{% for l in LOG_LINES %}<option{% if l == "100" %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    <button type="submit" class="ghost" title="ship-fleet logs --tag TAG SOURCE --lines N">Read it from {{ ships }}</button>
+  </form>
+  <p class="hint">Reading changes nothing. Each Ship's lines show on the job's card below its result.</p>
+</section>
+</div>
+{% endif %}
+{% endblock %}

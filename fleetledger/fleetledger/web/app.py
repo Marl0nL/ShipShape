@@ -38,6 +38,7 @@ from fleetledger.web import (
     adopt,
     dashboard,
     destroy,
+    fleetactions,
     images,
     network,
     overlayweb,
@@ -233,8 +234,18 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
         "jobs": ui.jobs.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
+        "can_renew": _has_ca(snap.inventory),
         "overlay_set": bool(snap.inventory is not None and snap.inventory.overlay),
     }
+
+
+def _has_ca(inv: Any) -> bool:
+    from fleetledger import ca
+
+    try:
+        return inv is not None and ca.config(inv) is not None
+    except FleetError:
+        return False
 
 
 def _quietly(build: Any, *args: Any) -> Any:
@@ -1038,6 +1049,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         *settings.routes(),
         *images.routes(),
         *trust.routes(),
+        *fleetactions.routes(),
         *overlayweb.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]

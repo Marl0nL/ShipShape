@@ -56,7 +56,7 @@ def public_key_line(text: str) -> str | None:
 
 def scope_choices(inv: Any) -> list[tuple[str, str]]:
     """(scope, what it says) for the Ships a machine may reach: all, a tag, one Ship."""
-    tags = sorted({t for s in inv.ships() for t in (s.tags or ())})
+    tags = sorted({t for s in inv.ships() for t in inv.effective_tags(s)})
     return ([("all", "every Ship")] + [(f"tag:{t}", f"Ships tagged {t}") for t in tags]
             + [(f"ship:{s.name}", s.name) for s in inv.ships()])
 
@@ -158,16 +158,37 @@ def _to_machines() -> Response:
 
 # --- certificates -------------------------------------------------------------------
 async def renew_all(request: Request) -> Response:
-    from fleetledger.web.app import form, one
+    """Every Ship's certificates (`ca sign`), or every Ship with a tag (`ca sign --tag
+    T`, from the Fleet page's Every Ship menu, which says from=fleet)."""
+    from fleetledger import ops
+    from fleetledger.web.app import back, form, one
 
     fields = await form(request)
+    tag = one(fields, "tag")
+    if one(fields, "from") == "fleet":  # the Fleet page's Every Ship menu
+        where = back("/", tag=tag if ops.TAG_RE.match(tag) else "")
+    else:
+        where = RedirectResponse(TO_CERTIFICATES, status_code=303)
+    if tag and not ops.TAG_RE.match(tag):  # never widened to every Ship
+        _flash(request, "bad", "Choose every Ship or a tag.")
+        return where
     inv = _inventory(request)
     if inv is not None:
         force = one(fields, "force") == "yes"
-        _start(request, "certs", [s.name for s in inv.ships()],
-               ["ca", "sign", *(["--force"] if force else [])],
-               "Re-issue every certificate" if force else "Renew certificates")
-    return RedirectResponse(TO_CERTIFICATES, status_code=303)
+        try:
+            ships = ops.select(inv, [], tag) if tag else inv.ships()
+        except FleetError as exc:  # no Ship has that tag (now)
+            _flash(request, "bad", exc.message)
+            return where
+        title = ("Re-issue every certificate" if force else "Renew certificates") + (
+            f" of every {tag} Ship" if tag else "")
+        if ships:
+            _start(request, "certs", [s.name for s in ships],
+                   ["ca", "sign", *(["--tag", tag] if tag else []),
+                    *(["--force"] if force else [])], title)
+        else:
+            _flash(request, "bad", "No Ships to renew.")
+    return where
 
 
 async def renew_ship(request: Request) -> Response:

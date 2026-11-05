@@ -406,6 +406,11 @@ def make_ssh(inventory):
                 tags, _joined = SHIPS[ship.name]
                 doc = status_doc(ship.name, tags, names.index(ship.name) + 1, time.time())
                 return Result(0, json.dumps(doc).encode(), "", ship.names[0])
+            if verb == "logs":  # a few made-up lines of the asked source
+                answer = ctl_result("logs")
+                answer["data"] = {"lines": [f"{ship.name} {command[4]}: demo line {i}"
+                                            for i in range(1, 6)]}
+                return Result(0, json.dumps(answer).encode(), "", ship.names[0])
             if verb == "overlay":  # status and leave, as ship-ctl overlay answers
                 if command[4:5] == ["leave"]:
                     LEFT.add(ship.name)

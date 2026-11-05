@@ -55,6 +55,15 @@
           <button type="submit" class="ghost"{% if not off %} disabled{% endif %} title="ship-fleet overlay join SHIP ...">Join {{ every }} not on the overlay ({{ off|length }})</button>
         </form>
         {% endif %}
+        {% if can_renew %}
+        <form method="post" action="/settings/certs/renew" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="from" value="fleet">
+          {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+          <button type="submit" class="ghost" title="ship-fleet ca sign{% if tag %} --tag {{ tag }}{% endif %}">Renew certificates</button>
+        </form>
+        {% endif %}
+        <a class="button ghost" href="/fleet/actions{% if tag %}?tag={{ tag }}{% endif %}">More fleet actions…</a>
         <p class="hint">Each sign-in needs its own approval in your browser; they run one after another on the Sign-ins page.</p>
       </div>
     </details>

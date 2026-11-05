@@ -622,3 +622,8 @@ header.top nav a.new-ship-link { margin-left: 10px; color: var(--brass-ink); }
 form.new-ship fieldset { margin: 10px 0; }
 form.new-ship fieldset.ship-tools label { display: inline-block; margin-right: 14px; }
 form.new-ship textarea { width: 100%; max-width: 32em; }
+
+/* Every Ship (/fleet/actions): a tick box beside its words in a settings grid */
+.settings label.inline-check { flex-direction: row; align-items: center; gap: 6px; }
+form.tools-form { margin: 8px 0 16px; }
+details.ship-log > summary { font-size: 13px; }
