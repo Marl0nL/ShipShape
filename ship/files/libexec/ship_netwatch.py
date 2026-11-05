@@ -68,10 +68,6 @@ def hour_key(when: datetime) -> str:
     return when.astimezone(UTC).strftime("%Y-%m-%dT%H")
 
 
-def parse_utc(text: str) -> datetime:
-    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-
-
 def clean_name(name: object) -> str | None:
     """A DNS name as kept: lower case, no trailing dot, well formed; else None."""
     if not isinstance(name, str):

@@ -290,7 +290,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
     if failures:
         data = {"started": started, "skipped": skipped}
         raise CtlError(
-            "herdr-unavailable", f"{failures} autostart agent(s) could not be started", 1
+            "herdr-unavailable", f"{failures} autostart agent(s) could not be started"
         ).with_data(data, started, messages)
     return {"started": started, "skipped": skipped}, started, messages
 

@@ -115,10 +115,10 @@ def parse(text: str, paths: Paths) -> ShipToml:
     try:
         doc = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise CtlError("invalid-ship-toml", f"ship.toml is not valid TOML: {exc}", 4) from exc
+        raise CtlError("invalid-ship-toml", f"ship.toml is not valid TOML: {exc}") from exc
     errors = check(doc, paths)
     if errors:
-        raise CtlError("invalid-ship-toml", "; ".join(errors[:5]), 4)
+        raise CtlError("invalid-ship-toml", "; ".join(errors[:5]))
     return ShipToml(doc)
 
 

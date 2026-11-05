@@ -33,8 +33,12 @@ agents may and may not change.
 - Do not edit `/etc/shipshape/`, `/etc/claude-code/` or `~/.claude/settings.json`.
 - Do not stop or restart the herdr server, and do not replace `~/.local/bin/claude`
   or `herdr`.
-- There is no network allow-list: the internet is open. That is not permission to
-  probe the local network.
+- There is no network allow-list: the internet is open. The Ship records which
+  programs connect where, for the person to review, and if its LAN guard is on,
+  new connections to the local network (other than its gateway, DNS and any
+  addresses the person has allowed) are refused. Neither is permission to probe the local network.
+- Ship logs are read from FleetLedger (`ship-fleet logs <ship> SOURCE`), not here;
+  `ship-axi rules` says the same.
 
 ## Not available yet
 

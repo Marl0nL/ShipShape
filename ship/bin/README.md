@@ -20,9 +20,14 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 | `tools.py` | the catalogue runner (`contracts/tools.md`) |
 | `converge.py` | switches to a new tooling bundle, rolling back on failure |
 | `logs.py` | `ship-ctl logs SOURCE` |
+| `net.py` | `ship-ctl net` and status's `net` section: summarises what ship-netwatch recorded (`contracts/net-summary.schema.json`) |
+| `sshtrust.py` | `ship-ctl ssh-trust`: installs FleetLedger's SSH certificates and CA keys |
 | `overlay.py` | `ship-ctl overlay join|leave|status` (phase 5): the auth key from stdin via a root-only file in `/run`, `tailscale up`, and the sshd listen policy (`network.ssh_listen`) |
 | `schema.py` | a small JSON Schema validator (Ships have no `jsonschema`) |
 | `tomlw.py` | TOML writing, and in-place key edits for herdr's config |
+| `shiptoml.py` | reading, checking and writing `ship.toml` |
+| `context.py`, `paths.py`, `runner.py` | what every command gets: the paths (moved under `SHIPSHAPE_ROOT` in tests), a command runner, pinned versions, a clock |
+| `homefs.py`, `fsutil.py` | safe reads and writes in the agent's home (below); atomic writes elsewhere |
 
 ## Beyond the contract
 
@@ -48,7 +53,9 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
   and puts the name back if herdr lost it.
 
 Internal state (not a contract; may change): `/var/lib/shipshape/provision.json`
-(written by ship-provision), `tools.json`, `autostart.json`; agent-side
+(written by ship-provision), `tools.json`, `autostart.json`, `autostart-repos.json`,
+`profiles.json`, `overlay.json`, `net/state.json`; the previous sign-in states in
+`/run/shipshape/`; agent-side
 `~/.local/state/shipshape/last-resume.json` (written by ship-resume) and the mode
 ledger.
 

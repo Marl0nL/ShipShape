@@ -27,14 +27,17 @@ What it does, in order (each step checks first and only counts real changes):
    Chrome comes from the chrome-devtools-axi recipe.
 3. herdr and uv, downloaded and checked against their pinned sha256.
 4. ShipShape files: the resume shim, the mode-ledger hook, `/usr/local/bin/ship-ctl`,
-   `/etc/profile.d/shipshape.sh`.
+   `/usr/local/bin/ship-axi`, `/etc/profile.d/shipshape.sh`; then ship-axi's Node
+   dependencies (`npm ci` from its lockfile).
 5. The agent's home folders, its npm prefix (`~/.local`) and lingering.
 6. Claude Code with the native installer, as `agent` (`install-claude.sh`: the
    release manifest's signature and the binary's checksum are checked), once;
    then it updates itself. herdr's Claude integration.
 7. The sshd, logind and journald drop-ins, then the units: `ship-status.timer`
-   (system), `herdr.service` and `ship-resume.service` (in `/etc/systemd/user`,
-   root-owned, `ConditionUser=agent`).
+   and the two `ship-lan-guard` units (system; `ship-ctl apply` turns the LAN
+   guard on or off), `herdr.service` and `ship-resume.service` (in
+   `/etc/systemd/user`, root-owned, `ConditionUser=agent`). Then
+   `ship-netwatch.service`, which records which programs connect where.
 8. First boot only: `ship-ctl apply`, `ship-ctl tools run`, start herdr, then
    `ship-resume` (nothing to resume yet, but its record lets autostart run at once).
 

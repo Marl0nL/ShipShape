@@ -2,11 +2,11 @@
 
 <p align="center"><em>Virtual machines for coding agents ("Ships"), and a tool to run a fleet of them ("FleetLedger").</em></p>
 
-> **Status: phase 1.** Ships boot, provision themselves and resume their agents;
-> FleetLedger creates, enrols, shows and signs them in. The previous Docker-based
-> design's code is kept by the tag `container-stack-final`, and its last state
-> in this repo (the `legacy/` folder) by commit `cdeecd7`; its notes are in
-> `docs/archive/`.
+> **Status:** Ships boot, provision themselves and resume their agents;
+> FleetLedger creates, signs in, updates and watches them, from the terminal or
+> a local web UI. The previous Docker-based design's code is kept by the tag
+> `container-stack-final`, and its last state in this repo (the `legacy/`
+> folder) by commit `cdeecd7`; its notes are in `docs/archive/`.
 
 ## What it is
 
@@ -21,21 +21,21 @@ See `docs/architecture.md` and `docs/security.md`.
 
 ## Quick start
 
+New here? [Set up your own fleet](docs/guide/your-own-fleet.md) walks through
+every step. In short:
+
 ```sh
 fleetledger/install.sh                 # installs ship-fleet with pipx
 ship-fleet setup                       # opens the setup page in your browser
 ```
 
-That is all. The setup page (on `127.0.0.1`, this computer only) starts with
-one choice: a **new fleet**, where FleetLedger makes every key it needs and
-looks after them (you never see, name or type one), or **connecting to keys you
-already have**. Then it asks only for what you alone can give: where Ships run
-(a Proxmox address and API token, with everything else found and filled in,
-and the exact root commands for anything missing; or manual), which of your SSH
-keys may log in to Ships, optionally a Tailscale OAuth client, and a first Ship,
-whose progress it shows live. Each step shows done or next; stop whenever you
-like and come back. No browser on that computer: `ship-fleet setup --text`
-asks the same in the terminal. Then, day to day:
+The setup page (on `127.0.0.1`, this computer only) first asks whether this is
+a **new fleet**, where FleetLedger makes and looks after every key it needs, or
+whether to **connect to keys you already have**. Then it asks only for what you
+alone can give: where Ships run (Proxmox, or manual), which of your SSH keys may
+log in to Ships, optionally a Tailscale OAuth client, and a first Ship. Each step
+shows done or next; stop whenever you like and come back. No browser on that
+computer? `ship-fleet setup --text` asks the same in the terminal. Then, day to day:
 
 ```sh
 ship-fleet new ship-02 --tag work      # seed, VM, provision, enrol
@@ -44,8 +44,6 @@ ship-fleet ls
 ship-fleet ui                          # the same in your browser (this computer only)
 ship-fleet doctor                      # what is set up, what is missing, the next command
 ```
-
-New here? Start with [set up your own fleet](docs/guide/your-own-fleet.md).
 
 Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [create a Ship](docs/runbooks/create-ship.md),
@@ -65,7 +63,7 @@ Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 | `contracts/` | schemas, examples and docs both halves build against |
 | `versions.toml` | pinned versions, checksums and signing keys |
 | `scripts/check` | lint, tests and the public-repo hygiene check (what CI runs) |
-| `docs/` | architecture, security, runbooks, build tracks, hygiene, archived design notes |
+| `docs/` | the first-fleet guide, web UI, architecture, security, network, runbooks, build tracks, hygiene, design and archived notes |
 | `tests/e2e/` | end-to-end tests on a real hypervisor pool, and the guided acceptance run |
 
 ## Development

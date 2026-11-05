@@ -132,7 +132,7 @@ def build_parser() -> Parser:
 # --- commands ------------------------------------------------------------------
 def require_root(ctx: Context) -> None:
     if not ctx.paths.sandbox and os.geteuid() != 0:
-        raise CtlError("not-root", "ship-ctl needs root; run it with sudo", 3)
+        raise CtlError("not-root", "ship-ctl needs root; run it with sudo")
 
 
 def cmd_version(ctx: Context, args) -> dict:
@@ -204,7 +204,7 @@ def cmd_set(ctx: Context, args) -> dict:
             raise CtlError("usage", "use either KEY=VALUE pairs or --file -")
         new = shiptoml.parse(sys.stdin.read(), ctx.paths).doc
         if new["ship"]["name"] != current.name or new["ship"]["id"] != current.id:
-            raise CtlError("invalid-ship-toml", "ship.name and ship.id must not change", 4)
+            raise CtlError("invalid-ship-toml", "ship.name and ship.id must not change")
     else:
         if not args.pairs:
             raise CtlError("usage", "nothing to set: give KEY=VALUE pairs or --file -")
@@ -221,12 +221,12 @@ def cmd_set(ctx: Context, args) -> dict:
             new.setdefault(table, {})[field] = _coerce(key, SET_KEYS[key], raw)
         errors = shiptoml.check(new, ctx.paths)
         if errors:
-            raise CtlError("invalid-ship-toml", "; ".join(errors[:5]), 4)
+            raise CtlError("invalid-ship-toml", "; ".join(errors[:5]))
     zone = new["ship"].get("timezone")
     if zone and zone != current.doc["ship"].get("timezone") and not shiptoml.zone_installed(
             ctx.paths, zone):
         raise CtlError("invalid-ship-toml",
-                       f"ship.timezone: {zone!r} is not a time zone installed on this Ship", 4)
+                       f"ship.timezone: {zone!r} is not a time zone installed on this Ship")
     _check_listen(ctx, current, new)
     changed = []
     if shiptoml.save(new, ctx.paths.ship_toml):
@@ -331,7 +331,7 @@ def cmd_tools(ctx: Context, args) -> dict:
         doc["tools"]["install"] = [i for i in install if i not in args.ids]
     errors = shiptoml.check(doc, ctx.paths)
     if errors:
-        raise CtlError("invalid-ship-toml", "; ".join(errors[:5]), 4)
+        raise CtlError("invalid-ship-toml", "; ".join(errors[:5]))
     changed = []
     if shiptoml.save(doc, ctx.paths.ship_toml):
         changed.append(ctx.paths.agent_path(ctx.paths.ship_toml))

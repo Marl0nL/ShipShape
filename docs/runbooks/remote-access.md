@@ -6,7 +6,8 @@ Headscale server you run), and an access rule lets your devices reach the Ships
 on port 22 and nothing else.
 
 What does not change: SSH with the Ship's pinned host key is still the only way
-in, as `agent` with your key or `fleet` with FleetLedger's. The overlay adds a
+in, as `agent` with your key, as your own login (`ship-fleet owner`), or as
+`fleet` with FleetLedger's. The overlay adds a
 route, not a new way to log in. Tailscale SSH stays off.
 
 ## How keys are handled
@@ -18,7 +19,11 @@ it to the Ship over SSH on stdin. On the Ship it exists only in a root-only file
 under `/run` while `tailscale up` runs. Keys never go into seeds, cloud metadata,
 command lines, logs, `ships.toml`, the audit log or the status document.
 
-## The quick way: `ship-fleet overlay setup`
+## The quick way: the setup page, or `ship-fleet overlay setup`
+
+`ship-fleet setup`'s **Reach Ships from anywhere** step does this for Tailscale
+with an OAuth client ([web-ui.md](../web-ui.md#first-run-the-setup-page)). For
+pasted keys or Headscale, or to choose everything in a terminal:
 
 ```sh
 ship-fleet overlay setup    # asks: provider, key source, OAuth client and level
@@ -27,17 +32,16 @@ ship-fleet overlay check    # verifies it, now and whenever you like
 
 `setup` asks for the provider (Tailscale, or your own Headscale), the key
 source (keys you paste, or an OAuth client) and, for OAuth, how much the stored
-secret may do: `keys` (the default: mint keys only), `devices` (also remove
-destroyed Ships' devices; `devices:core` is tailnet-wide) or `policy` (also add
-the Ships' access rules for you, after a diff and your yes). It checks the
+secret may do: `keys` (the default), `devices` or `policy`
+([the choice](../guide/your-own-fleet.md#choosing-how-ships-get-overlay-keys);
+scopes in [overlay-providers.md](../overlay-providers.md)). It checks the
 client's scopes with Tailscale before saving anything, writes `[overlay]` to
-`ships.toml` and the secret to your OS keyring (or a 0600 file), and prints the access rules to add
-to your policy unless it adds them itself. `check` verifies the setup, the policy (tag owners; your devices
-reach the Ships on port 22; no rule lets a Ship start a connection; the Ship
-tests pass in Tailscale's own engine, at the `policy` level; otherwise from an
-exported file, `--policy FILE`), the tailnet's Ship devices against the
-inventory (from the `devices` level), and each Ship's overlay; `--probe` also tries, from each Ship, to open
-a connection to this computer and to another Ship, which must fail.
+`ships.toml` and the secret to your OS keyring (or a 0600 file), and prints the
+access rules to add to your policy unless it adds them itself. `check` verifies
+the setup, the policy, the tailnet's Ship devices against the inventory (from
+the `devices` level) and each Ship's overlay; `--probe` also tries, from each
+Ship, to open a connection to this computer and to another Ship, which must
+fail ([5. Check it](#5-check-it-acceptance)).
 
 The steps below are what `setup` does, by hand, and the laptop side.
 [../guide/your-own-fleet.md](../guide/your-own-fleet.md) explains the choices.
@@ -135,7 +139,7 @@ FleetLedger's admin key"). If the overlay itself breaks, the Proxmox console
 still works, and `sudo ship-ctl set network.ssh_listen=any` there opens the LAN
 again.
 
-**With the LAN guard on** (`lan_guard=true`, phase 2), the Ship also refuses new
+**With the LAN guard on** (`lan_guard=true`), the Ship also refuses new
 outgoing connections to `100.64.0.0/10`, the overlay's own address range, and to
 your LAN. That matches the access rules (Ships open nothing), and replies to
 connections your devices start are let through. The one effect: the Ship cannot
@@ -146,7 +150,11 @@ traffic through its servers (still end-to-end encrypted) instead.
 
 1. Install Tailscale on the laptop and sign in to the same tailnet. With MagicDNS
    on, Ships are reachable by name.
-2. Trust the Ships' host keys on the laptop. FleetLedger knows them; copy the
+2. Trust the Ships' host keys on the laptop. The easy way is
+   `ship-fleet trust laptop --key laptop.pub` on the computer that runs
+   FleetLedger ([trust-machines.md](trust-machines.md)): the laptop gets a
+   certificate and the Ships' CA line, and needs no known-hosts lines or agent
+   key (skip to step 4). By hand: FleetLedger knows the host keys; copy the
    lines for the Ships you want from its known-hosts file (on the computer that
    runs FleetLedger):
 
@@ -168,9 +176,7 @@ traffic through its servers (still end-to-end encrypted) instead.
        StrictHostKeyChecking yes
    ```
 
-   (Phase 3's `ship-fleet trust <machine>` does this for you with SSH
-   certificates; this is the manual way.)
-3. Your key: the laptop's key must be one of the Ship's agent keys
+3. Your key (by hand only): the laptop's key must be one of the Ship's agent keys
    (`fleet.agent_keys` in `ships.toml`, put on the Ship by its seed).
 4. Attach:
 

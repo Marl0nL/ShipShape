@@ -50,7 +50,7 @@ ship-01 claude: WRONG ACCOUNT: claude is you@example.com, the Ship's tags expect
 sign-in columns).
 
 Within a minute of Claude signing in, the Ship starts its autostart agents by
-itself. They may start before you have signed in to gcloud or GitHub, and find
+itself (one that works in a private GitHub repo waits for the GitHub sign-in). They may start before you have signed in to gcloud or GitHub, and find
 those missing. So after each later sign-in that checks out, FleetLedger has the
 Ship tell its autostart agents, and only those, with one line:
 
@@ -74,7 +74,7 @@ ship-fleet set ship-01 remote_control=off    # or remote_control=on
 - "off" also stops resumed sessions from reconnecting (`disableRemoteControl`).
   `blocked` is an older name for the same setting.
 - A change reaches running sessions only when they restart: a reboot restarts
-  them all (`ssh` in and `sudo systemctl reboot`, never a forced reset).
+  them all (`ship-fleet reboot ship-01`, never a forced reset).
 - The Claude app can take a few minutes to show or drop sessions.
 - Sessions are named `<session prefix>-<agent name>` (the prefix defaults to the
   Ship's name), from `claude --name` when the agent starts. Sessions you start
@@ -97,7 +97,8 @@ ship-fleet logout ship-01 all
   updated.
 - **"The sign-in code expired" / "window closed":** run the login again and paste
   sooner.
-- **"refused FleetLedger's admin key":** `ssh-add ~/.ssh/shipshape_fleet_ed25519`.
+- **"refused FleetLedger's admin key":** see
+  [create-ship.md](create-ship.md#if-something-goes-wrong).
 - **Signed in, but the check says not signed in:** look at
   `ship-fleet status ship-01`; for gcloud both `gcloud` and `gcloud_adc` must be
   OK.

@@ -157,7 +157,7 @@ def merge_claude_json(existing: dict, trusted: list[str]) -> dict:
     return doc
 
 
-def expand_cwd(cwd: str, agent_home: str = "/home/agent") -> str:
+def expand_cwd(cwd: str, agent_home: str) -> str:
     return agent_home + cwd[1:] if cwd.startswith("~/") else cwd
 
 
@@ -214,11 +214,11 @@ def sync_owner(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[lis
         return ([sudoers] if remove(sudoers, dry_run=dry_run) else []), []
     name = owner["name"]
     if name in RESERVED_USERS:
-        raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a ShipShape login", 4)
+        raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a ShipShape login")
     messages = []
     uid = _passwd_uid(ctx, name)
     if uid is not None and (uid < 1000 or uid >= 60000):  # system accounts, nobody
-        raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a system account", 4)
+        raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a system account")
     if uid is None and not dry_run:
         r = ctx.runner.run(["useradd", "--create-home", "--shell", "/bin/bash", "--comment",
                             "ShipShape owner", name], timeout=30)

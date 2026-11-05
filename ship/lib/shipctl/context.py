@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cached_property
 
-from .homefs import HomeFS
+from .homefs import HomeFS, UnsafePath
 from .paths import Paths
 from .runner import Runner
 
@@ -54,10 +55,6 @@ class Context:
 
     def read_home_json(self, path, default=None):
         """A JSON file under the agent's home; `default` if missing, unsafe or invalid."""
-        import json
-
-        from .homefs import UnsafePath
-
         try:
             raw = self.home.read(self.paths.home_rel(path))
             return default if raw is None else json.loads(raw)

@@ -1,7 +1,8 @@
 # Network visibility
 
-Ships have normal internet access. ShipShape does not filter, proxy or block
-traffic. Instead, each Ship records which programs reached which domains,
+Ships have normal internet access. ShipShape does not filter or proxy internet
+traffic (the optional LAN guard only refuses new connections to your local
+network; [contracts/settings.md](../contracts/settings.md#lan-guard)). Instead, each Ship records which programs reached which domains,
 roughly how much they moved, and which destinations are new. You can then
 review what agents did afterwards. Like the old proxy log, it records domains,
 not URLs; there is no TLS inspection.
