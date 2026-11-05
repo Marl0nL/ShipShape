@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -26,6 +27,9 @@ from fleetledger.inventory import now_timestamp
 def record(
     ship: str, action: str, service: str, outcome: str, account: str | None = None
 ) -> dict:
+    """Append one entry. A log that cannot be written (disk full, read-only, a
+    root-owned file) is reported on stderr and never fails the action itself: by
+    the time an entry is written, the change has happened."""
     entry = {
         "at": now_timestamp(),
         "ship": ship,
@@ -35,11 +39,15 @@ def record(
         "account": account,
     }
     path = paths.audit_log_path()
-    paths.private_dir(path.parent)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, sort_keys=True) + "\n")
-    os.chmod(path, 0o600)
+    try:
+        paths.private_dir(path.parent)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        print(f"fleetledger: could not write the audit log ({exc.strerror or exc}); "
+              f"not recorded: {ship} {action} {outcome}.", file=sys.stderr)
     return entry
 
 

@@ -276,10 +276,10 @@ def cmd_new(args, app) -> int:
                 ed.remove_ship(name)
             seed.path.unlink(missing_ok=True)
             raise
+        with store.edit() as ed:  # the VM id is saved before the entry is written
+            ed.set_field(name, "driver_ref", dict(outcome.driver_ref))
         if not outcome.done:
             audited["outcome"] = "steps"
-    with store.edit() as ed:
-        ed.set_field(name, "driver_ref", dict(outcome.driver_ref))
     for message in outcome.messages:
         app.say(message)
     if outcome.instructions:

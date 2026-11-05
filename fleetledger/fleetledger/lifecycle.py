@@ -12,6 +12,7 @@ from fleetledger import enrol, images, overlay, status
 from fleetledger.commands import table
 from fleetledger.concierge import audit
 from fleetledger.drivers import NotSupported, PublishedImage
+from fleetledger.drivers.base import check_snapshot_name
 from fleetledger.errors import FleetError
 from fleetledger.inventory import STOCK_IMAGE
 
@@ -219,6 +220,7 @@ def cmd_snapshot(args, app) -> int:
         return 0
     if not args.snapshot:
         raise FleetError(f"snapshot {args.action} needs a snapshot name.")
+    check_snapshot_name(args.snapshot)  # before asking or recording: never log a bad name
     if args.action == "rollback":
         if not args.yes:
             if not app.stdin_isatty():
