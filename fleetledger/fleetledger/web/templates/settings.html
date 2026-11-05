@@ -88,8 +88,76 @@
 
 <section id="images" class="setup-step settings-group">
   <h2>Images</h2>
-  <p>New Ships start from {% if inv.pinned_image == "stock" %}the stock Ubuntu image{% else %}image <code>{{ inv.pinned_image }}</code>{% endif %}.
-    Managing images here comes later; for now: <code>ship-fleet image ls</code>.</p>
+  <p>New Ships start from {% if inv.pinned_image == "stock" %}the stock Ubuntu template{% else %}image <code>{{ inv.pinned_image }}</code>{% endif %}.
+    A baked image has your tools in it already, so a new Ship is ready sooner. Existing Ships
+    are never re-imaged: update them in place.</p>
+  {% for job in image_jobs %}{% include "_job.html" %}{% endfor %}
+  {% if images %}
+  <table class="images">
+    <thead><tr><th>Image</th><th>Ubuntu</th><th>Tooling</th><th>Baked</th><th>Published</th><th>Ships</th><th>File</th><th></th></tr></thead>
+    <tbody>
+    {% for i in images %}
+    <tr{% if i.pinned %} class="pinned"{% endif %}>
+      <td><code>{{ i.id }}</code>{% if i.pinned %} <span class="pill good">new Ships</span>{% endif %}</td>
+      <td>{{ i.ubuntu }}</td>
+      <td>{{ i.tooling }}{% if i.dirty %} <span class="pill warn">dirty</span>{% endif %}</td>
+      <td>{{ i.recipes|join(", ") or "-" }}</td>
+      <td>{% for d, ref in i.published.items() %}{{ d }} {{ ref.values()|join("/") }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</td>
+      <td>{{ i.ships }}</td>
+      <td>{{ "kept" if i.file else "-" }}</td>
+      <td class="row-actions">
+        {% if not i.pinned %}
+        <form method="post" action="/settings/images/use" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="image" value="{{ i.id }}">
+          <button type="submit" class="small" title="ship-fleet image use {{ i.id }}">Use for new Ships</button>
+        </form>
+        {% endif %}
+        {% if default_driver not in i.published and i.file %}
+        <form method="post" action="/settings/images/publish" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="image" value="{{ i.id }}">
+          <button type="submit" class="ghost small" title="ship-fleet image publish {{ i.id }}">Publish to {{ default_driver }}</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/settings/images/remove" class="inline"
+          data-confirm-title="Remove image {{ i.id }}?"
+          data-confirm="FleetLedger removes it from every hypervisor it is published to, then forgets it{% if i.file %} and deletes its file here, unless you keep it{% endif %}. Ships made from it keep running: they are full copies."
+          data-confirm-action="Remove {{ i.id }}" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="image" value="{{ i.id }}">
+          {% if i.file %}<label><input type="checkbox" name="keep_file" value="yes"> keep the file</label>{% endif %}
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost danger small" title="ship-fleet image rm {{ i.id }}">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if inv.pinned_image != "stock" %}
+  <form method="post" action="/settings/images/use" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="image" value="stock">
+    <button type="submit" class="ghost" title="ship-fleet image use stock">Use the stock template for new Ships</button>
+  </form>
+  {% endif %}
+  <h3>A template made by hand</h3>
+  <p class="hint">Made the image into a template on your hypervisor yourself (the manual driver
+    shows the steps when you publish)? Record its VM id, then use the image.</p>
+  <form method="post" action="/settings/images/publish" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Image <select name="image">{% for i in images %}<option value="{{ i.id }}">{{ i.id }}</option>{% endfor %}</select></label>
+    <label>template VM id <input name="template_vmid" inputmode="numeric" pattern="[0-9]+" required size="6"></label>
+    <button type="submit" class="ghost" title="ship-fleet image publish ID --template-vmid N">Record it</button>
+  </form>
+  {% else %}
+  <p class="quiet">No baked images yet.</p>
+  {% endif %}
+  <h3>Build one</h3>
+  <p>Building takes a while and needs local tools (libguestfs), so it runs in a terminal:
+    <code>ship-fleet image build</code> <button type="button" class="ghost small" data-copy="ship-fleet image build">Copy</button>
+    (see <code>docs/runbooks/images.md</code>). It shows up here when it is done.</p>
 </section>
 
 <section id="activity" class="setup-step settings-group">

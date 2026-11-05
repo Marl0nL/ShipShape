@@ -65,7 +65,7 @@ def _ui(request: Request):
 
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
-    from fleetledger.web import setup
+    from fleetledger.web import images, setup
     from fleetledger.web.app import render
 
     ui = _ui(request)
@@ -81,6 +81,7 @@ async def page(request: Request) -> Response:
     except (OSError, ValueError):
         entries = []
     context = await setup.access_context(inv)
+    context.update(await run_in_threadpool(images.section_context, ui, inv))
     return render(request, "settings.html", inv=inv, health=ui.health, STATES=STATES,
                   FIX=FIX, entries=list(reversed(entries)), back="settings",
                   inventory_path=setup._tilde(store.path),
