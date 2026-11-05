@@ -1,0 +1,11 @@
+{# The Ship page's Logs tab (included by ship.html; same context). #}
+  <section>
+    <h2>Logs</h2>
+    <form method="get" action="/ships/{{ ship.name }}/logs" class="inline">
+      <select name="source">{% for s in sources %}<option value="{{ s }}"{% if s == source %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+      <button type="submit">Show</button>
+    </form>
+    {% if log is not none %}
+    <pre class="log{% if not log_ok %} bad{% endif %}">{{ log }}</pre>
+    {% endif %}
+  </section>

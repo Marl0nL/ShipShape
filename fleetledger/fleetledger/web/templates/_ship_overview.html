@@ -1,0 +1,215 @@
+{# The Ship page's Overview tab (included by ship.html; same context). #}
+  {% if view.problem %}<p class="flash bad">{{ view.message }}</p>{% endif %}
+  {% if alerts %}
+  {% from "_macros.html" import alert_row %}
+  <section>
+    <h2>Needs attention</h2>
+    <ul class="alerts no-ship">
+    {% for a in alerts %}{{ alert_row(a, csrf, ship=False) }}{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Sign-ins</h2>
+    <table>
+      <thead><tr><th>Service</th><th>State</th><th>Account</th><th>Tags expect</th><th>Checked</th><th></th></tr></thead>
+      <tbody>
+      {% for service in AUTH_ORDER %}
+      {% set entry = view.auth(service) %}
+      {% set cell = auth_cell(view, service) %}
+      <tr>
+        <td>{{ service }}</td>
+        <td><span class="pill {{ cell|pill }}">{{ cell }}</span></td>
+        <td>{{ (entry.account if entry else None) or "-" }}{% if entry and entry.detail %} <span class="quiet">({{ entry.detail }})</span>{% endif %}</td>
+        <td>{{ expected[service]|join(" or ") or "-" }}</td>
+        <td class="quiet">{{ entry.checked_at if entry else "-" }}{% if entry and entry.expires_at %}; expires {{ entry.expires_at }}{% endif %}</td>
+        <td>
+          {% if cell == "off" %}<a class="quiet" href="/ships/{{ ship.name }}/settings">off (Settings)</a>
+          {% else %}
+          <form method="post" action="/signin" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="ship" value="{{ ship.name }}">
+            <input type="hidden" name="service" value="{{ SERVICE_PROVIDER[service] }}">
+            <button type="submit">{% if entry and entry.state in ("ok", "expiring") %}Re-sign{% else %}Sign in{% endif %}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/ships/{{ ship.name }}/logout" class="inline signout"
+      data-confirm-title="Sign {{ ship.name }} out of {value:service}?"
+      data-confirm="{{ ship.name }} forgets this sign-in. Agents and tools that use it stop working there until you sign in again."
+      data-confirm-action="Sign out of {value:service}" data-confirm-danger>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Sign out of
+        <select name="service">{% for s in SERVICES %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
+      </label>
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+      <button type="submit" class="ghost danger">Sign out</button>
+    </form>
+    {% if flows %}
+    <p class="hint">Recent sign-ins: {% for f in flows[:5] %}<a href="/signin?batch={{ f.batch }}">{{ f.label }} {{ f.outcome or f.state }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+  </section>
+
+  {% if doc %}
+  <section>
+    <h2>Agents</h2>
+    {% set claude_auth = doc.auth.claude %}
+    {% set signed_in = claude_auth and claude_auth.state in ("ok", "expiring") %}
+    {% set running = workspaces.values()|sum(start=[])|selectattr("kind", "equalto", "claude")|list %}
+    {% if running and signed_in and doc.claude.remote_control == "on" %}
+    <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
+      with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
+      Claude app (signed in as {{ claude_auth.account or "your account" }}).</p>
+    {% elif running and doc.claude.remote_control != "on" %}
+    <p class="hint">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running;
+      Remote Control is off, so they do not show in the Claude app (Settings, Remote Control).</p>
+    {% elif not signed_in %}
+    <p class="warning">Claude is not signed in on {{ ship.name }}, so no agent starts. Sign it
+      in (above): its agents then start, and with Remote Control on they show in the Claude app.</p>
+    {% elif not running %}
+    <p class="warning">No agent is running on {{ ship.name }}. Add one below: it starts now and on
+      every boot{% if doc.claude.remote_control == "on" %}, and shows in the Claude app (Remote
+      Control is on){% endif %}.</p>
+    {% endif %}
+    {% if workspaces %}
+    <table>
+      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>Pane</th><th>Folder</th></tr></thead>
+      <tbody>
+      {% for ws, agents in workspaces.items() %}
+      {% for a in agents %}
+      <tr>
+        <td>{{ ws if loop.first else "" }}</td>
+        <td>{{ a.name or "-" }}</td>
+        <td>{{ a.kind }}</td>
+        <td><span class="pill {{ ("waiting" if a.state == "blocked" else a.state)|pill }}">{{ "waiting" if a.state == "blocked" else a.state }}</span></td>
+        <td>{{ a.mode or "-" }}{% if a.mode == "bypassPermissions" %} <span class="pill warn">bypass</span>{% endif %}</td>
+        <td class="quiet">{{ a.pane or "" }}</td>
+        <td class="quiet">{{ a.cwd or "" }}</td>
+      </tr>
+      {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    <p class="hint">
+      herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
+      {% if doc.herdr.last_resume %}Last resume {{ doc.herdr.last_resume.at }} ({{ doc.herdr.last_resume.method }}): {{ doc.herdr.last_resume.resumed }} resumed{% if doc.herdr.last_resume.failed %}, {{ doc.herdr.last_resume.failed }} failed{% endif %}.{% endif %}
+    </p>
+    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Add an agent <input name="agent" value="{{ 'main' if not running else '' }}" placeholder="e.g. main" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <label>in <input name="cwd" value="~/work"></label>
+      <label>or a GitHub repo <input name="repo" placeholder="e.g. someone/agent-setup"></label>
+      <label>mode <select name="mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
+      <button type="submit" class="ghost">Add</button>
+    </form>
+    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline"
+      data-confirm-title="Stop starting {value:agent} on {{ ship.name }}?"
+      data-confirm="{{ ship.name }} no longer starts {value:agent} at boot. If it is running, it keeps running until it is stopped or the Ship reboots."
+      data-confirm-action="Stop starting {value:agent}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="do" value="remove">
+      <label>Stop starting an agent <input name="agent" placeholder="its name" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <button type="submit" class="ghost">Stop starting it</button>
+    </form>
+    <p class="hint">An added agent starts now (once Claude is signed in) and on every boot.
+      With a repo, the Ship clones it into <code>~/work/&lt;name&gt;</code> first (a private
+      one once GitHub is signed in) and the agent works there. One you stop starting keeps
+      running until it is stopped or the Ship reboots.</p>
+    {% if attach_here %}
+    <p>Attach from here: <code>herdr --remote {{ ship.name }}</code> or
+      <code>ssh {{ ship.name }}</code> (your key, with the fleet's certificates), or
+      <code>ship-fleet ssh {{ ship.name }}</code>.</p>
+    <p>As yourself, for admin work with sudo: <code>ssh {{ snap.inventory.owner }}@{{ ship.name }}</code>
+      or <code>ship-fleet ssh {{ ship.name }} --as owner</code>. The agent's login has no
+      sudo; its herdr session is the agent's own, so <code>herdr --remote {{ ship.name }}</code>
+      logs in as the agent (the same key and certificate) to reach it. (A Ship made before
+      owner logins existed gets one with <code>ship-fleet owner {{ snap.inventory.owner }}</code>.)</p>
+    {% if attach_until %}<p class="hint">This computer's certificate is valid until
+      {{ attach_until }}; FleetLedger renews it in its last day whenever it runs (this page,
+      or <code>ship-fleet status</code>). To renew it now:
+      <code>ship-fleet trust --this-computer</code>.</p>{% endif %}
+    {% else %}
+    <p>Attach from here: <code>ship-fleet ssh {{ ship.name }}</code>; as yourself, for admin
+      work with sudo: <code>ship-fleet ssh {{ ship.name }} --as owner</code>.</p>
+    {% if can_trust_here %}
+    <form method="post" action="/attach-here" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <button type="submit" class="ghost">Let this computer use ssh {{ ship.name }} and herdr --remote {{ ship.name }}</button>
+    </form>
+    <p class="hint">This trusts this computer with your own key (a short-lived certificate)
+      and adds the Ships to your SSH config (<code>~/.ssh/shipshape/</code>, included from
+      <code>~/.ssh/config</code>) and to herdr's saved machines.</p>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="grid">
+    <div>
+      <h2>Claude Code</h2>
+      <dl>
+        <dt>Version</dt><dd>{{ doc.claude.version or "?" }} ({{ doc.claude.channel }})</dd>
+        <dt>Remote Control</dt><dd>{{ doc.claude.remote_control }}</dd>
+        <dt>Default mode</dt><dd>{{ doc.claude.default_mode }}</dd>
+        <dt>Bypass allowed</dt><dd>{{ "yes" if doc.claude.allow_bypass else "no" }}</dd>
+      </dl>
+    </div>
+    <div>
+      <h2>Host</h2>
+      <dl>
+        <dt>CPU · mem · disk</dt><dd>{{ usage_cell(view) }}</dd>
+        <dt>Size</dt><dd>{{ doc.host.cpus }} CPUs, {{ doc.host.mem_total_mb }} MB, {{ doc.host.disk_total_gb }} GB</dd>
+        <dt>Up</dt><dd>{{ doc.host.uptime_s // 3600 }} h{% if doc.host.reboot_required %}, <span class="pill warn">reboot required</span>{% endif %}</dd>
+        <dt>Updates pending</dt><dd>{{ doc.host.updates_pending if doc.host.updates_pending is not none else "?" }}</dd>
+      </dl>
+    </div>
+    <div>
+      <h2>Tooling</h2>
+      <dl>
+        <dt>Version</dt><dd>{{ doc.ship.tooling }}{% if doc.ship.bundle_commit %} ({{ doc.ship.bundle_commit[:12] }}){% endif %}</dd>
+        <dt>Provisioning</dt><dd>{{ doc.provision.result }}{% if doc.provision.last_run %}, {{ doc.provision.last_run }}{% endif %}</dd>
+        <dt>Tools</dt><dd>{% for id, t in doc.tools|dictsort %}<span class="pill {{ t.state|pill }}">{{ id }} {{ t.state }}</span> {% else %}none{% endfor %}</dd>
+      </dl>
+    </div>
+  </section>
+  {% include "_ship_history.html" %}
+  {% if doc.errors %}
+  <section><h2>Probe errors</h2><ul>{% for e in doc.errors %}<li class="quiet">{{ e }}</li>{% endfor %}</ul></section>
+  {% endif %}
+  <section class="ops">
+    {% if overlay_set and not on_overlay %}
+    <form method="post" action="/operations" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="join">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <input type="hidden" name="confirm" value="yes">
+      <button type="submit">Join the overlay</button>
+    </form>
+    <span class="hint">{{ ship.name }} is not on your overlay yet: join it to reach it from
+      anywhere (its host certificate is re-signed with its overlay name).</span>
+    {% endif %}
+    {% for op in ("update", "reboot") %}
+    <form method="post" action="/operations" class="inline"
+      {% if op == "update" %}
+      data-confirm="FleetLedger copies this checkout's tooling to {{ ship.name }} and converges it; agents keep running. If its herdr changed it reboots, and its agents resume in their modes. Progress shows on the Fleet page."
+      {% else %}
+      data-confirm="{{ ship.name }} restarts and is out of reach for a minute or two. herdr saves every agent first and resumes it in its mode afterwards. Progress shows on the Fleet page."
+      data-confirm-danger
+      {% endif %}>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="{{ op }}">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+      <button type="submit" class="ghost">{{ op|capitalize }} {{ ship.name }}</button>
+    </form>
+    {% endfor %}
+  </section>
+  {% elif view.cloud_init %}
+  <p>First boot: cloud-init is {{ view.cloud_init.get("status", "unknown") }}.</p>
+  {% endif %}
