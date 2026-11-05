@@ -260,7 +260,7 @@
 <form method="post" action="/ships/{{ ship.name }}/power" class="inline"
   {%- if verb == "stop" %}{% set c = op_confirm("stop", ship.name) %}
   data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
-  data-confirm-action="{{ c.action }}" data-confirm-danger{% endif %}>
+  data-confirm-action="{{ c.action }}"{% if c.danger %} data-confirm-danger{% endif %}{% endif %}>
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <input type="hidden" name="power" value="{{ verb }}">
   {% if verb == "stop" %}<label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>{% endif %}

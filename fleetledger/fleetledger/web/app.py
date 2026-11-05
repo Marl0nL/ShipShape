@@ -557,6 +557,11 @@ async def ship_power(request: Request) -> Response:
     if verb == "stop" and one(fields, "confirm") != "yes":
         ui.flash(session, "bad", "Tick the box to confirm.")
         return back(f"/ships/{name}")
+    if verb == "stop" and any(f.ship == name for f in ui.concierge.active()):
+        # A shutdown would cut the sign-in's terminal mid-flow (as a rollback would).
+        ui.flash(session, "bad", f"Not stopped: a sign-in is open on {name}. Finish or "
+                 "cancel it on the Sign-ins page first.")
+        return back(f"/ships/{name}")
     try:
         actions.start_power(ui.jobs, ui.app, verb, name)
     except FleetError as exc:
@@ -680,7 +685,10 @@ async def job_card(request: Request) -> Response:
         return Response(status_code=286)
     if request.query_params.get("v") == str(job.version):
         return Response(status_code=204)
-    return partial(request, "_job.html", job=job)
+    response = partial(request, "_job.html", job=job)
+    if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
+        response.headers["HX-Refresh"] = "true"
+    return response
 
 
 # --- network visibility ----------------------------------------------------------------

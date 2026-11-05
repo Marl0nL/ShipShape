@@ -21,7 +21,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from fleetledger.drivers.base import NotSupported, Outcome, check_snapshot_name
+from fleetledger.drivers.base import NotSupported, check_snapshot_name
 from fleetledger.errors import FleetError
 from fleetledger.lifecycle import SNAPSHOT_WARNING
 
@@ -44,43 +44,6 @@ def listing(app: Any, name: str) -> dict[str, Any]:
     return found
 
 
-class _Recording:
-    """A driver whose lifecycle answers are kept on the job, for its card."""
-
-    def __init__(self, driver: Any, job: Any) -> None:
-        self._driver = driver
-        self._job = job
-
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self._driver, name)
-        if not callable(attr):
-            return attr
-
-        def call(*args: Any, **kwargs: Any) -> Any:
-            result = attr(*args, **kwargs)
-            if isinstance(result, Outcome):
-                self._job.result["outcome"] = result
-                if not result.done:  # left to you: the card says "by hand", not "done"
-                    self._job.result["by_hand"] = True
-            return result
-
-        return call
-
-
-class _JobApp:
-    """The app for one job: drivers record their answers on it."""
-
-    def __init__(self, app: Any, job: Any) -> None:
-        self._app = app
-        self._job = job
-
-    def driver_factory(self, inventory: Any, driver_id: str) -> Any:
-        return _Recording(self._app.driver_factory(inventory, driver_id), self._job)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._app, name)
-
-
 def _start(request: Request, name: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
     from fleetledger.web.app import session_of, ui_of
@@ -88,7 +51,7 @@ def _start(request: Request, name: str, argv: list[str], title: str) -> None:
     ui = ui_of(request)
 
     def run(job: Any) -> int:
-        return jobs.run_cli(_JobApp(ui.app, job), argv, job)
+        return jobs.run_cli(jobs.RecordingApp(ui.app, job), argv, job)
 
     try:
         ui.jobs.start("snapshot", [name], run, title=title)
