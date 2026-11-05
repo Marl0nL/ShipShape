@@ -672,7 +672,12 @@ def set_signins(app, store, name: str, wanted: list[str], say) -> bool:
     ok = True
     if turned_off:
         ssh = _ssh(app, inv)
+        view = status.fetch(ssh, inv, ship)
         for choice in turned_off:
+            states = [(view.auth(k) or {}).get("state") for k in signins.STATUS_KEYS[choice]]
+            if view.status is not None and all(st in (None, "missing") for st in states):
+                say(f"{name}: {signins.LABELS[choice]} was not signed in there; it is off now.")
+                continue
             for provider in providers.resolve(list(signins.PROVIDERS[choice][:1])):
                 if concierge.logout(ssh, ship, provider):
                     say(f"{name}: signed out of {provider.label}; it is off now.")

@@ -668,6 +668,16 @@ def test_a_sign_in_turned_off_is_signed_out_and_never_offered(env):
     assert env.store.load().ship("ship-01").signins is None  # all again: absent
 
 
+def test_turning_off_a_sign_in_that_was_never_made_signs_nothing_out(env):
+    doc = copy.deepcopy(RUNNING)
+    for key in ("gcloud", "gcloud_adc"):
+        doc["auth"][key].update(state="missing", account=None)
+    env.ship.status_override["ship-01"] = doc
+    code, out, _ = env.run("signins", "ship-01", "--off", "gcloud")
+    assert code == 0 and "Google Cloud was not signed in there" in out
+    assert not any("gcloud auth revoke" in c[-1] for _, c in env.ship.calls)
+
+
 def test_a_new_ship_can_use_fewer_sign_ins(env):
     assert env.run("new", "ship-17", "--signins", "claude")[0] == 0
     assert env.store.load().ship("ship-17").signins == ("claude",)
