@@ -96,7 +96,8 @@ atomically, then runs `apply`.
   `network.lan_guard_allow` (comma-separated; empty clears it),
   `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`. Booleans are `true` or `false`.
 - `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
-  that name); `autostart.remove=NAME` drops one (refused if none has it; a running
+  that name), and `autostart.add=NAME:github:OWNER/REPO[:MODE]` adds one that works
+  in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it; a running
   agent keeps running until it is stopped or the Ship reboots). Run `autostart`
   afterwards to start a new one at once.
 - `network.ssh_listen=overlay` is refused with `overlay-not-joined` (exit 1, no
@@ -118,6 +119,13 @@ The Ship runs it on its own: at boot (the first status refresh after
 `ship-resume.service` has finished) and once whenever Claude becomes signed in
 (see "Reacting to sign-ins" below). FleetLedger never needs to call it; calling
 it anyway is harmless.
+
+An entry with a `repo` is cloned into its `cwd` first, as the agent, once (into a
+folder that is empty or not there yet). A repo that cannot be cloned before the
+GitHub sign-in (private, or not there) leaves that agent unstarted, with the
+attention item `agent-repo-waiting`; it is retried when GitHub becomes signed in
+(see "Reacting to sign-ins"). A clone that fails while signed in is
+`agent-repo-failed`. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
 
@@ -161,7 +169,9 @@ least every 60 seconds), ship-ctl compares every `auth` service's state with the
 previous refresh:
 
 - a service that changed to `ok`: run `tools run` for the recipes waiting on it;
-- `claude` changed to `ok`: then run `autostart` once.
+- `claude` changed to `ok`: then run `autostart` once;
+- `github` changed to `ok`, with an `[[autostart]]` entry that has a `repo`: run
+  `autostart` once (its clone may need the sign-in).
 
 This is triggered by the change, not by the state, so an agent you stop later is
 not restarted until the next boot or the next time Claude goes from signed out
