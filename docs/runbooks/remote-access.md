@@ -6,7 +6,8 @@ Headscale server you run), and an access rule lets your devices reach the Ships
 on port 22 and nothing else.
 
 What does not change: SSH with the Ship's pinned host key is still the only way
-in, as `agent` with your key or `fleet` with FleetLedger's. The overlay adds a
+in, as `agent` with your key, as your own login (`ship-fleet owner`), or as
+`fleet` with FleetLedger's. The overlay adds a
 route, not a new way to log in. Tailscale SSH stays off.
 
 ## How keys are handled
@@ -18,7 +19,11 @@ it to the Ship over SSH on stdin. On the Ship it exists only in a root-only file
 under `/run` while `tailscale up` runs. Keys never go into seeds, cloud metadata,
 command lines, logs, `ships.toml`, the audit log or the status document.
 
-## The quick way: `ship-fleet overlay setup`
+## The quick way: the setup page, or `ship-fleet overlay setup`
+
+`ship-fleet setup`'s **Reach Ships from anywhere** step does this for Tailscale
+with an OAuth client ([web-ui.md](../web-ui.md#first-run-the-setup-page)). For
+pasted keys or Headscale, or to choose everything in a terminal:
 
 ```sh
 ship-fleet overlay setup    # asks: provider, key source, OAuth client and level
@@ -146,7 +151,11 @@ traffic through its servers (still end-to-end encrypted) instead.
 
 1. Install Tailscale on the laptop and sign in to the same tailnet. With MagicDNS
    on, Ships are reachable by name.
-2. Trust the Ships' host keys on the laptop. FleetLedger knows them; copy the
+2. Trust the Ships' host keys on the laptop. The easy way is
+   `ship-fleet trust laptop --key laptop.pub` on the computer that runs
+   FleetLedger ([trust-machines.md](trust-machines.md)): the laptop gets a
+   certificate and the Ships' CA line, and needs no known-hosts lines or agent
+   key (skip to step 4). By hand: FleetLedger knows the host keys; copy the
    lines for the Ships you want from its known-hosts file (on the computer that
    runs FleetLedger):
 
@@ -168,9 +177,7 @@ traffic through its servers (still end-to-end encrypted) instead.
        StrictHostKeyChecking yes
    ```
 
-   (Phase 3's `ship-fleet trust <machine>` does this for you with SSH
-   certificates; this is the manual way.)
-3. Your key: the laptop's key must be one of the Ship's agent keys
+3. Your key (by hand only): the laptop's key must be one of the Ship's agent keys
    (`fleet.agent_keys` in `ships.toml`, put on the Ship by its seed).
 4. Attach:
 
