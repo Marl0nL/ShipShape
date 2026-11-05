@@ -7,7 +7,7 @@ Every action is the CLI's own `ship-fleet image` command:
 - Publish (`image publish ID`, or `--template-vmid N` to record a template made
   by hand) and Remove (`image rm ID [--keep-file]`) talk to the hypervisor: they
   are jobs (web.jobs), shown in the Images section. A by-hand driver's steps show
-  on the job's card (runs.RecordingApp, _outcome.html). Remove needs the dialog's
+  on the job's card (jobs.RecordingApp, _outcome.html). Remove needs the dialog's
   tick box; the CLI refuses to remove the pinned image.
 Building an image takes a while and needs local tools: it stays a command to copy.
 """
@@ -71,12 +71,11 @@ def _lock(image: str) -> str:
 def _start(request: Request, image: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
     from fleetledger.web.app import ui_of
-    from fleetledger.web.runs import RecordingApp
 
     ui = ui_of(request)
 
     def run(job: Any) -> int:
-        return jobs.run_cli(RecordingApp(ui.app, job), argv, job)
+        return jobs.run_cli(jobs.RecordingApp(ui.app, job), argv, job)
 
     try:
         ui.jobs.start("image", [], run, title=title, locks=[_lock(image)])

@@ -47,12 +47,11 @@ def listing(app: Any, name: str) -> dict[str, Any]:
 def _start(request: Request, name: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
     from fleetledger.web.app import session_of, ui_of
-    from fleetledger.web.runs import RecordingApp
 
     ui = ui_of(request)
 
     def run(job: Any) -> int:
-        return jobs.run_cli(RecordingApp(ui.app, job), argv, job)
+        return jobs.run_cli(jobs.RecordingApp(ui.app, job), argv, job)
 
     try:
         ui.jobs.start("snapshot", [name], run, title=title)

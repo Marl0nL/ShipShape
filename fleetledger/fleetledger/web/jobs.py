@@ -207,3 +207,44 @@ class Jobs:
         with self._lock:
             self._stopping = True
             return [j for j in self._jobs if j.running]
+
+
+class _RecordingDriver:
+    """A driver whose lifecycle answers are kept on the job, for its card."""
+
+    def __init__(self, driver: Any, job: Any) -> None:
+        self._driver = driver
+        self._job = job
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._driver, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            result = attr(*args, **kwargs)
+            from fleetledger.drivers.base import Outcome
+
+            if isinstance(result, Outcome):
+                self._job.result["outcome"] = result
+                if not result.done:  # left to you: the card says "by hand", not "done"
+                    self._job.result["by_hand"] = True
+            return result
+
+        return call
+
+
+class RecordingApp:
+    """The app for one job running a CLI command that calls a driver: the driver's
+    answer (an Outcome) is kept on the job (job.result["outcome"], and "by_hand"
+    when it is left to you), so _job.html shows it through _outcome.html."""
+
+    def __init__(self, app: Any, job: Any) -> None:
+        self._app = app
+        self._job = job
+
+    def driver_factory(self, inventory: Any, driver_id: str) -> Any:
+        return _RecordingDriver(self._app.driver_factory(inventory, driver_id), self._job)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._app, name)
