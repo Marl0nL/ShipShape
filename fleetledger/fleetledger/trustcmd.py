@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -238,7 +239,14 @@ def cmd_trust(args, app) -> int:
     store = app.store_factory()
     inv = store.load()
     cfg = ca.require(inv)
+    if args.this_computer:
+        if args.no_herdr:
+            app.herdr = False
+        return 0 if trust_this_computer(app, store, app.say) else 1
     name = args.machine
+    if not name:
+        raise FleetError("Which machine? ship-fleet trust NAME --key PATH.pub (or "
+                         "--this-computer).")
     existing = ca.machine(inv, name)
     if existing is None:
         if not args.key:
@@ -273,18 +281,15 @@ def cmd_trust(args, app) -> int:
             inv = _change_scope(app, store, inv, existing, list(dict.fromkeys(args.scope)),
                                 say=say)
     m = ca.machine(inv, name)
-    cert, serial, until = ca.sign_user(_signer(app, inv), cfg, m, hours=args.hours)
-    with store.edit() as ed:
-        ed.set_machine_field(name, "last_serial", serial)
-        ed.set_machine_field(name, "last_valid_before", ca.stamp(until))
-        ed.set_machine_field(name, "issued", ca.issued_record(m, cfg, serial, until))
+    cert, until = _sign_machine(app, store, inv, m, hours=args.hours)
     ships = [s for s in inv.ships() if m.reaches(inv, s)]
     if args.print_cert:
         app.say(cert)
         return 0
     folder = paths.expand(args.out) if args.out else ca.bundle_dir(name)
     bundle = ca.write_bundle(folder, ca=cfg, machine_name=name, cert=cert, ships=ships,
-                             identity=args.identity, valid_before=until)
+                             identity=args.identity, valid_before=until,
+                             hostnames=_hostnames(app, ships))
     app.say(f"Certified {name} for {', '.join(m.scope)} until {ca.stamp(until)} "
             f"({len(ships)} Ship(s): {', '.join(bundle.ships) or 'none yet'}).")
     app.say(f"Bundle: {bundle.folder}")
@@ -300,6 +305,201 @@ def cmd_trust(args, app) -> int:
     app.say(f"Renew before it lapses: ship-fleet trust {name} --print-cert "
             f"> ~/.ssh/shipshape/{name}-cert.pub (on that machine)")
     return 0
+
+
+def _sign_machine(app, store, inv: Inventory, m: ca.Machine, *, hours=None):
+    """A new user certificate for a trusted machine, recorded. (certificate, until)"""
+    cfg = ca.require(inv)
+    cert, serial, until = ca.sign_user(_signer(app, inv), cfg, m, hours=hours)
+    with store.edit() as ed:
+        ed.set_machine_field(m.name, "last_serial", serial)
+        ed.set_machine_field(m.name, "last_valid_before", ca.stamp(until))
+        ed.set_machine_field(m.name, "issued", ca.issued_record(m, cfg, serial, until))
+    return cert, until
+
+
+def _hostnames(app, ships) -> dict[str, str]:
+    """Each Ship's HostName in a bundle: the first of its names that resolves here."""
+    return {s.name: ca.dial_name(s, app.resolves) for s in ships}
+
+
+# --- this computer ------------------------------------------------------------------
+# The computer FleetLedger runs on is trusted like any other machine, with your own
+# key, so `ssh <ship>` and `herdr --remote <ship>` work here as soon as there is a
+# Ship. Which machine entry is this computer is kept beside ships.toml (it is a fact
+# about this computer, not the fleet).
+THIS_COMPUTER = "this-computer.json"
+MACHINE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+
+
+def this_computer() -> dict | None:
+    """{"machine": name, "identity": path} once this computer is trusted; else None."""
+    try:
+        doc = json.loads((paths.config_dir() / THIS_COMPUTER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or not MACHINE_RE.match(str(doc.get("machine", ""))):
+        return None
+    return doc
+
+
+def attaches_here(inv: Inventory, ship: Ship) -> bool:
+    """Can plain ssh / herdr --remote reach this Ship from here (this computer is
+    trusted, its trust reaches the Ship, and the Ship has a host certificate)?"""
+    here = this_computer()
+    m = ca.machine(inv, here["machine"]) if here else None
+    return bool(m and not m.revoked and m.reaches(inv, ship) and _has_cert(ship))
+
+
+def _local_name(inv: Inventory) -> str:
+    import socket
+
+    base = re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-")
+    base = base[:24] or "this-computer"
+    if not MACHINE_RE.match(base):
+        base = "this-computer"
+    taken = {m.name for m in ca.machines(inv)}
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def _your_private_key(inv: Inventory) -> Path | None:
+    """The private half, on this computer, of one of your keys: one you can open
+    yourself first (plain ssh needs that), else one FleetLedger made and looks after."""
+    from fleetledger import keys
+
+    managed = set(keys.managed(inv)[1])
+    found = [pub.with_name(pub.name[:-4]) for pub in inv.agent_key_paths
+             if pub.name.endswith(".pub") and pub.with_name(pub.name[:-4]).is_file()]
+    return next((k for k in found if k not in managed), found[0] if found else None)
+
+
+def _plain_ssh(inv: Inventory, key_path: Path) -> tuple[bool, str | None]:
+    """Can plain ssh open your key here? A key you look after: yes. One FleetLedger made
+    (its passphrase only in your keyring): only while your own ssh-agent holds it, so
+    FleetLedger loads it there, if you have one running. (works, what to say)"""
+    from fleetledger import keys
+
+    if key_path not in keys.managed(inv)[1]:
+        return True, None
+    if keys.users_agent_answers():
+        keys.ensure_loaded(inv, [key_path])
+        return True, ("Your key is one FleetLedger made: plain ssh and herdr use it from your "
+                      "ssh-agent, which holds it until you log out; FleetLedger loads it "
+                      "there again whenever it runs.")
+    return False, ("Plain ssh cannot open your key here: FleetLedger made it, its passphrase "
+                   "is only in your keyring, and no ssh-agent of yours is running. Attach "
+                   "with ship-fleet ssh, or start ssh-agent and run ship-fleet trust "
+                   "--this-computer again.")
+
+
+RENEW_WITHIN_S = 24 * 3600
+
+
+def renew_this_computer_if_due(app, store) -> bool:
+    """Renew this computer's certificate (and its bundle) in its last day, so plain ssh
+    keeps working: called from the web UI's poll and ship-fleet status."""
+    here = this_computer()
+    if here is None:
+        return False
+    inv = store.load()
+    m = ca.machine(inv, here["machine"]) if ca.config(inv) else None
+    if m is None or m.revoked:
+        return False
+    until = ca.parse_stamp(m.last_valid_before)
+    if until is not None and (until - ca.utc_now()).total_seconds() > RENEW_WITHIN_S:
+        return False
+    return trust_this_computer(app, store, lambda line: None, create=False)
+
+
+def this_computer_until(inv: Inventory) -> str | None:
+    """When this computer's certificate lapses (for the Ship page), if it is trusted."""
+    here = this_computer()
+    m = ca.machine(inv, here["machine"]) if here and ca.config(inv) else None
+    return m.last_valid_before if m and not m.revoked else None
+
+
+def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
+    """Trust this computer (your own key, every Ship) and install its bundle here: an
+    SSH config entry per Ship (HostName: the first of its names that resolves here),
+    its certificate and the CA line, and herdr saved machines. With create=False, only
+    refresh it if it is trusted already (after each enrolment). Returns whether this
+    computer can now attach."""
+    inv = store.load()
+    cfg = ca.config(inv)
+    if cfg is None:
+        if create:
+            say("This computer is not set up for plain ssh / herdr --remote: the fleet has "
+                "no certificate authority yet (ship-fleet ca init).")
+        return False
+    here = this_computer()
+    m = ca.machine(inv, here["machine"]) if here else None
+    if m is None or m.revoked:
+        if not create:
+            return False
+        key_path = _your_private_key(inv)
+        if key_path is None:
+            say("This computer is not set up for plain ssh / herdr --remote: your key's "
+                "private half is not here. Attach with ship-fleet ssh.")
+            return False
+        from fleetledger import keys
+
+        key = keys.public_line(key_path)
+        m = next((x for x in ca.machines(inv)
+                  if not x.revoked and ca._blob(x.public_key) == ca._blob(key)), None)
+        if m is None:
+            name = _local_name(inv)
+            with store.edit() as ed:
+                ed.set_machine(name, {"public_key": key, "added": now_timestamp(),
+                                      "scope": ["all"]})
+            inv = store.load()
+            m = ca.machine(inv, name)
+        here = {"machine": m.name, "identity": _tilde(key_path)}
+        paths.write_private(paths.config_dir() / THIS_COMPUTER,
+                            (json.dumps(here, indent=2) + "\n").encode("utf-8"))
+    ships = [s for s in inv.ships() if m.reaches(inv, s)]
+    for ship in ships:
+        if not _has_cert(ship):
+            try:
+                certify(app, inv, ship)
+            except FleetError:
+                pass  # said below: plain ssh needs it
+    cert, until = _sign_machine(app, store, inv, m)
+    inv = store.load()
+    ships = [s for s in inv.ships() if m.reaches(inv, s)]
+    bundle = ca.write_bundle(ca.bundle_dir(m.name), ca=cfg, machine_name=m.name, cert=cert,
+                             ships=ships, identity=here["identity"], valid_before=until,
+                             hostnames=_hostnames(app, ships))
+    argv = ["sh", str(bundle.folder / "install.sh")]
+    if not getattr(app, "herdr", True):
+        argv.append("--no-herdr")
+    proc = subprocess.run(argv, cwd=bundle.folder, capture_output=True, text=True,
+                          timeout=120, check=False)
+    if proc.returncode != 0:
+        why = (proc.stderr or proc.stdout or "").strip().splitlines()
+        say("Could not set this computer up for plain ssh" + (f": {why[-1]}" if why else "."))
+        return False
+    works, note = _plain_ssh(inv, paths.expand(here["identity"]))
+    if note:
+        say(note)
+    ready = [s.name for s in ships if _has_cert(s)] if works else []
+    if ready:
+        say(f"This computer ({m.name}) can attach: ssh {ready[0]}, herdr --remote "
+            f"{ready[0]} (certificate until {ca.stamp(until)}; FleetLedger renews it in its "
+            "last day whenever it runs: the web UI, or ship-fleet status).")
+    unsigned = [s.name for s in ships if not _has_cert(s)]
+    if unsigned:
+        say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign`.")
+    return bool(ready)
+
+
+def _tilde(path: Path) -> str:
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 def _change_scope(app, store, inv: Inventory, m: ca.Machine, scope: list[str], *,
@@ -387,3 +587,8 @@ def after_enrol(app, store, name: str, say) -> None:
             say(message)
     except FleetError as exc:
         say(f"Certificates not installed yet ({exc.message}); run `ship-fleet ca sign {name}`.")
+    try:  # this computer, if trusted: its bundle now lists the new Ship
+        trust_this_computer(app, store, say, create=False)
+    except FleetError as exc:
+        say(f"This computer's SSH config was not refreshed ({exc.message}); run "
+            "`ship-fleet trust --this-computer`.")

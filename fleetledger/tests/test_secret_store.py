@@ -38,8 +38,46 @@ def fake_backend(module="keyring.backends.SecretService", name="Keyring", locked
                 raise Locked("Failed to unlock the collection!")
             del self.items[(service, item)]
 
+        # What keyring's SecretService backend offers for listing (stored_names).
+        schemes = {"default": {"username": "username", "service": "service"}}
+        scheme = "default"
+
+        def _query(self, service, username=None, **base):
+            return {"service": service, **({"username": username} if username else {}),
+                    **base}
+
+        def get_preferred_collection(self):
+            if locked:
+                raise Locked("Failed to unlock the collection!")
+            return Collection(self)
+
+    class Item:
+        def __init__(self, backend, service, username):
+            self.backend, self.attributes = backend, {"service": service,
+                                                      "username": username}
+
+        def get_attributes(self):
+            return dict(self.attributes)
+
+        def get_secret(self):
+            self.backend.secrets_read += 1
+            return self.backend.items[(self.attributes["service"],
+                                       self.attributes["username"])].encode()
+
+    class Collection:
+        def __init__(self, backend):
+            self.backend = backend
+
+        def search_items(self, query):
+            return [Item(self.backend, service, username)
+                    for (service, username) in self.backend.items
+                    if all({"service": service, "username": username}.get(k) == v
+                           for k, v in query.items())]
+
     Backend.__module__, Backend.__name__ = module, name
-    return Backend()
+    backend = Backend()
+    backend.secrets_read = 0
+    return backend
 
 
 @pytest.fixture
@@ -195,3 +233,31 @@ def test_an_empty_keyring_item_is_not_a_secret(use, stored):
     backend.items[("fleetledger", "proxmox-token:x@pve!y")] = stored
     with pytest.raises(ConfigError, match="not in the keyring"):
         secret_store.read_keyring("proxmox-token:x@pve!y", "Proxmox token", "hint")
+
+
+# --- what is already stored (setup offers it instead of asking again) --------------------------
+
+
+def test_stored_names_lists_item_names_without_reading_a_secret(use):
+    backend = use(fake_backend())
+    backend.items = {("fleetledger", "tailscale-oauth:kOne"): "tskey-client-kOne-s1",
+                     ("fleetledger", "proxmox-token:shipshape@pve!build"): "a-secret",
+                     ("fleetledger", "tailscale-oauth:kTwo"): "tskey-client-kTwo-s2",
+                     ("another-app", "tailscale-oauth:kThree"): "not ours"}
+    assert secret_store.stored_names("tailscale-oauth:") == ["kOne", "kTwo"]
+    assert secret_store.stored_names("proxmox-token:") == ["shipshape@pve!build"]
+    assert backend.secrets_read == 0  # names only
+
+
+def test_stored_names_is_unknown_where_the_keyring_cannot_list(use):
+    use(fake_backend("keyring.backends.macOS", "Keyring"))  # secure, but no listing
+    assert secret_store.stored_names("tailscale-oauth:") is None
+    use(fake_backend(locked=True))
+    assert secret_store.stored_names("tailscale-oauth:") is None
+    use(fake_backend("keyrings.alt.file", "PlaintextKeyring"))  # refused outright
+    assert secret_store.stored_names("tailscale-oauth:") is None
+
+
+def test_stored_names_is_empty_when_nothing_is_stored(use):
+    use(fake_backend())
+    assert secret_store.stored_names("tailscale-oauth:") == []

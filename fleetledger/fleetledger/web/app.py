@@ -119,6 +119,7 @@ def make_env() -> Environment:
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
+        MODES=commands.MODES,
         SETTINGS=SETTINGS,
         SETTINGS_TEXT=SETTINGS_TEXT,
         human_bytes=net.human_bytes,
@@ -278,6 +279,21 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "flows": flows,
         "workspaces": workspaces,
         "snap": snap,
+        **_attach_context(inv, view.ship),
+    }
+
+
+def _attach_context(inv, ship) -> dict[str, Any]:
+    """How to attach from here, whether this computer can be set up for it, and
+    whether the Ship is on the overlay."""
+    from fleetledger import ca, trustcmd
+
+    return {
+        "attach_here": trustcmd.attaches_here(inv, ship),
+        "attach_until": trustcmd.this_computer_until(inv),
+        "can_trust_here": ca.config(inv) is not None,
+        "overlay_set": bool(inv.overlay),
+        "on_overlay": ship.overlay_node is not None,
     }
 
 
@@ -347,6 +363,48 @@ async def ship_settings(request: Request) -> Response:
     return back(f"/ships/{name}/settings")
 
 
+async def ship_agents(request: Request) -> Response:
+    """Add an autostart agent to a Ship (or stop starting one)."""
+    ui = ui_of(request)
+    name = _ship_name(request)
+    if not name or name not in ui.fleet.snapshot.by_name:
+        return not_found(request, "No such Ship in the inventory.")
+    fields = await form(request)
+    session = session_of(request)
+    try:
+        if one(fields, "action") == "remove":
+            pair = ops.parse_autostart_change("autostart.remove", one(fields, "agent"))
+        else:
+            mode = one(fields, "mode")
+            value = f"{one(fields, 'agent')}:{one(fields, 'cwd')}" + (f":{mode}" if mode else "")
+            pair = ops.parse_autostart_change("autostart.add", value)
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(f"/ships/{name}")
+    outcome = await run_in_threadpool(actions.set_settings, ui.app, name, [pair])
+    _flash_outcome(ui, session, outcome)
+    await run_in_threadpool(ui.fleet.poll, [name])
+    return back(f"/ships/{name}")
+
+
+async def attach_here(request: Request) -> Response:
+    """Trust this computer (your key) so plain ssh and herdr --remote reach Ships."""
+    from fleetledger import trustcmd
+
+    ui = ui_of(request)
+    fields = await form(request)
+    name = one(fields, "ship")
+    where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
+    said: list[str] = []
+    try:
+        ok = await run_in_threadpool(trustcmd.trust_this_computer, ui.app,
+                                     ui.app.store_factory(), said.append)
+    except FleetError as exc:
+        ok, said = False, [exc.message]
+    ui.flash(session_of(request), "ok" if ok else "bad", " ".join(said) or "Nothing done.")
+    return back(where)
+
+
 async def ship_tags(request: Request) -> Response:
     ui = ui_of(request)
     name = _ship_name(request)
@@ -390,7 +448,7 @@ async def fleet_operation(request: Request) -> Response:
     operation = one(fields, "operation")
     name, tag = one(fields, "ship"), one(fields, "tag")
     where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
-    if operation not in ("update", "reboot"):
+    if operation not in ("update", "reboot", "join"):
         ui.flash(session, "bad", "Unknown operation.")
         return back(where)
     if one(fields, "confirm") != "yes":
@@ -406,7 +464,8 @@ async def fleet_operation(request: Request) -> Response:
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(where)
-    ui.flash(session, "ok", f"{operation.capitalize()} started; its progress is on the "
+    label = {"join": "Joining the overlay"}.get(operation, operation.capitalize())
+    ui.flash(session, "ok", f"{label} started; its progress is on the "
              "Fleet page.")
     return back("/", tag=tag)
 
@@ -660,6 +719,8 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/refresh", ship_refresh, methods=["POST"]),
         Route("/ships/{name}/settings", ship_settings, methods=["POST"]),
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
+        Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
+        Route("/attach-here", attach_here, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
         Route("/operations", fleet_operation, methods=["POST"]),
         Route("/ships/{name}/network/refresh", ship_network_refresh, methods=["POST"]),

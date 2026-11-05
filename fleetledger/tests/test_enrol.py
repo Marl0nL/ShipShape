@@ -76,11 +76,14 @@ def test_times_out(store, scripted):
     scripted(*["unreachable"] * 10)
     inv = store.load()
     ticks = iter(range(0, 100000, 100))
-    with pytest.raises(FleetError, match="did not finish provisioning"):
+    with pytest.raises(enrol_mod.StillStarting, match="did not finish provisioning") as exc:
         enrol_mod.wait_for_provisioning(
             None, inv, inv.ship("ship-01"), timeout=250, interval=100,
             sleep=lambda s: None, clock=lambda: next(ticks),
         )
+    # Not called an error: a slow first boot may still get there.
+    assert "may still be starting" in exc.value.message
+    assert "ship-fleet status ship-01 --wait" in exc.value.hint
 
 
 def _with_seed(store, home):

@@ -523,6 +523,70 @@ def test_ship_page(web):
     assert web.client.get("/ships/ship-01/nonsense").status_code == 404
 
 
+def _status(web, ship, change):
+    import copy
+
+    from test_cli import RUNNING
+
+    doc = copy.deepcopy(RUNNING)
+    change(doc)
+    web.ship.status_override[ship] = doc
+    web.fleet.poll()
+
+
+def test_ship_page_says_whether_its_agents_show_in_the_claude_app(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    assert "with Remote Control on" in page and "in the\n      Claude app" in page
+    _status(web, "ship-01", lambda d: d["herdr"].update(agents=[]))
+    page = web.client.get("/ships/ship-01").text
+    assert "No agent is running on ship-01" in page and 'name="agent" value="main"' in page
+    _status(web, "ship-01", lambda d: d["auth"]["claude"].update(state="missing", account=None))
+    assert "Claude is not signed in on ship-01" in web.client.get("/ships/ship-01").text
+
+
+def test_an_agent_can_be_added_from_the_ship_page(web):
+    web.sign_in()
+    web.post("/ships/ship-01/agents", {"agent": "docs", "cwd": "~/docs", "mode": "plan"})
+    sent = [c[3:] for name, c in web.ship.calls if name == "ship-01" and c[3:4] in (
+        ["set"], ["autostart"])]
+    assert ["set", "autostart.add=docs:~/docs:plan", "--json"] in sent
+    assert any(c[0] == "autostart" for c in sent)
+    before = len(web.ship.calls)
+    web.post("/ships/ship-01/agents", {"agent": "Bad Name", "cwd": "~/docs"})
+    assert len(web.ship.calls) == before  # refused before reaching the Ship
+
+
+def test_the_attach_command_shown_is_one_that_works_here(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    assert "herdr --remote agent@" not in page  # an unresolvable .local name, untrusted
+    assert "<code>ship-fleet ssh ship-01</code>" in page
+    assert "Let this computer use ssh ship-01" not in page  # no CA: nothing to offer
+
+
+def test_a_ship_not_on_the_overlay_can_join_it_in_one_click(web, monkeypatch):
+    from test_cli import Keys
+
+    with web.store.edit() as ed:
+        ed.doc["overlay"] = {"provider": "tailscale", "tags": ["tag:ship"]}
+    web.app.overlay_keys = Keys()
+    web.fleet.poll()
+    web.sign_in()
+    assert "Join the overlay" in web.client.get("/ships/ship-01").text
+    from fleetledger import trustcmd
+
+    refreshed = []
+    monkeypatch.setattr(trustcmd, "trust_this_computer",
+                        lambda app, store, say, create=True: refreshed.append(create))
+    web.post("/operations", {"operation": "join", "ship": "ship-01", "confirm": "yes"})
+    assert wait_for(lambda: web.store.load().ship("ship-01").names[0]
+                    == "ship-01.example-tailnet.ts.net")
+    assert wait_for(lambda: refreshed == [False])  # this computer's config: the new name
+    web.fleet.poll()
+    assert "Join the overlay" not in web.client.get("/ships/ship-01").text
+
+
 @pytest.mark.parametrize("net", [None, {"window_h": 24, "rx_mb": 0, "tx_mb": 0,
                                          "new_destinations": [], "collector": "unavailable"}])
 def test_network_tab_without_a_collector(web, net):
@@ -876,3 +940,10 @@ def test_audit_page(web):
     web.sign_in()
     page = web.client.get("/audit").text
     assert "work@example.com" in page and "login" in page
+
+
+def test_an_agent_can_stop_being_started_from_the_ship_page(web):
+    web.sign_in()
+    assert "Stop starting it" in web.client.get("/ships/ship-01").text
+    web.post("/ships/ship-01/agents", {"action": "remove", "agent": "docs"})
+    assert ["set", "autostart.remove=docs", "--json"] in [c[3:] for _, c in web.ship.calls]

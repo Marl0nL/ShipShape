@@ -28,6 +28,10 @@ class Enrolment:
     instructions: list[str] = field(default_factory=list)
 
 
+class StillStarting(FleetError):
+    """The Ship did not finish its first boot in time: it may well still be starting."""
+
+
 def wait_for_provisioning(
     ssh: SSH,
     inventory: Inventory,
@@ -53,10 +57,13 @@ def wait_for_provisioning(
         if view.provision_result in ("ok", "failed"):
             return view
         if clock() + interval > deadline:
-            raise FleetError(
+            last = f"{view.state}: {view.message}" if view.message else view.state
+            raise StillStarting(
                 f"{ship.name} did not finish provisioning within {timeout / 60:.0f} minutes "
-                f"(last state: {view.state}).",
-                hint=f"Check the VM console, then `ship-fleet logs {ship.name} provision`.",
+                f"(last state: {last}). It may still be starting.",
+                hint=f"Wait for it with `ship-fleet status {ship.name} --wait`; if it never "
+                f"gets there, check the VM console, then `ship-fleet logs {ship.name} "
+                "provision`.",
             )
         sleep(interval)
 

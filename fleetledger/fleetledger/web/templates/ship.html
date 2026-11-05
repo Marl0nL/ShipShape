@@ -75,9 +75,25 @@
   {% if doc %}
   <section>
     <h2>Agents</h2>
-    {% if not workspaces %}
-    <p class="quiet">No agents running.</p>
-    {% else %}
+    {% set claude_auth = doc.auth.claude %}
+    {% set signed_in = claude_auth and claude_auth.state in ("ok", "expiring") %}
+    {% set running = workspaces.values()|sum(start=[])|selectattr("kind", "equalto", "claude")|list %}
+    {% if running and signed_in and doc.claude.remote_control == "on" %}
+    <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
+      with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
+      Claude app (signed in as {{ claude_auth.account or "your account" }}).</p>
+    {% elif running and doc.claude.remote_control != "on" %}
+    <p class="hint">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running;
+      Remote Control is off, so they do not show in the Claude app (Settings, Remote Control).</p>
+    {% elif not signed_in %}
+    <p class="warning">Claude is not signed in on {{ ship.name }}, so no agent starts. Sign it
+      in (above): its agents then start, and with Remote Control on they show in the Claude app.</p>
+    {% elif not running %}
+    <p class="warning">No agent is running on {{ ship.name }}. Add one below: it starts now and on
+      every boot{% if doc.claude.remote_control == "on" %}, and shows in the Claude app (Remote
+      Control is on){% endif %}.</p>
+    {% endif %}
+    {% if workspaces %}
     <table>
       <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>Pane</th><th>Folder</th></tr></thead>
       <tbody>
@@ -100,8 +116,43 @@
     <p class="hint">
       herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
       {% if doc.herdr.last_resume %}Last resume {{ doc.herdr.last_resume.at }} ({{ doc.herdr.last_resume.method }}): {{ doc.herdr.last_resume.resumed }} resumed{% if doc.herdr.last_resume.failed %}, {{ doc.herdr.last_resume.failed }} failed{% endif %}.{% endif %}
-      Attach with <code>herdr --remote agent@{{ ship.names[0] }}</code> or <code>ship-fleet ssh {{ ship.name }}</code>.
     </p>
+    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Add an agent <input name="agent" value="{{ 'main' if not running else '' }}" placeholder="e.g. main" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <label>in <input name="cwd" value="~/work" required></label>
+      <label>mode <select name="mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
+      <button type="submit" class="ghost">Add</button>
+    </form>
+    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="remove">
+      <label>Stop starting an agent <input name="agent" placeholder="its name" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <button type="submit" class="ghost">Stop starting it</button>
+    </form>
+    <p class="hint">An added agent starts now (once Claude is signed in) and on every boot.
+      One you stop starting keeps running until it is stopped or the Ship reboots.</p>
+    {% if attach_here %}
+    <p>Attach from here: <code>herdr --remote {{ ship.name }}</code> or
+      <code>ssh {{ ship.name }}</code> (your key, with the fleet's certificates), or
+      <code>ship-fleet ssh {{ ship.name }}</code>.</p>
+    {% if attach_until %}<p class="hint">This computer's certificate is valid until
+      {{ attach_until }}; FleetLedger renews it in its last day whenever it runs (this page,
+      or <code>ship-fleet status</code>). To renew it now:
+      <code>ship-fleet trust --this-computer</code>.</p>{% endif %}
+    {% else %}
+    <p>Attach from here: <code>ship-fleet ssh {{ ship.name }}</code>.</p>
+    {% if can_trust_here %}
+    <form method="post" action="/attach-here" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <button type="submit" class="ghost">Let this computer use ssh {{ ship.name }} and herdr --remote {{ ship.name }}</button>
+    </form>
+    <p class="hint">This trusts this computer with your own key (a short-lived certificate)
+      and adds the Ships to your SSH config (<code>~/.ssh/shipshape/</code>, included from
+      <code>~/.ssh/config</code>) and to herdr's saved machines.</p>
+    {% endif %}
+    {% endif %}
   </section>
 
   <section class="grid">
@@ -136,6 +187,17 @@
   <section><h2>Probe errors</h2><ul>{% for e in doc.errors %}<li class="quiet">{{ e }}</li>{% endfor %}</ul></section>
   {% endif %}
   <section class="ops">
+    {% if overlay_set and not on_overlay %}
+    <form method="post" action="/operations" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="join">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <input type="hidden" name="confirm" value="yes">
+      <button type="submit">Join the overlay</button>
+    </form>
+    <span class="hint">{{ ship.name }} is not on your overlay yet: join it to reach it from
+      anywhere (its host certificate is re-signed with its overlay name).</span>
+    {% endif %}
     {% for op in ("update", "reboot") %}
     <form method="post" action="/operations" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">

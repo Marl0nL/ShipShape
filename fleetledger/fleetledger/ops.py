@@ -31,7 +31,7 @@ from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
 from fleetledger.seed import bundle as bundle_mod
 from fleetledger.seed.shiptoml import TIMEZONE_RE
-from fleetledger.shipctl import ShipCtl
+from fleetledger.shipctl import ShipCtl, ShipCtlError
 from fleetledger.ssh import Unreachable
 
 Event = Callable[[str, str], None]
@@ -555,14 +555,37 @@ def update(
 # --- settings, tags, tools, logs ----------------------------------------------
 
 
+AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+AUTOSTART_KEYS = ("autostart.add", "autostart.remove")
+
+
+def parse_autostart_change(key: str, val: str) -> str:
+    """autostart.add=NAME:CWD[:MODE] or autostart.remove=NAME, checked."""
+    if key == "autostart.remove":
+        if not AGENT_NAME_RE.match(val):
+            raise FleetError(f"autostart.remove: '{val}' is not an agent name.")
+        return f"{key}={val}"
+    parts = val.split(":")
+    mode = parts.pop() if len(parts) > 2 and parts[-1] in MODES else None
+    name, cwd = parts[0], ":".join(parts[1:])
+    if not AGENT_NAME_RE.match(name) or not cwd.startswith(("~/", "/")):
+        raise FleetError("autostart.add=NAME:FOLDER[:MODE]: a name of a-z, 0-9, - and _, and "
+                         "a folder starting ~/ or /.")
+    return f"{key}={name}:{cwd}" + (f":{mode}" if mode else "")
+
+
 def parse_assignments(values: Iterable[str]) -> list[str]:
     """`set` arguments (short or full key names) as ship-ctl set KEY=VALUE pairs."""
     out: dict[str, str] = {}
+    agents: list[str] = []  # autostart changes: several may be given, in order
     full_names = {full: (full, allowed) for full, allowed in SET_KEYS.values()}
     for value in values:
         key, sep, val = value.partition("=")
         if not sep:
             raise FleetError(f"'{value}' is not KEY=VALUE.")
+        if key in AUTOSTART_KEYS:
+            agents.append(parse_autostart_change(key, val))
+            continue
         full, allowed = SET_KEYS.get(key) or full_names.get(key) or (None, None)
         if full is None:
             raise FleetError(f"Unknown setting '{key}' (settings: {', '.join(SET_KEYS)}).")
@@ -584,7 +607,7 @@ def parse_assignments(values: Iterable[str]) -> list[str]:
         out[full] = val
     if out.get("claude.default_mode") == "bypassPermissions":
         out.setdefault("claude.allow_bypass", "true")
-    return [f"{k}={v}" for k, v in out.items()]
+    return [f"{k}={v}" for k, v in out.items()] + agents
 
 
 def _record_settings(fleet: Fleet, ship: Ship, pairs: Sequence[str]) -> None:
@@ -609,12 +632,19 @@ def set_settings(
     pairs = parse_assignments(assignments)
 
     def one(ship: Ship, event: Event) -> Outcome:
-        result = ShipCtl(fleet.ssh(), ship).set(pairs)
+        ctl = ShipCtl(fleet.ssh(), ship)
+        result = ctl.set(pairs)
         _record_settings(fleet, ship, pairs)
         summary = ", ".join(result.changed) or "no change"
+        messages = list(result.messages)
+        if any(p.startswith("autostart.add=") for p in pairs):
+            # Start it now (it starts once Claude is signed in, and on every boot).
+            try:
+                messages += list(ctl.call("autostart", timeout=300).messages)
+            except ShipCtlError as exc:
+                messages.append(f"Not started yet: {exc.message}")
         event(ship.name, summary)
-        return Outcome(ship.name, True, summary, list(result.messages),
-                       {"changed": result.changed})
+        return Outcome(ship.name, True, summary, messages, {"changed": result.changed})
 
     return for_each(fleet, ships, one, on_event)
 

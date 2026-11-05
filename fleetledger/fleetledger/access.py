@@ -71,25 +71,20 @@ def cmd_overlay(args, app) -> int:
     ships = inv.select(args.names, args.tag)
     failed = 0
     if args.action == "join":
-        keys = getattr(app, "overlay_keys", None) or overlay.key_source(
-            config, isatty=app.stdin_isatty)
+        keys = _keys(app, config)
         for ship in ships:
             try:
-                joined = overlay.join(ShipCtl(app.ssh_factory(inv), ship), ship, config, keys)
+                join_one(app, store, ship.name, keys, app.say)
             except FleetError as exc:
                 app.say(f"{ship.name}: not joined: {exc.message}")
                 failed += 1
-                continue
-            name = joined.name if joined.name and overlay.HOST_RE.match(joined.name) else None
-            if joined.name and name is None:
-                app.say(f"{ship.name}: its overlay name {joined.name!r} is not a usable host "
-                        "name; add one by hand to its names in ships.toml.")
-            with store.edit() as ed:
-                ed.set_field(ship.name, "names",
-                             overlay.names_with(store.load().ship(ship.name), name))
-                ed.set_field(ship.name, "overlay_node", joined.node_id)
-            app.say(f"{ship.name}: on the overlay as {joined.name or '?'} "
-                    f"({', '.join(joined.addresses) or 'no address yet'}).")
+        if failed < len(ships):  # this computer's SSH config now prefers the overlay names
+            from fleetledger import trustcmd
+
+            try:
+                trustcmd.trust_this_computer(app, store, app.say, create=False)
+            except FleetError as exc:
+                app.say(f"This computer's SSH config was not refreshed ({exc.message}).")
         if not failed:
             app.say("Only SSH with the pinned host key is allowed in, over the overlay as on "
                     "the LAN. To refuse LAN logins: ship-fleet set SHIP ssh_listen=overlay")
@@ -111,3 +106,53 @@ def cmd_overlay(args, app) -> int:
         for message in messages:
             app.say(f"{ship.name}: {message}")
     return 1 if failed else 0
+
+
+def _keys(app, config):
+    return getattr(app, "overlay_keys", None) or overlay.key_source(
+        config, isatty=app.stdin_isatty)
+
+
+def join_one(app, store, name: str, keys=None, say=None) -> overlay.Joined:
+    """Join one Ship to the overlay, record its overlay name (first of its names) and
+    node, and re-sign its host certificate so the overlay name is in it. Raises
+    FleetError if the join fails; a certificate that cannot be re-signed is said."""
+    from fleetledger import ca, trustcmd
+
+    say = say or app.say
+    inv = store.load()
+    config = overlay.settings(inv)
+    ship = inv.ship(name)
+    joined = overlay.join(ShipCtl(app.ssh_factory(inv), ship), ship, config,
+                          keys or _keys(app, config))
+    host = joined.name if joined.name and overlay.HOST_RE.match(joined.name) else None
+    if joined.name and host is None:
+        say(f"{name}: its overlay name {joined.name!r} is not a usable host name; add one "
+            "by hand to its names in ships.toml.")
+    with store.edit() as ed:
+        ed.set_field(name, "names", overlay.names_with(store.load().ship(name), host))
+        ed.set_field(name, "overlay_node", joined.node_id)
+    say(f"{name}: on the overlay as {joined.name or '?'} "
+        f"({', '.join(joined.addresses) or 'no address yet'}).")
+    inv = store.load()
+    if host and ca.config(inv) is not None:
+        try:
+            trustcmd.certify(app, inv, inv.ship(name), force=True)
+            say(f"{name}: host certificate re-signed with its overlay name.")
+        except FleetError as exc:
+            say(f"{name}: host certificate not re-signed ({exc.message}); run "
+                f"`ship-fleet ca sign {name} --force`.")
+    return joined
+
+
+def join_after_enrol(app, store, name: str, say) -> None:
+    """With an overlay set up, a newly enrolled Ship joins it (best effort: a key that
+    must be pasted with no terminal, or a failed join, is said with the command)."""
+    inv = store.load()
+    if not inv.overlay:
+        return
+    try:
+        join_one(app, store, name, say=say)
+    except FleetError as exc:
+        say(f"{name}: not on the overlay yet ({exc.message}); join it with "
+            f"`ship-fleet overlay join {name}` (or its page in the web UI).")

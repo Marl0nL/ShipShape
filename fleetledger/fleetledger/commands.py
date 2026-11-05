@@ -280,7 +280,7 @@ def cmd_new(args, app) -> int:
         app.say(f"\nWhen it has booted: ship-fleet status {name} --wait")
         return 0
     _reachable_name(app, store, driver, name)
-    return _enrol(app, store, name)
+    return _enrol(app, store, name, overlay=not args.no_overlay)
 
 
 def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None:
@@ -293,6 +293,7 @@ def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None
     """
     ship = store.load().ship(name)
     waited = 0.0
+    app.note(f"{name}: booting; waiting for the hypervisor to report its address.")
     while True:
         addresses = driver.status(ship).addresses
         if addresses:
@@ -314,25 +315,53 @@ def _reachable_name(app, store, driver, name: str, timeout: float = 900) -> None
              "\"Names\").")
 
 
-def _enrol(app, store, name: str, say=None) -> int:
+HEARTBEAT = 60  # seconds between "still ..." lines while a Ship's first boot runs
+
+
+def _first_boot_phase(view) -> str:
+    """What a status poll during the first boot means, in words. Not answering (or
+    refusing the admin key before cloud-init has set it up) is normal for a while."""
+    if view.state == "unreachable":
+        return "not answering yet: still booting"
+    if view.state == "provisioning":
+        return "first boot: cloud-init is installing (the slow part)"
+    if view.state == "error":
+        return f"{view.message or 'an error'} (it may still be starting; still trying)"
+    if view.state == "invalid":
+        return f"{view.message or 'an unexpected answer'} (still trying)"
+    return view.state
+
+
+def _enrol(app, store, name: str, say=None, overlay: bool = True) -> int:
     say = say or app.say
     inv = store.load()
     ship = inv.ship(name)
     driver = app.driver_factory(inv, ship.driver)
-    last = {"state": None}
+    started = app.clock()
+    last = {"said": None, "at": started}
 
     def progress(view):
-        if view.state != last["state"]:
-            last["state"] = view.state
-            app.note(f"{name}: {view.state}")
+        said = _first_boot_phase(view)
+        now = app.clock()
+        if said != last["said"]:
+            last["said"], last["at"] = said, now
+            app.note(f"{name}: {said}")
+        elif now - last["at"] >= HEARTBEAT:
+            last["at"] = now
+            app.note(f"{name}: still waiting, {(now - started) / 60:.0f} min so far")
 
-    result = enrol.enrol(store, _ssh(app, inv), driver, ship, on_update=progress)
+    result = enrol.enrol(store, _ssh(app, inv), driver, ship, on_update=progress,
+                         sleep=app.sleep, clock=app.clock)
     for message in result.messages:
         say(message)
     if result.instructions:
         say("Then remove the seed (it holds the Ship's private host key):")
         for line in result.instructions:
             say(f"  {line}")
+    if overlay:
+        from fleetledger.access import join_after_enrol
+
+        join_after_enrol(app, store, name, say)  # before certifying: its overlay name too
     after_enrol(app, store, name, say)
     say(f"Next: ship-fleet login {name} all")
     return 0
@@ -478,6 +507,13 @@ def cmd_status(args, app) -> int:
         inv = store.load()
         ship = inv.ship(args.name)
     view = _views(app, inv, [ship], offline=False)[0]
+    from fleetledger import trustcmd
+
+    try:  # this computer's certificate, in its last day: renewed (plain ssh keeps working)
+        if trustcmd.renew_this_computer_if_due(app, store):
+            app.note("Renewed this computer's certificate.")
+    except FleetError as exc:
+        app.note(f"This computer's certificate was not renewed ({exc.message}).")
     if args.json:
         app.say(json.dumps(view_json(view, inv.effective_tags(ship)), indent=2))
         return 0 if view.problem is None else 1

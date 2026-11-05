@@ -21,10 +21,23 @@ always under **Setup** in the menu. It starts with one choice:
   of your SSH keys may log in to Ships: your `~/.ssh/id_ed25519.pub` (or another
   found there) is proposed, or FleetLedger makes one for you.
 - **Connect to an existing fleet or keys.** Use the admin and CA keys you
-  already have, from another computer say, where they are. They keep their
-  passphrases (you load them with `ssh-add`), unless you hand them over:
-  type each current passphrase once and FleetLedger re-encrypts the files with
-  passphrases it keeps. The keys themselves stay the same.
+  already have, from another computer say, where they are. The page asks, in the
+  open, **who looks after their passphrases**: FleetLedger (recommended: type each
+  current passphrase once, FleetLedger re-encrypts the files with passphrases it
+  keeps and loads them itself, so you are never asked again), or you (they keep
+  their passphrases; you load the admin key with `ssh-add`, or are asked for its
+  passphrase, on a desktop often in a pop-up, each time FleetLedger connects).
+  The keys themselves stay the same either way.
+
+Anything already on this computer is offered rather than asked again: a Proxmox
+token secret already in the keyring or in `~/.config/fleetledger/proxmox-token`
+(said up front; type its token id, which is filled in when the keyring names it,
+and leave the secret empty), the saved Proxmox address and a certificate you
+confirmed before, and a Tailscale OAuth client whose secret is in the keyring
+(`fleetledger` / `tailscale-oauth:<client id>`) or in
+`~/.config/fleetledger/tailscale-oauth` (whose secret names its client). Only
+names are read to offer them; secrets are read only to check and use them, and
+never shown.
 
 Then, each step showing **done** or **next**:
 
@@ -37,15 +50,28 @@ Then, each step showing **done** or **next**:
    button and a **Check again**; nothing is saved until everything is there, and
    a last connection test runs before saving. A certificate that differs from
    the one you confirmed before is flagged, with both fingerprints, and needs its
-   own tick. Or manual: FleetLedger writes each Ship's first-boot ISO and prints
-   the steps.
+   own tick. New Ships get VM ids 9100-9199 (ids already taken are skipped), away
+   from the low ids Proxmox hands out to your own VMs; Advanced changes the range,
+   or `any` for any free id. Or manual: FleetLedger writes each Ship's first-boot
+   ISO and prints the steps.
 2. **Reach Ships from anywhere (optional).** Links to the two Tailscale admin
    pages, the access rules with a copy button, then the OAuth client's id and
    secret. Before saving, FleetLedger checks the client signs in, can make a
    `tag:ship` key (made and deleted at once, which shows the rules are in
    place), and has the scopes of the level. **Skip for now** is fine.
-3. **Your first Ship.** Name and tag; its progress shows live (seed, clone,
-   start, enrol, certificate), then **Sign it in** takes you to the concierge.
+3. **Your first Ship.** Name and tag, and a Claude agent to start on it (on by
+   default: `main`, working in `~/work`) with Remote Control, so once you sign the
+   Ship in to Claude it shows in the Claude app under your account. With an
+   overlay set up, the Ship joins it once it enrols (a tick to opt out) and its
+   host certificate is signed with its overlay name. Progress shows live (seed,
+   clone, start, then the first boot in words: not answering yet, cloud-init
+   installing, a line a minute), and a first boot that outlasts the wait (30
+   minutes) is "still starting", with `ship-fleet status <name> --wait`, not an
+   error. Then FleetLedger trusts this computer with your own key (as `ship-fleet
+   trust --this-computer` does: a short-lived certificate, an SSH config entry per
+   Ship included from `~/.ssh/config`, herdr saved machines), so `ssh <ship>` and
+   `herdr --remote <ship>` work here at once; **Sign it in** takes you to the
+   concierge.
 
 Each step has a collapsed **Advanced** section for the rest (where secrets are
 kept, key file locations, other Proxmox storages, the VM ids FleetLedger may
@@ -75,6 +101,13 @@ checks each passphrase can be read. What this protects: a copy of the key files
 program running as you while the keyring is unlocked can read the passphrases,
 as it can use ssh-agent.
 
+On a GNOME desktop, the ssh-agent (`gcr-ssh-agent`, or the older gnome-keyring
+one) lists every key in `~/.ssh` that has a `.pub`, whether it holds it or not,
+and asks for the passphrase in a pop-up when one is used. So FleetLedger never
+takes that list as "loaded": it adds its keys itself (and again every ten
+minutes or each new command), and the setup page says when a key you look after
+will bring those pop-ups.
+
 ## Every day
 
 ```sh
@@ -95,7 +128,7 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 | Page | What is on it |
 |---|---|
 | **Fleet** (`/`) | Needs attention, then one row per Ship: state, agents, each sign-in, CPU · memory · disk, notes. Filter by tag. Batch actions for every Ship (or every Ship with the selected tag): sign in to a service, update, reboot. Updates and reboots run in the background, with their progress and outcome (including whether each Ship's agents came back in their modes) on this page. |
-| **Ship** (`/ships/<name>`) | Status, Needs attention, sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, herdr's last resume, Claude Code, host and tooling. |
+| **Ship** (`/ships/<name>`) | Status, Needs attention, sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, and whether they show in the Claude app (Remote Control on and Claude signed in) or why not; **Add an agent** (name, folder, mode: started now and on every boot, `ship-fleet set SHIP autostart.add=NAME:FOLDER`); herdr's last resume; the attach command that works from this computer (`herdr --remote <ship>` and `ssh <ship>` once this computer is trusted, else `ship-fleet ssh <ship>` and a button to trust it); **Join the overlay** for a Ship not on it yet; Claude Code, host and tooling. |
 | Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`), and tags. Update or reboot this Ship from its Overview. |
 | Ship **Logs** | `ship-ctl logs` for one source. |
 | Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |

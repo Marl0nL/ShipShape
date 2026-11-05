@@ -240,7 +240,7 @@ FOUND = ["", "", "", "", "", "", ""]  # node, pool, disk, seed, image, bridge, t
 PROXMOX_OK = [*START,
               "",                # store: keyring (the default)
               *FOUND,
-              "",                # VM ids: any
+              "",                # VM ids: the default block
               "", "skip"]        # overlay, Ship
 
 
@@ -255,7 +255,8 @@ def test_proxmox_from_three_answers(fresh):
         "pool": "shipshape", "template_vmid": 9000, "seed_storage": "shipshape-seeds",
         "disk_storage": "local-lvm", "bridge": "vmbr0", "image_storage": "shipshape-images",
         "token_id": TOKEN_ID, "token_store": "keyring",
-        "keyring_item": "proxmox-token:" + TOKEN_ID, "tls_fingerprint": FPR}
+        "keyring_item": "proxmox-token:" + TOKEN_ID, "tls_fingerprint": FPR,
+        "vmid_range": [9100, 9199]}  # Ships kept away from the low ids Proxmox hands out
     assert fresh.keyring.items == {("fleetledger", "proxmox-token:" + TOKEN_ID): TOKEN}
     assert set(fresh.pve.secrets_seen) == {TOKEN}
     assert fresh.pve.configs[0]["tls_fingerprint"] == FPR  # the API went through the pin

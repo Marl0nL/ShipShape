@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import re
 import stat
 import sys
 import tomllib
@@ -13,6 +14,7 @@ import yaml
 from fleetledger.concierge import engine
 from fleetledger.drivers import get_driver
 from fleetledger.drivers.base import Outcome
+from fleetledger.errors import FleetError
 from fleetledger.scan import Announcement
 from fleetledger.seed import hostkey, iso
 from fleetledger.ssh import SSH, Result, Unreachable
@@ -353,6 +355,35 @@ def test_new_proxmox_waits_and_enrols(env, home):
     assert "ship-04 is enrolled." in out and "ship-fleet login ship-04 all" in out
 
 
+def test_new_proxmox_says_what_the_first_boot_is_doing(env, monkeypatch):
+    """A first boot is minutes of not answering, then of refusing the admin key until
+    cloud-init has set it up: each is said in words, with a line now and then, and
+    none of it ends the wait."""
+    ticks = iter(range(0, 10**6, 20))  # each look at the clock: 20 s on
+    env.app.clock = lambda: next(ticks)
+    polls = []
+    real = type(env.ship).__call__
+
+    def booting(self, ship, command):
+        if command[-2:] == ["status", "--json"]:
+            polls.append(command)
+            if len(polls) <= 6:
+                raise Unreachable(f"Cannot reach {ship.name}: connection refused")
+            if len(polls) == 7:
+                raise FleetError(f"{ship.name} (192.0.2.44) refused FleetLedger's admin key.")
+        return real(self, ship, command)
+
+    monkeypatch.setattr(type(env.ship), "__call__", booting)
+    code, out, err = env.run("new", "ship-12", "--driver", "proxmox")
+    assert code == 0, err
+    assert env.store.load().ship("ship-12").enrolled
+    assert "ship-12: not answering yet: still booting" in err
+    assert re.search(r"ship-12: still waiting, \d+ min so far", err)
+    assert ("refused FleetLedger's admin key. (it may still be starting; still trying)"
+            in err)
+    assert "ship-12: unreachable" not in err and "ship-12: error" not in err
+
+
 def test_new_proxmox_keeps_names_that_resolve(env):
     env.app.resolves = lambda host: host == "ship-06.local"
     assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0
@@ -589,6 +620,23 @@ def test_set(env):
     assert env.run("set", "ship-01", "colour=blue")[0] == 1
     assert env.run("set", "ship-01", "remote_control=maybe")[0] == 1
     assert env.run("set", "ship-01", "remote_control")[0] == 1
+
+
+def test_set_adds_an_agent_and_starts_it(env):
+    code, out, err = env.run("set", "ship-01", "autostart.add=main:~/work",
+                             "autostart.add=docs:~/docs:plan")
+    assert code == 0, err
+    verbs = [c[3:] for _, c in env.ship.calls[-2:]]
+    assert verbs[0] == ["set", "autostart.add=main:~/work", "autostart.add=docs:~/docs:plan",
+                        "--json"]
+    assert verbs[1][0] == "autostart"  # started now (once Claude is signed in)
+    assert env.run("set", "ship-01", "autostart.remove=docs")[0] == 0
+    assert env.ship.calls[-1][1][3:] == ["set", "autostart.remove=docs", "--json"]
+    for bad in ("autostart.add=Main:~/work", "autostart.add=main:work",
+                "autostart.add=main", "autostart.remove=../x"):
+        calls = len(env.ship.calls)
+        assert env.run("set", "ship-01", bad)[0] == 1
+        assert len(env.ship.calls) == calls  # refused before reaching the Ship
 
 
 def test_tag(env):
@@ -875,6 +923,33 @@ def test_overlay_leave_drops_the_overlay_name(env):
     code, out, err = env.run("overlay", "leave", "ship-01")
     assert code == 0, err
     assert env.store.load().ship("ship-01").names == ("ship-01.local",)
+
+
+def test_a_new_ship_joins_the_overlay_once_it_enrols(env):
+    with_overlay(env)
+    code, out, err = env.run("new", "ship-13", "--driver", "proxmox")
+    assert code == 0, err
+    joins = [c for name, c in env.ship.calls if name == "ship-13" and "join" in c]
+    assert len(joins) == 1
+    ship = env.store.load().ship("ship-13")
+    assert ship.names[0] == "ship-13.example-tailnet.ts.net"  # the preferred name
+    assert "on the overlay as" in out
+
+
+def test_a_new_ship_can_stay_off_the_overlay(env):
+    with_overlay(env)
+    code, out, err = env.run("new", "ship-14", "--driver", "proxmox", "--no-overlay")
+    assert code == 0, err
+    assert not [c for name, c in env.ship.calls if name == "ship-14" and "join" in c]
+
+
+def test_a_failed_join_does_not_fail_the_new_ship(env):
+    with_overlay(env)
+    env.ship.overlay_fails = True
+    code, out, err = env.run("new", "ship-15", "--driver", "proxmox")
+    assert code == 0, err
+    assert env.store.load().ship("ship-15").enrolled
+    assert "not on the overlay yet" in out and "ship-fleet overlay join ship-15" in out
 
 
 def test_overlay_needs_its_section(env):

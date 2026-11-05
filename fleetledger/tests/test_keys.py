@@ -124,6 +124,36 @@ def test_managed_keys_are_loaded_into_the_agent_once(home, ring, agent, spawned,
     assert spawned == []
 
 
+def test_a_key_the_agent_only_lists_is_still_loaded(home, ring, agent, monkeypatch, tmp_path):
+    """GNOME's agent lists every ~/.ssh key that has a .pub, held or not, and using one
+    it does not hold pops up a passphrase prompt nobody can answer for a managed key.
+    So the list alone never stops FleetLedger adding its keys."""
+    admin = tmp_path / "ssh" / "admin"
+    keys.make(admin, "admin", "keyring")
+    inv = inventory_with(home, tmp_path, "keyring", admin)
+    monkeypatch.setattr(keys, "loaded_fingerprints", lambda: {keys.fingerprint(admin)})
+    assert keys.fingerprint(admin) not in held()
+    assert keys.ensure_loaded(inv) == ["admin"]  # listed, but not trusted
+    assert keys.fingerprint(admin) in held()
+    assert keys.ensure_loaded(inv) == []  # added just now and still listed
+    monkeypatch.setattr(keys, "ADDED_FRESH", 0)
+    assert keys.ensure_loaded(inv) == ["admin"]  # added a while ago: again
+
+
+def test_gnomes_agent_is_told_from_its_socket(tmp_path, monkeypatch):
+    for parent in ("keyring", "gcr"):
+        (tmp_path / parent).mkdir()
+        (tmp_path / parent / "ssh").touch()
+        link = tmp_path / f"link-{parent}"  # as a terminal multiplexer might point at it
+        link.symlink_to(tmp_path / parent / "ssh")
+        monkeypatch.setenv("SSH_AUTH_SOCK", str(link))
+        assert keys.desktop_agent_preloads()
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "agent.sock"))
+    assert not keys.desktop_agent_preloads()
+    monkeypatch.delenv("SSH_AUTH_SOCK")
+    assert not keys.desktop_agent_preloads()
+
+
 def test_a_locked_keyring_is_a_plain_error_and_loads_nothing(home, ring, agent, monkeypatch,
                                                              tmp_path):
     admin = tmp_path / "ssh" / "admin"

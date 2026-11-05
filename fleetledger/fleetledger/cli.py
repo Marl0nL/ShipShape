@@ -51,6 +51,7 @@ class App:
     sleep: Callable[[float], None] = None
     clock: Callable[[], float] = time.monotonic
     http_factory: Callable = None  # () -> pins.Http
+    herdr: bool = True  # installing a trust bundle here may add herdr saved machines
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
 
     def __post_init__(self) -> None:
@@ -200,6 +201,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the Ship's time zone, e.g. Europe/Berlin (default: this computer's)")
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for the Ship to provision and enrol")
+    p.add_argument("--no-overlay", action="store_true",
+                   help="do not join the overlay after it enrols (with [overlay] set up)")
 
     p = _add(sub, "adopt", "enrol a Ship FleetLedger did not create, after checking its key",
              "Pin the host key of a running Ship after you compare its fingerprint with\n"
@@ -245,8 +248,11 @@ def build_parser() -> argparse.ArgumentParser:
              "update_channel (latest|stable), session_prefix, sudo, lan_guard,\n"
              "lan_guard_allow (addresses or CIDRs, comma-separated), auto_reboot,\n"
              "reboot_time (HH:MM, the Ship's local time), timezone (e.g. Europe/Berlin),\n"
-             "tags; or their full names (claude.remote_control, ...).\n\n"
+             "tags; or their full names (claude.remote_control, ...).\n"
+             "Agents: autostart.add=NAME:FOLDER[:MODE] starts one now (once Claude is\n"
+             "signed in) and on every boot; autostart.remove=NAME stops starting it.\n\n"
              "  ship-fleet set ship-01 remote_control=off default_mode=bypassPermissions\n"
+             "  ship-fleet set ship-01 autostart.add=main:~/work\n"
              "  ship-fleet set --tag work update_channel=stable\n"
              "  ship-fleet set all lan_guard=true")
     p.add_argument("args", nargs="+", metavar="[SHIP ...|all] KEY=VALUE")
@@ -363,7 +369,10 @@ def build_parser() -> argparse.ArgumentParser:
              "saved machines. Run it again to renew.\n\n"
              "  ship-fleet trust laptop --key laptop.pub --scope tag:work\n"
              "  ship-fleet trust laptop --print-cert     renew: just the new certificate")
-    p.add_argument("machine", help="a name for the machine (e.g. laptop)")
+    p.add_argument("machine", nargs="?", help="a name for the machine (e.g. laptop)")
+    p.add_argument("--this-computer", action="store_true",
+                   help="trust this computer with your own key and install it here, so "
+                   "ssh <ship> and herdr --remote <ship> work (the web setup does this)")
     p.add_argument("--key", help="the machine's ed25519 public key (file or line); first time only")
     p.add_argument("--scope", action="append", metavar="all|tag:TAG|ship:NAME",
                    help="which Ships it may attach to (repeatable; default all)")
@@ -374,7 +383,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--print-cert", action="store_true", help="print only the certificate")
     p.add_argument("--install", action="store_true",
                    help="also install the bundle here (this is the machine)")
-    p.add_argument("--no-herdr", action="store_true", help="install: skip herdr saved machines")
+    p.add_argument("--no-herdr", action="store_true",
+                   help="install, --this-computer: skip herdr saved machines")
 
     p = _add(sub, "untrust", "revoke a machine's certificates on every Ship")
     p.add_argument("machine")

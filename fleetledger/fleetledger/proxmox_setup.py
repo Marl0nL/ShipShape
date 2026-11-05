@@ -575,6 +575,23 @@ def find(api, node: str, pve_major: int = 9) -> Found:
     )
 
 
+# VM ids FleetLedger uses unless told otherwise: a block well away from the low ids
+# Proxmox hands out first (100, 101, ...), so Ships do not land among your own VMs.
+# Ids already taken are skipped (the driver asks Proxmox which are free).
+DEFAULT_VMID_RANGE = (9100, 9199)
+
+
+def parse_vmid_range(text: str) -> list[int] | None:
+    """[first, last] from "first-last"; None for "any" (any free id). Raises on
+    anything else."""
+    if text.strip().lower() == "any":
+        return None
+    match = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", text)
+    if not match or not 100 <= int(match.group(1)) <= int(match.group(2)):
+        raise FleetError("VM ids: two numbers, first-last, both 100 or more (or 'any').")
+    return [int(match.group(1)), int(match.group(2))]
+
+
 def defaults(found: Found, old: Mapping[str, Any]) -> dict[str, Any]:
     """The values setup proposes: what ships.toml had, else the likeliest."""
     def prefer(options, *wanted):
@@ -596,6 +613,7 @@ def defaults(found: Found, old: Mapping[str, Any]) -> dict[str, Any]:
         "bridge": prefer(found.bridges, old.get("bridge")) or (
             old.get("bridge") if found.any_bridge else None),
         "template_vmid": template,
+        "vmid_range": list(old.get("vmid_range") or DEFAULT_VMID_RANGE),
     }
 
 
@@ -716,12 +734,13 @@ def _discover(app, store, api, config: dict[str, Any], old: Mapping[str, Any],
 
 
 def _vmid_range(app, old) -> list[int] | None:
-    shown = f"{old[0]}-{old[1]}" if old else "any free one"
+    current = list(old) if old else list(DEFAULT_VMID_RANGE)
     while True:
-        answer = _ask(app, f"VM ids FleetLedger may use, e.g. 9100-9199 ({shown}): ", "")
+        answer = _ask(app, f"VM ids FleetLedger may use, first-last, or 'any' for any free "
+                      f"one ({current[0]}-{current[1]}): ", "")
         if not answer:
-            return list(old) if old else None
-        match = re.match(r"^\s*(\d+)\s*-\s*(\d+)\s*$", answer)
-        if match and 100 <= int(match.group(1)) <= int(match.group(2)):
-            return [int(match.group(1)), int(match.group(2))]
-        app.note("Give two numbers, first-last, both 100 or more.")
+            return current
+        try:
+            return parse_vmid_range(answer)
+        except FleetError:
+            app.note("Give two numbers, first-last, both 100 or more (or 'any').")

@@ -99,10 +99,18 @@ key_source = "prompt"                              # or "tailscale-api":
 
 ## 3. Join Ships
 
+With `[overlay]` set up, a new Ship joins on its own once it enrols (`ship-fleet
+new`, and the web UI; `--no-overlay` or the setup page's tick opts one out), and
+its host certificate is re-signed with its overlay name. A join key that must be
+pasted needs a terminal, so from the web UI that takes the API key source. For
+Ships made before, or opted out:
+
 ```sh
 ship-fleet overlay join ship-01          # or several names, or --tag work
 ship-fleet overlay status
 ```
+
+or **Join the overlay** on the Ship's page.
 
 On the Ship this installs `tailscale` from its pinned, signature-checked apt repo
 (it is not installed or running on Ships that never join), starts `tailscaled`
