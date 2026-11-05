@@ -220,8 +220,10 @@ def cmd_new(args, app) -> int:
         claude["default_mode"] = args.mode
     if args.allow_bypass or args.mode == "bypassPermissions":
         claude["allow_bypass"] = True
-    size = {k: v for k, v in (("cores", args.cores), ("memory_mb", args.memory_mb),
-                               ("disk_gb", args.disk_gb)) if v is not None}
+    from fleetledger.lifecycle import check_size
+
+    size = check_size({"cores": args.cores, "memory_mb": args.memory_mb,
+                       "disk_gb": args.disk_gb})  # the size contract's limits, said plainly
     driver_id = args.driver or inv.defaults.get("driver", "manual")
     image_id = args.image or inv.pinned_image
     image = images.published(inv, image_id, driver_id)  # checks it exists for this driver

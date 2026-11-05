@@ -293,3 +293,18 @@ def test_removing_an_agent_drops_its_repo_attention(ship):
     assert ship.ctl("set", "autostart.remove=setup", "--json")[0] == 0
     rc, doc, _ = ship.ctl("status", "--json")
     assert "agent-repo-waiting" not in {a["code"] for a in doc["attention"]}
+
+
+def test_f8_github_signin_alone_never_starts_when_claude_signed_out(ship):
+    """A GitHub sign-in with a repo agent waiting, while Claude is signed out, starts
+    nothing: only a Claude sign-in (or a boot while signed in) lets agents start."""
+    ship.set(git={"private": ["someone/agent-setup"]}, gh={"login": None},
+             claude={"logged_in": False})
+    _with_repo_agent(ship)
+    ship.ctl("refresh", "--json")
+    ship.set(gh={"login": "example-user"})
+    ship.ctl("refresh", "--json")
+    assert ship.p("/home/agent/work/agent-setup/CLAUDE.md").exists()  # cloned
+    assert started_args(ship) == {}  # but nothing started
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert doc["state"] == "needs-sign-in"

@@ -444,6 +444,12 @@ def test_a_size_the_contract_refuses_never_reaches_the_hypervisor(env, args):
     assert sized == [] and env.store.load().ship("ship-23").size == {}
 
 
+def test_a_new_ship_outside_the_size_contract_is_refused_plainly(env):
+    code, _, err = env.run("new", "ship-26", "--memory-mb", "2048")
+    assert code == 1 and "memory mb: 4096 to 262144" in err
+    assert "does not match" not in err and not env.store.load().has_ship("ship-26")
+
+
 def test_a_ship_for_an_ecdsa_or_security_key(env, home):
     at = "@" + "openssh.com"  # a key type's suffix (written apart: not an address)
     key = f"sk-ssh-ed25519{at} AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t you\n"
