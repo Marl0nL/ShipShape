@@ -35,9 +35,11 @@ from fleetledger.web.fleet import Item
 LEVELS = ("critical", "warning", "notice")
 LEVEL_OF = {"high": "critical", "medium": "warning", "low": "notice"}
 DISK_WARN, DISK_CRIT = 80.0, 90.0
+DISK_RULES = [(DISK_WARN, f"{DISK_WARN:.0f}%", "warn"), (DISK_CRIT, f"{DISK_CRIT:.0f}%", "crit")]
 
 # Chart ranges: key -> (span, bucket) in seconds.
 RANGES = {"6h": (6 * 3600, 300), "24h": (86400, 900), "7d": (7 * 86400, 3600)}
+RANGE_LABELS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days"}  # "The last ..."
 DEFAULT_RANGE = "24h"
 TRAFFIC_STEP = {"6h": 3600, "24h": 3600, "7d": 6 * 3600}  # net summaries are hourly
 CARD_RANGE = "24h"
@@ -230,11 +232,16 @@ def _binned(samples: dict[str, list[Any]], starts: Sequence[float], step: float
     return out
 
 
+def _readings(rows: Sequence[Any], field: str) -> list[float]:
+    """A field's values from the samples taken while the Ship answered."""
+    return [getattr(s, field) for s in rows if s.up and getattr(s, field) is not None]
+
+
 def _ship_means(bins: dict[str, list[list[Any]]], field: str, i: int) -> list[float]:
     """Each Ship's mean of a field in bucket i (Ships with no reading skipped)."""
     found = []
     for rows in bins.values():
-        values = [getattr(s, field) for s in rows[i] if s.up and getattr(s, field) is not None]
+        values = _readings(rows[i], field)
         if values:
             found.append(sum(values) / len(values))
     return found
@@ -270,8 +277,6 @@ def fleet_charts(history: Any, views: Sequence[ShipView], range_: str,
         idle.append(sum((s.agents or 0) - (s.working or 0) - (s.waiting or 0)
                         for s in live) if latest else None)
         up.append(float(sum(1 for s in latest if s.up)) if latest else None)
-    disk_rules = [(DISK_WARN, f"{DISK_WARN:.0f}%", "warn"),
-                  (DISK_CRIT, f"{DISK_CRIT:.0f}%", "crit")]
     return {
         "range": range_,
         "has_history": bool(samples),
@@ -283,7 +288,7 @@ def fleet_charts(history: Any, views: Sequence[ShipView], range_: str,
             charts.Series("s2", "Fullest Ship", mem_max)], ymax=100),
         "disk": charts.line_chart(starts, step, [
             charts.Series("s1", "Average", disk_avg),
-            charts.Series("s2", "Fullest Ship", disk_max)], ymax=100, thresholds=disk_rules),
+            charts.Series("s2", "Fullest Ship", disk_max)], ymax=100, thresholds=DISK_RULES),
         "agents": charts.stacked_columns(starts, step, [
             charts.Series("s1", "Working", working),
             charts.Series("warn", "Waiting for you", waiting),
@@ -291,7 +296,7 @@ def fleet_charts(history: Any, views: Sequence[ShipView], range_: str,
         "up": charts.line_chart(starts, step, [charts.Series("s1", "Ships answering", up)],
                                 unit="", ymax=float(max(1, len(views)))),
         "traffic": traffic_chart(views, range_, now),
-        "disk_now": disk_bars(views, disk_rules),
+        "disk_now": disk_bars(views, DISK_RULES),
     }
 
 
@@ -351,7 +356,7 @@ def sparklines(history: Any, views: Sequence[ShipView], now: float
         rows = bins.get(name, [[] for _ in starts])
         found[name] = {
             field: charts.sparkline([
-                _mean([getattr(s, field) for s in b if s.up and getattr(s, field) is not None])
+                _mean(_readings(b, field))
                 for b in rows])
             for field in ("cpu", "mem")
         }
@@ -367,7 +372,7 @@ def ship_charts(history: Any, view: ShipView, range_: str, now: float) -> dict[s
     bins = _binned(samples, starts, step).get(name, [[] for _ in starts])
 
     def series(field: str) -> list[float | None]:
-        return [_mean([getattr(s, field) for s in b if s.up and getattr(s, field) is not None])
+        return [_mean(_readings(b, field))
                 for b in bins]
 
     def agents(field: str) -> list[float | None]:
@@ -382,7 +387,7 @@ def ship_charts(history: Any, view: ShipView, range_: str, now: float) -> dict[s
             charts.Series("s1", "CPU", series("cpu")),
             charts.Series("s2", "Memory", series("mem")),
             charts.Series("s3", "Disk", series("disk"))], ymax=100,
-            thresholds=[(DISK_CRIT, f"{DISK_CRIT:.0f}%", "crit")], width=WIDE, height=190),
+            thresholds=DISK_RULES[1:], width=WIDE, height=190),
         "agents": charts.stacked_columns(starts, step, [
             charts.Series("s1", "Working", agents("working")),
             charts.Series("warn", "Waiting for you", agents("waiting")),

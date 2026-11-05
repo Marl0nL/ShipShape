@@ -46,7 +46,7 @@
         <td>{{ (entry.account if entry else None) or "-" }}{% if entry and entry.detail %} <span class="quiet">({{ entry.detail }})</span>{% endif %}</td>
         <td>{{ expected[service]|join(" or ") or "-" }}</td>
         <td class="quiet">{{ entry.checked_at if entry else "-" }}{% if entry and entry.expires_at %}; expires {{ entry.expires_at }}{% endif %}</td>
-        <td class="actions">
+        <td>
           {% if cell == "off" %}<a class="quiet" href="/ships/{{ ship.name }}/settings">off (Settings)</a>
           {% else %}
           <form method="post" action="/signin" class="inline">

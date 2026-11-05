@@ -3,8 +3,8 @@
 Every change the UI makes goes through the same `ship-fleet` command functions
 the CLI uses (fleetledger.commands), so the CLI stays complete and the two can
 never disagree. Pages read the background poller's cached views (fleet.py) and
-never wait on SSH, except for the few actions that are SSH by nature (logs,
-settings, sign-out, refresh), which run in a worker thread.
+never wait on SSH, except for the actions that are SSH by nature (logs,
+per-Ship changes, sign-out, refresh), which run in a worker thread.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import urlencode
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.applications import Starlette
@@ -36,10 +36,10 @@ from fleetledger.errors import FleetError
 from fleetledger.web import actions, dashboard, network, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
+from fleetledger.web.forms import NAME_RE, form, one
 from fleetledger.web.security import Gate, GateMiddleware, Session
 
 HERE = Path(__file__).resolve().parent
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 TAG_RE = NAME_RE
 FLOW_ID_RE = re.compile(r"^[0-9]{1,9}-[0-9a-f]{8}$")
 BATCH_RE = re.compile(r"^[0-9a-f]{12}$")
@@ -60,6 +60,7 @@ SETTINGS_TEXT = {
     "reboot_time": "Reboot time for OS updates (HH:MM)",
     "lan_guard_allow": "LAN guard also allows (addresses or CIDRs, comma-separated)",
 }
+NO_SUCH_SHIP = "No such Ship in the inventory."
 TABS = ("overview", "settings", "logs", "network")
 
 
@@ -88,15 +89,6 @@ class UI:
 # --- helpers ---------------------------------------------------------------------
 
 
-def _ago(wall: float | None) -> str:
-    if wall is None:
-        return "not yet"
-    seconds = max(0, int(time.time() - wall))
-    if seconds < 60:
-        return f"{seconds}s ago"
-    return f"{seconds // 60} min ago"
-
-
 def _clock(wall: float | None) -> str:
     if wall is None:
         return "never"
@@ -115,7 +107,6 @@ def make_env() -> Environment:
         agents_cell=commands.agents_cell,
         usage_cell=commands.usage_cell,
         notes_cell=commands.notes_cell,
-        ago=_ago,
         clock=_clock,
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
@@ -128,6 +119,7 @@ def make_env() -> Environment:
         SETTINGS_TEXT=SETTINGS_TEXT,
         human_bytes=net.human_bytes,
         since=network.since,
+        RANGE_LABELS=dashboard.RANGE_LABELS,
     )
     env.filters["pill"] = _pill
     return env
@@ -145,20 +137,6 @@ def _pill(value: str | None) -> str:
                  "provisioning", "timeout"):
         return "warn"
     return "muted"
-
-
-async def form(request: Request) -> dict[str, list[str]]:
-    """The posted form (the gate has already capped its size and checked CSRF)."""
-    body = await request.body()
-    try:
-        return parse_qs(body.decode("utf-8"), max_num_fields=100)
-    except (UnicodeDecodeError, ValueError):
-        return {}
-
-
-def one(fields: dict[str, list[str]], key: str) -> str:
-    values = fields.get(key, [])
-    return values[0].strip() if len(values) == 1 else ""
 
 
 def _flash_outcome(ui: UI, session: Session, outcome: actions.Outcome) -> None:
@@ -191,12 +169,10 @@ def _size_limits_for_forms() -> dict[str, int]:
 def render(request: Request, template: str, status_code: int = 200, **context: Any) -> Response:
     ui = ui_of(request)
     session = session_of(request)
-    waiting = [f for f in ui.concierge.active() if f.needs_you]
     context.setdefault("flashes", ui.take_flashes(session))
     html = ui.env.get_template(template).render(
         csrf=session.csrf,
-        waiting_count=len(waiting),
-        snapshot=ui.fleet.snapshot,
+        waiting_count=sum(1 for f in ui.concierge.active() if f.needs_you),
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
@@ -216,6 +192,12 @@ def back(path: str, **query: str) -> RedirectResponse:
 def _ship_name(request: Request) -> str | None:
     name = request.path_params.get("name", "")
     return name if NAME_RE.match(name) else None
+
+
+def _known_ship(request: Request) -> str | None:
+    """The {name} in the path, if it is a Ship the poller knows."""
+    name = _ship_name(request)
+    return name if name and name in ui_of(request).fleet.snapshot.by_name else None
 
 
 def not_found(request: Request, what: str) -> Response:
@@ -238,11 +220,9 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
     return {
         "tag": tag,
         "views": views,
-        "items": items,
         "alerts": alerts,
         "summary": dashboard.summary(views, alerts, snap.inventory),
         "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
-        "flows_waiting": flows_waiting,
         "operations": ui.operations.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
@@ -362,7 +342,7 @@ async def ship_page(request: Request) -> Response:
     tab = request.path_params.get("tab", "overview")
     context = _ship_context(ui, name) if name else None
     if context is None or tab not in TABS:
-        return not_found(request, "No such Ship in the inventory.")
+        return not_found(request, NO_SUCH_SHIP)
     if tab == "logs":
         source = request.query_params.get("source", "provision")
         if source not in commands.LOG_SOURCES:
@@ -374,14 +354,13 @@ async def ship_page(request: Request) -> Response:
             ok, lines = await run_in_threadpool(actions.logs, ui.app, name, source, 300)
             context["log"] = clean("\n".join(lines))
             context["log_ok"] = ok
-    if tab == "network":
-        snap = ui.fleet.snapshot
-        context["netview"] = network.ship_view(snap.inventory, context["ship"])
+    if tab == "network":  # the same snapshot the rest of the page shows
+        context["netview"] = network.ship_view(context["snap"].inventory, context["ship"])
         context["net"] = network.status_digest(context["view"])
         context["week"] = request.query_params.get("week") == "1"
     if tab == "overview":
         context["alerts"] = dashboard.alerts([context["view"]], context["items"], [],
-                                             ui.fleet.snapshot.inventory)
+                                             context["snap"].inventory)
         range_ = dashboard.range_key(request.query_params.get("range"))
         context["history"] = _quietly(dashboard.ship_charts, ui.fleet.history,
                                       context["view"], range_, time.time())
@@ -391,9 +370,9 @@ async def ship_page(request: Request) -> Response:
 
 async def ship_refresh(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     await run_in_threadpool(ui.fleet.poll, [name])
     ui.flash(session_of(request), "ok", f"Checked {name}.")
     return back(f"/ships/{name}")
@@ -401,9 +380,9 @@ async def ship_refresh(request: Request) -> Response:
 
 async def ship_settings(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     assignments = []
     for key, (set_key, allowed, _label) in SETTINGS.items():
@@ -431,9 +410,9 @@ async def ship_settings(request: Request) -> Response:
 async def ship_agents(request: Request) -> Response:
     """Add an autostart agent to a Ship (or stop starting one)."""
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     session = session_of(request)
     try:
@@ -457,9 +436,9 @@ async def ship_agents(request: Request) -> Response:
 async def ship_signins(request: Request) -> Response:
     """Choose the sign-ins a Ship uses; the ones turned off are signed out there."""
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     session = session_of(request)
     said: list[str] = []
@@ -479,9 +458,9 @@ async def ship_size(request: Request) -> Response:
     from fleetledger import lifecycle
 
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     session = session_of(request)
     try:
@@ -521,9 +500,9 @@ async def attach_here(request: Request) -> Response:
 
 async def ship_tags(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     wanted = [t for t in re.split(r"[\s,]+", one(fields, "tags")) if t]
     session = session_of(request)
@@ -539,9 +518,9 @@ async def ship_tags(request: Request) -> Response:
 
 async def ship_logout(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     service = one(fields, "service")
     session = session_of(request)
@@ -555,14 +534,15 @@ async def ship_logout(request: Request) -> Response:
 
 
 async def fleet_operation(request: Request) -> Response:
-    """Update or reboot one Ship, or every Ship with a tag (fleetledger.ops)."""
+    """Update, reboot or join one Ship, every Ship with a tag, or the whole fleet
+    (fleetledger.ops)."""
     ui = ui_of(request)
     session = session_of(request)
     fields = await form(request)
     operation = one(fields, "operation")
     name, tag = one(fields, "ship"), one(fields, "tag")
     where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
-    if operation not in ("update", "reboot", "join"):
+    if operation not in actions.KINDS:
         ui.flash(session, "bad", "Unknown operation.")
         return back(where)
     if one(fields, "confirm") != "yes":
@@ -589,9 +569,9 @@ async def fleet_operation(request: Request) -> Response:
 
 async def ship_network_refresh(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     session = session_of(request)
     try:
         problems = await run_in_threadpool(network.refresh, ui.app, [name])

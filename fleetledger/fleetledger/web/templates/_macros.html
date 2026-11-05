@@ -1,4 +1,5 @@
-{# Shared pieces: severity icons and the SVG charts (geometry from web/charts.py).
+{# Shared pieces: severity icons, the alert row, the SVG charts, sparklines and the
+   range chips (chart geometry from web/charts.py).
    No inline styles or scripts (the CSP forbids them): colours come from classes. #}
 
 {% macro sev_icon(level) %}
@@ -16,7 +17,7 @@
 </svg>
 {% endmacro %}
 
-{% macro sev(level) %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span class="word">{{ level|capitalize }}</span></span>{% endmacro %}
+{% macro sev(level) %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span>{{ level|capitalize }}</span></span>{% endmacro %}
 
 {% macro alert_row(a, csrf, ship=True) %}
 <li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
@@ -104,7 +105,7 @@
   <svg class="plot" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ title }}">
     {{ axes(c) }}
     {% for col in c.columns %}
-    <g class="col">
+    <g>
       {% for seg in col.segments %}<rect class="mark-fill {{ seg.key }}" x="{{ col.x }}" y="{{ seg.y }}" width="{{ col.w }}" height="{{ seg.h }}" rx="{{ 1.5 if col.w > 4 else 0 }}"/>{% endfor %}
       <rect class="hit" x="{{ col.slot_x }}" y="{{ c.top }}" width="{{ col.slot_w }}" height="{{ c.bottom - c.top }}"><title>{{ col.title }}</title></rect>
     </g>
@@ -135,6 +136,11 @@
   </svg>
   {% else %}<p class="quiet">No Ship answered.</p>{% endif %}
 </figure>
+{% endmacro %}
+
+{% macro store_radios(usable) %}
+<label><input type="radio" name="store" value="keyring"{% if usable %} checked{% else %} disabled{% endif %}> keep the secret in your OS keyring</label>
+<label><input type="radio" name="store" value="file"{% if not usable %} checked{% endif %}> in a file only you can read (0600)</label>
 {% endmacro %}
 
 {% macro sparkline(s, label, value, cls) %}

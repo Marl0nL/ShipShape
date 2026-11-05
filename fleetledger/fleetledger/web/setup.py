@@ -30,8 +30,10 @@ from starlette.routing import Route
 
 from fleetledger import keys, paths
 from fleetledger.errors import FleetError
+from fleetledger.web.forms import NAME_RE
+from fleetledger.web.forms import form as _form
+from fleetledger.web.forms import one as _one
 
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 ADMIN_KEY = "~/.ssh/shipshape_fleet_ed25519"
 HOST_CA_KEY = "~/.ssh/shipshape_host_ca_ed25519"
 USER_CA_KEY = "~/.ssh/shipshape_user_ca_ed25519"
@@ -238,21 +240,10 @@ def _back(anchor: str = "") -> RedirectResponse:
     return RedirectResponse("/setup" + (f"#{anchor}" if anchor else ""), status_code=303)
 
 
-async def _form(request: Request) -> dict[str, list[str]]:
-    from fleetledger.web.app import form
-
-    return await form(request)
-
-
-def _one(fields, key: str) -> str:
-    values = fields.get(key, [])
-    return values[0].strip() if len(values) == 1 else ""
-
-
 def _secret_field(fields, key: str) -> str:
-    """A token or client secret (surrounding whitespace removed); never logged."""
-    values = fields.get(key, [])
-    return values[0].strip() if len(values) == 1 else ""
+    """A token or client secret (surrounding whitespace removed); never logged.
+    The same as _one(), named so a secret field reads as one."""
+    return _one(fields, key)
 
 
 def _passphrase_field(fields, key: str) -> str:
@@ -531,7 +522,7 @@ async def owner_name(request: Request) -> Response:
     said: list[str] = []
     try:
         ok = await run_in_threadpool(commands.set_owner, app, app.store_factory(),
-                                     _one(fields, "owner").strip(), said.append)
+                                     _one(fields, "owner"), said.append)
     except FleetError as exc:
         ok, said = False, [exc.message]
     _flash(request, "ok" if ok else "bad", " ".join(said))
@@ -1034,7 +1025,7 @@ def size_from_form(fields) -> dict[str, int]:
     from fleetledger.lifecycle import check_size
 
     def number(key: str) -> int | None:
-        value = _one(fields, key).strip()
+        value = _one(fields, key)
         if not value:
             return None
         if not value.isdigit():

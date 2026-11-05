@@ -2,7 +2,7 @@
 {% set base = "/?" ~ ("tag=" ~ tag ~ "&" if tag else "") %}
 <section id="charts" class="charts" hx-get="/partials/charts?{% if tag %}tag={{ tag }}&amp;{% endif %}range={{ range }}&amp;v={{ charts_version }}" hx-trigger="every 60s" hx-swap="outerHTML">
   <div class="toolbar">
-    <h2>The last {{ {"6h": "6 hours", "24h": "24 hours", "7d": "7 days"}[range] }}</h2>
+    <h2>The last {{ RANGE_LABELS[range] }}</h2>
     {{ ranges_nav(ranges, range, base) }}
   </div>
   {% if charts is none %}

@@ -280,9 +280,10 @@ and htmx for polling; no front-end build.
 | `setup.py` | the setup page: the same steps as `ship-fleet setup --text`, through the same functions (keys.py, proxmox_setup.py, overlay_setup.py) |
 | `server.py` | `ship-fleet ui`: binding, the link, uvicorn (access log off) |
 | `app.py` | routes and pages |
+| `forms.py` | reading posted forms (`form()`, `one()`), shared by `app.py` and `setup.py` |
 | `fleet.py` | the background poller; Needs attention from `ops.attention` |
 | `flows.py` | the concierge's browser prompter, the live-terminal bridge, batches |
-| `actions.py` | settings, tags, logs, update and reboot through the shared day-2 operations (`fleetledger/ops.py`), sign-out through `ship-fleet logout`; update and reboot run in the background |
+| `actions.py` | settings, tags, logs, update, reboot and joining the overlay through the shared day-2 operations (`fleetledger/ops.py`), sign-out through `ship-fleet logout`; update, reboot and join run in the background |
 | `network.py` | the Network tab and page over `fleetledger/net.py` (shared with `ship-fleet net`), plus the status `net` digest |
 | `dashboard.py` | the Fleet page's summary, alerts (each with its fix) and chart data; the history store is `fleetledger/history.py` |
 | `charts.py` | SVG chart geometry (lines, stacked columns, bars, sparklines); `templates/_macros.html` draws it |
