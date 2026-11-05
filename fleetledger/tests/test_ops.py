@@ -237,6 +237,13 @@ def events():
 # --- select -----------------------------------------------------------------
 
 
+def test_a_failed_command_is_described_by_its_last_line():
+    assert ops._last_line("warming up\nstill going\nno space left on device\n") == \
+        "no space left on device"
+    assert ops._last_line("") == "no output"
+    assert ops._last_line("  \n") == "no output"
+
+
 def test_select_by_names_tag_or_all(store):
     inv = store.load()
     assert [s.name for s in ops.select(inv, ["ship-02"])] == ["ship-02"]

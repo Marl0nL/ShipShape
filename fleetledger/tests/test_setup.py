@@ -570,6 +570,16 @@ def test_bad_addresses(text):
         proxmox_setup.parse_address(text)
 
 
+def test_the_grants_printed_are_the_grants_checked():
+    n = proxmox_setup.Names(disk="local-lvm", bridge="vmbr1")
+    checked = [path for path, _role, _lacking in proxmox_setup.missing_grants({}, n)]
+    assert checked == ["/pool/shipshape", "/storage/shipshape-seeds", "/storage/local-lvm",
+                       "/sdn/zones/localnetwork/vmbr1"]
+    printed = "\n".join(proxmox_setup.grant_commands(n))
+    for path in checked:
+        assert f"pveum acl modify {path} --tokens" in printed
+
+
 def test_permissions_propagate_from_parents():
     perms = {"/": {"Datastore.Audit": 1}, "/storage": {"Datastore.AllocateSpace": 1}}
     assert proxmox_setup.effective(perms, "/storage/local-lvm") == {
