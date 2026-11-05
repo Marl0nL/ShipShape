@@ -917,6 +917,16 @@ def test_destroy_manual_prints_steps_and_keeps_the_entry_until_forget(env):
     assert not env.store.load().has_ship("ship-01")
 
 
+def test_destroy_drops_the_cached_status(env):
+    from fleetledger import status
+
+    env.run("new", "ship-04", "--on", "proxmox")
+    status.write_cache("ship-04", {"attention": []})
+    assert status.cache_path("ship-04").exists()
+    assert env.run("destroy", "ship-04", "--yes")[0] == 0
+    assert not status.cache_path("ship-04").exists()
+
+
 def test_destroy_runs_the_before_destroy_hook_first(env):
     env.run("new", "ship-04", "--on", "proxmox")
     seen = []

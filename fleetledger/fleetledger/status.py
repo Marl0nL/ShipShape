@@ -220,17 +220,18 @@ def poll(
 # --- cache ---------------------------------------------------------------
 
 
-def _cache_path(name: str) -> Path:
+def cache_path(name: str) -> Path:
+    """Where a Ship's last fetched status is kept (for `ls --offline`)."""
     return paths.status_cache_dir() / f"{name}.json"
 
 
 def write_cache(name: str, doc: dict[str, Any]) -> None:
-    folder = paths.private_dir(paths.status_cache_dir())
-    paths.write_private(folder / f"{name}.json", json.dumps(doc).encode("utf-8"))
+    paths.private_dir(paths.status_cache_dir())
+    paths.write_private(cache_path(name), json.dumps(doc).encode("utf-8"))
 
 
 def read_cache(name: str) -> dict[str, Any] | None:
     try:
-        return json.loads(_cache_path(name).read_text(encoding="utf-8"))
+        return json.loads(cache_path(name).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
