@@ -113,7 +113,7 @@ body {
    switches back to the paper's ink, muted text and links. */
 table, ul.alerts, .grid > div, article.flow, section.setup-step, .tile, .ship-card,
 figure.chart, dialog.confirm-dialog, .flash, .warning, .notice, .pill, .chip,
-input, select, textarea, nav.tabs a.on, code.cmd {
+input, select, textarea, nav.tabs a.on, code.cmd, .action-bar, .menu-items {
   --ink: var(--paper-ink); --muted: var(--paper-muted); --accent: var(--paper-accent);
   color: var(--ink);
 }
@@ -121,7 +121,8 @@ input, select, textarea, nav.tabs a.on, code.cmd {
    around it: verdigris inside parchment panels, brass (from body) on the deck.
    Inputs, selects and tabs inherit whichever they sit on. */
 table, ul.alerts, .grid > div, article.flow, section.setup-step, .tile, .ship-card,
-figure.chart, dialog.confirm-dialog, .flash, .warning, .notice { --focus: var(--s1); }
+figure.chart, dialog.confirm-dialog, .flash, .warning, .notice, .action-bar,
+.menu-items { --focus: var(--s1); }
 a { color: var(--accent); text-underline-offset: 2px; }
 a:hover { text-decoration-thickness: 2px; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -161,6 +162,8 @@ header.top nav a { color: var(--hull-link); text-decoration: none; padding: 2px 
 header.top nav a:hover { border-bottom-color: var(--brass); }
 header.top .local { color: var(--hull-ink); opacity: .8; font-size: 12px; }
 @media (max-width: 640px) {
+  nav.tabs { flex-wrap: wrap; }
+  nav.tabs a { padding: 6px 10px; }
   header.top { flex-wrap: wrap; gap: 6px 16px; padding: 10px 16px 14px; }
   header.top nav { order: 3; flex-basis: 100%; }
   main { padding: 18px 14px 40px; }
@@ -247,8 +250,6 @@ input, select, textarea { font: inherit; font-size: 13px; padding: 4px 6px; bord
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--s1); }
 label.confirm { font-size: 12px; color: var(--muted); }
-.batch, .ops { margin-top: 16px; }
-.batch-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
 .flash { padding: 6px 10px; border: 1px solid var(--line-strong); }
 .flash.ok { background: var(--good-bg); color: var(--good); border-color: transparent; }
 .flash.bad { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
@@ -256,6 +257,45 @@ label.confirm { font-size: 12px; color: var(--muted); }
 /* --- a Ship's page --------------------------------------------------------------------- */
 .ship-head { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
 .ship-head .meta { flex: 1; color: var(--muted); margin: 0; }
+
+/* --- the Ship's action bar and the menus ------------------------------------------- */
+/* A plated bar under the Ship's name, on every tab; it sticks to the top while
+   the page scrolls, so Check now, Update and Reboot stay in reach. */
+.action-bar {
+  position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 20px;
+  align-items: center; justify-content: space-between; margin: 10px 0 4px; padding: 8px 14px;
+  border: 1px solid var(--line-strong); box-shadow: var(--shadow);
+  background: var(--plates), url("/static/paper.svg") 0 0 / 300px 300px, var(--panel);
+}
+.action-bar .attach { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.action-bar .attach code { overflow-wrap: anywhere; }
+.action-bar .actions, .toolbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* Menus are <details>: no script. The summary looks like a button; the items open
+   below it on a parchment panel. They hold one-click actions, each with its dialog. */
+details.menu { position: relative; margin: 0; }
+details.menu > summary {
+  list-style: none; display: inline-block; cursor: pointer; font-size: 13px; font-weight: 600;
+  padding: 4px 12px; color: var(--accent); border: 1px solid var(--line-strong);
+}
+details.menu > summary::-webkit-details-marker { display: none; }
+details.menu > summary::after { content: " \25BE"; }
+details.menu[open] > summary { border-color: var(--accent); }
+.menu-items {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; display: flex;
+  flex-direction: column; align-items: flex-start; gap: 10px; padding: 12px 14px;
+  width: max-content; max-width: min(36em, calc(100vw - 32px));
+  border: 1px solid var(--line-strong); box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  background: var(--plates), url("/static/paper.svg") 0 0 / 300px 300px, var(--panel);
+}
+.menu-items .hint { margin: 0; }
+@media (prefers-color-scheme: dark) {
+  .action-bar, .menu-items { background: var(--plates), var(--panel); }
+}
+@media (max-width: 640px) {  /* menus open in place, full width, on a phone */
+  .action-bar { position: static; }  /* not pinned: it would take a third of the screen */
+  details.menu { flex-basis: 100%; }
+  .menu-items { position: static; width: auto; max-width: none; margin-top: 6px; }
+}
 nav.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--brass-lo); margin: 12px 0; }
 nav.tabs a { padding: 6px 14px; text-decoration: none; color: var(--ink);
   font-family: var(--serif); font-weight: 600; }
@@ -278,6 +318,8 @@ pre.log.bad { color: var(--term-bad); }
 .signout { margin-top: 8px; }
 
 /* --- sign-ins and operations ------------------------------------------------------------ */
+.batch { margin-top: 16px; }  /* the Sign-ins page's start forms */
+.batch > form.inline { margin-right: 24px; }
 .flows { display: flex; flex-direction: column; gap: 10px; }
 article.flow { border: 1px solid var(--line-strong); padding: 10px 14px; box-shadow: var(--shadow); }
 article.flow.link, article.flow.code, article.flow.live-offered { border-color: var(--warn-mark);
@@ -287,7 +329,6 @@ code.device-code { font-size: 20px; letter-spacing: 2px; padding: 2px 8px; backg
   color: var(--ink); border: 1px dashed var(--warn-mark); }
 .code-form input { min-width: 22em; max-width: 100%; }
 ul.dests { padding-left: 0; list-style: none; }
-.batch > form.inline { margin-right: 24px; }
 
 /* --- setup (/setup) ---------------------------------------------------------------------- */
 ol.steps { list-style: none; padding: 0; margin: 12px 0 20px; display: flex; flex-direction: column; gap: 4px; }

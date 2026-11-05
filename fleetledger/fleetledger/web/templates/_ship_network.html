@@ -1,0 +1,64 @@
+{# The Ship page's Network tab (included by ship.html; same context). #}
+  <section>
+    <h2>Network <span class="when">{% if netview.available %}summary from {{ since(netview.generated_at) }}{% endif %}</span></h2>
+    <form method="post" action="/ships/{{ ship.name }}/network/refresh" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="ghost">Fetch the latest summary</button>
+    </form>
+    {% if netview.available %}
+      {% set c = netview.collector %}{% set t = netview.totals %}
+      <p>Collector {{ c.state }}{% if c.source %} ({{ c.source }}{% if c.source == "ss" %}: polling, short connections can be missed{% endif %}){% endif %}{% if c.note %}. {{ c.note }}{% endif %}</p>
+      {% if c.state != "running" %}<p class="flash bad">The collector is {{ c.state }}; this is its last summary.</p>{% endif %}
+      <dl>
+        <dt>24 hours</dt><dd>{{ "%.1f"|format(t.rx_mb_24h) }} MB in, {{ "%.1f"|format(t.tx_mb_24h) }} MB out</dd>
+        <dt>7 days</dt><dd>{{ "%.1f"|format(t.rx_mb_7d) }} MB in, {{ "%.1f"|format(t.tx_mb_7d) }} MB out</dd>
+      </dl>
+      {% if netview.new %}
+      <h3>First seen in the last 24 hours</h3>
+      <ul class="dests">{% for r in netview.new[:50] %}<li><span class="pill warn">{{ "new to the fleet" if r.new_to_fleet else "new" }}</span> {{ r.name }} <span class="quiet">{{ since(r.first_seen) }} · {{ r.programs|map(attribute="name")|join(", ") }}</span></li>{% endfor %}</ul>
+      {% endif %}
+      <h3>Top destinations
+        <a class="chip{% if not week %} on{% endif %}" href="/ships/{{ ship.name }}/network">24 hours</a>
+        <a class="chip{% if week %} on{% endif %}" href="/ships/{{ ship.name }}/network?week=1">7 days</a></h3>
+      {% set rows = netview.top_7d if week else netview.top_24h %}{% set k = "7d" if week else "24h" %}
+      {% if rows %}
+      <table>
+        <thead><tr><th>Destination</th><th>Scope</th><th>Connections</th><th>In</th><th>Out</th><th>Programs</th><th>Last seen</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr><td>{% if r.new %}<span class="pill warn">new</span> {% endif %}{{ r.name }}</td><td>{{ r.scope }}</td>
+            <td class="num">{{ r["connections_" ~ k] }}</td><td class="num">{{ human_bytes(r["rx_bytes_" ~ k]) }}</td>
+            <td class="num">{{ human_bytes(r["tx_bytes_" ~ k]) }}</td>
+            <td>{{ r.programs|map(attribute="name")|join(", ") }}</td><td class="quiet">{{ since(r.last_seen) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="quiet">No connections in this window.</p>{% endif %}
+      {% if netview.programs %}
+      <h3>Programs (7 days)</h3>
+      <table>
+        <thead><tr><th>Program</th><th>Connections 24 h</th><th>Connections 7 d</th><th>Destinations 7 d</th></tr></thead>
+        <tbody>{% for p in netview.programs[:30] %}<tr><td>{{ p.name }}</td><td class="num">{{ p.connections_24h }}</td><td class="num">{{ p.connections_7d }}</td><td class="num">{{ p.destinations_7d }}</td></tr>{% endfor %}</tbody>
+      </table>
+      {% endif %}
+      {% if netview.truncated %}<p class="hint">{{ netview.truncated }} more destinations are not listed.</p>{% endif %}
+    {% elif net %}
+      <p class="hint">No full summary fetched yet; this is the Ship's own 24-hour digest.</p>
+      {% if net.collector != "running" %}<p class="flash bad">The collector is {{ net.collector }}; this is its last summary.</p>{% endif %}
+      <dl>
+        <dt>Window</dt><dd>last {{ net.window_h }} h</dd>
+        <dt>Received</dt><dd>{{ "%.1f"|format(net.rx_mb) }} MB</dd>
+        <dt>Sent</dt><dd>{{ "%.1f"|format(net.tx_mb) }} MB</dd>
+        {% if net.destinations is not none %}<dt>Destinations</dt><dd>{{ net.destinations }}</dd>{% endif %}
+        {% if net.connections is not none %}<dt>Connections</dt><dd>{{ net.connections }}</dd>{% endif %}
+        {% if net.source %}<dt>Seen by</dt><dd>{{ net.source }}{% if net.source == "ss" %} <span class="quiet">(polling: short connections can be missed)</span>{% endif %}</dd>{% endif %}
+      </dl>
+      <h3>New destinations</h3>
+      {% if net.new_destinations %}
+      <ul class="dests">{% for d in net.new_destinations %}<li><span class="pill warn">new</span> {{ d }}</li>{% endfor %}</ul>
+      {% else %}<p class="quiet">None in this window.</p>{% endif %}
+    {% else %}
+    <p class="quiet">Network visibility is not available for this Ship yet: its collector (ship-netwatch) is not installed or not available, or no summary has been fetched. Update the Ship to get it. Nothing is blocked either way.</p>
+    {% endif %}
+    <p class="hint">Visibility only: nothing is blocked. Domains, not URLs. <a href="/network">Across the fleet</a>.</p>
+  </section>
