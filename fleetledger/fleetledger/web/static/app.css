@@ -320,7 +320,7 @@ td.row-actions form.inline { margin: 0 6px 4px 0; }
 /* --- sign-ins and operations ------------------------------------------------------------ */
 .batch { margin-top: 16px; }  /* the Sign-ins page's start forms */
 .batch > form.inline { margin-right: 24px; }
-.flows { display: flex; flex-direction: column; gap: 10px; }
+.flows, section.activity, section.ship-jobs { display: flex; flex-direction: column; gap: 10px; }
 article.flow { border: 1px solid var(--line-strong); padding: 10px 14px; box-shadow: var(--shadow); }
 article.flow.link, article.flow.code, article.flow.live-offered { border-color: var(--warn-mark);
   box-shadow: 0 0 0 1px var(--warn-mark) inset, var(--shadow); }

@@ -441,7 +441,7 @@
 {# --- 4. the first Ship ------------------------------------------------------------- #}
 <section id="ship" class="setup-step">
 <h2>4. Your first Ship</h2>
-{% if steps[3].state == 'done' and not state.ship %}
+{% if steps[3].state == 'done' and not setup_job %}
   <p>{{ steps[3].summary }} <a href="/">Go to your fleet</a>.</p>
 {% elif steps[1].state != 'done' %}
   <p class="quiet">Once you have chosen where Ships run.</p>
@@ -453,8 +453,8 @@
     <code>ssh-add {{ inv.doc.fleet.admin_key }}</code>, or let FleetLedger look after it
     (step 1) and you are not asked again.</p>
   {% endif %}
-  {% if state.ship %}
-    {% with job=state.ship, lines=state.ship.snapshot() %}{% include "_setup_ship.html" %}{% endwith %}
+  {% if setup_job %}
+    {% with job=setup_job, lines=setup_job.snapshot() %}{% include "_setup_ship.html" %}{% endwith %}
   {% else %}
   <p>A Ship is a VM where your agents work. FleetLedger makes it, waits until it is
     provisioned and checked, and then you sign it in to Claude (and GitHub and Google Cloud

@@ -62,13 +62,13 @@ def op_confirm(op: str, ship: str) -> Confirm:
     texts = {
         "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
                    "agents keep running. If its herdr changed it reboots, and its agents "
-                   "resume in their modes. Progress shows on the Fleet page.", False),
+                   "resume in their modes. Progress shows on this page.", False),
         "reboot": (f"{ship} restarts and is out of reach for a minute or two. herdr saves "
                    "every agent first and resumes it in its mode afterwards. Progress shows "
-                   "on the Fleet page.", True),
+                   "on this page.", True),
         "join": (f"{ship} joins your overlay with a one-off key, so you can reach it from "
                  "anywhere. Its host certificate is re-signed with its overlay name, and this "
-                 "computer's SSH config is updated. Progress shows on the Fleet page.", False),
+                 "computer's SSH config is updated. Progress shows on this page.", False),
     }
     text, danger = texts[op]
     label = {"join": f"Join {ship} to the overlay"}.get(op, f"{op.capitalize()} {ship}")
