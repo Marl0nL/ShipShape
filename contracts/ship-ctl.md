@@ -125,7 +125,9 @@ An entry with a `repo` is cloned into its `cwd` first, as the agent, once (into 
 folder that is empty or not there yet). A repo that cannot be cloned before the
 GitHub sign-in (private, or not there) leaves that agent unstarted, with the
 attention item `agent-repo-waiting`; it is retried when GitHub becomes signed in
-(see "Reacting to sign-ins"). A clone that fails while signed in is
+(see "Reacting to sign-ins"). The status refresh clones each entry's repo as soon
+as it can, without waiting for Claude (a public repo needs no sign-in), so the
+folder is ready when the agent starts. A clone that fails while signed in is
 `agent-repo-failed`. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
