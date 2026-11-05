@@ -68,6 +68,14 @@ class ShipView:
             )
         return "unknown"
 
+    @property
+    def settings(self) -> dict[str, Any] | None:
+        """The Ship's settings as it reports them (status `settings`), or None: no
+        status, or older tooling that does not report them (shown as unknown)."""
+        if self.status is None:
+            return None
+        return self.status.get("settings")
+
     def auth(self, service: str) -> dict[str, Any] | None:
         if self.status is None:
             return None

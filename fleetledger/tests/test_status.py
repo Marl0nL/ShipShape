@@ -152,3 +152,17 @@ def test_never_provisioned_counts_as_running():
     view = ShipView(ship=None, status={"provision": {"result": "never"}, "state": "provisioning"})
     assert view.provision_result == "running"
     assert status_mod.ShipView(ship=None).state == "unknown"
+
+
+def test_a_ships_reported_settings_are_read_when_present(store, fake_ssh):
+    inv = store.load()
+    with_settings = json.loads(
+        (EXAMPLES / "ship-status" / "running-settings.json").read_text())
+    with_settings["ship"]["name"], with_settings["ship"]["id"] = "ship-01", RUNNING["ship"]["id"]
+    view = fetch(fake_ssh(answer(with_settings)), inv, inv.ship("ship-01"))
+    assert view.problem is None
+    assert view.settings["updates"] == {"auto_reboot": False, "reboot_time": "04:00"}
+    assert view.settings["owner"] == "human"
+    older = fetch(fake_ssh(answer(RUNNING)), inv, inv.ship("ship-01"))  # older tooling
+    assert older.problem is None and older.settings is None
+    assert ShipView(inv.ship("ship-01")).settings is None  # no status at all

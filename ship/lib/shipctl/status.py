@@ -497,6 +497,28 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
     return items
 
 
+def settings_section(ship: ShipToml) -> dict:
+    """What ship.toml says now, defaults filled in: the values `ship-ctl set` manages
+    (contracts/ship-status.schema.json, settings), so FleetLedger shows a Ship's
+    settings as the Ship has them."""
+    c = ship.claude
+    keep = ("name", "cwd", "mode", "repo")
+    return {
+        "ship": {"tags": list(ship.tags), "timezone": ship.timezone},
+        "claude": {"remote_control": c["remote_control"], "default_mode": c["default_mode"],
+                   "allow_bypass": bool(c["allow_bypass"]),
+                   "update_channel": c["update_channel"],
+                   "session_prefix": c["session_prefix"]},
+        "agent": {"sudo": ship.agent_sudo},
+        "network": {"lan_guard": ship.lan_guard, "lan_guard_allow": ship.lan_guard_allow,
+                    "ssh_listen": overlay.ssh_listen(ship)},
+        "updates": {"auto_reboot": bool(ship.updates["auto_reboot"]),
+                    "reboot_time": ship.updates["reboot_time"]},
+        "owner": (ship.owner or {}).get("name"),
+        "autostart": [{k: e[k] for k in keep if e.get(k)} for e in ship.autostart],
+    }
+
+
 def derive_state(doc: dict) -> str:
     prov = doc["provision"]
     if prov["result"] in ("running", "never") or prov["cloud_init"] == "running":
@@ -579,6 +601,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         "overlay": overlay_doc,
         "net": net,
         "ssh": ssh,
+        "settings": settings_section(ship),
         "errors": [],
     }
     doc["state"] = derive_state(doc)

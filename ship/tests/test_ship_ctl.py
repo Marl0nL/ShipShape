@@ -575,3 +575,24 @@ def test_a_ship_without_tags_still_gets_the_owners_principals(ship):
     assert rc == 0, doc
     principals = ship.p("/etc/ssh/shipshape/principals")
     assert (principals / "human").read_text() == "owner:all\nowner:ship:ship-01\n"
+
+
+def test_status_reports_the_settings_set_last_applied(ship):
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert_valid("ship-status", doc)
+    before = doc["settings"]
+    assert before["claude"]["session_prefix"] == "ship-01"  # a default, filled in
+    assert before["network"] == {"lan_guard": False, "lan_guard_allow": [], "ssh_listen": "any"}
+    assert ship.ctl("set", "claude.remote_control=off", "updates.auto_reboot=true",
+                    "updates.reboot_time=03:30", "ship.tags=work,lab", "agent.sudo=true",
+                    "network.lan_guard=true", "network.lan_guard_allow=192.0.2.0/24",
+                    "--json")[0] == 0
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert_valid("ship-status", doc)
+    s = doc["settings"]
+    assert s["claude"]["remote_control"] == "off" and s["agent"]["sudo"] is True
+    assert s["updates"] == {"auto_reboot": True, "reboot_time": "03:30"}
+    assert s["ship"]["tags"] == ["work", "lab"]
+    assert s["network"]["lan_guard"] is True and s["network"]["lan_guard_allow"] == [
+        "192.0.2.0/24"]
+    assert [a["name"] for a in s["autostart"]] == [a["name"] for a in before["autostart"]]
