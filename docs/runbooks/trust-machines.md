@@ -215,3 +215,18 @@ once. Their next certificate carries both principals; until a machine renews, a
 Ship already updated (`ship-fleet update`) lets its current certificate log in as
 the agent only. This computer renews within a day by itself; for another machine,
 `ship-fleet trust NAME --print-cert > ~/.ssh/shipshape/NAME-cert.pub` on it.
+
+**Update every Ship before relying on "the agent only".** A Ship still running the
+previous tooling lets any `agent:*` certificate log in as you, whatever the machine's
+logins say, because its owner login took the agent's certificates then. So:
+`ship-fleet update` every Ship first, then `ship-fleet trust NAME --logins agent`.
+Narrowing a machine trusted before the upgrade revokes the certificates it holds
+(the migration records them as having opened both logins, which they did), on
+every Ship it reaches; one it cannot reach is named, and gets the list at the next
+`ship-fleet ca sign`.
+
+**Going back to the previous FleetLedger** needs a hand edit of ships.toml: it does
+not know `logins` or `owner:*` principals, so delete every `logins = [...]` line
+under `[machine.*]` and every `issued` entry naming `owner:*`. Ships need nothing:
+the previous FleetLedger signs `agent:*` only, which an updated Ship takes for the
+agent's login only.

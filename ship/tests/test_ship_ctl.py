@@ -567,3 +567,11 @@ def test_grow_root_grows_a_filesystem_its_partition_outgrew(ship):
     rc, doc, _ = ship.ctl("grow-root", "--json")
     assert rc == 0 and doc["data"]["grown"] is True
     assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]
+
+
+def test_a_ship_without_tags_still_gets_the_owners_principals(ship):
+    assert ship.ctl("set", "ship.tags=", "--json")[0] == 0
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={OWNER_KEY}", "--json")
+    assert rc == 0, doc
+    principals = ship.p("/etc/ssh/shipshape/principals")
+    assert (principals / "human").read_text() == "owner:all\nowner:ship:ship-01\n"

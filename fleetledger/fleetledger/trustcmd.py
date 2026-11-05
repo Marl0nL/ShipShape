@@ -288,8 +288,11 @@ def cmd_trust(args, app) -> int:
                 logins and logins != list(existing.logins)):
             # With --print-cert, stdout is the certificate alone.
             say = app.note if args.print_cert else app.say
-            inv = _change_scope(app, store, inv, existing, scope or list(existing.scope),
-                                say=say, logins=logins)
+            try:
+                inv = _change_scope(app, store, inv, existing, scope or list(existing.scope),
+                                    say=say, logins=logins)
+            except PushFailed:
+                inv = store.load()  # recorded; said above; the certificate follows
     m = ca.machine(inv, name)
     cert, until = _sign_machine(app, store, inv, m, hours=args.hours)
     ships = [s for s in inv.ships() if m.reaches(inv, s)]
@@ -323,22 +326,36 @@ LOGINS_EXPLAINED = (
     "the agent's (agent:*), so a machine trusted only to attach to the agent cannot log "
     "in as you. Machines trusted before keep what they had, both: {names}. Their next "
     "certificate carries both; until they renew it, a Ship already updated lets their "
-    "current one log in as the agent only. To let one only attach to the agent: "
-    "ship-fleet trust NAME --logins agent.")
+    "current one log in as the agent only. A Ship not updated yet still lets any agent "
+    "certificate log in as you: update every Ship (ship-fleet update) before relying on "
+    "ship-fleet trust NAME --logins agent, which lets a machine only attach to the agent.")
 
 
 def migrate_logins(store, say) -> list[str]:
     """Machines trusted before logins were recorded: record both (what their
-    certificates opened then), and say so, once: afterwards every machine has it."""
+    certificates opened then), and say so, once: afterwards every machine has it.
+
+    Their certificates still out there name agent:<scope> only, but on the Ships of
+    their day that opened your login too. So each is recorded as having held
+    owner:<scope> as well: narrowing the machine to the agent later revokes them."""
     inv = store.load()
-    names = [m.name for m in ca.machines(inv) if not m.logins_recorded and not m.revoked]
-    if not names:
+    machines = [m for m in ca.machines(inv) if not m.logins_recorded and not m.revoked]
+    if not machines:
         return []
     with store.edit() as ed:
-        for name in names:
-            ed.set_machine_field(name, "logins", list(ca.LOGINS))
-    say(LOGINS_EXPLAINED.format(names=", ".join(names)))
-    return names
+        for m in machines:
+            ed.set_machine_field(m.name, "logins", list(ca.LOGINS))
+            if m.issued:
+                ed.set_machine_field(m.name, "issued", [_as_both(i) for i in m.issued])
+    say(LOGINS_EXPLAINED.format(names=", ".join(m.name for m in machines)))
+    return [m.name for m in machines]
+
+
+def _as_both(entry: dict) -> dict:
+    """An issued certificate from before: what it opened, agent:<s> and owner:<s>."""
+    principals = list(entry.get("principals", []))
+    owner = [f"owner:{p[len('agent:'):]}" for p in principals if p.startswith("agent:")]
+    return {**entry, "principals": list(dict.fromkeys([*principals, *owner]))}
 
 
 def set_logins(app, store, name: str, logins: list[str], say) -> None:
@@ -351,10 +368,16 @@ def set_logins(app, store, name: str, logins: list[str], say) -> None:
         raise FleetError(f"No trusted machine called {name}.")
     if list(m.logins) == list(logins):
         return
-    _change_scope(app, store, inv, m, list(m.scope), say=say, logins=list(logins))
+    failed = None
+    try:
+        _change_scope(app, store, inv, m, list(m.scope), say=say, logins=list(logins))
+    except PushFailed as exc:
+        failed = exc
     here = this_computer()
     if here and here["machine"] == name:
         trust_this_computer(app, store, say, create=False)
+    if failed is not None:
+        raise failed  # recorded, but not every Ship has the new revocation list
 
 
 def bundle_user(inv: Inventory, m: ca.Machine) -> str:
@@ -403,7 +426,8 @@ def attaches_here(inv: Inventory, ship: Ship) -> bool:
     trusted, its trust reaches the Ship, and the Ship has a host certificate)?"""
     here = this_computer()
     m = ca.machine(inv, here["machine"]) if here else None
-    return bool(m and not m.revoked and m.reaches(inv, ship) and _has_cert(ship))
+    return bool(m and not m.revoked and "agent" in m.logins and m.reaches(inv, ship)
+                and _has_cert(ship))
 
 
 def _local_name(inv: Inventory) -> str:
@@ -594,10 +618,19 @@ def _change_scope(app, store, inv: Inventory, m: ca.Machine, scope: list[str], *
     if ca.revoked_serials(inv) != before:
         failed = _push_to_ships(app, inv, say)
         if failed:
-            app.note(f"Not updated yet: {', '.join(failed)}. Until they are, {m.name}'s "
-                     "older certificates still work there for the scope it had. "
-                     "Run `ship-fleet ca sign` when they are back.")
+            say(f"NOT YET REVOKED on {', '.join(failed)} (not reached). Until they are "
+                f"updated, {m.name}'s older certificates still work there for what it had. "
+                "Run `ship-fleet ca sign` when they are back.")
+            raise PushFailed(failed)
     return inv
+
+
+class PushFailed(FleetError):
+    """The change is recorded, but some Ships did not get the new revocation list."""
+
+    def __init__(self, ships: list[str]):
+        super().__init__(f"Not yet revoked on {', '.join(ships)}.")
+        self.ships = ships
 
 
 def _push_to_ships(app, inv: Inventory, say=None) -> list[str]:

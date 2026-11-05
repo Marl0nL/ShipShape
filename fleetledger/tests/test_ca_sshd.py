@@ -162,3 +162,47 @@ def test_no_principals_file_means_no_certificate_logins(setup):
     cert, _, _ = ca.sign_user(NO_AGENT, s["ca"], m, hours=1)
     (s["dir"] / "principals" / getpass.getuser()).unlink()
     assert _login(s, key, cert).returncode == 255
+
+
+def _principals(s, text):
+    (s["dir"] / "principals" / getpass.getuser()).write_text(text)
+
+
+def test_an_agent_certificate_never_opens_the_owner_login(setup):
+    """The test user stands in for the owner: its principals file as a Ship writes the
+    owner's (owner:*). An agent-only certificate is refused; an owner one logs in."""
+    s = setup
+    _principals(s, "owner:all\nowner:tag:work\nowner:ship:ship-01\n")
+    key, m = _machine(s, "shared", ("all",))
+    agent_only = ca.Machine(m.name, m.public_key, m.added, m.scope, logins=("agent",))
+    cert, _, _ = ca.sign_user(NO_AGENT, s["ca"], agent_only, hours=1)
+    assert _login(s, key, cert).returncode == 255
+    owner = ca.Machine(m.name, m.public_key, m.added, m.scope, logins=("owner",))
+    cert, _, _ = ca.sign_user(NO_AGENT, s["ca"], owner, hours=1)
+    proc = _login(s, key, cert)
+    assert proc.returncode == 0 and proc.stdout.strip() == "in", proc.stderr
+
+
+def test_narrowing_a_pre_upgrade_machine_revokes_its_certificate_on_a_real_sshd(setup, store):
+    """X2: before the upgrade an agent:* certificate also opened the owner login (the
+    owner's principals file was agent's, as here). After the migration and --logins
+    agent, the KRL FleetLedger builds refuses that certificate."""
+    from fleetledger import trustcmd
+
+    s = setup
+    key, m = _machine(s, "shared", ("all",))
+    before = ca.Machine(m.name, m.public_key, m.added, m.scope, logins=("agent",))
+    cert, serial, until = ca.sign_user(NO_AGENT, s["ca"], before, hours=24)
+    assert _login(s, key, cert).returncode == 0  # opens the (pre-#33) owner login
+    with store.edit() as ed:  # as the previous FleetLedger recorded it: no logins
+        ed.set_machine("shared", {
+            "public_key": m.public_key, "added": m.added, "scope": ["all"],
+            "last_serial": serial, "last_valid_before": ca.stamp(until),
+            "issued": [{"serial": serial, "valid_before": ca.stamp(until),
+                        "principals": ["agent:all"],
+                        "ca": ca.fingerprint(s["ca"].user_public)}]})
+    trustcmd.migrate_logins(store, lambda line: None)
+    with store.edit() as ed:
+        ed.set_machine_field("shared", "logins", ["agent"])
+    (s["dir"] / "krl").write_bytes(ca.build_krl(store.load()))
+    assert _login(s, key, cert).returncode == 255  # revoked

@@ -137,7 +137,10 @@
   you choose here: the agent's (to attach to it, <code>herdr --remote</code>) and your own
   (sudo). A machine that should only attach to agents, a shared one say, needs only the
   agent's. Trust another: <code>ship-fleet trust NAME --key its.pub --logins agent</code>
-  (or <code>owner</code>, or <code>both</code>).</p>
+  (or <code>owner</code>, or <code>both</code>). Machines trusted before your login had
+  certificates of its own keep both. A Ship not updated yet still lets any of the
+  agent's certificates log in as you: update every Ship before relying on "the agent
+  only".</p>
 <table>
   <thead><tr><th>Machine</th><th>Ships</th><th>May log in as</th></tr></thead>
   <tbody>

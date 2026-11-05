@@ -168,7 +168,7 @@ class Machine:
             last_valid_before=entry.get("last_valid_before"),
             revoked=entry.get("revoked"),
             issued=tuple(dict(i) for i in entry.get("issued", ())),
-            logins=tuple(entry.get("logins", LOGINS)),
+            logins=tuple(x for x in LOGINS if x in entry.get("logins", LOGINS)),
             logins_recorded="logins" in entry,
         )
 
@@ -714,17 +714,24 @@ echo "Done. Try: ssh @FIRST@ true   (then herdr --remote @FIRST@)"
 """
 
 
-def install_script(machine_name: str, ships: Sequence[str], identity: str) -> str:
+def install_script(machine_name: str, ships: Sequence[str], identity: str, *,
+                   herdr: bool = True) -> str:
+    """herdr=False: a machine that may not log in as the agent gets no herdr saved
+    machines (herdr attaches to the agent), and its hint says so."""
     if identity.startswith("~/"):
         ident = '"$HOME/' + identity[2:].replace('"', "") + '"'
     else:
         ident = shlex.quote(identity)
-    return (
+    script = (
         INSTALL_SH.replace("@CERT@", f"{machine_name}-cert.pub")
         .replace("@IDENTITY_SH@", ident)
-        .replace("@SHIPS@", " ".join(shlex.quote(s) for s in ships) or "")
+        .replace("@SHIPS@", " ".join(shlex.quote(s) for s in ships) if herdr else "")
         .replace("@FIRST@", ships[0] if ships else "<ship>")
     )
+    if not herdr:
+        script = script.replace("   (then herdr --remote " + (ships[0] if ships else "<ship>")
+                                + ")", "   (your own login; herdr needs the agent's)")
+    return script
 
 
 def write_bundle(
@@ -745,9 +752,8 @@ def write_bundle(
         "known_hosts": known_hosts_text(ca, ships),
         "config": ssh_config_text(machine_name, ships, identity, hostnames, user),
         # herdr attaches to the agent: only for a machine that may log in as agent.
-        "install.sh": install_script(machine_name,
-                                     [s.name for s in ships] if user == "agent" else [],
-                                     identity),
+        "install.sh": install_script(machine_name, [s.name for s in ships], identity,
+                                     herdr=user == "agent"),
         "bundle.json": json.dumps({
             "schema": "shipshape.trust-bundle/1",
             "machine": machine_name,

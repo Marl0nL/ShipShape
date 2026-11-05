@@ -299,8 +299,8 @@ def render_files(ctx: Context, ship: ShipToml, dry_run: bool = False) -> list[Pa
     fleet = _p(ctx, PRINCIPALS_DIR + "/fleet")
     if remove(fleet, dry_run=dry_run):
         changed.append(fleet)
-    # The owner's login takes the same certificates as agent (your machines), and the
-    # owner's own keys; any other principals or keys file is stale and goes.
+    # The owner's login takes certificates for owner:* (never agent's) and the owner's
+    # own keys; any other principals or keys file is stale and goes.
     owner = (ship.owner or {}).get("name")
     if owner:
         own = _p(ctx, PRINCIPALS_DIR + "/" + owner)

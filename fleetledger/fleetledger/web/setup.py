@@ -514,8 +514,10 @@ async def machine_logins(request: Request) -> Response:
         await run_in_threadpool(trustcmd.set_logins, app, app.store_factory(),
                                 _one(fields, "machine"), logins, said.append)
         ok = True
+    except trustcmd.PushFailed:
+        ok = False  # recorded; what was said names the Ships still to update
     except FleetError as exc:
-        ok, said = False, [exc.message]
+        ok, said = False, [*said, exc.message]
     _flash(request, "ok" if ok else "bad", " ".join(said) or "No change.")
     return _back("fleet")
 

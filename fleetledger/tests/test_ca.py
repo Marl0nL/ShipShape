@@ -795,3 +795,89 @@ def test_machines_trusted_before_keep_both_and_are_told_once(caenv, tmp_path):
     assert "owner:all" in _cert_text(cert) and "agent:all" in _cert_text(cert)
     code, out, err = caenv.run("trust", "old", "--print-cert")
     assert "trusted before" not in out + err  # once
+
+
+def _as_before_the_upgrade(store, name):
+    """ships.toml as the previous FleetLedger left it: no logins, agent:* issued only."""
+    with store.edit() as ed:
+        entry = ed.doc["machine"][name]
+        del entry["logins"]
+        for i in entry["issued"]:
+            i["principals"] = [p for p in i["principals"] if p.startswith("agent:")]
+
+
+def test_narrowing_a_machine_trusted_before_the_upgrade_revokes_its_certificates(caenv,
+                                                                                tmp_path):
+    """X2: its agent:* certificates opened your login on the Ships of their day."""
+    keygen(tmp_path / "shared", "shared")
+    caenv.run("trust", "shared", "--key", str(tmp_path / "shared.pub"),
+              "--out", str(tmp_path / "b1"))
+    old = (tmp_path / "b1" / "shared-cert.pub").read_text()
+    old_serial = ca.machine(caenv.store.load(), "shared").last_serial
+    _as_before_the_upgrade(caenv.store, "shared")
+    _no_ssh_section(caenv)
+    code, out, err = caenv.run("trust", "shared", "--logins", "agent",
+                               "--out", str(tmp_path / "b2"))
+    assert code == 0, err
+    assert "update every Ship" in out  # the migration says what --logins agent needs
+    assert "1 certificate(s) issued for more" in out
+    assert ca.krl_revokes(_pushed_krl(caenv), old)
+    inv = caenv.store.load()
+    assert old_serial in [s for v in ca.revoked_serials(inv).values() for s in v]
+    assert not ca.krl_revokes(_pushed_krl(caenv), (tmp_path / "b2" / "shared-cert.pub")
+                              .read_text())
+
+
+def test_hand_ordered_logins_are_read_in_order(caenv, tmp_path):
+    keygen(tmp_path / "m", "m")
+    caenv.run("trust", "m", "--key", str(tmp_path / "m.pub"), "--logins", "owner,agent",
+              "--out", str(tmp_path / "b"))
+    with caenv.store.edit() as ed:
+        ed.doc["machine"]["m"]["logins"] = ["owner", "agent"]
+    assert ca.machine(caenv.store.load(), "m").logins == ("agent", "owner")
+    code, out, err = caenv.run("trust", "m", "--out", str(tmp_path / "b2"))
+    assert code == 0, err
+    assert ca.parse_logins("owner,agent") == ["agent", "owner"]
+
+
+def test_a_revocation_that_did_not_reach_a_ship_is_said_plainly(caenv, tmp_path,
+                                                               monkeypatch):
+    from fleetledger import trustcmd
+
+    keygen(tmp_path / "lap", "lap")
+    caenv.run("trust", "lap", "--key", str(tmp_path / "lap.pub"), "--out", str(tmp_path / "b"))
+
+    def unreachable(app, inv, ship, **kw):
+        raise ca.FleetError(f"{ship.name}: unreachable")
+
+    monkeypatch.setattr(trustcmd, "certify", unreachable)
+    said = []
+    with pytest.raises(trustcmd.PushFailed) as exc:
+        trustcmd.set_logins(caenv.app, caenv.store, "lap", ["agent"], said.append)
+    assert exc.value.ships == ["ship-01", "ship-02"]
+    assert any("NOT YET REVOKED on ship-01, ship-02" in line for line in said)
+    assert ca.machine(caenv.store.load(), "lap").logins == ("agent",)  # recorded anyway
+
+
+def test_an_owner_only_bundle_names_its_ships_without_herdr(caenv, tmp_path):
+    keygen(tmp_path / "box", "box")
+    caenv.run("trust", "box", "--key", str(tmp_path / "box.pub"), "--logins", "owner",
+              "--out", str(tmp_path / "b"))
+    script = (tmp_path / "b" / "install.sh").read_text()
+    assert "    for ship in ; do\n" in script  # no herdr saved machines
+    assert "Try: ssh ship-01 true   (your own login; herdr needs the agent's)" in script
+
+
+def test_this_computer_attaches_only_while_it_may_log_in_as_the_agent(here):
+    from fleetledger import trustcmd
+
+    assert here.run("trust", "--this-computer")[0] == 0
+    name = trustcmd.this_computer()["machine"]
+    inv = here.store.load()
+    assert trustcmd.attaches_here(inv, inv.ship("ship-01"))
+    trustcmd.set_logins(here.app, here.store, name, ["owner"], lambda line: None)
+    inv = here.store.load()
+    assert not trustcmd.attaches_here(inv, inv.ship("ship-01"))  # no herdr --remote here
+    config = (here.home_dir / ".ssh" / "shipshape" / "config").read_text()
+    assert "  User human\n" in config  # set_logins rewrote this computer's bundle
+    assert here.run("trust", "--this-computer", "--logins", "agent")[0] == 1
