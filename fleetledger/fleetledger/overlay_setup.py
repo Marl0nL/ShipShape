@@ -419,6 +419,19 @@ def _probe(app, inv, ship, ip: str) -> tuple[str, str]:
 
 
 def check(args, app) -> int:
+    text = paths.expand(args.policy).read_text(encoding="utf-8") if args.policy else None
+    items = check_items(app, policy_text=text, probe=args.probe)
+    rows = [[c.state.upper(), c.name, c.detail] for c in items]
+    app.say(table(rows, ["", "CHECK", "DETAIL"]))
+    return 1 if any(c.state == "fail" for c in items) else 0
+
+
+def check_items(app, *, policy_text: str | None = None, probe: bool = False) -> list[Check]:
+    """What `ship-fleet overlay check` finds, as items (the web UI's Check shows them):
+    the configuration, the access rules (policy_text: a policy exported from the
+    admin console; else the API's, at the policy level), the tailnet's devices, each
+    Ship's overlay state and, with probe, whether each Ship can reach this computer
+    or another Ship (both must fail). Contacts the API and the Ships."""
     inv = app.store_factory().load()
     config = overlay.settings(inv)
     tags = overlay.tags(config)
@@ -448,15 +461,13 @@ def check(args, app) -> int:
     # the policy at the policy level, devices from the device-removal level up.
     reads_policy = uses_api and bool(config["api"].get("manage_policy"))
     reads_devices = uses_api and bool(config["api"].get("remove_devices"))
-    text = None
-    if args.policy:
-        text = paths.expand(args.policy).read_text(encoding="utf-8")
-    elif reads_policy:
+    text = policy_text
+    if text is None and reads_policy:
         try:
             text, _ = api.policy_text()
         except FleetError as exc:
             items.append(Check("read the policy", "fail", exc.message))
-    else:
+    elif text is None:
         items.append(Check("access rules", "skip",
                            "export your policy from the admin console and run "
                            "ship-fleet overlay check --policy FILE"))
@@ -509,7 +520,7 @@ def check(args, app) -> int:
         items.append(Check(f"{ship.name} overlay", "ok" if state == "running" else "fail",
                            f"{state} as {doc.get('name') or '?'}"))
         joined.append((ship, doc))
-    if args.probe:
+    if probe:
         local = getattr(app, "local_overlay_ips", None) or _local_overlay_ips
         mine = local()
         for ship, _doc in joined:
@@ -522,7 +533,4 @@ def check(args, app) -> int:
             for label, ip in targets:
                 state, detail = _probe(app, inv, ship, ip)
                 items.append(Check(f"{ship.name} cannot reach {label}", state, detail))
-
-    rows = [[c.state.upper(), c.name, c.detail] for c in items]
-    app.say(table(rows, ["", "CHECK", "DETAIL"]))
-    return 1 if any(c.state == "fail" for c in items) else 0
+    return items

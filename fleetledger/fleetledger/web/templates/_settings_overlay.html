@@ -1,0 +1,34 @@
+{# Settings ▸ Access ▸ Overlay (web.overlayweb): what is set up, the access rules to
+   paste into the admin console, and Check (`ship-fleet overlay check`) as a job.
+   Context: inv, csrf, overlay_rules, overlay_jobs, POLICY_BYTES, TOO_BIG, flash_at,
+   placed. #}
+<h3 id="overlay">Overlay</h3>
+{% if flash_at == "overlay" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
+{% if inv.overlay %}
+<p>{{ "Headscale at " ~ inv.overlay.login_server if inv.overlay.provider == "headscale" else "Tailscale" }}{% if inv.overlay.tags %}, Ships tagged {{ inv.overlay.tags|join(", ") }}{% endif %}{% if inv.overlay.key_source == "tailscale-api" %}; FleetLedger makes each Ship's key{% else %}; you paste each Ship's key{% endif %}. <a href="/setup#overlay">Change in Setup</a></p>
+{% for job in overlay_jobs %}{% include "_job.html" %}{% endfor %}
+<form method="post" action="/settings/overlay/check" class="overlay-check">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="wide">Your policy, to check its access rules (optional: paste the policy file
+    from the admin console{% if inv.overlay.api and inv.overlay.api.manage_policy %}; empty: FleetLedger reads it through the API{% endif %})
+    <textarea name="policy" rows="4" spellcheck="false" placeholder="{&quot;tagOwners&quot;: ...}"
+      data-max-bytes="{{ POLICY_BYTES }}" data-too-long="policy-too-long"></textarea></label>
+  <p class="flash bad" id="policy-too-long" hidden>{{ TOO_BIG }}</p>
+  <label><input type="checkbox" name="probe" value="yes"> also try, from each Ship, to reach this computer and another Ship (both must fail)</label>
+  <button type="submit" title="ship-fleet overlay check [--policy FILE] [--probe]">Check the overlay</button>
+</form>
+<p class="hint">Checking asks your overlay's API (as far as its level allows) and each Ship. A
+  long policy (this page sends up to {{ POLICY_BYTES // 1024 }} KiB once encoded, about half
+  that of JSON): <code>ship-fleet overlay check --policy FILE</code>.</p>
+{% if overlay_rules %}
+<details class="rules">
+  <summary>The access rules Ships need</summary>
+  <p class="hint">Paste them into your admin console's access controls (or let setup merge
+    them, if you gave it the policy level).</p>
+  <pre class="log">{{ overlay_rules }}</pre>
+  <button type="button" class="ghost small" data-copy="{{ overlay_rules }}">Copy</button>
+</details>
+{% endif %}
+{% else %}
+<p>Not set up: Ships are reachable on your LAN only. <a href="/setup#overlay">Set it up</a></p>
+{% endif %}

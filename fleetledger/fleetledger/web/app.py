@@ -40,6 +40,7 @@ from fleetledger.web import (
     destroy,
     images,
     network,
+    overlayweb,
     settings,
     setup,
     shipsettings,
@@ -60,7 +61,7 @@ SERVICES = ("claude", "gcloud", "gcloud-adc", "github", "all")
 AUTH_ORDER = ("claude", "gcloud", "gcloud_adc", "github")
 NO_SUCH_SHIP = "No such Ship in the inventory."
 LOG_LINES = ("100", "300", "1000", "3000")  # the Logs tab's "last N lines" choices
-TABS = ("overview", "settings", "snapshots", "logs", "network")
+TABS = ("overview", "access", "settings", "snapshots", "logs", "network")
 
 
 @dataclasses.dataclass
@@ -232,6 +233,7 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
         "jobs": ui.jobs.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
+        "overlay_set": bool(snap.inventory is not None and snap.inventory.overlay),
     }
 
 
@@ -377,6 +379,9 @@ async def ship_page(request: Request) -> Response:
                                                    context["view"])
     if tab == "snapshots":
         context.update(await snapshots.tab_context(ui.app, name))
+    if tab == "access":
+        context.update(overlayweb.tab_context(context["snap"].inventory, context["ship"],
+                                              context["doc"]))
     if tab == "network":  # the same snapshot the rest of the page shows
         context["netview"] = network.ship_view(context["snap"].inventory, context["ship"])
         context["net"] = network.status_digest(context["view"])
@@ -537,6 +542,8 @@ async def attach_here(request: Request) -> Response:
     fields = await form(request)
     name = one(fields, "ship")
     where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
+    if where != "/" and one(fields, "from") == "access":
+        where += "/access"
     said: list[str] = []
     try:
         ok = await run_in_threadpool(trustcmd.trust_this_computer, ui.app,
@@ -637,6 +644,10 @@ async def fleet_operation(request: Request) -> Response:
     try:
         inv = ui.app.store_factory().load()
         chosen = ops.select(inv, [name] if name else [], tag or None, everything=not (name or tag))
+        if operation == "join":  # only the Ships not on it yet
+            chosen = [s for s in chosen if s.overlay_node is None]
+            if not chosen:
+                raise FleetError("Every one of those Ships is on the overlay already.")
         actions.start_operation(ui.jobs, ui.app, operation, [s.name for s in chosen])
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
@@ -739,7 +750,7 @@ async def job_card(request: Request) -> Response:
         response.headers["HX-Redirect"] = "/"  # destroyed: the page it was on is gone too
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
         response.headers["HX-Refresh"] = "true"
-    if job.done and job.kind in trust.KINDS:  # certificates or machines changed: redraw
+    if job.done and job.kind in (*trust.KINDS, "leave"):  # what the page shows changed
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
         response.headers["HX-Refresh"] = "true"
@@ -1027,6 +1038,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         *settings.routes(),
         *images.routes(),
         *trust.routes(),
+        *overlayweb.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)

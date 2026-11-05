@@ -207,9 +207,9 @@ def test_off_the_overlay_only_when_one_is_configured(store):
     ("reboot-required", "post"), ("herdr-restart-pending", "post"), ("behind-tooling", "post"),
     ("not-on-overlay", "post"), ("unreachable", "post"),
     ("host-cert-expiring", "post"), ("ssh-trust-behind", "post"),
-    # These need a shell, or wait for a later PR (overlay): copy the command.
+    ("overlay-down", "link"),  # to Settings ▸ Access ▸ Overlay, where Check is
+    # These need a shell: copy the command.
     ("agent-waiting", "command"), ("disk-nearly-full", "command"),
-    ("overlay-down", "command"),
 ])
 def test_fixes_the_ui_can_do_are_buttons(code, kind):
     action = dashboard.action_for(code, "ship-01", None, None)

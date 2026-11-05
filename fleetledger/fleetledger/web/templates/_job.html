@@ -11,6 +11,9 @@
     <span class="when">started {{ clock(job.started) }}</span></header>
   {% if job.error %}<p class="flash bad">{{ job.error }}</p>{% endif %}
   {% if job.done and job.result.outcome %}{% with outcome=job.result.outcome, unsupported=None %}{% include "_outcome.html" %}{% endwith %}{% endif %}
+  {% if job.done and job.result.checks %}
+  {% from "_macros.html" import check_rows %}{{ check_rows(job.result.checks) }}
+  {% endif %}
   {% for o in job.outcomes %}
   <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
   {% endfor %}
@@ -24,5 +27,5 @@
   {% set said = job.result.outcome.messages|list + job.result.outcome.instructions|list %}
   {% set lines = lines|map("trim")|reject("in", said)|list %}
   {% endif %}
-  {% if lines and (not job.done or not job.outcomes) %}<pre class="log{% if job.done and not job.ok and not by_hand %} bad{% endif %}">{{ lines|join("\n") }}</pre>{% endif %}
+  {% if lines and (not job.done or not (job.outcomes or job.result.checks)) %}<pre class="log{% if job.done and not job.ok and not by_hand %} bad{% endif %}">{{ lines|join("\n") }}</pre>{% endif %}
 </article>

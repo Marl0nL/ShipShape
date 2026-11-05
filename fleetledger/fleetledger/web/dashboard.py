@@ -152,7 +152,6 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     commands = {
         "agent-waiting": ("Attach to answer it:",
                           f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
-        "overlay-down": ("Find out why:", "ship-fleet overlay check"),
         "disk-nearly-full": ("See what fills it:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),
     }
@@ -160,6 +159,7 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         hint, command = commands[code]
         return Action("command", "Copy", command, hint)
     links = {
+        "overlay-down": ("Check the overlay", "/settings?said=overlay#overlay"),
         "not-enrolled": ("Finish enrolling", f"/ships/{ship}"),
         "provision-failed": ("Provisioning log", f"/ships/{ship}/logs?source=provision"),
         "unit-failed": ("System log", f"/ships/{ship}/logs?source=system"),

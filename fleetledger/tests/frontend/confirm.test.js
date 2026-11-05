@@ -70,6 +70,11 @@ const PAGE = `
   <label><input type="checkbox" name="protect" value="yes"> Hand these keys over</label>
   <button type="submit">Use these keys</button>
 </form>
+<form id="check" method="post" action="/settings/overlay/check">
+  <textarea name="policy" data-max-bytes="40" data-too-long="too-long"></textarea>
+  <p id="too-long" hidden>Too long: ship-fleet overlay check --policy FILE</p>
+  <button type="submit">Check the overlay</button>
+</form>
 <form id="rollback" method="post" action="/ships/ship-01/snapshots/rollback"
   data-confirm-title="Roll ship-01 back to snap-1?"
   data-confirm="Everything since then is lost."
@@ -365,3 +370,17 @@ test("typed confirmation: Enter confirms once the value matches, and only then",
     assert.deepEqual(p.sent, [{ form: "rollback",
       data: { snapshot: "snap-1", confirm_name: "ship-01" } }]);
   }));
+
+
+test("a field longer than it may be sent stops its form and says what to do", on({}, async ({ $, sent, click }) => {
+  $("#check textarea").value = '{"acls": []}';  // 12 characters, 24 once encoded
+  click("#check button");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].data.policy, '{"acls": []}');
+  assert.equal($("#too-long").hidden, true);
+  $("#check textarea").value = '{"acls": [], "tests": []}';  // 25 characters, over 40 encoded
+  click("#check button");
+  assert.equal(sent.length, 1);  // not sent, and not cut short either
+  assert.equal($("#too-long").hidden, false);
+  assert.equal($("#check textarea").value, '{"acls": [], "tests": []}');
+}));
