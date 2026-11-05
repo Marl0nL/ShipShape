@@ -155,15 +155,29 @@ def _to_machines() -> Response:
 
 # --- certificates -------------------------------------------------------------------
 async def renew_all(request: Request) -> Response:
-    from fleetledger.web.app import form, one
+    """Every Ship's certificates (`ca sign`), or every Ship with a tag (`ca sign --tag
+    T`, from the Fleet page's Every Ship menu, which says from=fleet)."""
+    from fleetledger import ops
+    from fleetledger.web.app import back, form, one
+    from fleetledger.web.fleetactions import TAG_RE
 
     fields = await form(request)
     inv = _inventory(request)
+    tag = one(fields, "tag")
+    tag = tag if TAG_RE.match(tag) else ""
     if inv is not None:
         force = one(fields, "force") == "yes"
-        _start(request, "certs", [s.name for s in inv.ships()],
-               ["ca", "sign", *(["--force"] if force else [])],
-               "Re-issue every certificate" if force else "Renew certificates")
+        ships = ops.select(inv, [], tag) if tag else inv.ships()
+        title = ("Re-issue every certificate" if force else "Renew certificates") + (
+            f" of every {tag} Ship" if tag else "")
+        if ships:
+            _start(request, "certs", [s.name for s in ships],
+                   ["ca", "sign", *(["--tag", tag] if tag else []),
+                    *(["--force"] if force else [])], title)
+        else:
+            _flash(request, "bad", "No Ships to renew.")
+    if one(fields, "from") == "fleet":
+        return back("/", tag=tag)
     return RedirectResponse(TO_CERTIFICATES, status_code=303)
 
 
