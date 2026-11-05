@@ -42,15 +42,16 @@ ON_DEMO_DRIVER = {"ship-01", "ship-02", "ship-03", "ship-04"}
 DEMO_FINGERPRINT = ":".join(["AB", "CD", "EF", "01", "23", "45", "67", "89"] * 4)  # made up
 
 SHIPS = {
-    # name: (tags, host key tail, on the overlay)
-    "ship-01": (["work"], "aaaa", True),
-    "ship-02": (["work"], "bbbb", True),
-    "ship-03": (["personal"], "cccc", True),
-    "ship-04": (["lab"], "dddd", True),
-    "ship-05": (["lab"], "eeee", True),
-    "ship-06": (["work"], "ffff", False),
+    # name: (tags, on the overlay)
+    "ship-01": (["work"], True),
+    "ship-02": (["work"], True),
+    "ship-03": (["personal"], True),
+    "ship-04": (["lab"], True),
+    "ship-05": (["lab"], True),
+    "ship-06": (["work"], False),
 }
 DOWN = {"ship-05"}
+DEMO_CA: dict[str, str] = {}  # the demo CA's fingerprints, once home() has made it
 
 INVENTORY = """\
 schema = 1
@@ -96,7 +97,7 @@ id = "{id}"
 tags = {tags}
 driver = "{driver}"
 names = ["{name}.example.invalid"]
-host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZX{tail}"
+host_key = "{host_key}"
 enrolled = "2026-01-01T00:00:00Z"
 {overlay}"""
 
@@ -232,19 +233,49 @@ def home(base: Path) -> None:
     os.environ["FLEETLEDGER_CONFIG_DIR"] = str(base / "config")
     os.environ["FLEETLEDGER_DATA_DIR"] = str(base / "data")
     os.environ["FLEETLEDGER_RUNTIME_DIR"] = str(base / "run")
-    for key in ("fleet_admin", "you"):
+    # Your home and ssh-agent too: "Let this computer use ssh" writes an SSH config and
+    # herdr's saved machines under HOME, so in the demo that is the throwaway home.
+    (base / "home").mkdir(mode=0o700)
+    os.environ["HOME"] = str(base / "home")
+    os.environ.pop("SSH_AUTH_SOCK", None)
+    for key in ("fleet_admin", "you", *(f"host-{name}" for name in SHIPS)):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", key,
                         "-f", str(base / "keys" / key)], check=True)
     text = INVENTORY.format(keys=base / "keys", fingerprint=DEMO_FINGERPRINT)
-    for i, (name, (tags, tail, joined)) in enumerate(SHIPS.items(), start=1):
+    for i, (name, (tags, joined)) in enumerate(SHIPS.items(), start=1):
         overlay = f'overlay_node = "nDemo{i}"\n' if joined else ""
         driver = "proxmox" if name in ON_DEMO_DRIVER else "manual"
+        host_key = " ".join((base / "keys" / f"host-{name}.pub").read_text().split()[:2])
         text += SHIP_ENTRY.format(name=name, id=ship_id(i), tags=json.dumps(tags),
-                                  tail=tail, overlay=overlay, driver=driver)
+                                  host_key=host_key, overlay=overlay, driver=driver)
     text += demo_images(base)
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
     path.chmod(0o600)
+    demo_ca(base, path)
+
+
+def demo_ca(base: Path, path: Path) -> None:
+    """A made-up certificate authority (keys without a passphrase, in the demo home)
+    and one trusted machine, so Settings ▸ Access shows certificates and machines."""
+    from fleetledger.store import TomlFileStore
+
+    from fleetledger import ca
+
+    for key in ("host_ca", "user_ca", "laptop"):
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", f"demo-{key}",
+                        "-f", str(base / "keys" / key)], check=True)
+    public = {k: (base / "keys" / f"{k}.pub").read_text().strip()
+              for k in ("host_ca", "user_ca", "laptop")}
+    DEMO_CA.update(host=ca.fingerprint(public["host_ca"]),
+                   user=ca.fingerprint(public["user_ca"]))
+    soon = _stamp(datetime.now(UTC) + timedelta(hours=10))
+    with TomlFileStore(path).edit() as ed:
+        ed.set_ca({"host_key": str(base / "keys" / "host_ca"),
+                   "user_key": str(base / "keys" / "user_ca")})
+        ed.set_machine("laptop", {"public_key": public["laptop"],
+                                  "added": "2026-01-01T00:00:00Z", "scope": ["tag:work"],
+                                  "logins": ["agent"], "last_valid_before": soon})
 
 
 def _stamp(when: datetime) -> str:
@@ -270,6 +301,16 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
                 reboot_required=index == 4)
     agents = doc["herdr"]["agents"]
     doc["attention"] = []
+    if DEMO_CA:  # certified by the demo CA; ship-04's runs out soon
+        days = 5 if name == "ship-04" else 60
+        until = datetime.fromtimestamp(now, UTC) + timedelta(days=days)
+        doc["ssh"] = {"host_certificate": {
+            "serial": 100 + index, "key_id": f"{name} host",
+            "principals": [name, f"{name}.example.invalid"],
+            "valid_after": _stamp(until - timedelta(days=90)), "valid_before": _stamp(until),
+            "ca_fingerprint": DEMO_CA["host"]},
+            "user_ca": [DEMO_CA["user"]], "agent_principals": ["agent:all"],
+            "revoked_keys_sha256": None}
     if name == "ship-01":
         doc["attention"].append({"code": "agent-waiting", "subject": "main",
                                  "message": "Agent 'main' is waiting for you."})
@@ -311,6 +352,16 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
     doc["net"] = {"window_h": 24, "rx_mb": 120.0 * index, "tx_mb": 14.0 * index,
                   "new_destinations": [], "collector": "running", "source": "ebpf",
                   "destinations": 10 + index, "connections": 200 * index}
+    doc["tools"] = {"gh-axi": {"state": "ok", "version": "1.4.0"},  # catalogue tools
+                    "tasks-axi": {"state": "ok", "version": "0.9.2"}}
+    if name != "ship-06":  # its settings, as newer tooling reports them; ship-06 is older
+        settings = json.loads((EXAMPLES / "ship-status" / "running-settings.json")
+                              .read_text())["settings"]
+        settings["ship"]["tags"] = list(tags)
+        settings["claude"]["session_prefix"] = name
+        settings["network"]["ssh_listen"] = doc["overlay"]["ssh_listen"] if doc.get(
+            "overlay") else "any"
+        doc["settings"] = settings
     return doc
 
 
@@ -325,12 +376,27 @@ def make_ssh(inventory):
                 raise Unreachable(f"Cannot reach {ship.name} (demo: switched off).")
             verb = command[3] if command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"] else ""
             if verb == "status":
-                tags, _tail, _joined = SHIPS[ship.name]
+                tags, _joined = SHIPS[ship.name]
                 doc = status_doc(ship.name, tags, names.index(ship.name) + 1, time.time())
                 return Result(0, json.dumps(doc).encode(), "", ship.names[0])
+            if verb in ("version", "ssh-trust"):  # so certificate jobs succeed
+                return Result(0, json.dumps(ctl_result(verb)).encode(), "", ship.names[0])
             return Result(0, b"{}", "", ship.names[0])
 
+        def probe_certificate(self, ship, known_hosts, timeout=30):
+            return None  # as if the Ship presented its new certificate
+
     return DemoSSH(inventory)
+
+
+def ctl_result(verb: str) -> dict:
+    """ship-ctl's answer (the ship-ctl-result contract) to version and ssh-trust."""
+    data = {"tooling": "0.1.0", "commit": "0123456789ab",
+            "contracts": {"ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1,
+                          "bundle": 1, "seed": 1, "runtime": 1, "ssh-trust": 1}}
+    return {"schema": "shipshape.ship-ctl-result/1", "command": verb, "ok": True,
+            "changed": ["/etc/ssh/sshd_config.d/shipshape.conf"] if verb == "ssh-trust" else [],
+            "messages": [], "data": data if verb == "version" else {}, "error": None}
 
 
 def seed_net() -> None:
@@ -406,6 +472,9 @@ def main() -> int:
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
                   ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
                   stdin_isatty=lambda: False)
+    from fleetledger import ca
+
+    app.signer = ca.Signer(agent_keys=lambda: set())  # the demo CA's keys; never ssh-agent
     print(f"Demo FleetLedger home: {base}", flush=True)
     return server.serve(app, port=args.port, open_browser=False, interval=10)
 

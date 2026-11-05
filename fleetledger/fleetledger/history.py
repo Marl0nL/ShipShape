@@ -141,6 +141,15 @@ class History:
                 self._pruned = now
         return len(rows)
 
+    def forget(self, ship: str) -> None:
+        """Drop every sample of a Ship (it was destroyed or forgotten)."""
+        if not self.path.exists():
+            return
+        with self._lock:
+            self._last.pop(ship, None)
+        with self._db() as conn:
+            conn.execute("DELETE FROM sample WHERE ship = ?", (ship,))
+
     # --- reading -----------------------------------------------------------
     def since(self, start: float, ships: Iterable[str] | None = None
               ) -> dict[str, list[Sample]]:

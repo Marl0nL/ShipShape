@@ -33,7 +33,18 @@ from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, dashboard, images, network, settings, setup, snapshots
+from fleetledger.web import (
+    actions,
+    dashboard,
+    destroy,
+    images,
+    network,
+    settings,
+    setup,
+    shipsettings,
+    snapshots,
+    trust,
+)
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -46,22 +57,8 @@ FLOW_ID_RE = re.compile(r"^[0-9]{1,9}-[0-9a-f]{8}$")
 BATCH_RE = re.compile(r"^[0-9a-f]{12}$")
 SERVICES = ("claude", "gcloud", "gcloud-adc", "github", "all")
 AUTH_ORDER = ("claude", "gcloud", "gcloud_adc", "github")
-SETTINGS = {
-    # form field -> (ship-fleet set key, allowed values, label)
-    "remote_control": ("remote_control", ("on", "off", "blocked"), "Remote Control"),
-    "default_mode": ("default_mode", commands.MODES, "Default permission mode"),
-    "allow_bypass": ("allow_bypass", ("true", "false"), "Allow bypassPermissions"),
-    "update_channel": ("update_channel", ("latest", "stable"), "Claude update channel"),
-    "sudo": ("sudo", ("true", "false"), "Agent sudo"),
-    "lan_guard": ("lan_guard", ("true", "false"), "LAN guard"),
-    "auto_reboot": ("auto_reboot", ("true", "false"), "Reboot for OS updates on its own"),
-}
-# Free-text settings: fleetledger.ops checks their format.
-SETTINGS_TEXT = {
-    "reboot_time": "Reboot time for OS updates (HH:MM)",
-    "lan_guard_allow": "LAN guard also allows (addresses or CIDRs, comma-separated)",
-}
 NO_SUCH_SHIP = "No such Ship in the inventory."
+LOG_LINES = ("100", "300", "1000", "3000")  # the Logs tab's "last N lines" choices
 TABS = ("overview", "settings", "snapshots", "logs", "network")
 
 
@@ -79,6 +76,8 @@ class UI:
     health: Any = None  # web.settings.Health: the last "Check now" on Settings
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
     started: set[str] = dataclasses.field(default_factory=set)
+    destroyed: dict[str, tuple[float, bool]] = dataclasses.field(  # name -> (when, forgot)
+        default_factory=dict)
     flashes: dict[str, list[tuple[str, str]]] = dataclasses.field(default_factory=dict)
 
     def flash(self, session: Session, kind: str, text: str) -> None:
@@ -117,8 +116,10 @@ def make_env() -> Environment:
         SIGNIN_CHOICES=signins.CHOICES,
         SIZE=_size_limits_for_forms(),
         SIGNIN_LABELS=signins.LABELS,
-        SETTINGS=SETTINGS,
-        SETTINGS_TEXT=SETTINGS_TEXT,
+        SETTING_GROUPS=shipsettings.GROUPS,
+        SSH_LISTEN=shipsettings.SSH_LISTEN,
+        setting_now=shipsettings.current,
+        setting_older=shipsettings.older_hint,
         human_bytes=net.human_bytes,
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
@@ -346,6 +347,14 @@ async def ship_page(request: Request) -> Response:
     name = _ship_name(request)
     tab = request.path_params.get("tab", "overview")
     context = _ship_context(ui, name) if name else None
+    if context is None and name and (gone := destroy.gone_since(ui, name)) is not None:
+        at, forgotten = gone
+        text = (f"{name} was forgotten at {_clock(at)}: it is no longer in the inventory, and "
+                "its VM was not touched." if forgotten else
+                f"{name} was destroyed at {_clock(at)}: its VM, its seed and its entry in the "
+                "inventory are gone.")
+        return render(request, "message.html", status_code=410, title=f"{name} is gone",
+                      text=text)
     if context is None or tab not in TABS:
         return not_found(request, NO_SUCH_SHIP)
     if tab == "logs":
@@ -355,10 +364,16 @@ async def ship_page(request: Request) -> Response:
         context["source"] = source
         context["sources"] = commands.LOG_SOURCES
         context["log"] = None
+        count = request.query_params.get("lines", "300")
+        count = int(count) if count in LOG_LINES else 300
+        context["lines"], context["line_choices"] = count, LOG_LINES
         if request.query_params.get("source"):
-            ok, lines = await run_in_threadpool(actions.logs, ui.app, name, source, 300)
+            ok, lines = await run_in_threadpool(actions.logs, ui.app, name, source, count)
             context["log"] = clean("\n".join(lines))
             context["log_ok"] = ok
+    if tab == "settings":
+        context["tools"] = await run_in_threadpool(actions.tool_choices, ui.app,
+                                                   context["view"])
     if tab == "snapshots":
         context.update(await snapshots.tab_context(ui.app, name))
     if tab == "network":  # the same snapshot the rest of the page shows
@@ -392,19 +407,20 @@ async def ship_settings(request: Request) -> Response:
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
-    assignments = []
-    for key, (set_key, allowed, _label) in SETTINGS.items():
-        value = one(fields, key)
-        if not value:
-            continue  # "(unchanged)"
-        if value not in allowed:
-            ui.flash(session_of(request), "bad", f"{key}: not an allowed value.")
-            return back(f"/ships/{name}/settings")
-        assignments.append(f"{set_key}={value}")
-    for key in SETTINGS_TEXT:
-        value = one(fields, key)
-        if value:
-            assignments.append(f"{key}={value}")
+    view = ui.fleet.snapshot.by_name.get(name)
+    ssh = one(fields, "part") == "ssh"
+    if ssh and one(fields, "confirm") != "yes":  # it can cut the LAN path to the Ship
+        ui.flash(session_of(request), "bad", "Tick the box to confirm.")
+        return back(f"/ships/{name}/settings")
+    if ssh and (view is None or view.ship.overlay_node is None):
+        ui.flash(session_of(request), "bad", f"{name} is not on the overlay.")
+        return back(f"/ships/{name}/settings")
+    try:  # only what changed; the ssh_listen form sends that one key
+        keys = ("ssh_listen",) if ssh else None
+        assignments = shipsettings.assignments(fields, view, keys)
+    except FleetError as exc:
+        ui.flash(session_of(request), "bad", exc.message)
+        return back(f"/ships/{name}/settings")
     session = session_of(request)
     if not assignments:
         ui.flash(session, "muted", "Nothing to change.")
@@ -412,6 +428,25 @@ async def ship_settings(request: Request) -> Response:
     outcome = await run_in_threadpool(actions.set_settings, ui.app, name, assignments)
     _flash_outcome(ui, session, outcome)
     await run_in_threadpool(ui.fleet.poll, [name])
+    return back(f"/ships/{name}/settings")
+
+
+async def ship_tools(request: Request) -> Response:
+    """The Settings tab's Tools: add and remove catalogue tools, as one job."""
+    ui = ui_of(request)
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
+    fields = await form(request)
+    session = session_of(request)
+    view = ui.fleet.snapshot.by_name.get(name)
+    try:
+        await run_in_threadpool(actions.change_tools, ui.jobs, ui.app, name,
+                                fields.get("tool", []), view)
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(f"/ships/{name}/settings")
+    ui.flash(session, "ok", "Changing its tools; its progress is above.")
     return back(f"/ships/{name}/settings")
 
 
@@ -479,8 +514,13 @@ async def ship_size(request: Request) -> Response:
         if not size:
             ui.flash(session, "muted", "Nothing to change.")
             return back(f"/ships/{name}/settings")
+        record_only = (one(fields, "record_only") == "yes"
+                       and current.ship(name).driver == "manual")  # you resized it by hand
         said = await run_in_threadpool(lifecycle.resize, ui.app, ui.app.store_factory(), name,
-                                       size, restart=one(fields, "restart") == "yes")
+                                       size, restart=one(fields, "restart") == "yes",
+                                       record_only=record_only)
+        if record_only:
+            said.append(f"Recorded {name}'s size; its VM was not touched.")
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(f"/ships/{name}/settings")
@@ -676,6 +716,14 @@ async def finish_enrolling(request: Request) -> Response:
     return back(f"/ships/{name}")
 
 
+def _on_ship_page(request: Request, ships: list[str]) -> bool:
+    """Whether htmx polled from one of these Ships' pages (not, say, the Fleet page)."""
+    from urllib.parse import urlsplit
+
+    path = urlsplit(request.headers.get("HX-Current-URL", "")).path
+    return any(path == f"/ships/{s}" or path.startswith(f"/ships/{s}/") for s in ships)
+
+
 async def job_card(request: Request) -> Response:
     """One job's card, for htmx polling: 204 while unchanged, 286 (stop) once gone."""
     ui = ui_of(request)
@@ -686,7 +734,11 @@ async def job_card(request: Request) -> Response:
     if request.query_params.get("v") == str(job.version):
         return Response(status_code=204)
     response = partial(request, "_job.html", job=job)
+    if job.done and job.result.get("gone") and _on_ship_page(request, job.ships):
+        response.headers["HX-Redirect"] = "/"  # destroyed: the page it was on is gone too
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
+        response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind in trust.KINDS:  # certificates or machines changed: redraw
         response.headers["HX-Refresh"] = "true"
     return response
 
@@ -942,6 +994,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/settings", ship_settings, methods=["POST"]),
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
+        Route("/ships/{name}/tools", ship_tools, methods=["POST"]),
         Route("/ships/{name}/size", ship_size, methods=["POST"]),
         Route("/ships/{name}/signins", ship_signins, methods=["POST"]),
         Route("/attach-here", attach_here, methods=["POST"]),
@@ -966,8 +1019,10 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
         *snapshots.routes(),
+        *destroy.routes(),
         *settings.routes(),
         *images.routes(),
+        *trust.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)

@@ -170,7 +170,7 @@ def test_remove_on_the_manual_driver_reads_by_hand_with_the_next_step(imaged):
     assert "Do this on your hypervisor" in card
     assert (f"Image {IMG} is still published to manual; remove it there, then run this "
             "again.") in card  # the command's own next step, on the card
-    assert 'class="log' not in card  # not the raw log as well
+    assert 'class="log bad"' not in card  # the next step is not shown as an error
     assert IMG in imaged.store.load().images
 
 

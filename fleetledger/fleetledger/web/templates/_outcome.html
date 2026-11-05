@@ -1,8 +1,7 @@
 {# A driver's answer, for any action that calls one (drivers.base): outcome is an
    Outcome (done, messages, instructions); unsupported is why the driver cannot (a
    NotSupported message). A by-hand driver (manual) answers with steps to do on your
-   hypervisor; each comes with Copy. Either may be missing. then (optional): what the
-   command said besides, such as its next step, shown after the steps. #}
+   hypervisor; each comes with Copy. Either may be missing. #}
 {% if unsupported %}<p class="notice outcome-unsupported">{{ unsupported }}</p>{% endif %}
 {% if outcome %}
 <div class="outcome">
@@ -13,6 +12,5 @@
     {% for line in outcome.instructions %}<li><code>{{ line }}</code> <button type="button" class="ghost small" data-copy="{{ line }}">Copy</button></li>{% endfor %}
   </ol>
   {% endif %}
-  {% for line in then or () %}<p class="outcome-then">{{ line }}</p>{% endfor %}
 </div>
 {% endif %}

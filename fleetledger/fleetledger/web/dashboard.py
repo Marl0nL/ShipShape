@@ -117,6 +117,15 @@ def range_key(value: str | None) -> str:
 # --- alerts -----------------------------------------------------------------------
 
 
+# Certificate alerts -> the few words before their Renew button.
+CERT_CODES = {
+    "host-cert-expired": "Renew its certificate:",
+    "host-cert-expiring": "Renew its certificate:",
+    "host-cert-missing": "Sign its host key:",
+    "ssh-trust-behind": "Bring its trust up to date:",
+}
+
+
 def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
                attach_here: bool = False) -> Action:
     """The one action that fixes an attention code on a Ship. attach_here: this
@@ -133,6 +142,9 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         return _operation("update", ship, "Update", f"ship-fleet update {ship}")
     if code == "not-on-overlay":
         return _operation("join", ship, "Join", f"ship-fleet overlay join {ship}")
+    if code in CERT_CODES:  # renewing changes no access: no dialog
+        return Action("post", "Renew", f"/ships/{ship}/certs/renew",
+                      hint=CERT_CODES[code], title=f"ship-fleet ca sign {ship}")
     if code == "unreachable":  # checking again changes nothing: no dialog
         return Action("post", "Check now", f"/ships/{ship}/refresh",
                       hint="Switched on and on the network? Then:",
@@ -140,10 +152,6 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     commands = {
         "agent-waiting": ("Attach to answer it:",
                           f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
-        "host-cert-expired": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
-        "host-cert-expiring": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
-        "host-cert-missing": ("Sign its host key:", f"ship-fleet ca sign {ship}"),
-        "ssh-trust-behind": ("Bring its trust up to date:", f"ship-fleet ca sign {ship}"),
         "overlay-down": ("Find out why:", "ship-fleet overlay check"),
         "disk-nearly-full": ("See what fills it:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),
