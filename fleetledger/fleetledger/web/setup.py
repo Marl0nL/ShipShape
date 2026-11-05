@@ -222,7 +222,11 @@ def _flash(request: Request, kind: str, text: str) -> None:
     _ui(request).flash(request.scope["state"]["session"], kind, text)
 
 
-def _back(anchor: str = "") -> RedirectResponse:
+def _back(anchor: str = "", fields: dict[str, list[str]] | None = None) -> RedirectResponse:
+    """Back to the setup step, or to Settings' Access section when the form was
+    posted from there (back=settings)."""
+    if fields is not None and _one(fields, "back") == "settings":
+        return RedirectResponse("/settings#access", status_code=303)
     return RedirectResponse("/setup" + (f"#{anchor}" if anchor else ""), status_code=303)
 
 
@@ -249,19 +253,12 @@ async def page(request: Request) -> Response:
                                "inventory_path": _tilde(ui.app.store_factory().path),
                                "TAILSCALE_ACLS": TAILSCALE_ACLS,
                                "TAILSCALE_OAUTH": TAILSCALE_OAUTH}
-    usable, why = await run_in_threadpool(_keyring_usable)
-    context.update(keyring_usable=usable, keyring_why=why,
-                   default_store="keyring" if usable else "file")
+    context.update(await access_context(inv))
     if inv is None:
         context["your_keys"] = [_tilde(p) for p in await run_in_threadpool(your_key_choices)]
     else:
-        context["unmanaged"] = [(what, _tilde(p)) for what, p in
-                                await run_in_threadpool(unmanaged_keys, inv)]
         context["agent_ok"] = await run_in_threadpool(agent_holds_admin, inv)
-        context["desktop_agent"] = keys.desktop_agent_preloads()
-        context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
         context["policy"] = _policy_text()
-        context.update(await run_in_threadpool(_machines_context, inv))
         context["size"] = inv.effective_size()
     from fleetledger import proxmox_setup
 
@@ -274,6 +271,22 @@ async def page(request: Request) -> Response:
             context["overlay_here"] = await run_in_threadpool(overlay_on_this_computer)
     context["token_commands"] = proxmox_setup.user_and_token_commands(proxmox_setup.Names())
     return render(request, "setup.html", **context)
+
+
+async def access_context(inv) -> dict[str, Any]:
+    """What the fleet's access forms need (_fleet_access.html, on Settings and Setup):
+    the keyring, keys you look after yourself, the managed ones, trusted machines.
+    Reads files and asks the keyring if it is usable; runs no command."""
+    usable, why = await run_in_threadpool(_keyring_usable)
+    context: dict[str, Any] = {"keyring_usable": usable, "keyring_why": why,
+                               "default_store": "keyring" if usable else "file"}
+    if inv is not None:
+        context["unmanaged"] = [(what, _tilde(p)) for what, p in
+                                await run_in_threadpool(unmanaged_keys, inv)]
+        context["desktop_agent"] = keys.desktop_agent_preloads()
+        context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
+        context.update(await run_in_threadpool(_machines_context, inv))
+    return context
 
 
 def _keyring_usable() -> tuple[bool, str]:
@@ -438,13 +451,13 @@ async def fleet_adopt(request: Request) -> Response:
     if _one(fields, "confirm") != "yes":
         _flash(request, "bad", "Tick the box to confirm: FleetLedger re-encrypts these key "
                "files (the keys themselves stay the same).")
-        return _back("fleet")
+        return _back("fleet", fields)
     secrets_ = {str(i): _passphrase_field(fields, f"passphrase_{i}") for i in range(3)}
     try:
         taken = await run_in_threadpool(_adopt, _ui(request).app, fields, secrets_)
     except FleetError as exc:
         _flash(request, "bad", exc.message)
-        return _back("fleet")
+        return _back("fleet", fields)
     finally:
         secrets_.clear()
     if taken:
@@ -452,22 +465,23 @@ async def fleet_adopt(request: Request) -> Response:
                ". Their old passphrases no longer open them.")
     else:
         _flash(request, "muted", "Nothing chosen.")
-    return _back("fleet")
+    return _back("fleet", fields)
 
 
 async def fleet_ca(request: Request) -> Response:
     from fleetledger.trustcmd import make_ca
 
     app = _ui(request).app
+    fields = await _form(request)
     try:
         store = app.store_factory()
         managed = keys.managed(store.load())[0] or keys.default_store()  # the fleet's store
         await run_in_threadpool(make_ca, app, store, HOST_CA_KEY, USER_CA_KEY, managed=managed)
     except FleetError as exc:
         _flash(request, "bad", exc.message)
-        return _back("fleet")
+        return _back("fleet", fields)
     _flash(request, "ok", "Made the certificate authority.")
-    return _back("hypervisor")
+    return _back("hypervisor", fields)
 
 
 def _machines_context(inv) -> dict[str, Any]:
@@ -497,7 +511,7 @@ async def machine_logins(request: Request) -> Response:
     except FleetError as exc:
         ok, said = False, [*said, exc.message]
     _flash(request, "ok" if ok else "bad", " ".join(said) or "No change.")
-    return _back("fleet")
+    return _back("fleet", fields)
 
 
 async def owner_name(request: Request) -> Response:
@@ -513,7 +527,7 @@ async def owner_name(request: Request) -> Response:
     except FleetError as exc:
         ok, said = False, [exc.message]
     _flash(request, "ok" if ok else "bad", " ".join(said))
-    return _back("fleet")
+    return _back("fleet", fields)
 
 
 async def load_keys(request: Request) -> Response:

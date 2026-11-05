@@ -1,0 +1,12 @@
+{# The audit log's entries, newest first (audit.html and Settings). Context: entries. #}
+{% if entries %}
+<table>
+  <thead><tr><th>When (UTC)</th><th>Ship</th><th>Action</th><th>Service</th><th>Outcome</th><th>Account</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+  <tr><td>{{ e.at }}</td><td>{{ e.ship }}</td><td>{{ e.action }}</td><td>{{ e.service }}</td>
+      <td><span class="pill {{ e.outcome|pill }}">{{ e.outcome }}</span></td><td>{{ e.account or "-" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="quiet">Nothing yet.</p>{% endif %}
