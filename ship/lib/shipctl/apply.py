@@ -186,6 +186,50 @@ def _check_sudoers(ctx: Context, text: str) -> None:
         raise CtlError("internal", "visudo rejected the agent sudoers rule")
 
 
+RESERVED_USERS = ("root", "fleet", "agent")
+OWNER_SUDOERS = "/etc/sudoers.d/90-shipshape-owner"
+
+
+def _passwd_uid(ctx: Context, name: str) -> int | None:
+    try:
+        lines = ctx.paths.p("/etc/passwd").read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split(":")
+        if len(fields) > 2 and fields[0] == name:
+            try:
+                return int(fields[2])
+            except ValueError:
+                return None
+    return None
+
+
+def sync_owner(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[Path], list[str]]:
+    """The owner's login ([owner]): made once with useradd, and given sudo. Without an
+    [owner], its sudo rule goes (the user itself is left, with its files)."""
+    sudoers = ctx.paths.p(OWNER_SUDOERS)
+    owner = ship.owner
+    if owner is None:
+        return ([sudoers] if remove(sudoers, dry_run=dry_run) else []), []
+    name = owner["name"]
+    if name in RESERVED_USERS:
+        raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a ShipShape login", 4)
+    messages = []
+    uid = _passwd_uid(ctx, name)
+    if uid is not None and uid < 1000:
+        raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a system account", 4)
+    if uid is None and not dry_run:
+        r = ctx.runner.run(["useradd", "--create-home", "--shell", "/bin/bash", "--comment",
+                            "ShipShape owner", name], timeout=30)
+        if not r.ok:
+            raise CtlError("internal", f"could not create the owner login {name}")
+        messages.append(f"Created the owner login {name} (sudo; your keys and certificates).")
+    line = f"{name} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    _check_sudoers(ctx, line)
+    return ([sudoers] if write_atomic(sudoers, line, 0o440, dry_run=dry_run) else []), messages
+
+
 def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str], list[str]]:
     """Returns (changed paths, messages)."""
     paths: Paths = ctx.paths
@@ -212,6 +256,12 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
         )
     else:
         note(paths.sudoers_agent, remove(paths.sudoers_agent, dry_run=dry_run))
+
+    # The owner's login: a user with sudo (its keys and certificates: sshtrust below).
+    owner_changed, owner_messages = sync_owner(ctx, ship, dry_run=dry_run)
+    for path in owner_changed:
+        note(path, True)
+    messages += owner_messages
 
     # Root-owned: the LAN announcement. avahi reloads its services folder by itself.
     avahi = paths.p("/etc/avahi/services/shipshape.service")

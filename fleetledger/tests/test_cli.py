@@ -754,6 +754,25 @@ def test_ssh(env, monkeypatch):
     assert seen[-1][-1] == "uptime"
 
 
+def test_your_own_login_on_ships(env, monkeypatch, home):
+    assert env.run("owner")[1].strip() == "human"  # the default
+    assert env.run("new", "ship-22")[0] == 0
+    owner = _seed_ship_toml(home, "ship-22")["owner"]
+    assert owner["name"] == "human" and owner["keys"][0].startswith("ssh-ed25519 ")
+    code, out, err = env.run("owner", "sam")
+    assert code == 0, err
+    sent = [c[3:] for name, c in env.ship.calls if name == "ship-01" and c[3:4] == ["set"]]
+    assert sent[-1][1:3] == ["owner.name=sam", f"owner.keys={owner['keys'][0]}"]
+    assert env.store.load().owner == "sam" and "ssh sam@ship-01" in out
+    for bad in ("agent", "fleet", "root", "Sam", "a b"):
+        assert env.run("owner", bad)[0] == 1
+    assert env.store.load().owner == "sam"
+    seen = []
+    monkeypatch.setattr("os.execvp", lambda file, argv: seen.append(argv))
+    env.run("ssh", "ship-01", "--as", "owner")
+    assert seen[-1][seen[-1].index("-l") + 1] == "sam" and "-i" not in seen[-1]
+
+
 def test_ssh_dials_the_first_name_that_resolves(env, monkeypatch):
     seen = []
     monkeypatch.setattr("os.execvp", lambda file, argv: seen.append(argv))

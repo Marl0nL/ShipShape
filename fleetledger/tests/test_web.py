@@ -993,3 +993,9 @@ def test_an_agent_can_stop_being_started_from_the_ship_page(web):
     assert "Stop starting it" in web.client.get("/ships/ship-01").text
     web.post("/ships/ship-01/agents", {"action": "remove", "agent": "docs"})
     assert ["set", "autostart.remove=docs", "--json"] in [c[3:] for _, c in web.ship.calls]
+
+
+def test_the_ship_page_says_how_to_connect_as_yourself(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    assert "ship-fleet ssh ship-01 --as owner" in page

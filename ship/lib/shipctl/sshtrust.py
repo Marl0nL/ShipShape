@@ -40,6 +40,7 @@ HOST_CERT = "/etc/ssh/ssh_host_ed25519_key-cert.pub"
 CA_DIR = "/etc/ssh/shipshape"
 USER_CA = CA_DIR + "/user-ca.pub"
 PRINCIPALS_DIR = CA_DIR + "/principals"
+KEYS_DIR = CA_DIR + "/keys"  # root-owned authorized keys for the owner's login
 REVOKED = CA_DIR + "/revoked-keys"
 DROPIN = "/etc/ssh/sshd_config.d/20-shipshape-ca.conf"
 FLEET_KEYS = "/home/fleet/.ssh/authorized_keys"
@@ -265,6 +266,11 @@ def render_dropin(ctx: Context) -> str:
         lines.append(f"AuthorizedPrincipalsFile {PRINCIPALS_DIR}/%u")
     if _p(ctx, REVOKED).exists():
         lines.append(f"RevokedKeys {REVOKED}")
+    keys = _p(ctx, KEYS_DIR)
+    if keys.is_dir() and any(keys.iterdir()):
+        # The owner's keys live here, root-owned, so nothing is written into a home;
+        # everyone else keeps ~/.ssh/authorized_keys.
+        lines.append(f"AuthorizedKeysFile .ssh/authorized_keys {KEYS_DIR}/%u")
     return "\n".join(lines) + "\n"
 
 
@@ -279,10 +285,26 @@ def render_files(ctx: Context, ship: ShipToml, dry_run: bool = False) -> list[Pa
     text = "\n".join(agent_principals(ship)) + "\n"
     if write_atomic(principals, text, 0o644, dry_run=dry_run):
         changed.append(principals)
-    # A principals file for fleet must never exist: certificates log in as agent only.
+    # A principals file for fleet must never exist: certificates never log in as fleet.
     fleet = _p(ctx, PRINCIPALS_DIR + "/fleet")
     if remove(fleet, dry_run=dry_run):
         changed.append(fleet)
+    # The owner's login takes the same certificates as agent (your machines), and the
+    # owner's own keys; any other principals or keys file is stale and goes.
+    owner = (ship.owner or {}).get("name")
+    if owner:
+        own = _p(ctx, PRINCIPALS_DIR + "/" + owner)
+        if write_atomic(own, text, 0o644, dry_run=dry_run):
+            changed.append(own)
+        keys = _p(ctx, KEYS_DIR + "/" + owner)
+        lines = "".join(k.strip() + "\n" for k in ship.owner.get("keys", []))
+        if write_atomic(keys, lines, 0o644, dry_run=dry_run):
+            changed.append(keys)
+    for folder, keep in ((PRINCIPALS_DIR, {"agent", owner}), (KEYS_DIR, {owner})):
+        d = _p(ctx, folder)
+        for f in sorted(d.iterdir()) if d.is_dir() else []:
+            if f.name not in keep and remove(f, dry_run=dry_run):
+                changed.append(f)
     dropin = _p(ctx, DROPIN)
     if write_atomic(dropin, render_dropin(ctx), 0o644, dry_run=dry_run):
         changed.append(dropin)

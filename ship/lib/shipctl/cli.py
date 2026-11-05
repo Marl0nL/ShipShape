@@ -49,6 +49,8 @@ SET_KEYS = {
     "updates.auto_reboot": "bool",
     "updates.reboot_time": "str",
     "network.ssh_listen": "str",
+    "owner.name": "str",
+    "owner.keys": "list",
 }
 RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart "

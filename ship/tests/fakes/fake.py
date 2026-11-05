@@ -417,12 +417,23 @@ def tailscale(s: dict, a: list[str]) -> int:
     return 0
 
 
+def useradd(s: dict, a: list[str]) -> int:
+    """Adds the user to the sandbox's /etc/passwd, as the real one would."""
+    name = a[-1]
+    passwd = Path(os.environ["SHIPSHAPE_ROOT"]) / "etc/passwd"
+    passwd.parent.mkdir(parents=True, exist_ok=True)
+    with passwd.open("a") as fh:
+        fh.write(f"{name}:x:1001:1001:ShipShape owner:/home/{name}:/bin/bash\n")
+    return 0
+
+
 HANDLERS = {
     "herdr": herdr,
     "claude": claude,
     "gcloud": gcloud,
     "gh": gh,
     "git": git,
+    "useradd": useradd,
     "npm": npm,
     "dpkg-query": dpkg_query,
     "apt-get": apt_get,

@@ -491,6 +491,22 @@ async def fleet_ca(request: Request) -> Response:
     return _back("hypervisor")
 
 
+async def owner_name(request: Request) -> Response:
+    """Your own login name on Ships (fleet.owner), set on every Ship."""
+    from fleetledger import commands
+
+    app = _ui(request).app
+    fields = await _form(request)
+    said: list[str] = []
+    try:
+        ok = await run_in_threadpool(commands.set_owner, app, app.store_factory(),
+                                     _one(fields, "owner").strip(), said.append)
+    except FleetError as exc:
+        ok, said = False, [exc.message]
+    _flash(request, "ok" if ok else "bad", " ".join(said))
+    return _back("fleet")
+
+
 async def load_keys(request: Request) -> Response:
     app = _ui(request).app
     try:
@@ -1071,6 +1087,7 @@ def routes() -> list[Route]:
         Route("/setup/fleet/adopt", fleet_adopt, methods=["POST"]),
         Route("/setup/fleet/ca", fleet_ca, methods=["POST"]),
         Route("/setup/keys/load", load_keys, methods=["POST"]),
+        Route("/setup/owner", owner_name, methods=["POST"]),
         Route("/setup/hypervisor/manual", hypervisor_manual, methods=["POST"]),
         Route("/setup/proxmox/start", proxmox_start, methods=["POST"]),
         Route("/setup/proxmox/cancel", proxmox_cancel, methods=["POST"]),

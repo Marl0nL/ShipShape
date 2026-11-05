@@ -486,3 +486,41 @@ def test_adc_probe_never_captures_the_token():
     seen.clear()
     probe_gcloud_auth(Ctx())
     assert seen["env"] == {"CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "1"}
+
+
+# --- the owner's login --------------------------------------------------------------
+OWNER_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVvd25lcmtleWV4YW1wbGVvd25lcmtl you"
+
+
+def test_an_owner_login_with_sudo_its_keys_and_certificates(ship):
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={OWNER_KEY}", "--json")
+    assert rc == 0, doc
+    assert ["useradd", "--create-home", "--shell", "/bin/bash", "--comment",
+            "ShipShape owner", "human"] in ship.calls("useradd")
+    sudoers = ship.p("/etc/sudoers.d/90-shipshape-owner")
+    assert sudoers.read_text() == "human ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    assert oct(sudoers.stat().st_mode & 0o777) == "0o440"
+    assert ship.p("/etc/ssh/shipshape/keys/human").read_text() == OWNER_KEY + "\n"
+    principals = ship.p("/etc/ssh/shipshape/principals")
+    assert (principals / "human").read_text() == (principals / "agent").read_text()
+    dropin = next(ship.p("/etc/ssh/sshd_config.d").glob("*shipshape*")).read_text()
+    assert "AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/shipshape/keys/%u" in dropin
+    assert not ship.p("/etc/sudoers.d/91-shipshape-agent").exists()  # agent: still no sudo
+    # Applied again: the user is not made twice.
+    ship.ctl("apply", "--json")
+    assert len(ship.calls("useradd")) == 1
+
+
+@pytest.mark.parametrize("name", ["agent", "fleet", "root"])
+def test_the_owner_cannot_be_a_shipshape_login(ship, name):
+    rc, doc, _ = ship.ctl("set", f"owner.name={name}", "--json")
+    assert rc == 4 and not ship.calls("useradd")
+    assert not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()
+
+
+def test_the_owner_cannot_be_a_system_account(ship):
+    passwd = ship.p("/etc/passwd")
+    passwd.write_text("daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n")
+    rc, doc, _ = ship.ctl("set", "owner.name=daemon", "--json")
+    assert rc == 4 and "system account" in doc["error"]["message"]
+    assert not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()

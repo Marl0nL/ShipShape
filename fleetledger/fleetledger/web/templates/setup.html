@@ -119,6 +119,15 @@
   fleet admin key <code>{{ inv.doc.fleet.admin_key }}</code>,
   your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.
   {% if admin_managed %}FleetLedger looks after its keys.{% endif %}</p>
+<form method="post" action="/setup/owner" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Your own login on Ships <input name="owner" value="{{ inv.owner }}" pattern="[a-z_][a-z0-9_\-]{0,31}" required></label>
+  <button type="submit" class="ghost">Use this name</button>
+</form>
+<p class="hint">Each Ship has a login for you, apart from the agent's: it has sudo, your
+  key and your certificates, for admin work (<code>ssh {{ inv.owner }}@&lt;ship&gt;</code>).
+  The agent's login keeps no sudo. Changing the name sets it on every Ship now, and on new
+  ones.</p>
 {% if not inv.doc.ca %}
 <form method="post" action="/setup/fleet/ca" class="inline">
   <input type="hidden" name="csrf" value="{{ csrf }}">

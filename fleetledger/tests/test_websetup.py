@@ -907,3 +907,11 @@ def test_the_first_agent_can_work_in_a_github_repo(chosen, monkeypatch):
                                             "agent": "main", "cwd": "~/work",
                                             "repo": "someone/agent-setup"})
     assert args.repo == "someone/agent-setup"
+
+
+def test_your_login_name_on_ships_from_the_setup_page(chosen):
+    assert 'name="owner" value="human"' in page(chosen)
+    chosen.post("/setup/owner", {"owner": "sam"})
+    assert chosen.store.load().owner == "sam" and "New Ships get the login sam" in page(chosen)
+    chosen.post("/setup/owner", {"owner": "agent"})
+    assert chosen.store.load().owner == "sam" and "cannot be your login name" in page(chosen)

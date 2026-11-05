@@ -27,6 +27,7 @@ FAKE_COMMANDS = [
     "gcloud",
     "gh",
     "git",
+    "useradd",
     "npm",
     "dpkg-query",
     "apt-get",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -685,6 +686,45 @@ def set_signins(app, store, name: str, wanted: list[str], say) -> bool:
     return ok
 
 
+OWNER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def cmd_owner(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    if not args.name:
+        app.say(inv.owner)
+        return 0
+    return 0 if set_owner(app, store, args.name, app.say) else 1
+
+
+def set_owner(app, store, name: str, say) -> bool:
+    """fleet.owner, and the owner login on every Ship (ship-ctl set owner.*)."""
+    from fleetledger.seed import cloudinit
+    from fleetledger.shipctl import ShipCtl, ShipCtlError
+
+    if not OWNER_RE.match(name) or name in ("root", "fleet", "agent"):
+        raise FleetError(f"'{name}' cannot be your login name: a-z, 0-9, _ and -, not root, "
+                         "fleet or agent.")
+    with store.edit() as ed:
+        ed.doc["fleet"]["owner"] = name
+    inv = store.load()
+    keys = [k for path in inv.agent_key_paths
+            for k in cloudinit.read_public_keys(path, "an agent key")]
+    ok = True
+    ssh = _ssh(app, inv)
+    for ship in inv.ships():
+        try:
+            ShipCtl(ssh, ship).set([f"owner.name={name}", f"owner.keys={','.join(keys)}"])
+            say(f"{ship.name}: your login is {name} (ssh {name}@{ship.name}).")
+        except (FleetError, ShipCtlError) as exc:
+            say(f"{ship.name}: not changed ({exc.message}); its tooling may need ship-fleet "
+                "update first.")
+            ok = False
+    say(f"New Ships get the login {name}.")
+    return ok
+
+
 def cmd_logout(args, app) -> int:
     inv = app.store_factory().load()
     ship = inv.ship(args.name)
@@ -890,7 +930,7 @@ def cmd_ssh(args, app) -> int:
     inv = app.store_factory().load()
     ship = inv.ship(args.name)
     remote = args.remote
-    user = "fleet" if args.user == "fleet" else "agent"
+    user = {"fleet": "fleet", "owner": inv.owner}.get(args.user, "agent")
     # An interactive session cannot fall back name by name as ssh.run does, so dial
     # the first name that resolves here (the pinned host key is checked either way).
     host = next((h for h in ship.names if app.resolves(h)), ship.names[0])

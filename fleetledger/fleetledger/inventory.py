@@ -130,6 +130,11 @@ class Inventory:
         return self.admin_key.with_name(self.admin_key.name + ".pub")
 
     @property
+    def owner(self) -> str:
+        """Your own login name on Ships (fleet.owner; default human)."""
+        return str(self.doc["fleet"].get("owner", "human"))
+
+    @property
     def agent_key_paths(self) -> list[Path]:
         return [paths.expand(p) for p in self.doc["fleet"]["agent_keys"]]
 
