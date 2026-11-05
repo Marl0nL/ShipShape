@@ -76,11 +76,16 @@ ship-fleet trust laptop --key laptop.pub --scope tag:work       # or --scope all
 ```
 
 - `--scope` decides which Ships the certificate opens. You can repeat it.
-  Scopes become certificate principals (`agent:all`, `agent:tag:work`,
-  `agent:ship:ship-01`), and each Ship accepts only those matching its own name
-  and tags.
+- `--logins` decides what it may log in as there: `agent` (attach to the agent,
+  `herdr --remote`), `owner` (your own login, with sudo) or `both`, the default for
+  a new machine (one of yours). A shared machine that should only reach agents:
+  `--logins agent`.
+  Scopes and logins become certificate principals (`agent:all`, `agent:tag:work`,
+  `owner:ship:ship-01`, ...), and each Ship accepts for each login only those
+  matching that login and its own name and tags. An owner-only machine's SSH config
+  logs in as you, and its herdr saved machines are left out.
 - `--hours` sets the lifetime; the default comes from `[ca] user_cert_hours`.
-- Certificates log in as `agent` only. They allow a terminal and nothing else:
+- Certificates never log in as `fleet`. They allow a terminal and nothing else:
   no agent, port or X11 forwarding.
 
 The bundle lands in `~/.local/share/fleetledger/trust/laptop/` (mode 0600).
@@ -147,7 +152,10 @@ ship-fleet trust laptop --print-cert | ssh laptop 'cat > ~/.ssh/shipshape/laptop
 Re-run `install.sh` after adding Ships, so the new Ships get `Host` blocks and
 herdr entries.
 
-To change a machine's scope, run `ship-fleet trust laptop --scope <new scope>`.
+To change a machine's scope, run `ship-fleet trust laptop --scope <new scope>`; its
+logins, `ship-fleet trust laptop --logins agent` (or the setup page's Trusted
+machines). Narrowing logins works like narrowing a scope, below: a certificate it
+holds for more is revoked on every Ship at once.
 A certificate names the Ships it opens, so narrowing the scope (for example
 from `all` to `tag:work`) would otherwise leave the old certificate opening
 every Ship until it lapsed. FleetLedger records each certificate it issues
@@ -196,3 +204,14 @@ herdr 0.9.5 and OpenSSH 10.2.
   connection.
 
 `fleetledger/tests/test_ca_sshd.py` runs the same checks against a real sshd.
+
+## Logins of their own (upgrading)
+
+Before owner logins had certificates of their own, a machine's `agent:*`
+certificate also opened your own login. The first `ship-fleet trust`, `untrust`
+or `ca sign` (or the web UI starting) after upgrading records `logins = ["agent",
+"owner"]` for every machine trusted before, so each keeps what it had, and says so
+once. Their next certificate carries both principals; until a machine renews, a
+Ship already updated (`ship-fleet update`) lets its current certificate log in as
+the agent only. This computer renews within a day by itself; for another machine,
+`ship-fleet trust NAME --print-cert > ~/.ssh/shipshape/NAME-cert.pub` on it.

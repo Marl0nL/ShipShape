@@ -7,8 +7,10 @@ Two CA keys, both on your computer and passphrase-protected (ships.toml [ca]):
   certificate without anyone ever trusting a key first seen on the network. The
   certificate lists every name the Ship is reached by.
 - the user CA signs short-lived certificates for your machines ([machine.<m>]),
-  which log in as agent only, on the Ships their scope allows
-  (agent:all, agent:tag:<tag>, agent:ship:<name>).
+  for the logins each may use (agent, to attach to the agent; owner, your own
+  login with sudo), on the Ships its scope allows: <login>:all,
+  <login>:tag:<tag>, <login>:ship:<name>. The Ship takes agent:* for agent and
+  owner:* for the owner login, so one never opens the other.
 
 Ships get what they need through `ship-ctl ssh-trust` (contracts/ship-ctl.md):
 the host certificate, the user CA public keys and a revocation list (KRL) of
@@ -54,6 +56,7 @@ ED25519_LINE = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\n]*)?$")
 CERT_LINE = re.compile(r"^ssh-ed25519-cert-v01@openssh\.com [A-Za-z0-9+/]+={0,2}( [^\n]*)?$")
 PRINCIPAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:_-]{0,252}$")
 SCOPE = re.compile(r"^(all|tag:[a-z0-9][a-z0-9-]{0,30}|ship:[a-z0-9][a-z0-9-]{0,30})$")
+LOGINS = ("agent", "owner")  # what a machine's certificate may log in as
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -150,6 +153,8 @@ class Machine:
     last_valid_before: str | None = None
     revoked: str | None = None
     issued: tuple[dict[str, Any], ...] = ()
+    logins: tuple[str, ...] = LOGINS  # absent in ships.toml: both, as before
+    logins_recorded: bool = True
 
     @classmethod
     def from_entry(cls, name: str, entry: dict[str, Any]) -> Machine:
@@ -163,11 +168,13 @@ class Machine:
             last_valid_before=entry.get("last_valid_before"),
             revoked=entry.get("revoked"),
             issued=tuple(dict(i) for i in entry.get("issued", ())),
+            logins=tuple(entry.get("logins", LOGINS)),
+            logins_recorded="logins" in entry,
         )
 
     @property
     def principals(self) -> list[str]:
-        return [principal_for(s) for s in self.scope]
+        return [principal_for(s, login) for login in self.logins for s in self.scope]
 
     def outlived(self) -> list[dict[str, Any]]:
         """Certificates issued for a wider scope than the machine has now."""
@@ -193,10 +200,27 @@ def machine(inventory: Inventory, name: str) -> Machine | None:
     return Machine.from_entry(name, entry) if entry else None
 
 
-def principal_for(scope: str) -> str:
+def principal_for(scope: str, login: str = "agent") -> str:
     if not SCOPE.match(scope):
         raise FleetError(f"Unknown scope {scope!r}: use all, tag:<tag> or ship:<name>.")
-    return f"agent:{scope}"
+    if login not in LOGINS:
+        raise FleetError(f"Unknown login {login!r}: use agent or owner.")
+    return f"{login}:{scope}"
+
+
+def parse_logins(text: str) -> list[str]:
+    """--logins agent | owner | both (or agent,owner)."""
+    wanted = list(LOGINS) if text.strip() == "both" else [
+        t.strip() for t in text.split(",") if t.strip()]
+    if not wanted or any(t not in LOGINS for t in wanted):
+        raise FleetError("--logins: agent (attach to the agent), owner (your own login, "
+                         "with sudo) or both.")
+    return [t for t in LOGINS if t in wanted]
+
+
+def logins_said(logins) -> str:
+    return {("agent",): "the agent's login", ("owner",): "your own login (sudo)",
+            LOGINS: "the agent's login and your own (sudo)"}[tuple(logins)]
 
 
 def host_principals(ship: Ship) -> list[str]:
@@ -604,7 +628,7 @@ def dial_name(ship: Ship, resolves) -> str:
 
 
 def ssh_config_text(machine_name: str, ships: Iterable[Ship], identity: str,
-                    hostnames: Mapping[str, str] | None = None) -> str:
+                    hostnames: Mapping[str, str] | None = None, user: str = "agent") -> str:
     base = BUNDLE_DIR_ON_MACHINE
     out = [
         f"# ShipShape Ships for {machine_name} (written by ship-fleet trust).",
@@ -615,7 +639,7 @@ def ssh_config_text(machine_name: str, ships: Iterable[Ship], identity: str,
             "",
             f"Host {ship.name}",
             f"  HostName {(hostnames or {}).get(ship.name, ship.names[0])}",
-            "  User agent",
+            f"  User {user}",
             f"  IdentityFile {identity}",
             f"  CertificateFile {base}/{machine_name}-cert.pub",
             "  IdentitiesOnly yes",
@@ -713,13 +737,17 @@ def write_bundle(
     identity: str,
     valid_before: datetime,
     hostnames: Mapping[str, str] | None = None,
+    user: str = "agent",
 ) -> Bundle:
     paths.private_dir(folder)
     files = {
         f"{machine_name}-cert.pub": cert + "\n",
         "known_hosts": known_hosts_text(ca, ships),
-        "config": ssh_config_text(machine_name, ships, identity, hostnames),
-        "install.sh": install_script(machine_name, [s.name for s in ships], identity),
+        "config": ssh_config_text(machine_name, ships, identity, hostnames, user),
+        # herdr attaches to the agent: only for a machine that may log in as agent.
+        "install.sh": install_script(machine_name,
+                                     [s.name for s in ships] if user == "agent" else [],
+                                     identity),
         "bundle.json": json.dumps({
             "schema": "shipshape.trust-bundle/1",
             "machine": machine_name,

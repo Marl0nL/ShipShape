@@ -733,3 +733,65 @@ def test_an_overlay_join_refreshes_this_computers_ssh_config(here):
     with_overlay(here)
     assert here.run("overlay", "join", "ship-01")[0] == 0
     assert "Host ship-01\n  HostName ship-01.example-tailnet.ts.net\n" in config.read_text()
+
+
+# --- which logins a machine may use (agent:*, owner:*) -----------------------------------
+
+
+def _cert_text(path):
+    return subprocess.run(["ssh-keygen", "-L", "-f", str(path)], capture_output=True,
+                          text=True).stdout
+
+
+def test_a_new_machine_logs_in_as_both_by_default_or_as_chosen(caenv, tmp_path):
+    for name, logins in (("laptop", None), ("shared", "agent"), ("admin-box", "owner")):
+        keygen(tmp_path / name, name)
+        argv = ["trust", name, "--key", str(tmp_path / f"{name}.pub"),
+                "--out", str(tmp_path / f"b-{name}")]
+        code, out, err = caenv.run(*argv, *(["--logins", logins] if logins else []))
+        assert code == 0, err
+    both = _cert_text(tmp_path / "b-laptop" / "laptop-cert.pub")
+    assert "agent:all" in both and "owner:all" in both
+    agent_only = _cert_text(tmp_path / "b-shared" / "shared-cert.pub")
+    assert "agent:all" in agent_only and "owner:" not in agent_only
+    owner_only = _cert_text(tmp_path / "b-admin-box" / "admin-box-cert.pub")
+    assert "owner:all" in owner_only and "agent:" not in owner_only
+    # An owner-only machine's SSH config logs in as you, and herdr is not set up.
+    config = (tmp_path / "b-admin-box" / "config").read_text()
+    assert "  User human\n" in config and "  User agent\n" not in config
+    assert "    for ship in ; do\n" in (tmp_path / "b-admin-box" / "install.sh").read_text()
+    assert ca.machine(caenv.store.load(), "shared").logins == ("agent",)
+    assert caenv.run("trust", "x", "--key", str(tmp_path / "laptop.pub"), "--logins",
+                     "root")[0] == 1
+
+
+def test_narrowing_a_machine_to_the_agent_revokes_its_owner_certificate(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+              "--out", str(tmp_path / "b1"))
+    both = (tmp_path / "b1" / "laptop-cert.pub").read_text()
+    _no_ssh_section(caenv)
+    code, out, err = caenv.run("trust", "laptop", "--logins", "agent",
+                               "--out", str(tmp_path / "b2"))
+    assert code == 0, err
+    assert "may now log in as the agent's login" in out
+    narrow = (tmp_path / "b2" / "laptop-cert.pub").read_text()
+    krl = _pushed_krl(caenv)
+    assert ca.krl_revokes(krl, both) and not ca.krl_revokes(krl, narrow)
+    assert "owner:" not in _cert_text(tmp_path / "b2" / "laptop-cert.pub")
+
+
+def test_machines_trusted_before_keep_both_and_are_told_once(caenv, tmp_path):
+    keygen(tmp_path / "old", "old")
+    with caenv.store.edit() as ed:  # as ships.toml had it before logins existed
+        ed.set_machine("old", {"public_key": (tmp_path / "old.pub").read_text().strip(),
+                               "added": "2026-01-01T00:00:00Z", "scope": ["all"]})
+    code, out, err = caenv.run("trust", "old", "--print-cert")
+    assert code == 0, err
+    assert "Machines trusted before keep what they had, both: old" in err  # stdout: cert
+    assert ca.machine(caenv.store.load(), "old").logins == ("agent", "owner")
+    cert = tmp_path / "old-cert.pub"
+    cert.write_text(out)
+    assert "owner:all" in _cert_text(cert) and "agent:all" in _cert_text(cert)
+    code, out, err = caenv.run("trust", "old", "--print-cert")
+    assert "trusted before" not in out + err  # once

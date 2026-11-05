@@ -142,6 +142,12 @@ class Fleet:
         except FleetError as exc:
             self._publish(Snapshot(None, [], None, error=exc.message))
             return
+        try:  # machines trusted before logins were recorded: both, said once
+            from fleetledger import trustcmd
+
+            trustcmd.migrate_logins(self.app.store_factory(), self.app.note)
+        except FleetError:
+            pass
         views = [status.cached_view(inv, ship, "Not checked yet.") for ship in inv.ships()]
         self._publish(Snapshot(inv, views, None))
 

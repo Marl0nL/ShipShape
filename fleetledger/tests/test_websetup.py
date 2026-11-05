@@ -917,3 +917,26 @@ def test_your_login_name_on_ships_from_the_setup_page(chosen):
     assert chosen.store.load().owner == "sam" and "New Ships get the login sam" in page(chosen)
     chosen.post("/setup/owner", {"owner": "agent"})
     assert chosen.store.load().owner == "sam" and "cannot be your login name" in page(chosen)
+
+
+# --- what each trusted machine may log in as ------------------------------------------
+
+
+def test_each_trusted_machine_logs_in_as_what_you_choose(chosen, tmp_path):
+    from fleetledger import ca
+
+    _key(tmp_path / "shared")
+    with chosen.store.edit() as ed:
+        ed.set_machine("shared", {"public_key": (tmp_path / "shared.pub").read_text().strip(),
+                                  "added": "2026-01-01T00:00:00Z", "scope": ["all"],
+                                  "logins": ["agent", "owner"]})
+    text = page(chosen)
+    assert "Trusted machines" in text and '<option value="both" selected>' in text
+    assert 'data-confirm-title="Change what shared may log in as?"' in text
+    chosen.post("/setup/machine", {"machine": "shared", "logins": "agent"})
+    assert ca.machine(chosen.store.load(), "shared").logins == ("agent",)
+    assert "may now log in as the agent" in page(chosen)
+    chosen.post("/setup/machine", {"machine": "shared", "logins": "root"})
+    assert ca.machine(chosen.store.load(), "shared").logins == ("agent",)
+    chosen.post("/setup/machine", {"machine": "nobody-here", "logins": "both"})
+    assert "No trusted machine called nobody-here" in page(chosen)

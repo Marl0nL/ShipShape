@@ -502,7 +502,11 @@ def test_an_owner_login_with_sudo_its_keys_and_certificates(ship):
     assert oct(sudoers.stat().st_mode & 0o777) == "0o440"
     assert ship.p("/etc/ssh/shipshape/keys/human").read_text() == OWNER_KEY + "\n"
     principals = ship.p("/etc/ssh/shipshape/principals")
-    assert (principals / "human").read_text() == (principals / "agent").read_text()
+    # The owner's own principals: a certificate for the agent's login never opens it.
+    assert (principals / "human").read_text() == (
+        "owner:all\nowner:tag:work\nowner:ship:ship-01\n")
+    assert (principals / "agent").read_text() == (
+        "agent:all\nagent:tag:work\nagent:ship:ship-01\n")
     dropin = next(ship.p("/etc/ssh/sshd_config.d").glob("*shipshape*")).read_text()
     assert "AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/shipshape/keys/%u" in dropin
     assert "\nAllowUsers human\n" in dropin  # beside 10-shipshape.conf's fleet and agent
