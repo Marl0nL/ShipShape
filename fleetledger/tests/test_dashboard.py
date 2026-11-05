@@ -158,7 +158,9 @@ def test_alerts_are_ranked_with_a_fix_each(store):
                                                          "ship-fleet reboot ship-01")
     assert dict(reboot.fields) == {"operation": "reboot", "ship": "ship-01"}
     assert reboot.confirm.danger and reboot.confirm.title == "Reboot ship-01?"
-    assert by_code["host-cert-expiring"].action.value == "ship-fleet ca sign ship-01"
+    renew = by_code["host-cert-expiring"].action
+    assert (renew.kind, renew.value, renew.title) == ("post", "/ships/ship-01/certs/renew",
+                                                      "ship-fleet ca sign ship-01")
     assert by_code["behind-tooling"].level == "notice"
     assert dict(by_code["behind-tooling"].action.fields)["operation"] == "update"
     assert by_code["agent-waiting"].waiting
@@ -204,9 +206,9 @@ def test_off_the_overlay_only_when_one_is_configured(store):
 @pytest.mark.parametrize("code, kind", [
     ("reboot-required", "post"), ("herdr-restart-pending", "post"), ("behind-tooling", "post"),
     ("not-on-overlay", "post"), ("unreachable", "post"),
-    # These need a shell, or wait for later PRs (certificates, overlay): copy the command.
+    ("host-cert-expiring", "post"), ("ssh-trust-behind", "post"),
+    # These need a shell, or wait for a later PR (overlay): copy the command.
     ("agent-waiting", "command"), ("disk-nearly-full", "command"),
-    ("host-cert-expiring", "command"), ("ssh-trust-behind", "command"),
     ("overlay-down", "command"),
 ])
 def test_fixes_the_ui_can_do_are_buttons(code, kind):
@@ -214,8 +216,10 @@ def test_fixes_the_ui_can_do_are_buttons(code, kind):
     assert action.kind == kind
     if kind == "post":
         assert action.title.startswith("ship-fleet ")  # the CLI equivalent, as a tooltip
-        # Anything that changes the Ship goes through the dialog; checking again does not.
-        assert (action.confirm is None) == (code == "unreachable")
+        # Anything that changes the Ship goes through the dialog; checking again and
+        # renewing a certificate (no access changes) do not.
+        assert (action.confirm is None) == (code in ("unreachable", "host-cert-expiring",
+                                                     "ssh-trust-behind"))
 
 
 def test_unknown_codes_link_to_the_ship(store):
