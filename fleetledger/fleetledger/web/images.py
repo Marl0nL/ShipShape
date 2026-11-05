@@ -54,12 +54,21 @@ async def use(request: Request) -> Response:
     if image is None:
         _flash(request, "bad", "Choose an image (or the stock template).")
         return _back()
+    if ui_of(request).jobs.busy([], [_lock(image)]):
+        _flash(request, "bad", f"{image} is being published or removed; wait for it to finish.")
+        return _back()
     code, lines = await run_in_threadpool(run_now, ui_of(request).app, ["image", "use", image])
     _flash(request, "ok" if code == 0 else "bad", " ".join(lines) or "Done.")
     return _back()
 
 
-def _start(request: Request, argv: list[str], title: str) -> None:
+def _lock(image: str) -> str:
+    """The job lock for one image: one Publish or Remove of it at a time, so a second
+    click cannot upload it twice (orphaning a template) or forget it mid-upload."""
+    return f"image {image}"
+
+
+def _start(request: Request, image: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
     from fleetledger.web.app import ui_of
     from fleetledger.web.runs import RecordingApp
@@ -70,7 +79,7 @@ def _start(request: Request, argv: list[str], title: str) -> None:
         return jobs.run_cli(RecordingApp(ui.app, job), argv, job)
 
     try:
-        ui.jobs.start("image", [], run, title=title)
+        ui.jobs.start("image", [], run, title=title, locks=[_lock(image)])
     except FleetError as exc:
         _flash(request, "bad", exc.message)
         return
@@ -84,13 +93,13 @@ async def publish(request: Request) -> Response:
     vmid = one(fields, "template_vmid")
     if image is None:
         _flash(request, "bad", "Choose an image.")
-    elif vmid and not vmid.isdigit():
+    elif vmid and not (vmid.isascii() and vmid.isdigit()):
         _flash(request, "bad", "A template VM id is a number, such as 9181.")
     elif vmid:
-        _start(request, ["image", "publish", image, "--template-vmid", vmid],
+        _start(request, image, ["image", "publish", image, "--template-vmid", vmid],
                f"Record template {vmid} for {image}")
     else:
-        _start(request, ["image", "publish", image], f"Publish {image}")
+        _start(request, image, ["image", "publish", image], f"Publish {image}")
     return _back()
 
 
@@ -104,7 +113,7 @@ async def remove(request: Request) -> Response:
         _flash(request, "bad", "Tick the box to confirm.")
     else:
         keep = one(fields, "keep_file") == "yes"
-        _start(request, ["image", "rm", image, *(["--keep-file"] if keep else [])],
+        _start(request, image, ["image", "rm", image, *(["--keep-file"] if keep else [])],
                f"Remove {image}")
     return _back()
 

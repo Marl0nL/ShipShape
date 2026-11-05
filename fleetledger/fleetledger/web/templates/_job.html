@@ -1,15 +1,25 @@
-{# One background job (web.jobs): its progress while it runs, its outcome once done. #}
-<article class="flow job {{ ("ok" if job.ok else "failed") if job.done else "working" }}" id="job-{{ job.id }}"
+{# One background job (web.jobs): its progress while it runs, its outcome once done.
+   A job whose driver left the work to you (result.by_hand) reads "by hand", even when
+   the command then exits non-zero to say it is not finished (image rm on the manual
+   driver): its card shows the steps and the command's own next step, not "failed". #}
+{% set by_hand = job.done and job.result.by_hand and not job.error %}
+<article class="flow job {{ ("ok" if job.ok or by_hand else "failed") if job.done else "working" }}" id="job-{{ job.id }}"
   {% if not job.done %}hx-get="/jobs/{{ job.id }}?v={{ job.version }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-  <header><strong>{{ job.title }}</strong> · {{ job.ships|join(", ") }}
-    {% if job.done and job.ok and job.result.by_hand %}<span class="pill muted">by hand</span>
+  <header><strong>{{ job.title }}</strong>{% if job.ships %} · {{ job.ships|join(", ") }}{% endif %}
+    {% if by_hand %}<span class="pill muted">by hand</span>
     {% else %}<span class="pill {{ (("ok" if job.ok else "failed") if job.done else "working")|pill }}">{{ ("done" if job.ok else "failed") if job.done else "running" }}</span>{% endif %}
     <span class="when">started {{ clock(job.started) }}</span></header>
   {% if job.error %}<p class="flash bad">{{ job.error }}</p>{% endif %}
-  {% if job.done and job.result.outcome %}{% with outcome=job.result.outcome, unsupported=None %}{% include "_outcome.html" %}{% endwith %}{% endif %}
+  {% set lines = job.snapshot() %}
+  {% if job.done and job.result.outcome %}
+  {% set o = job.result.outcome %}
+  {% set shown = (o.messages|list) + (o.instructions|list) %}
+  {# what the command said besides the driver's answer: its next step, or why not #}
+  {% set said = lines|map("trim")|reject("in", shown)|list %}
+  {% with outcome=o, unsupported=None, then=said %}{% include "_outcome.html" %}{% endwith %}
+  {% endif %}
   {% for o in job.outcomes %}
   <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
   {% endfor %}
-  {% set lines = job.snapshot() %}
   {% if lines and (not job.done or not (job.outcomes or job.result.outcome)) %}<pre class="log{% if job.done and not job.ok %} bad{% endif %}">{{ lines|join("\n") }}</pre>{% endif %}
 </article>

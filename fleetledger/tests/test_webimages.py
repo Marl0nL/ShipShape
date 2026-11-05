@@ -3,13 +3,14 @@ images, each through `ship-fleet image`, with a fake driver."""
 
 import hashlib
 import subprocess
+import threading
 
 import pytest
 from fleetledger.drivers.base import Outcome
 from test_cli import IMG, add_image
 from test_web import wait_for, web  # noqa: F401 - the web UI fixture
 
-from fleetledger import firstrun
+from fleetledger import firstrun, images
 
 
 class FakeDriver:
@@ -60,7 +61,13 @@ def test_the_images_section(imaged, monkeypatch):
     page = _settings(imaged)
     section = page[page.index('id="images"'):page.index('id="activity"')]
     assert IMG in section and "20261016" in section and "chrome-devtools-axi" in section
-    assert 'action="/settings/images/use"' in section
+    row = section[section.index(f"<code>{IMG}</code>"):]
+    row = row[:row.index("</tr>")]
+    cells = [c.split(">", 1)[1].split("<", 1)[0].strip() for c in row.split("<td")[1:6]]
+    assert cells == ["20261016", "0.1.0", "chrome-devtools-axi", "-", "0"]
+    assert ">kept</td>" in row
+    # Not published to the default driver (manual): Use would be refused, so not offered.
+    assert "Use for new Ships" not in section
     assert "Publish to manual" in section  # not published to the default driver yet
     assert 'action="/settings/images/remove"' in section and 'name="keep_file"' in section
     assert 'data-copy="ship-fleet image build"' in section
@@ -97,12 +104,91 @@ def test_the_manual_driver_shows_the_steps(imaged):
     assert '<span class="pill muted">by hand</span>' in card
 
 
+def test_the_listing_is_the_data_image_ls_prints(imaged):
+    with imaged.store.edit() as ed:
+        ed.set_image_field(IMG, "published", {"proxmox": {"template_vmid": 9181}})
+        ed.set_image_field(IMG, "dirty", True)
+        ed.set_default("image", IMG)
+        ed.doc["ship"]["ship-01"]["image"] = IMG
+    (row,) = images.listing(imaged.store.load())
+    assert row == {"id": IMG, "ubuntu": "20261016", "tooling": "0.1.0", "dirty": True,
+                   "recipes": ["chrome-devtools-axi"],
+                   "published": {"proxmox": {"template_vmid": 9181}}, "ships": 1,
+                   "file": True, "pinned": True}
+    with imaged.store.edit() as ed:
+        ed.set_image_field(IMG, "file", None)
+        ed.set_default("image", None)
+    (row,) = images.listing(imaged.store.load())
+    assert row["file"] is False and row["pinned"] is False
+
+
+class SlowDriver(FakeDriver):
+    """A Publish that takes until the test lets it finish."""
+
+    def __init__(self):
+        super().__init__()
+        self.go = threading.Event()
+
+    def publish_image(self, image):
+        self.go.wait(10)
+        return super().publish_image(image)
+
+
+def test_one_job_per_image_a_second_publish_or_remove_is_refused(imaged):
+    from fleetledger.drivers import get_driver
+
+    slow = SlowDriver()
+    imaged.app.driver_factory = lambda inv, d: slow if d == "proxmox" else get_driver(inv, d)
+    with imaged.store.edit() as ed:
+        ed.set_default("driver", "proxmox")
+    imaged.post("/settings/images/publish", {"image": IMG})
+    imaged.post("/settings/images/publish", {"image": IMG})  # a double click
+    assert f"already running on image {IMG}" in _settings(imaged)
+    imaged.post("/settings/images/remove", {"image": IMG, "confirm": "yes"})
+    assert f"already running on image {IMG}" in _settings(imaged)
+    imaged.post("/settings/images/use", {"image": IMG})
+    assert "being published or removed" in _settings(imaged)
+    assert len(imaged.app_ui.jobs.recent()) == 1
+    slow.go.set()
+    job = _job(imaged)
+    assert job.ok and slow.published == [IMG] and slow.removed == []
+    assert job.locks == [f"image {IMG}"]
+    imaged.post("/settings/images/remove", {"image": IMG, "confirm": "yes"})  # free again
+    wait_for(lambda: len(imaged.app_ui.jobs.recent()) == 2
+             and imaged.app_ui.jobs.recent()[0].done)
+    assert imaged.app_ui.jobs.recent()[0].ok and slow.removed
+
+
+def test_remove_on_the_manual_driver_reads_by_hand_with_the_next_step(imaged):
+    with imaged.store.edit() as ed:
+        ed.set_image_field(IMG, "published", {"manual": {"template_vmid": 9182}})
+    imaged.post("/settings/images/remove", {"image": IMG, "confirm": "yes"})
+    job = _job(imaged)
+    assert not job.ok and job.result["by_hand"]  # the CLI says it is not finished
+    card = imaged.client.get(f"/jobs/{job.id}").text
+    assert '<span class="pill muted">by hand</span>' in card and ">failed<" not in card
+    assert "Do this on your hypervisor" in card
+    assert (f"Image {IMG} is still published to manual; remove it there, then run this "
+            "again.") in card  # the command's own next step, on the card
+    assert 'class="log' not in card  # not the raw log as well
+    assert IMG in imaged.store.load().images
+
+
+def test_remove_deletes_the_file_unless_kept(imaged):
+    with imaged.store.edit() as ed:
+        ed.set_image_field(IMG, "published", {"proxmox": {"template_vmid": 9181}})
+    imaged.post("/settings/images/remove", {"image": IMG, "confirm": "yes"})
+    assert _job(imaged).ok
+    assert IMG not in imaged.store.load().images and not imaged.qcow.exists()
+
+
 def test_recording_a_template_vm_id(imaged):
     imaged.post("/settings/images/publish", {"image": IMG, "template_vmid": "9182"})
     assert _job(imaged).ok
     assert imaged.store.load().images[IMG]["published"] == {"manual": {"template_vmid": 9182}}
-    imaged.post("/settings/images/publish", {"image": IMG, "template_vmid": "92a"})
-    assert len(imaged.app_ui.jobs.recent()) == 1  # not a number: refused
+    for bad in ("92a", "9²"):  # not a number, or not an ASCII one: refused
+        imaged.post("/settings/images/publish", {"image": IMG, "template_vmid": bad})
+    assert len(imaged.app_ui.jobs.recent()) == 1
 
 
 def test_remove_needs_the_tick_refuses_the_pinned_image_and_can_keep_the_file(imaged):

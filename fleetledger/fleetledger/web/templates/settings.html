@@ -106,7 +106,7 @@
       <td>{{ i.ships }}</td>
       <td>{{ "kept" if i.file else "-" }}</td>
       <td class="row-actions">
-        {% if not i.pinned %}
+        {% if not i.pinned and default_driver in i.published %}
         <form method="post" action="/settings/images/use" class="inline">
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <input type="hidden" name="image" value="{{ i.id }}">
