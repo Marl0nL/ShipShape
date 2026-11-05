@@ -874,15 +874,15 @@ def test_update_and_reboot_run_the_shared_operations_in_the_background(web, monk
     assert calls[0][:2] == ("update", ["ship-01"])
     assert calls[0][2]["reboot_policy"] == "auto" and calls[0][2]["wait"] is True
     page = web.client.get("/partials/fleet").text
-    assert "Updates and reboots" in page and "converging to 0.2.0" in page
+    assert "Activity" in page and "converging to 0.2.0" in page
     # One at a time per Ship.
     web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
     assert "already running" in web.client.get("/").text
     release.set()
-    wait_for(lambda: all(op.done for op in web.app_ui.operations.recent()))
+    wait_for(lambda: all(op.done for op in web.app_ui.jobs.recent()))
     assert "updated to 0.2.0" in web.client.get("/partials/fleet").text
     web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
-    wait_for(lambda: len(calls) == 2 and web.app_ui.operations.recent()[0].done)
+    wait_for(lambda: len(calls) == 2 and web.app_ui.jobs.recent()[0].done)
     assert calls[1][:2] == ("reboot", ["ship-01"]) and calls[1][2]["wait"] is True
     page = web.client.get("/partials/fleet").text
     assert "did not come back" in page and "agent main did not come back" in page
@@ -1092,3 +1092,32 @@ def test_the_ship_page_says_how_to_connect_as_yourself(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
     assert "ship-fleet ssh ship-01 --as owner" in page
+
+
+def test_a_job_shows_on_the_fleet_page_its_ships_page_and_in_any_session(web, monkeypatch):
+    release = threading.Event()
+
+    def slow_update(fleet, ships, **kw):
+        kw["on_event"](ships[0].name, "converging")
+        release.wait(10)
+        return [ops.Outcome(s.name, True, "updated") for s in ships]
+
+    monkeypatch.setattr(ops, "update", slow_update)
+    web.sign_in()
+    response = web.post("/operations", {"operation": "update", "ship": "ship-01",
+                                        "confirm": "yes"})
+    assert response.headers["location"].startswith("/ships/ship-01")  # back to the Ship
+    job = web.app_ui.jobs.recent()[0]
+    wait_for(lambda: job.snapshot())
+    assert f'id="job-{job.id}"' in web.client.get("/ships/ship-01").text
+    other = TestClient(web.client.app, base_url=BASE, follow_redirects=False)
+    web.sign_in(other)
+    assert "converging" in other.get("/partials/fleet").text  # not tied to a session
+    card = web.client.get(f"/jobs/{job.id}?v={job.version}")
+    assert card.status_code == 204  # unchanged
+    release.set()
+    wait_for(lambda: job.done)
+    card = web.client.get(f"/jobs/{job.id}?v=0")
+    assert card.status_code == 200 and "updated" in card.text and "hx-get" not in card.text
+    assert web.client.get("/jobs/9999").status_code == 286  # gone: stop polling
+    assert web.client.get("/jobs/nope").status_code == 286

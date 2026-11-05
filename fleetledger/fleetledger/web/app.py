@@ -37,6 +37,7 @@ from fleetledger.web import actions, dashboard, network, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
+from fleetledger.web.jobs import Jobs
 from fleetledger.web.security import Gate, GateMiddleware, Session
 
 HERE = Path(__file__).resolve().parent
@@ -72,7 +73,7 @@ class UI:
     gate: Gate
     fleet: Fleet
     concierge: Concierge
-    operations: actions.Operations
+    jobs: Jobs  # every background job: update, reboot, join, making a Ship ...
     env: Environment
     setups: Any = None  # web.setup.Setups: each session's progress through /setup
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
@@ -208,7 +209,7 @@ def not_found(request: Request, what: str) -> Response:
 
 
 def _fleet_version(ui: UI) -> str:
-    return f"{ui.fleet.version}.{ui.concierge.version}.{ui.operations.version}"
+    return f"{ui.fleet.version}.{ui.concierge.version}.{ui.jobs.version}"
 
 
 def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
@@ -223,7 +224,7 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
         "alerts": alerts,
         "summary": dashboard.summary(views, alerts, snap.inventory),
         "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
-        "operations": ui.operations.recent(),
+        "jobs": ui.jobs.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
     }
@@ -314,6 +315,7 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "items": attention_items([view]),
         "expected": expected,
         "flows": flows,
+        "jobs": ui.jobs.for_ship(name),
         "workspaces": workspaces,
         "snap": snap,
         **_attach_context(inv, view.ship),
@@ -554,14 +556,28 @@ async def fleet_operation(request: Request) -> Response:
     try:
         inv = ui.app.store_factory().load()
         chosen = ops.select(inv, [name] if name else [], tag or None, everything=not (name or tag))
-        ui.operations.start(operation, [s.name for s in chosen])
+        actions.start_operation(ui.jobs, ui.app, operation, [s.name for s in chosen])
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(where)
     label = {"join": "Joining the overlay"}.get(operation, operation.capitalize())
-    ui.flash(session, "ok", f"{label} started; its progress is on the "
-             "Fleet page.")
+    if name:  # started from the Ship's page: back there, where its job shows
+        ui.flash(session, "ok", f"{label} started; its progress is below.")
+        return back(where)
+    ui.flash(session, "ok", f"{label} started; its progress is under Activity.")
     return back("/", tag=tag)
+
+
+async def job_card(request: Request) -> Response:
+    """One job's card, for htmx polling: 204 while unchanged, 286 (stop) once gone."""
+    ui = ui_of(request)
+    raw = request.path_params.get("job", "")
+    job = ui.jobs.get(int(raw)) if raw.isdigit() else None
+    if job is None:
+        return Response(status_code=286)
+    if request.query_params.get("v") == str(job.version):
+        return Response(status_code=204)
+    return partial(request, "_job.html", job=job)
 
 
 # --- network visibility ----------------------------------------------------------------
@@ -797,8 +813,8 @@ async def audit_page(request: Request) -> Response:
 
 
 def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
-               concierge_: Concierge | None = None, start_page: str | None = None
-               ) -> Starlette:
+               concierge_: Concierge | None = None, start_page: str | None = None,
+               jobs: Jobs | None = None) -> Starlette:
     """The ASGI app behind the gate. `app` is a cli.App (the outside world)."""
     fleet = fleet or Fleet(app)
     concierge_ = concierge_ or Concierge(
@@ -832,12 +848,13 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/flows/{flow}/terminal", flow_terminal),
         WebSocketRoute("/flows/{flow}/ws", flow_socket),
         Route("/audit", audit_page),
+        Route("/jobs/{job}", job_card),
         *setup.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)
-    operations = actions.Operations(app, on_finished=fleet.poll)
     web.state.ui = UI(app=app, gate=gate, fleet=fleet, concierge=concierge_,
-                      operations=operations, env=make_env(), setups=setup.Setups(),
-                      start_page=start_page)
+                      jobs=jobs or Jobs(app, on_finished=lambda ships: fleet.poll(ships)),
+                      env=make_env(),
+                      setups=setup.Setups(), start_page=start_page)
     return GateMiddleware(web, gate)

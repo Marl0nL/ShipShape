@@ -53,21 +53,10 @@
   {% endif %}
 </section>
 
-{% if operations %}
-<section class="operations">
-  <h2>Updates and reboots</h2>
-  {% for op in operations %}
-  <article class="flow">
-    <header><strong>{{ op.kind|capitalize }}</strong> · {{ op.ships|join(", ") }}
-      <span class="pill {{ (("ok" if op.ok else "failed") if op.done else "working")|pill }}">{{ ("done" if op.ok else "failed") if op.done else "running" }}</span>
-      <span class="when">started {{ clock(op.started) }}</span></header>
-    {% if op.error %}<p class="flash bad">{{ op.error }}</p>{% endif %}
-    {% for o in op.outcomes %}
-    <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
-    {% endfor %}
-    {% if not op.done and op.events %}<pre class="log">{{ op.events|list|join("\n") }}</pre>{% endif %}
-  </article>
-  {% endfor %}
+{% if jobs %}
+<section class="operations activity">
+  <h2>Activity</h2>
+  {% for job in jobs %}{% include "_job.html" %}{% endfor %}
 </section>
 {% endif %}
 

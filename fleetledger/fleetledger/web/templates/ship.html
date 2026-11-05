@@ -13,6 +13,11 @@
 </section>
 {% from "_macros.html" import ship_action_bar with context %}
 {{ ship_action_bar() }}
+{% if jobs %}
+<section class="ship-jobs">
+  {% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}
+</section>
+{% endif %}
 <nav class="tabs">
   {% for t, label in (("overview", "Overview"), ("settings", "Settings"), ("logs", "Logs"), ("network", "Network")) %}
   <a href="/ships/{{ ship.name }}{% if t != "overview" %}/{{ t }}{% endif %}" class="{% if tab == t %}on{% endif %}">{{ label }}</a>
