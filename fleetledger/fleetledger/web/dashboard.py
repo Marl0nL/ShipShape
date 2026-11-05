@@ -25,7 +25,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from fleetledger import net
+from fleetledger import net, trustcmd
+from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory
 from fleetledger.status import ShipView
 from fleetledger.web import charts
@@ -71,8 +72,11 @@ def range_key(value: str | None) -> str:
 # --- alerts -----------------------------------------------------------------------
 
 
-def action_for(code: str, ship: str, view: ShipView | None, signin: str | None) -> Action:
-    """The one action that fixes an attention code on a Ship."""
+def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
+               attach_here: bool = False) -> Action:
+    """The one action that fixes an attention code on a Ship. attach_here: this
+    computer can reach the Ship with plain herdr --remote (trustcmd.attaches_here),
+    so that is the command offered for a waiting agent; else ship-fleet ssh."""
     if signin:
         return Action("signin", "Sign in", signin)
     if code.startswith("signin-"):
@@ -80,9 +84,8 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None) 
     commands = {
         "unreachable": ("Switched on and on the network? Then check again:",
                         f"ship-fleet status {ship}"),
-        "agent-waiting": ("Answer it in herdr:",
-                          f"herdr --remote agent@{view.ship.names[0]}" if view
-                          else f"ship-fleet ssh {ship}"),
+        "agent-waiting": ("Attach to answer it:",
+                          f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
         "host-cert-expired": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
         "host-cert-expiring": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
         "host-cert-missing": ("Sign its host key:", f"ship-fleet ca sign {ship}"),
@@ -139,6 +142,16 @@ def alerts(views: Sequence[ShipView], items: Sequence[Item], flows_waiting: Sequ
     """Every alert, most severe first; within a level, sign-ins in progress first,
     then in the order of ops.attention."""
     by_name = {v.ship.name: v for v in views}
+
+    def attaches(name: str) -> bool:
+        view = by_name.get(name)
+        if inventory is None or view is None:
+            return False
+        try:
+            return trustcmd.attaches_here(inventory, view.ship)
+        except (FleetError, OSError, ValueError):
+            return False
+
     found = [
         Alert("critical", f.ship, "signin", f"{f.label} sign-in is waiting for you.",
               Action("link", "Open", f"/signin?batch={f.batch}"), f"signin/{f.id}")
@@ -147,7 +160,8 @@ def alerts(views: Sequence[ShipView], items: Sequence[Item], flows_waiting: Sequ
     for item in [*items, *derived(views, inventory, items)]:
         found.append(Alert(
             LEVEL_OF.get(item.level, "warning"), item.ship, item.code, item.message,
-            action_for(item.code, item.ship, by_name.get(item.ship), item.signin),
+            action_for(item.code, item.ship, by_name.get(item.ship), item.signin,
+                       item.code == "agent-waiting" and attaches(item.ship)),
             item.key, waiting=item.code == "agent-waiting",
         ))
     order = {level: i for i, level in enumerate(LEVELS)}

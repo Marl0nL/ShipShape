@@ -158,8 +158,18 @@ def test_alerts_are_ranked_with_a_fix_each(store):
     assert by_code["behind-tooling"].level == "notice"
     assert by_code["behind-tooling"].action.value == "ship-fleet update ship-01"
     assert by_code["agent-waiting"].waiting
-    assert by_code["agent-waiting"].action.value == "herdr --remote agent@ship-01.local"
+    assert by_code["agent-waiting"].action.value == "ship-fleet ssh ship-01"  # not trusted here
     assert by_code["disk-nearly-full"].action.kind == "command"
+
+
+def test_a_waiting_agent_gets_herdr_remote_only_when_it_works_from_here(store, monkeypatch):
+    from fleetledger import trustcmd
+
+    views = [view(store)]
+    monkeypatch.setattr(trustcmd, "attaches_here", lambda inv, ship: ship.name == "ship-01")
+    found = dashboard.alerts(views, attention_items(views), [], store.load())
+    waiting = next(a for a in found if a.code == "agent-waiting")
+    assert waiting.action.value == "herdr --remote ship-01"
 
 
 @pytest.mark.parametrize("disk, level", [
@@ -311,7 +321,7 @@ def test_dashboard_page(web, home):  # noqa: F811
     page = web.client.get("/?range=7d").text
     assert "Ships up" in page and "Needs attention" in page and "The last 7 days" in page
     assert 'class="sev-tag lvl-warning"' in page  # the waiting agent: icon and word
-    assert 'data-copy="herdr --remote agent@ship-01.local"' in page  # the fix, copyable
+    assert 'data-copy="ship-fleet ssh ship-01"' in page  # the fix, copyable
     assert '<svg class="plot"' in page and "spark-plot" in page
     assert not re.search(r"\sstyle=", page)  # the CSP allows no inline styles
     assert "<script>" not in page
@@ -334,7 +344,7 @@ def test_ship_page_alerts_match_the_dashboard(web):  # noqa: F811
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
     assert 'class="sev-tag lvl-warning"' in page  # the waiting agent: icon and word
-    assert 'data-copy="herdr --remote agent@ship-01.local"' in page  # and its fix
+    assert 'data-copy="ship-fleet ssh ship-01"' in page  # and its fix
 
 
 def test_charts_partial_answers_204_when_nothing_changed(web):  # noqa: F811

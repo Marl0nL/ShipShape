@@ -149,7 +149,8 @@ that differ). Above them come any sign-ins in the browser that are waiting for
 you. Each alert carries its fix: a one-click **Sign in**, a link to the log or
 setting, or the exact command with a **Copy** button (`ship-fleet reboot ship-01`,
 `ship-fleet ca sign ship-01`, `ship-fleet overlay join ship-01`,
-`herdr --remote agent@...` for a waiting agent). Unknown attention codes from
+`herdr --remote ship-01` for a waiting agent when this computer is trusted, else
+`ship-fleet ssh ship-01`). Unknown attention codes from
 newer Ships are shown as they are, with a link to the Ship.
 
 ### History and charts
