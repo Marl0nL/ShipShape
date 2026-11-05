@@ -27,7 +27,7 @@
   --paper-muted: #634830;
   --paper-accent: #0b5a53;  /* verdigris: links */
   --deck-ink: #f6e8c8;
-  --deck-muted: #dcc49a;
+  --deck-muted: #e6d0ac;  /* >= 4.5:1 on the grain's brightest streaks */
   --deck-accent: #f2cf7c;   /* brass: links on the deck */
   --ink: var(--paper-ink);
   --muted: var(--paper-muted);
@@ -48,6 +48,12 @@
   /* chart series (validated: colourblind-safe and >= 3:1 on parchment) */
   --s1: #008a7c; --s2: #c0571f; --s3: #5260c0;
   --grid: #e3d3b0;
+  /* brass corner plates for parchment panels (see "parchment surfaces") */
+  --plates:
+    linear-gradient(135deg, var(--brass) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) top left / 14px 14px no-repeat,
+    linear-gradient(225deg, var(--brass) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) top right / 14px 14px no-repeat,
+    linear-gradient(45deg, var(--brass) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) bottom left / 14px 14px no-repeat,
+    linear-gradient(315deg, var(--brass) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) bottom right / 14px 14px no-repeat;
   /* type */
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L",
     P052, Georgia, serif;
@@ -100,6 +106,7 @@ body {
     var(--bg);
   background-size: auto, 480px 240px, auto;
   --ink: var(--deck-ink); --muted: var(--deck-muted); --accent: var(--deck-accent);
+  --focus: var(--deck-accent);  /* the focus ring: brass on the deck, verdigris on paper */
 }
 
 /* Text on the deck and on parchment: everything with a light surface of its own
@@ -108,11 +115,12 @@ table, ul.alerts, .grid > div, article.flow, section.setup-step, .tile, .ship-ca
 figure.chart, dialog.confirm-dialog, .flash, .warning, .notice, .pill, .chip,
 input, select, textarea, nav.tabs a.on, code.cmd {
   --ink: var(--paper-ink); --muted: var(--paper-muted); --accent: var(--paper-accent);
+  --focus: var(--s1);
   color: var(--ink);
 }
 a { color: var(--accent); text-underline-offset: 2px; }
 a:hover { text-decoration-thickness: 2px; }
-:focus-visible { outline: 3px solid var(--s1); outline-offset: 2px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 code, pre { font-family: var(--mono); font-size: 13px; }
 h1, h2, h3, .brand, .chart-title { font-family: var(--serif); letter-spacing: .01em; }
 h1 { font-size: 26px; margin: 8px 0 4px; font-weight: 700; }
@@ -158,14 +166,6 @@ main { max-width: 1400px; margin: 0 auto; padding: 22px 24px 48px; }
 /* --- parchment surfaces --------------------------------------------------------- */
 /* Square-cut, like hull plates. Panels carry small brass plates on their corners
    (--plates); tiles have rivets instead (below). */
-:root {
-  --plate: var(--brass);
-  --plates:
-    linear-gradient(135deg, var(--plate) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) top left / 14px 14px no-repeat,
-    linear-gradient(225deg, var(--plate) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) top right / 14px 14px no-repeat,
-    linear-gradient(45deg, var(--plate) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) bottom left / 14px 14px no-repeat,
-    linear-gradient(315deg, var(--plate) 0 6px, var(--brass-lo) 6px 7px, transparent 7px) bottom right / 14px 14px no-repeat;
-}
 table, ul.alerts, .tile, .flash, .warning, .notice {
   background: url("/static/paper.svg") 0 0 / 300px 300px, var(--panel);
 }
@@ -179,10 +179,13 @@ table, ul.alerts, .tile, .flash, .warning, .notice {
   }
   .flash, .warning, .notice { background-image: none; }
 }
-/* Pills, chips and counts are cut like nameplates. */
+/* Pills, chips and counts are cut like nameplates. The clip also cuts off any
+   outline, so a focused chip (the only focusable one) shows its ring inside the
+   shape instead: two-tone, so it reads on parchment and on brass alike. */
 .pill, .chip, .count, .badge {
   clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 5px 100%, 0 50%);
 }
+.chip:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #2a1c10, inset 0 0 0 4px #fff6e0; }
 
 table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--line-strong);
   overflow: hidden; box-shadow: var(--shadow); }
@@ -458,6 +461,7 @@ details.table-view summary { font-size: 12px; }
 }
 @media print {
   body, header.top { background: none; color: #000; }
+  body { --ink: var(--paper-ink); --muted: var(--paper-muted); --accent: var(--paper-accent); }
   header.top::after, .tile::before { display: none; }
 }
 
