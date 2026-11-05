@@ -45,7 +45,7 @@
       <input type="hidden" name="operation" value="{{ op }}">
       {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
       <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
-      <button type="submit" class="ghost">{{ op|capitalize }} {% if tag %}every {{ tag }} Ship{% else %}every Ship{% endif %}</button>
+      <button type="submit" class="ghost">{{ op|capitalize }} {{ every }}</button>
     </form>
     {% endfor %}
   </div>

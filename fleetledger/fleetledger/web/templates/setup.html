@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import store_radios %}
 {% block title %}Set up · FleetLedger{% endblock %}
 {% block body %}
 <h1>Set up FleetLedger</h1>
@@ -11,7 +12,7 @@
 <ol class="steps">
   {% for step in steps %}
   <li class="step {{ step.state }}"><a href="#{{ step.key }}">{{ step.title }}</a>
-    <span class="pill {{ {'done': 'good', 'next': 'warn', 'skipped': 'muted'}.get(step.state, 'muted') }}">{{ {'done': 'done', 'next': 'next', 'later': 'later', 'optional': 'optional', 'skipped': 'skipped'}[step.state] }}</span>
+    <span class="pill {{ {'done': 'good', 'next': 'warn', 'skipped': 'muted'}.get(step.state, 'muted') }}">{{ step.state }}</span>
     {% if step.summary %}<span class="quiet">{{ step.summary }}</span>{% endif %}</li>
   {% endfor %}
 </ol>
@@ -51,7 +52,7 @@
             copied disk.</p>
         </fieldset>
         <label class="field">Or another public key file <input name="your_key_other" placeholder="~/.ssh/other.pub"></label>
-        <label class="field">Fleet admin key <input name="admin_key" placeholder="{{ '~/.ssh/shipshape_fleet_ed25519' }}"></label>
+        <label class="field">Fleet admin key <input name="admin_key" placeholder="~/.ssh/shipshape_fleet_ed25519"></label>
         <label class="field">Host CA key <input name="host_ca_key" placeholder="~/.ssh/shipshape_host_ca_ed25519"></label>
         <label class="field">User CA key <input name="user_ca_key" placeholder="~/.ssh/shipshape_user_ca_ed25519"></label>
       </details>
@@ -280,8 +281,7 @@
       <button type="button" class="ghost" data-copy="{{ token_commands|join('\n') }}">Copy</button>
     </details>
     <details class="advanced"><summary>Advanced</summary>
-      <label><input type="radio" name="store" value="keyring"{% if keyring_usable %} checked{% else %} disabled{% endif %}> keep the secret in your OS keyring</label>
-      <label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}> in a file only you can read (0600)</label>
+      {{ store_radios(keyring_usable) }}
     </details>
     <button type="submit">Check the token</button>
   </form>
@@ -425,8 +425,7 @@
     <details class="advanced"><summary>Advanced</summary>
       <label><input type="radio" name="level" value="keys" checked> keys only (Auth Keys: Write)</label>
       <label><input type="radio" name="level" value="devices"> also remove destroyed Ships' devices (adds devices:core, which can change any device in your tailnet)</label>
-      <label><input type="radio" name="store" value="keyring"{% if keyring_usable %} checked{% else %} disabled{% endif %}> keep the secret in your OS keyring</label>
-      <label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}> in a file only you can read (0600)</label>
+      {{ store_radios(keyring_usable) }}
       <p class="hint">Headscale, pasted keys and the policy level: <code>ship-fleet overlay setup</code>.</p>
     </details>
     <button type="submit">Check and save</button>

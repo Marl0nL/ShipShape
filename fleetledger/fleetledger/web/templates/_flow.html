@@ -11,12 +11,12 @@
   {% elif flow.state in ("link", "code") %}
     <ol>
       <li>Open
-        {% if flow.url %}<a href="{{ flow.url }}" target="_blank" rel="noopener noreferrer" class="signin-link">the {{ flow.label }} sign-in page</a>
+        {% if flow.url %}<a href="{{ flow.url }}" target="_blank" rel="noopener noreferrer">the {{ flow.label }} sign-in page</a>
         {% else %}the sign-in page. <span class="flash bad">The Ship printed a link that is not a plain https address, so it is not shown as a link.</span>{% endif %}
       </li>
       {% if flow.mode == "device-code" %}
       <li>Enter the code <code class="device-code">{{ flow.device_code }}</code>
-        <button type="button" class="ghost copy" data-copy="{{ flow.device_code }}">Copy</button> and approve.
+        <button type="button" class="ghost" data-copy="{{ flow.device_code }}">Copy</button> and approve.
         The Ship finishes on its own.</li>
       {% else %}
       <li>Approve, then paste the code the page shows:
@@ -56,7 +56,7 @@
     {% for n in flow.notes %}<p class="quiet">note: {{ n }}</p>{% endfor %}
   {% endif %}
   {% if not flow.done %}
-  <form method="post" action="/flows/{{ flow.id }}/cancel" class="inline cancel">
+  <form method="post" action="/flows/{{ flow.id }}/cancel" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit" class="ghost">Cancel</button>
   </form>

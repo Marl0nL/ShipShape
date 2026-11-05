@@ -86,7 +86,7 @@
         <span class="pill {{ v.state|pill }}">{{ v.state }}</span>
       </header>
       <p class="card-meta">{{ snap.effective_tags(v)|join(", ") or "no tags" }}{% if doc %} · up {{ doc.host.uptime_s // 86400 }}d {{ doc.host.uptime_s % 86400 // 3600 }}h{% endif %}</p>
-      <p class="card-agents"><span class="quiet">Agents</span> {{ agents_cell(v) }}{% if doc and doc.claude.remote_control == "on" and doc.herdr.agents %} <span class="quiet">· Remote Control</span>{% endif %}</p>
+      <p><span class="quiet">Agents</span> {{ agents_cell(v) }}{% if doc and doc.claude.remote_control == "on" and doc.herdr.agents %} <span class="quiet">· Remote Control</span>{% endif %}</p>
       <ul class="auths" aria-label="Sign-ins">
         {% for service, short in (("claude", "Claude"), ("gcloud", "gcloud"), ("gcloud_adc", "ADC"), ("github", "GitHub")) %}
         {% set cell = auth_cell(v, service) %}
@@ -105,7 +105,7 @@
         <span class="spark"><span class="spark-label">Mem</span><strong class="spark-value">{{ doc.host.mem_used_pct|round|int }}%</strong></span>
         {% endif %}
         {% set disk = doc.host.disk_used_pct %}
-        <span class="spark disk"><span class="spark-label">Disk</span>
+        <span class="spark"><span class="spark-label">Disk</span>
           <svg class="meter" viewBox="0 0 120 10" width="120" height="10" aria-hidden="true">
             <rect class="track" x="0" y="1" width="120" height="8" rx="3"/>
             <rect class="mark-fill {{ "crit" if disk >= 90 else "warn" if disk >= 80 else "s3" }}" x="0" y="1" width="{{ [2, disk * 1.2]|max }}" height="8" rx="3"/>
