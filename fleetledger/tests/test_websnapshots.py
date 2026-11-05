@@ -5,9 +5,11 @@ import re
 
 import pytest
 from fleetledger.drivers.base import Outcome, Snapshot
+from fleetledger.errors import FleetError
 from fleetledger.lifecycle import SNAPSHOT_WARNING
+from fleetledger.web import flows
 from markupsafe import escape
-from test_web import _action_bar, wait_for, web  # noqa: F401 - the web UI fixture
+from test_web import _action_bar, flow_of, wait_for, web  # noqa: F401 - the web UI fixture
 
 
 class FakeDriver:
@@ -112,12 +114,15 @@ def test_the_manual_driver_cannot_list_and_shows_the_steps(driven):
     assert "cannot list snapshots" in page and "Roll back or delete, by name" in page
     bar = _action_bar(page)
     assert "Snapshot (by hand)" in bar and 'href="/ships/ship-02/snapshots#take"' in bar
+    outside_more = bar[:bar.index('<details class="menu">')]
+    assert "snapshots#take" not in outside_more  # no primary Snapshot on a by-hand driver
     driven.post("/ships/ship-02/snapshots/take", {"snapshot": "before-work"})
     job = _finished(driven)
     assert job.result["outcome"].done is False
     card = driven.client.get(f"/jobs/{job.id}").text
     assert "Do this on your hypervisor" in card and "before-work" in card
     assert 'data-copy="' in card
+    assert '<span class="pill muted">by hand</span>' in card and ">done</span>" not in card
 
 
 def test_one_job_at_a_time_per_ship(driven, monkeypatch):
@@ -143,3 +148,25 @@ def test_one_job_at_a_time_per_ship(driven, monkeypatch):
 def test_unknown_ships_are_404(driven):
     assert driven.post("/ships/nope/snapshots/take", {}).status_code == 404
     assert driven.client.get("/ships/nope/snapshots").status_code == 404
+
+
+def test_a_driver_that_cannot_be_reached_says_so(driven, monkeypatch):
+    def down(ship):
+        raise FleetError("Cannot reach the Proxmox API at pve.example.invalid.")
+
+    monkeypatch.setattr(driven.fake, "snapshots", down)
+    response = driven.client.get("/ships/ship-01/snapshots")
+    assert response.status_code == 200
+    assert "Cannot reach the Proxmox API" in response.text and 'class="flash bad"' in response.text
+    assert 'id="take"' in response.text  # taking one may still work
+
+
+def test_no_rollback_while_a_sign_in_is_open_on_the_ship(driven):
+    driven.post("/signin", {"ship": "ship-01", "service": "claude"})
+    flow = flow_of(driven)
+    wait_for(lambda: flow.state in (flows.LINK, flows.CODE))
+    driven.post("/ships/ship-01/snapshots/rollback",
+                {"snapshot": "before-upgrade", "confirm_name": "ship-01"})
+    assert driven.app_ui.jobs.recent() == [] and driven.fake.calls == []
+    assert "a sign-in is open on ship-01" in driven.client.get("/ships/ship-01/snapshots").text
+    flow.cancel()

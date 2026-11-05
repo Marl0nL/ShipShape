@@ -188,6 +188,14 @@
     dialog.typedInput.oninput = function () {
       dialog.ok.disabled = Boolean(want) && dialog.typedInput.value !== want;
     };
+    // Enter in the field means "confirm" (as typing yes at the CLI's prompt does),
+    // never the dialog form's default button (Cancel): it confirms once the value
+    // matches, and does nothing before that.
+    dialog.typedInput.onkeydown = function (event) {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      if (!dialog.ok.disabled) dialog.ok.click();
+    };
     // Escape closes without touching returnValue: clear the last "ok" first, or
     // Escape on this dialog would send the form (tested in confirm.test.js).
     dialog.el.returnValue = "";

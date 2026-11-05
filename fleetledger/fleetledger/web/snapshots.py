@@ -60,6 +60,8 @@ class _Recording:
             result = attr(*args, **kwargs)
             if isinstance(result, Outcome):
                 self._job.result["outcome"] = result
+                if not result.done:  # left to you: the card says "by hand", not "done"
+                    self._job.result["by_hand"] = True
             return result
 
         return call
@@ -131,6 +133,10 @@ async def rollback(request: Request) -> Response:
     snap = _snapshot_name(one(fields, "snapshot"))
     if snap is None:
         _bad(request, "Choose a snapshot to roll back to.")
+    elif _signing_in(request, name):
+        # A rollback restarts the VM: it would cut the sign-in's terminal mid-flow.
+        _bad(request, f"Not rolled back: a sign-in is open on {name}. Finish or cancel it "
+             "on the Sign-ins page first.")
     elif one(fields, "confirm_name") != name:
         _bad(request, f"Not rolled back: type {name} to confirm.")
     else:
@@ -154,6 +160,12 @@ async def delete(request: Request) -> Response:
     else:
         _start(request, name, ["snapshot", "rm", name, snap], f"Delete {snap} of {name}")
     return back(f"/ships/{name}/snapshots")
+
+
+def _signing_in(request: Request, name: str) -> bool:
+    from fleetledger.web.app import ui_of
+
+    return any(f.ship == name for f in ui_of(request).concierge.active())
 
 
 def _bad(request: Request, text: str) -> None:

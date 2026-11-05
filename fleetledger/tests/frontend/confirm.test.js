@@ -347,3 +347,21 @@ test("typed confirmation without <dialog>: the field shows and is sent as typed"
     assert.deepEqual(p.sent, [{ form: "rollback",
       data: { snapshot: "snap-1", confirm_name: "ship-01" } }]);
   }));
+
+test("typed confirmation: Enter confirms once the value matches, and only then",
+  on({}, (p) => {
+    p.click("#rollback button");
+    const input = p.dialog().querySelector(".confirm-typed input");
+    const enter = () => input.dispatchEvent(new p.window.KeyboardEvent("keydown",
+      { key: "Enter", bubbles: true, cancelable: true }));
+    input.value = "ship-0";
+    input.dispatchEvent(new p.window.Event("input"));
+    enter();
+    assert.equal(p.dialog().open, true, "not yet: the dialog stays, nothing is sent");
+    assert.deepEqual(p.sent, []);
+    input.value = "ship-01";
+    input.dispatchEvent(new p.window.Event("input"));
+    enter();
+    assert.deepEqual(p.sent, [{ form: "rollback",
+      data: { snapshot: "snap-1", confirm_name: "ship-01" } }]);
+  }));
