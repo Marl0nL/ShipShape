@@ -135,14 +135,14 @@ header.top .local { color: var(--hull-ink); opacity: .8; font-size: 12px; }
 main { max-width: 1400px; margin: 0 auto; padding: 22px 24px 48px; }
 
 /* --- parchment surfaces --------------------------------------------------------- */
-.paper, table, ul.items, ul.alerts, .grid > div, article.flow, section.setup-step,
-.tile, .ship-card, figure.chart, .flash, .warning, .notice {
-  background: var(--paper, url("/static/paper.svg")), var(--panel);
+table, ul.alerts, .grid > div, article.flow, section.setup-step,
+.tile, .ship-card, figure.chart, dialog.confirm-dialog, .flash, .warning, .notice {
+  background: url("/static/paper.svg"), var(--panel);
   background-size: 300px 300px, auto;
 }
 @media (prefers-color-scheme: dark) {
-  .paper, table, ul.items, ul.alerts, .grid > div, article.flow, section.setup-step,
-  .tile, .ship-card, figure.chart { background: linear-gradient(180deg, rgba(255, 200, 120, .03), transparent 40%), var(--panel); }
+  table, ul.alerts, .grid > div, article.flow, section.setup-step,
+  .tile, .ship-card, figure.chart, dialog.confirm-dialog { background: linear-gradient(180deg, rgba(255, 200, 120, .03), transparent 40%), var(--panel); }
   .flash, .warning, .notice { background-image: none; }
 }
 
@@ -154,7 +154,6 @@ th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--p
   text-transform: uppercase; letter-spacing: .04em; }
 tr:last-child td { border-bottom: 0; }
 td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
-td.notes { color: var(--muted); max-width: 28em; }
 
 /* --- pills, chips, badges ---------------------------------------------------------- */
 .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
@@ -177,20 +176,6 @@ td.notes { color: var(--muted); max-width: 28em; }
 .chip:hover { border-color: var(--brass-lo); }
 .chip.on { background: linear-gradient(180deg, var(--brass-hi), var(--brass)); color: var(--brass-ink);
   border-color: var(--brass-lo); font-weight: 600; }
-
-/* --- the old Needs attention list (Ship pages) --------------------------------------- */
-ul.items { list-style: none; padding: 0; margin: 0; border: 1px solid var(--line-strong);
-  border-radius: 6px; box-shadow: var(--shadow); }
-li.item { display: flex; gap: 10px; align-items: center; padding: 6px 10px;
-  border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-li.item:last-child { border-bottom: 0; }
-li.item .ship { font-weight: 600; }
-li.item .msg { flex: 1; min-width: 12em; }
-.sev { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 4px;
-  background: var(--panel-2); border: 1px solid var(--line); }
-.sev.critical, .sev.high { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-mark); font-weight: 700; }
-.sev.medium { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-mark); }
-.sev.low { color: var(--muted); border-style: dashed; }
 
 /* --- buttons and forms: brass fittings ------------------------------------------------ */
 form.inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0; }
@@ -439,7 +424,6 @@ details.table-view summary { font-size: 12px; }
 /* confirmations (app.js): a native <dialog> in place of the "sure" tick boxes */
 [hidden] { display: none !important; }
 dialog.confirm-dialog { max-width: min(34em, calc(100vw - 32px)); padding: 0; color: var(--ink);
-  background: url("/static/paper.svg"), var(--panel); background-size: 300px 300px, auto;
   border: 1px solid var(--line-strong); border-top: 4px solid var(--brass-lo);
   border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, .45); }
 dialog.confirm-dialog.danger { border-top-color: var(--bad-mark); }
@@ -450,7 +434,4 @@ dialog.confirm-dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
 .confirm-buttons { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
 .confirm-buttons button { font-size: 14px; padding: 6px 16px; }
 .confirm-buttons button.danger { background: var(--bad-mark); border-color: var(--bad-mark); color: #fff; }
-@media (prefers-color-scheme: dark) {
-  dialog.confirm-dialog { background: var(--panel); }
-  .confirm-buttons button.danger { color: #1d0f0f; }
-}
+@media (prefers-color-scheme: dark) { .confirm-buttons button.danger { color: #1d0f0f; } }
