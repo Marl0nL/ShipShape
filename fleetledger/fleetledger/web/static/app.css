@@ -383,8 +383,14 @@ form.overlay-check button { align-self: start; }
 details.rules pre.log { max-height: 40vh; }
 table.attach-commands td:first-child code { overflow-wrap: anywhere; }
 table.attach-commands td:nth-child(2) { width: 1%; white-space: nowrap; }
-section.access > div.wide { grid-column: 1 / -1; }
-section.access table.attach-commands { box-shadow: none; }
+section.access-attach { margin-bottom: 16px; }
+@media (max-width: 640px) {  /* each command on its own line, whole, then its Copy and what it does */
+  table.attach-commands tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.attach-commands td { display: inline-block; border: 0; padding: 2px 8px 2px 0; width: auto; }
+  table.attach-commands td:first-child { display: block; }
+  table.attach-commands td:first-child code { overflow-wrap: normal; white-space: pre; display: block;
+    overflow-x: auto; }
+}
 /* Access: certificates and trusted machines (web.trust) */
 code.fp { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 table.machines td, table.certs td { vertical-align: top; }

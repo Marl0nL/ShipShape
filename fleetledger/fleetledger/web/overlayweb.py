@@ -6,14 +6,18 @@ Overlay (the access rules and Check).
 - Leave runs `ship-fleet overlay leave SHIP` as a job, behind the confirm dialog: the
   CLI's own command, so it clears the Ship's overlay node and overlay name.
 - Check runs `overlay_setup.check_items` (the items `ship-fleet overlay check`
-  prints) as a job, with an optional pasted policy and the probes; the job keeps the
-  items for its card. A pasted policy is capped at POLICY_MAX characters, below the
-  gate's 64 KiB body limit: a larger one is checked with the CLI's --policy FILE.
+  prints) as a job, one at a time, with an optional pasted policy and the probes;
+  the job keeps the items for its card. A pasted policy may be POLICY_BYTES long
+  once form-encoded, inside the gate's 64 KiB body limit (which answers a bare
+  "Request too large"): the page stops a longer one before it is sent (app.js,
+  data-max-bytes) and the server refuses one that gets here, each pointing to the
+  CLI's --policy FILE.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote_plus
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
@@ -21,9 +25,9 @@ from starlette.routing import Route
 
 from fleetledger.errors import FleetError
 
-POLICY_MAX = 60 * 1024
-TOO_BIG = (f"That policy is over {POLICY_MAX // 1024} KiB, more than this page takes. "
-           "Check it from a terminal: ship-fleet overlay check --policy FILE")
+POLICY_BYTES = 60 * 1024  # the pasted policy, form-encoded
+TOO_BIG = ("That policy is too long to send from this page. Check it from a terminal: "
+           "ship-fleet overlay check --policy FILE")
 TO_OVERLAY = "/settings?said=overlay#overlay"
 
 
@@ -96,7 +100,7 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
         rules = overlay.policy(inv.overlay).rstrip()
     except FleetError:
         rules = None
-    return {"overlay_rules": rules, "POLICY_MAX": POLICY_MAX,
+    return {"overlay_rules": rules, "POLICY_BYTES": POLICY_BYTES, "TOO_BIG": TOO_BIG,
             "overlay_jobs": [j for j in ui.jobs.recent() if j.kind == "overlay-check"][:2]}
 
 
@@ -109,8 +113,12 @@ async def check(request: Request) -> Response:
     ui = _ui(request)
     policy = one(fields, "policy")
     probe = one(fields, "probe") == "yes"
-    if len(policy) > POLICY_MAX:
+    if len(quote_plus(policy)) > POLICY_BYTES:
         _flash(request, "bad", TOO_BIG)
+        return RedirectResponse(TO_OVERLAY, status_code=303)
+    if any(j.kind == "overlay-check" and j.running for j in ui.jobs.recent()):
+        # No await since this read, so no other request starts one in between.
+        _flash(request, "bad", "A check of the overlay is already running; it shows below.")
         return RedirectResponse(TO_OVERLAY, status_code=303)
     try:
         if not ui.app.store_factory().load().overlay:

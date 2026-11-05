@@ -87,7 +87,8 @@ def test_leave_needs_the_tick_then_clears_the_node_and_the_overlay_name(ov):
     response = ov.post("/ships/ship-01/overlay/leave", {"from": "access"})
     assert response.headers["location"] == "/ships/ship-01/access"
     assert ov.app_ui.jobs.recent() == []
-    ov.post("/ships/ship-01/overlay/leave", {"confirm": "yes"})
+    response = ov.post("/ships/ship-01/overlay/leave", {"confirm": "yes"})
+    assert response.headers["location"] == "/ships/ship-01"  # from More: the page it was on
     job = _finished(ov)
     assert job.ok, job.snapshot()
     assert job.kind == "leave" and job.ships == ["ship-01"]
@@ -112,7 +113,9 @@ def test_settings_shows_the_rules_with_copy_and_a_check_form(ov):
     rules = overlay.policy(ov.store.load().overlay).rstrip()
     assert "tag:ship" in rules and 'data-copy="' in part
     assert 'action="/settings/overlay/check"' in part
-    assert f'maxlength="{overlayweb.POLICY_MAX}"' in part and 'name="probe"' in part
+    assert "maxlength" not in part  # a paste is never cut short
+    assert f'data-max-bytes="{overlayweb.POLICY_BYTES}"' in part and 'name="probe"' in part
+    assert 'id="policy-too-long" hidden' in part and "--policy FILE" in part
 
 
 def test_check_runs_the_cli_checks_as_a_job_and_shows_its_items(ov, monkeypatch):
@@ -131,6 +134,7 @@ def test_check_runs_the_cli_checks_as_a_job_and_shows_its_items(ov, monkeypatch)
     assert seen == [(None, True)] and not job.ok  # an item failed
     card = ov.client.get(f"/jobs/{job.id}?v=0").text
     assert "ship-01 overlay" in card and ">failed<" in card and ">skipped<" in card
+    assert 'class="log' not in card  # the items, not the raw log beside them
     page = ov.client.get("/settings?said=overlay").text
     assert page.index("Check the overlay and probe") > page.index('id="overlay"')
 
@@ -147,7 +151,8 @@ def test_a_pasted_policy_is_checked_with_the_same_items_as_the_cli(ov):
 
 
 def test_a_policy_over_the_cap_is_refused_with_the_cli_command(ov):
-    ov.post("/settings/overlay/check", {"policy": "x" * (overlayweb.POLICY_MAX + 1)})
+    # Under the gate's 64 KiB body cap, but over the page's limit once encoded.
+    ov.post("/settings/overlay/check", {"policy": '{"a":1}' * (overlayweb.POLICY_BYTES // 15)})
     assert ov.app_ui.jobs.recent() == []
     page = ov.client.get("/settings?said=overlay").text
     assert "ship-fleet overlay check --policy FILE" in page
@@ -197,3 +202,47 @@ def test_trusting_this_computer_from_the_access_tab_returns_there(ov, monkeypatc
     response = ov.post("/attach-here", {"ship": "ship-01", "from": "access"})
     assert response.headers["location"] == "/ships/ship-01/access"
     assert ov.post("/attach-here", {"ship": "ship-01"}).headers["location"] == "/ships/ship-01"
+
+
+def test_one_check_at_a_time(ov, monkeypatch):
+    import threading
+
+    go = threading.Event()
+
+    def slow(app, *, policy_text=None, probe=False):
+        go.wait(10)
+        return [Check("join keys", "ok", "pasted")]
+
+    monkeypatch.setattr(overlay_setup, "check_items", slow)
+    ov.post("/settings/overlay/check", {})
+    ov.post("/settings/overlay/check", {})  # a double click
+    assert len(ov.app_ui.jobs.recent()) == 1
+    assert "already running" in ov.client.get("/settings?said=overlay").text
+    go.set()
+    assert _finished(ov).ok
+
+
+def test_a_stale_node_is_explained(ov):
+    ov.ship.overlay.pop("ship-01")
+    doc = json.loads((EXAMPLES / "ship-status" / "running-overlay.json").read_text())
+    doc["overlay"] = {**doc["overlay"], "joined": False, "state": "off", "name": None,
+                      "addresses": []}
+    ov.ship.status_override["ship-01"] = doc
+    ov.fleet.poll()
+    page = ov.client.get("/ships/ship-01/access").text
+    assert "says it is not on the overlay" in page and "Leave clears that" in page
+
+
+def test_the_leave_dialog_says_the_device_stays(ov):
+    for path in ("/ships/ship-01", "/ships/ship-01/access"):
+        assert "admin console until you remove it there" in ov.client.get(path).text
+
+
+def test_a_ship_not_seen_yet_has_no_certificate_verdict(caweb):  # noqa: F811
+    from fleetledger import status
+
+    caweb.ship.down.add("ship-02")
+    status.cache_path("ship-02").unlink(missing_ok=True)
+    caweb.fleet.poll()
+    page = caweb.client.get("/ships/ship-02/access").text
+    assert "Not seen yet" in page and "predates certificates" not in page

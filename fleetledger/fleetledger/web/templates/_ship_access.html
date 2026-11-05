@@ -6,8 +6,8 @@
 {% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
 {% macro cmd(line, what) %}<tr><td><code>{{ line }}</code></td><td><button type="button" class="ghost small" data-copy="{{ line }}">Copy</button></td><td>{{ what }}</td></tr>{% endmacro %}
 {% set owner = snap.inventory.owner %}
-<section class="grid access">
-  <div class="wide">
+<section class="grid access-attach">
+  <div>
   <h2>Attach from this computer</h2>
   <table class="attach-commands">
     <tbody>
@@ -25,6 +25,8 @@
     existed gets one with <code>ship-fleet owner {{ owner }}</code>.)</p>
 
   </div>
+</section>
+<section class="grid access">
   <div>
   <h2>This computer</h2>
   {% if attach_here %}
@@ -66,6 +68,9 @@
     <dt>Addresses</dt><dd>{{ o.addresses|join(", ") or "none yet" }}</dd>
     <dt>SSH</dt><dd>{{ "on the overlay only (LAN logins refused)" if o.ssh_listen == "overlay" else "on the LAN and the overlay" }} · <a href="/ships/{{ ship.name }}/settings">change</a></dd>
   </dl>
+  {% elif on_overlay and doc %}
+  <p>{{ ship.name }} says it is not on the overlay, though FleetLedger has a node recorded
+    for it: Leave clears that, then Join again.</p>
   {% elif on_overlay %}
   <p>On the overlay (node recorded); its state shows once it answers.</p>
   {% else %}
@@ -74,7 +79,7 @@
   {% if overlay_set and on_overlay %}
   <form method="post" action="/ships/{{ ship.name }}/overlay/leave" class="inline"
     data-confirm-title="Take {{ ship.name }} off the overlay?"
-    data-confirm="{{ ship.name }} leaves your overlay and forgets its overlay name: from then on it is reachable on your LAN only, and a sign-in or attach over the overlay stops. Join it again at any time."
+    data-confirm="{{ ship.name }} leaves your overlay and forgets its overlay name: from then on it is reachable on your LAN only, and a sign-in or attach over the overlay stops. Its device stays in your overlay's admin console until you remove it there. Join it again at any time."
     data-confirm-action="Leave the overlay" data-confirm-danger>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="from" value="access">
@@ -98,6 +103,9 @@
   <h2>Host certificate</h2>
   {% if cert is none %}
   <p>The fleet has no certificate authority: {{ ship.name }} is reached with its pinned host key.</p>
+  {% elif not doc %}
+  <p>Not seen yet: {{ ship.name }} has not answered, so its certificate is not known.
+    Is it switched on? Then Check now.</p>
   {% elif not cert.supported %}
   <p>{{ ship.name }}'s tooling predates certificates: <a href="/ships/{{ ship.name }}">update it</a> first.</p>
   {% else %}

@@ -309,6 +309,9 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         ]
     if name == "ship-06" or name in LEFT:
         doc["overlay"] = None
+    else:  # each Ship its own overlay name and address
+        doc["overlay"].update(name=f"{name}.example-tailnet.ts.net", node_id=f"nDemo{index}",
+                              addresses=[f"192.0.2.{10 + index}"])
     if name == "ship-06":
         doc["herdr"]["agents"] = []
         doc["state"] = "ready"

@@ -240,6 +240,24 @@
     typedFields(form).forEach(function (field) { field.value = ""; });
     ask(form, event.submitter);
   });
+  // --- fields too long to post ------------------------------------------------------
+  // A field with data-max-bytes stops its form when the field, form-encoded, is
+  // longer, and shows the element whose id is its data-too-long (a note saying what
+  // to do instead). The gate refuses a body over 64 KiB with a bare "Request too
+  // large" before any page sees it, and a maxlength would cut a paste silently; the
+  // server checks the same limit for a post without script.
+  document.addEventListener("submit", function (event) {
+    const over = all(event.target, "[data-max-bytes]").find(function (field) {
+      const sent = new URLSearchParams([["x", field.value]]).toString().length - 2;
+      return sent > Number(E.getAttribute.call(field, "data-max-bytes"));
+    });
+    if (!over) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();  // and no confirm dialog either
+    const note = document.getElementById(E.getAttribute.call(over, "data-too-long") || "");
+    if (note) note.hidden = false;
+    over.focus();
+  }, true);
   document.addEventListener("DOMContentLoaded", function () { enhance(document); });
   document.addEventListener("htmx:afterSwap", function (event) { enhance(event.target); });
   // Coming back to a page from the browser's history: no box stays ticked.

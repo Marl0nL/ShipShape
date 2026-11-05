@@ -270,7 +270,7 @@
         {% if overlay_set and on_overlay %}
         <form method="post" action="/ships/{{ ship.name }}/overlay/leave" class="inline"
           data-confirm-title="Take {{ ship.name }} off the overlay?"
-          data-confirm="{{ ship.name }} leaves your overlay and forgets its overlay name: from then on it is reachable on your LAN only, and a sign-in or attach over the overlay stops. Join it again at any time."
+          data-confirm="{{ ship.name }} leaves your overlay and forgets its overlay name: from then on it is reachable on your LAN only, and a sign-in or attach over the overlay stops. Its device stays in your overlay's admin console until you remove it there. Join it again at any time."
           data-confirm-action="Leave the overlay" data-confirm-danger>
           <input type="hidden" name="csrf" value="{{ csrf }}">
           <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
