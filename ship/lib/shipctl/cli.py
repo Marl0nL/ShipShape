@@ -403,8 +403,12 @@ def cmd_refresh(ctx: Context, args) -> dict:
         messages.append("profiles retried: " + ", ".join(f"{p} {s}" for p, s in states.items()))
         messages += why
     repo_waiting = "github" in newly_ok and any(e.get("repo") for e in ship.autostart)
+    if any(e.get("repo") for e in ship.autostart):  # a public repo clones at once
+        messages += autostart.prepare_repos(ctx, ship, retry="github" in newly_ok)
     if ("claude" in newly_ok or repo_waiting) and ship.autostart:
-        state = "ready" if doc["state"] in ("needs-sign-in", "unknown") else doc["state"]
+        state = doc["state"]
+        if "claude" in newly_ok and state in ("needs-sign-in", "unknown"):
+            state = "ready"  # Claude is signed in now; a GitHub sign-in alone never starts
         try:
             data, _, _ = autostart.run(ctx, ship, state)
             if any(s["reason"] == "resume-pending" for s in data["skipped"]):

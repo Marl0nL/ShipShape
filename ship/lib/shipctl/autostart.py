@@ -79,6 +79,33 @@ def ensure_repo(ctx: Context, repo: str, cwd: str) -> tuple[str, str]:
     return "failed", f"could not clone {repo}: {why[0][:200]}"
 
 
+def _repo_states(ctx: Context) -> dict:
+    repos = read_json(ctx.paths.state / REPOS_STATE, {})
+    return repos if isinstance(repos, dict) else {}
+
+
+def prepare_repos(ctx: Context, ship: ShipToml, retry: bool = False) -> list[str]:
+    """Clone what can be cloned before the agents may start (a public repo needs no
+    sign-in at all): each entry's repo once, and again only when retry (GitHub has just
+    become signed in). Run by the status refresh; autostart clones too, if needed."""
+    states = _repo_states(ctx)
+    messages = []
+    agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
+    for entry in ship.autostart:
+        if not entry.get("repo"):
+            continue
+        rec = states.get(entry["name"]) or {}
+        if rec.get("state") == "cloned" or (rec and rec.get("repo") == entry["repo"]
+                                             and not retry):
+            continue
+        state, why = ensure_repo(ctx, entry["repo"], expand_cwd(entry["cwd"], agent_home))
+        states[entry["name"]] = {"repo": entry["repo"], "state": state, "message": why}
+        messages.append(f"{entry['name']}: {why}")
+    if messages:
+        write_atomic(ctx.paths.state / REPOS_STATE, json.dumps(states, indent=2) + "\n", 0o644)
+    return messages
+
+
 def mode_args(mode: str) -> list[str]:
     if mode == "bypassPermissions":
         return ["--dangerously-skip-permissions"]
@@ -179,7 +206,7 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
     agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
     failures = 0
     named = None  # whether claude takes --name; asked once, only if something starts
-    repos: dict[str, dict] = {}
+    repos = _repo_states(ctx)
 
     for entry in entries:
         name = entry["name"]

@@ -232,3 +232,14 @@ def test_a_folder_that_holds_something_else_is_never_overwritten(ship):
     skipped = next(s for s in doc["data"]["skipped"] if s["name"] == "setup")
     assert "not a checkout" in skipped["reason"]
     assert (folder / "notes.txt").read_text() == "mine" and not (folder / ".git").exists()
+
+
+def test_a_public_repo_is_cloned_before_any_sign_in(ship):
+    ship.set(git={"public": ["someone/agent-setup"]}, claude={"logged_in": False})
+    _with_repo_agent(ship)
+    ship.ctl("refresh", "--json")
+    assert ship.p("/home/agent/work/agent-setup/CLAUDE.md").exists()  # ready for the agent
+    assert "setup" not in started_args(ship)  # which starts once Claude is signed in
+    clones = [c for c in ship.calls("git") if c[1:2] == ["clone"]]
+    ship.ctl("refresh", "--json")
+    assert [c for c in ship.calls("git") if c[1:2] == ["clone"]] == clones  # not again
