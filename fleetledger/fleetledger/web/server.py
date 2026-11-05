@@ -73,6 +73,7 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     except ImportError as exc:  # pragma: no cover - a broken install
         raise FleetError("The web UI needs FleetLedger's web dependencies.",
                          hint="Rerun fleetledger/install.sh.") from exc
+    from fleetledger.history import History
     from fleetledger.web.app import create_app
     from fleetledger.web.fleet import Fleet
     from fleetledger.web.flows import Concierge
@@ -86,7 +87,7 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     sock = bind(port)
     port = sock.getsockname()[1]
     gate = Gate(port)
-    fleet = Fleet(app, interval=interval)
+    fleet = Fleet(app, interval=interval, history=History())
     concierge = Concierge(app, on_finished=lambda ship: fleet.poll([ship]))
     asgi = create_app(app, gate, fleet=fleet, concierge_=concierge, start_page=start_page)
     server = uvicorn.Server(uvicorn_config(asgi))

@@ -1,0 +1,17 @@
+{# The Ship page's history charts (the overview tab). Context: ship, history, ranges. #}
+{% from "_macros.html" import line_chart, columns_chart, ranges_nav %}
+{% if history %}
+<section class="charts ship-history">
+  <div class="toolbar">
+    <h2>The last {{ {"6h": "6 hours", "24h": "24 hours", "7d": "7 days"}[history.range] }}</h2>
+    {{ ranges_nav(ranges, history.range, "/ships/" ~ ship.name ~ "?") }}
+  </div>
+  {% if not history.has_history %}
+  <p class="hint">FleetLedger samples each Ship every 5 minutes while the UI is open, and keeps 7 days.</p>
+  {% endif %}
+  <div class="chart-grid two">
+    {{ line_chart(history.usage, "CPU, memory and disk") }}
+    {{ columns_chart(history.agents, "Agents") }}
+  </div>
+</section>
+{% endif %}

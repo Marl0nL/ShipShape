@@ -127,8 +127,8 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 
 | Page | What is on it |
 |---|---|
-| **Fleet** (`/`) | Needs attention, then one row per Ship: state, agents, each sign-in, CPU · memory · disk, notes. Filter by tag. Batch actions for every Ship (or every Ship with the selected tag): sign in to a service, update, reboot. Updates and reboots run in the background, with their progress and outcome (including whether each Ship's agents came back in their modes) on this page. |
-| **Ship** (`/ships/<name>`) | Status, Needs attention, sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, and whether they show in the Claude app (Remote Control on and Claude signed in) or why not; **Add an agent** (name, folder, mode: started now and on every boot, `ship-fleet set SHIP autostart.add=NAME:FOLDER`); herdr's last resume; the attach command that works from this computer (`herdr --remote <ship>` and `ssh <ship>` once this computer is trusted, else `ship-fleet ssh <ship>` and a button to trust it); **Join the overlay** for a Ship not on it yet; Claude Code, host and tooling. |
+| **Fleet** (`/`) | The dashboard. Across the top, the fleet at a glance: Ships up, agents (working, waiting for you, on Remote Control), how many alerts at each level, sign-ins to fix, pending reboots and tooling updates (and OS packages), and overlay membership. Then **Needs attention**, then a card per Ship: state, tags, uptime, agents, each sign-in, CPU and memory over the last day as small charts with their current value, a disk gauge (marks at 80% and 90%), and its first note; a card links to its Ship. Then charts for the last 6 hours, 24 hours or 7 days (see "History and charts"). Filter by tag. Batch actions for every Ship (or every Ship with the selected tag): sign in to a service, update, reboot. Updates and reboots run in the background, with their progress and outcome (including whether each Ship's agents came back in their modes) on this page. |
+| **Ship** (`/ships/<name>`) | Status, Needs attention (the Fleet page's alerts for this Ship, with their fixes), sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, and whether they show in the Claude app (Remote Control on and Claude signed in) or why not; **Add an agent** (name, folder, mode: started now and on every boot, `ship-fleet set SHIP autostart.add=NAME:FOLDER`); herdr's last resume; the attach command that works from this computer (`herdr --remote <ship>` and `ssh <ship>` once this computer is trusted, else `ship-fleet ssh <ship>` and a button to trust it); **Join the overlay** for a Ship not on it yet; Claude Code, host and tooling, and its CPU, memory, disk and agents over the last 6 hours, 24 hours or 7 days. |
 | Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`), and tags. Update or reboot this Ship from its Overview. |
 | Ship **Logs** | `ship-ctl logs` for one source. |
 | Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |
@@ -136,19 +136,47 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 | **Sign-ins** (`/signin`) | The concierge: start a sign-in for one Ship, or for every Ship with a tag; each sign-in's link, code box and countdown; results. |
 | **Audit log** (`/audit`) | Who, what and when for every sign-in and sign-out. |
 
-**Needs attention** is `ship-fleet attention`'s list, ranked the same way
-(high, medium, low): a Ship presenting the wrong host key or claiming another
-identity, unreachable Ships, wrong-account or expired sign-ins, failures, waiting
-agents, missing or expiring sign-ins, pending reboots and herdr restarts, Ships
-behind on tooling, tools waiting for a sign-in. Above it come any sign-ins in the
-browser that are waiting for you. Sign-in items have a one-click **Sign in** button. Unknown
-attention codes from newer Ships are shown as they are.
+**Needs attention** is `ship-fleet attention`'s list, ranked the same way, plus
+two alerts the dashboard adds itself: a disk 80% full (warning) or 90% full
+(critical), and a Ship not on the overlay when `ships.toml` has an `[overlay]`.
+Its three levels are shown by an icon and a word as well as a colour:
+**critical** (high: a Ship presenting the wrong host key or claiming another
+identity, unreachable Ships, wrong-account or expired sign-ins, failures, expired
+host certificates), **warning** (medium: waiting agents, missing or expiring
+sign-ins, pending reboots and herdr restarts, expiring certificates, the overlay)
+and **notice** (low: Ships behind on tooling, tools waiting for a sign-in, tags
+that differ). Above them come any sign-ins in the browser that are waiting for
+you. Each alert carries its fix: a one-click **Sign in**, a link to the log or
+setting, or the exact command with a **Copy** button (`ship-fleet reboot ship-01`,
+`ship-fleet ca sign ship-01`, `ship-fleet overlay join ship-01`,
+`herdr --remote ship-01` for a waiting agent when this computer is trusted, else
+`ship-fleet ssh ship-01`). Unknown attention codes from
+newer Ships are shown as they are, with a link to the Ship.
+
+### History and charts
+
+While the UI is open, every poll is also sampled into a small history:
+`history.sqlite3` in FleetLedger's data folder (`~/.local/share/fleetledger/`,
+mode 0600). One sample per Ship at most every 5 minutes, kept for 7 days and
+then pruned, so it stays at about 2,000 rows per Ship. A sample holds only
+numbers and the Ship's name: whether it answered, CPU (load per core), memory
+and disk use, and how many agents were working, waiting and idle. Nothing is
+sampled while the UI is closed, so charts show those hours as gaps. Delete the
+file to start again.
+
+The Fleet page charts the fleet's CPU, memory and disk (the average and the
+busiest or fullest Ship), agents, Ships answering, network traffic (from each
+Ship's cached 7-day network summary, refreshed on the Network page) and each
+Ship's disk now, fullest first. Charts are SVG drawn on the server (no script,
+nothing fetched from elsewhere); hover a chart for the values at that time, and
+open **Table** under it for every value.
 
 The status of every Ship is checked over SSH every 30 seconds (`--interval`)
 while a page is open, and not at all once nobody has looked for two minutes.
 Pages read the last result and never wait on SSH, so a waiting agent appears
 within a poll. Before the first check finishes, the last good status (as
-`ship-fleet ls --offline` shows it) is shown.
+`ship-fleet ls --offline` shows it) is shown, and the summary says "last known;
+not checked yet" rather than counting Ships as answering.
 
 **Browser notifications:** on the Fleet page, "Notify me when an agent waits"
 asks for permission; afterwards a notification appears when an agent starts
@@ -241,8 +269,21 @@ and htmx for polling; no front-end build.
 | `flows.py` | the concierge's browser prompter, the live-terminal bridge, batches |
 | `actions.py` | settings, tags, logs, update and reboot through the shared day-2 operations (`fleetledger/ops.py`), sign-out through `ship-fleet logout`; update and reboot run in the background |
 | `network.py` | the Network tab and page over `fleetledger/net.py` (shared with `ship-fleet net`), plus the status `net` digest |
+| `dashboard.py` | the Fleet page's summary, alerts (each with its fix) and chart data; the history store is `fleetledger/history.py` |
+| `charts.py` | SVG chart geometry (lines, stacked columns, bars, sparklines); `templates/_macros.html` draws it |
+| `static/app.css` | the theme: timber, brass and parchment, light ("daylight on deck") and dark ("below decks by lamplight") by `prefers-color-scheme`; textures are `static/grain.svg`, `grain-lamp.svg` and `paper.svg`, fonts the system's own |
 
 Tests: `fleetledger/tests/test_web.py` (the gate's every check, pages, actions,
-and real sign-in sessions in a terminal driven through the browser routes) and
+and real sign-in sessions in a terminal driven through the browser routes),
 `test_websetup.py` (the setup page, with real OpenSSH keys, a fake keyring, a
-fake Proxmox and a fake Tailscale).
+fake Proxmox and a fake Tailscale) and `test_dashboard.py` (the history store,
+alerts, summary and charts).
+
+To work on the UI or take screenshots without a fleet, run
+`.venv/bin/python fleetledger/tests/demo_ui.py`: six made-up Ships, simulated in
+the process, in a throwaway FleetLedger home with a week of made-up history. It
+never reads your real `~/.config/fleetledger`, `~/.ssh` or keyring.
+
+The Content-Security-Policy allows no inline styles or scripts, so a template
+never uses `style=` or `<script>`: colours and sizes are CSS classes, and chart
+geometry is SVG attributes.

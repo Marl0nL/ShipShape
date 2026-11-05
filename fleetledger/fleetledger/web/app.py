@@ -13,6 +13,7 @@ import asyncio
 import dataclasses
 import json
 import re
+import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +33,7 @@ from fleetledger import commands, net, ops
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, network, setup
+from fleetledger.web import actions, dashboard, network, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.security import Gate, GateMiddleware, Session
@@ -215,14 +216,40 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
     snap = ui.fleet.snapshot
     views = snap.views_for(tag)
     items = attention_items(views)
+    flows_waiting = [f for f in ui.concierge.active() if f.needs_you]
+    alerts = dashboard.alerts(views, items, flows_waiting, snap.inventory)
     return {
         "tag": tag,
         "views": views,
         "items": items,
-        "flows_waiting": [f for f in ui.concierge.active() if f.needs_you],
+        "alerts": alerts,
+        "summary": dashboard.summary(views, alerts, snap.inventory),
+        "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
+        "flows_waiting": flows_waiting,
         "operations": ui.operations.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
+    }
+
+
+def _quietly(build: Any, *args: Any) -> Any:
+    """Charts from the history store, or None if it cannot be read: a broken
+    history file must never break a page."""
+    try:
+        return build(*args)
+    except (OSError, sqlite3.Error):
+        return None
+
+
+def _charts_context(ui: UI, tag: str | None, range_: str) -> dict[str, Any]:
+    views = ui.fleet.snapshot.views_for(tag)
+    return {
+        "tag": tag,
+        "range": range_,
+        "ranges": dashboard.RANGES,
+        "charts": _quietly(dashboard.fleet_charts, ui.fleet.history, views, range_,
+                           time.time()),
+        "charts_version": ui.fleet.version,
     }
 
 
@@ -239,8 +266,12 @@ async def home(request: Request) -> Response:
     if not ui.app.store_factory().exists() or (first and ui.start_page):
         return RedirectResponse(ui.start_page or "/setup", status_code=303)
     ui.fleet.touch()
+    tag = _tag_param(request)
+    range_ = dashboard.range_key(request.query_params.get("range"))
+    charts = _charts_context(ui, tag, range_)
     return render(request, "fleet.html", tags=ui.fleet.snapshot.tags(),
-                  **_fleet_context(ui, _tag_param(request)))
+                  range=charts["range"], ranges=charts["ranges"], charts=charts["charts"],
+                  charts_version=charts["charts_version"], **_fleet_context(ui, tag))
 
 
 async def fleet_partial(request: Request) -> Response:
@@ -249,6 +280,15 @@ async def fleet_partial(request: Request) -> Response:
     if request.query_params.get("v") == _fleet_version(ui):
         return Response(status_code=204)
     return partial(request, "_fleet.html", **_fleet_context(ui, _tag_param(request)))
+
+
+async def charts_partial(request: Request) -> Response:
+    ui = ui_of(request)
+    ui.fleet.touch()
+    if request.query_params.get("v") == str(ui.fleet.version):
+        return Response(status_code=204)
+    range_ = dashboard.range_key(request.query_params.get("range"))
+    return partial(request, "_charts.html", **_charts_context(ui, _tag_param(request), range_))
 
 
 # --- one Ship ------------------------------------------------------------------------
@@ -321,6 +361,13 @@ async def ship_page(request: Request) -> Response:
         context["netview"] = network.ship_view(snap.inventory, context["ship"])
         context["net"] = network.status_digest(context["view"])
         context["week"] = request.query_params.get("week") == "1"
+    if tab == "overview":
+        context["alerts"] = dashboard.alerts([context["view"]], context["items"], [],
+                                             ui.fleet.snapshot.inventory)
+        range_ = dashboard.range_key(request.query_params.get("range"))
+        context["history"] = _quietly(dashboard.ship_charts, ui.fleet.history,
+                                      context["view"], range_, time.time())
+        context["ranges"] = dashboard.RANGES
     return render(request, "ship.html", tab=tab, **context)
 
 
@@ -714,6 +761,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
     routes = [
         Route("/", home),
         Route("/partials/fleet", fleet_partial),
+        Route("/partials/charts", charts_partial),
         Route("/ships/{name}", ship_page),
         Route("/ships/{name}/{tab}", ship_page),
         Route("/ships/{name}/refresh", ship_refresh, methods=["POST"]),

@@ -1,0 +1,154 @@
+{# Shared pieces: severity icons and the SVG charts (geometry from web/charts.py).
+   No inline styles or scripts (the CSP forbids them): colours come from classes. #}
+
+{% macro sev_icon(level) %}
+<svg class="sev-icon lvl-{{ level }}" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false">
+{% if level == "critical" %}
+  <path class="shape" d="M6.2 1h7.6L19 6.2v7.6L13.8 19H6.2L1 13.8V6.2z"/>
+  <path class="mark" d="M8.8 4.5h2.4l-.4 7.2H9.2zM10 13.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/>
+{% elif level == "warning" %}
+  <path class="shape" d="M10 1.2 19.2 18H.8z"/>
+  <path class="mark" d="M8.9 6.5h2.2l-.35 5.8h-1.5zM10 13.6a1.35 1.35 0 1 1 0 2.7 1.35 1.35 0 0 1 0-2.7z"/>
+{% else %}
+  <circle class="shape" cx="10" cy="10" r="8.6"/>
+  <path class="mark" d="M8.9 8.4h2.2v7h-2.2zM10 4.2a1.35 1.35 0 1 1 0 2.7 1.35 1.35 0 0 1 0-2.7z"/>
+{% endif %}
+</svg>
+{% endmacro %}
+
+{% macro sev(level) %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span class="word">{{ level|capitalize }}</span></span>{% endmacro %}
+
+{% macro alert_row(a, csrf, ship=True) %}
+<li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
+  {{ sev(a.level) }}
+  {% if ship %}<a href="/ships/{{ a.ship }}" class="ship">{{ a.ship }}</a>{% endif %}
+  <span class="msg">{{ a.message }} <code class="code">{{ a.code }}</code></span>
+  <span class="fix">
+  {% if a.action.kind == "signin" %}
+    <form method="post" action="/signin" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="ship" value="{{ a.ship }}">
+      <input type="hidden" name="service" value="{{ a.action.value }}">
+      <button type="submit">Sign in</button>
+    </form>
+  {% elif a.action.kind == "command" %}
+    <span class="hint">{{ a.action.hint }}</span>
+    <code class="cmd">{{ a.action.value }}</code>
+    <button type="button" class="ghost small" data-copy="{{ a.action.value }}">Copy</button>
+  {% else %}
+    <a class="button ghost" href="{{ a.action.value }}">{{ a.action.label }}</a>
+  {% endif %}
+  </span>
+</li>
+{% endmacro %}
+
+{% macro axes(c) %}
+  {% for t in c.yticks %}
+  <line class="gridline" x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ t.y }}" y2="{{ t.y }}"/>
+  <text class="tick" x="{{ c.left - 4 }}" y="{{ t.y + 3 }}" text-anchor="end">{{ t.label }}</text>
+  {% endfor %}
+  {% for t in c.xticks %}
+  <text class="tick" x="{{ t.x }}" y="{{ c.bottom + 14 }}" text-anchor="middle">{{ t.label }}</text>
+  {% endfor %}
+{% endmacro %}
+
+{% macro legend(items, kind="line") %}
+<ul class="legend">
+  {% for s in items %}<li><svg width="16" height="10" aria-hidden="true">{% if kind == "line" %}<line class="mark-line {{ s.key }}" x1="1" x2="15" y1="5" y2="5"/>{% else %}<rect class="mark-fill {{ s.key }}" x="2" y="0" width="12" height="10" rx="2"/>{% endif %}</svg>{{ s.label }}</li>{% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro table_view(c) %}
+<details class="table-view">
+  <summary>Table</summary>
+  {% if c.table.rows %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>When</th>{% for h in c.table.head %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for r in c.table.rows %}<tr><td>{{ r.when }}</td>{% for v in r.cells %}<td class="num">{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+  </div>
+  {% else %}<p class="quiet">No data in this range.</p>{% endif %}
+</details>
+{% endmacro %}
+
+{% macro line_chart(c, title, note="") %}
+<figure class="chart">
+  <figcaption><span class="chart-title">{{ title }}</span>{% if note %} <span class="hint">{{ note }}</span>{% endif %}</figcaption>
+  {% if c.lines|length > 1 %}{{ legend(c.lines) }}{% endif %}
+  <svg class="plot" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ title }}">
+    {{ axes(c) }}
+    {% for t in c.thresholds %}
+    <line class="rule {{ t.cls }}" x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ t.y }}" y2="{{ t.y }}"/>
+    <text class="rule-label {{ t.cls }}" x="{{ c.left + 3 }}" y="{{ t.y + 10 }}">{{ t.label }}</text>
+    {% endfor %}
+    {% for l in c.lines %}
+    {% if l.d %}<path class="mark-line {{ l.key }}" d="{{ l.d }}"/>{% endif %}
+    {% for d in l.dots %}<circle class="mark-dot {{ l.key }}" cx="{{ d.x }}" cy="{{ d.y }}" r="3"/>{% endfor %}
+    {% if l.end %}<circle class="mark-end {{ l.key }}" cx="{{ l.end.x }}" cy="{{ l.end.y }}" r="4"/>{% endif %}
+    {% endfor %}
+    {% for col in c.columns %}<rect class="hit" x="{{ col.x }}" y="{{ c.top }}" width="{{ col.w }}" height="{{ c.bottom - c.top }}"><title>{{ col.title }}</title></rect>{% endfor %}
+    {% if c.empty %}<text class="empty" x="{{ (c.left + c.right) / 2 }}" y="{{ (c.top + c.bottom) / 2 }}" text-anchor="middle">No samples yet</text>{% endif %}
+  </svg>
+  {% if not c.empty %}
+  <p class="readout">{% for l in c.lines %}{% if l.end %}<span><svg width="14" height="8" aria-hidden="true"><line class="mark-line {{ l.key }}" x1="1" x2="13" y1="4" y2="4"/></svg>{{ l.label }} <strong>{{ l.end.value }}</strong></span>{% endif %}{% endfor %}</p>
+  {% endif %}
+  {{ table_view(c) }}
+</figure>
+{% endmacro %}
+
+{% macro columns_chart(c, title, note="") %}
+<figure class="chart">
+  <figcaption><span class="chart-title">{{ title }}</span>{% if note %} <span class="hint">{{ note }}</span>{% endif %}</figcaption>
+  {{ legend(c.legend, "fill") }}
+  <svg class="plot" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ title }}">
+    {{ axes(c) }}
+    {% for col in c.columns %}
+    <g class="col">
+      {% for seg in col.segments %}<rect class="mark-fill {{ seg.key }}" x="{{ col.x }}" y="{{ seg.y }}" width="{{ col.w }}" height="{{ seg.h }}" rx="{{ 1.5 if col.w > 4 else 0 }}"/>{% endfor %}
+      <rect class="hit" x="{{ col.slot_x }}" y="{{ c.top }}" width="{{ col.slot_w }}" height="{{ c.bottom - c.top }}"><title>{{ col.title }}</title></rect>
+    </g>
+    {% endfor %}
+    {% if c.empty %}<text class="empty" x="{{ (c.left + c.right) / 2 }}" y="{{ (c.top + c.bottom) / 2 }}" text-anchor="middle">No samples yet</text>{% endif %}
+  </svg>
+  {{ table_view(c) }}
+</figure>
+{% endmacro %}
+
+{% macro bars_chart(c, title, note="") %}
+<figure class="chart">
+  <figcaption><span class="chart-title">{{ title }}</span>{% if note %} <span class="hint">{{ note }}</span>{% endif %}</figcaption>
+  {% if c.rows %}
+  <svg class="plot" viewBox="0 0 {{ c.width }} {{ c.height }}" role="img" aria-label="{{ title }}">
+    {% for t in c.thresholds %}
+    <line class="rule {{ t.cls }}" x1="{{ t.x }}" x2="{{ t.x }}" y1="{{ c.top }}" y2="{{ c.bottom }}"/>
+    {% endfor %}
+    {% for r in c.rows %}
+    <a href="/ships/{{ r.label }}">
+      <text class="bar-label" x="{{ c.label_w - 8 }}" y="{{ r.bar_y + 10 }}" text-anchor="end">{{ r.label }}</text>
+      <rect class="track" x="{{ c.label_w }}" y="{{ r.bar_y }}" width="{{ c.plot_right - c.label_w }}" height="{{ r.bar_h }}" rx="3"/>
+      <rect class="mark-fill {{ r.cls }}" x="{{ c.label_w }}" y="{{ r.bar_y }}" width="{{ r.w }}" height="{{ r.bar_h }}" rx="3"/>
+      <text class="bar-value {{ r.cls }}" x="{{ r.value_x }}" y="{{ r.bar_y + 10 }}" text-anchor="end">{{ r.value }}</text>
+      <title>{{ r.label }}: {{ r.value }} of its disk used</title>
+    </a>
+    {% endfor %}
+  </svg>
+  {% else %}<p class="quiet">No Ship answered.</p>{% endif %}
+</figure>
+{% endmacro %}
+
+{% macro sparkline(s, label, value, cls) %}
+<span class="spark"><span class="spark-label">{{ label }}</span>
+<svg class="spark-plot" viewBox="0 0 {{ s.width }} {{ s.height }}" width="{{ s.width }}" height="{{ s.height }}" aria-hidden="true">
+  <line class="gridline" x1="0" x2="{{ s.width }}" y1="{{ s.height - 1 }}" y2="{{ s.height - 1 }}"/>
+  {% if s.d %}<path class="mark-line {{ cls }}" d="{{ s.d }}"/>{% endif %}
+  {% if s.end %}<circle class="mark-end {{ cls }}" cx="{{ s.end.x }}" cy="{{ s.end.y }}" r="2.5"/>{% endif %}
+</svg>
+<strong class="spark-value">{{ value }}</strong></span>
+{% endmacro %}
+
+{% macro ranges_nav(ranges, current, base) %}
+<nav class="ranges" aria-label="Time range">
+  {% for key in ranges %}<a href="{{ base }}range={{ key }}" class="chip{% if key == current %} on{% endif %}"{% if key == current %} aria-current="true"{% endif %}>{{ key }}</a>{% endfor %}
+</nav>
+{% endmacro %}

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta name="htmx-config" content='{"allowEval": false, "allowScriptTags": false, "includeIndicatorStyles": false, "selfRequestsOnly": true, "historyCacheSize": 0}'>
 <meta name="csrf-token" content="{{ csrf }}">
 <title>{% block title %}FleetLedger{% endblock %}</title>
@@ -12,7 +13,7 @@
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/">FleetLedger</a>
+  <a class="brand" href="/"><svg class="wheel" viewBox="0 0 28 28" width="26" height="26" aria-hidden="true" focusable="false"><circle cx="14" cy="14" r="8"/><circle class="hub" cx="14" cy="14" r="2.6"/><path d="M14 1.5v25M1.5 14h25M5.2 5.2l17.6 17.6M22.8 5.2 5.2 22.8"/></svg>FleetLedger</a>
   <nav>
     <a href="/">Fleet</a>
     <a href="/signin">Sign-ins{% if waiting_count %} <span class="badge warn">{{ waiting_count }}</span>{% endif %}</a>

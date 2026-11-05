@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240">
+  <!-- Wood grain for FleetLedger's deck: long streaks of noise, dark and faint. -->
+  <filter id="g" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.003 0.09" numOctaves="3" seed="7" stitchTiles="stitch"/>
+    <feColorMatrix values="0 0 0 0 0.24  0 0 0 0 0.14  0 0 0 0 0.06  0 0 0 0.9 -0.36"/>
+  </filter>
+  <rect width="480" height="240" filter="url(#g)"/>
+</svg>

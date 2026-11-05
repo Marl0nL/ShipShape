@@ -22,13 +22,12 @@
 
 {% if tab == "overview" %}
   {% if view.problem %}<p class="flash bad">{{ view.message }}</p>{% endif %}
-  {% if items %}
+  {% if alerts %}
+  {% from "_macros.html" import alert_row %}
   <section>
     <h2>Needs attention</h2>
-    <ul class="items">
-    {% for i in items %}
-      <li class="item {{ i.level }}"><span class="sev {{ i.level }}">{{ i.code }}</span><span class="msg">{{ i.message }}</span></li>
-    {% endfor %}
+    <ul class="alerts no-ship">
+    {% for a in alerts %}{{ alert_row(a, csrf, ship=False) }}{% endfor %}
     </ul>
   </section>
   {% endif %}
@@ -183,6 +182,7 @@
       </dl>
     </div>
   </section>
+  {% include "_ship_history.html" %}
   {% if doc.errors %}
   <section><h2>Probe errors</h2><ul>{% for e in doc.errors %}<li class="quiet">{{ e }}</li>{% endfor %}</ul></section>
   {% endif %}
