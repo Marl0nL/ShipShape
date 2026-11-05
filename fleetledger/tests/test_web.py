@@ -511,6 +511,23 @@ def test_unreachable_ship_is_shown_not_fatal(web):
 # --- one Ship ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("path, data", [
+    ("/ships/{}/refresh", {}),
+    ("/ships/{}/settings", {"remote_control": "on"}),
+    ("/ships/{}/logout", {"service": "claude", "confirm": "yes"}),
+    ("/ships/{}/network/refresh", {}),
+])
+def test_actions_on_a_ship_the_poller_does_not_know_are_404(web, path, data):
+    """Every per-Ship action route checks the Ship exists (app._known_ship)."""
+    web.sign_in()
+    for name in ("nope", "BAD!"):  # well-formed but unknown; not a Ship name at all
+        response = web.post(path.format(name), data)
+        assert response.status_code == 404
+        assert "No such Ship in the inventory." in response.text
+    if path.endswith("/refresh") and "network" not in path:
+        assert web.post(path.format("ship-01"), data).status_code == 303  # a known Ship works
+
+
 def test_ship_page(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
