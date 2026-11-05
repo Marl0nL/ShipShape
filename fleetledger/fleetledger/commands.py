@@ -40,14 +40,6 @@ def table(rows: list[list[str]], headers: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _tilde(path: Path) -> str:
-    home = Path.home()
-    try:
-        return "~/" + str(path.resolve().relative_to(home.resolve()))
-    except ValueError:
-        return str(path)
-
-
 def _ssh(app, inventory: Inventory):
     return app.ssh_factory(inventory)
 
@@ -127,8 +119,8 @@ def cmd_init(args, app) -> int:
     admin = make_fleet(app, store, args.admin_key, args.agent_key,
                        no_passphrase=args.no_passphrase)
     app.say("Next:")
-    app.say(f"  ssh-add {_tilde(admin)}                 # FleetLedger uses ssh-agent")
-    app.say(f"  edit {_tilde(store.path)}   # tags, expected accounts, [drivers.proxmox]")
+    app.say(f"  ssh-add {paths.tilde(admin)}                 # FleetLedger uses ssh-agent")
+    app.say(f"  edit {paths.tilde(store.path)}   # tags, expected accounts, [drivers.proxmox]")
     app.say("  ship-fleet new ship-01 --tag work")
     return 0
 
@@ -175,10 +167,10 @@ def make_fleet(app, store, admin_key: str, agent_key_values: list[str], *,
     for key in agent_keys:
         cloudinit.read_public_keys(key, "an agent key")
 
-    store.create(new_inventory(_tilde(admin), [_tilde(k) for k in agent_keys]))
+    store.create(new_inventory(paths.tilde(admin), [paths.tilde(k) for k in agent_keys]))
     if made_managed:
         with store.edit() as ed:
-            keys.record(ed, managed, [_tilde(admin)])
+            keys.record(ed, managed, [paths.tilde(admin)])
     app.say(f"Wrote {store.path}.")
     return admin
 

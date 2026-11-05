@@ -26,7 +26,7 @@ from fleetledger import paths
 from fleetledger.drivers import proxmox_api
 from fleetledger.errors import FleetError
 from fleetledger.overlay import secret_store
-from fleetledger.overlay_setup import _ask, _choose, _plausible_secret, _secret, _tilde
+from fleetledger.overlay_setup import _ask, _choose, _plausible_secret, _secret
 
 SECRET_FILE = "proxmox-token"
 TOKEN_ID_RE = re.compile(r"^[^@!\s]+@[^!\s]+![A-Za-z][A-Za-z0-9_.-]*$")  # as the schema
@@ -374,7 +374,7 @@ def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused:
     if not reused:
         paths.private_dir(path.parent)
         paths.write_private(path, (secret + "\n").encode("utf-8"))
-    config["token_file"] = _tilde(path)
+    config["token_file"] = paths.tilde(path)
     config.pop("token_store", None)
     config.pop("keyring_item", None)
     return f"{path} (0600)"
@@ -472,7 +472,7 @@ def _token_secret(app, token_id: str, old: Mapping[str, Any], *, keyring_ok: boo
         except FleetError:
             continue
         if _plausible_token(on_disk) and _choose(
-                app, f"A token secret is already in {_tilde(path)}. Use it (checked with "
+                app, f"A token secret is already in {paths.tilde(path)}. Use it (checked with "
                 "Proxmox first, never shown)", ("yes", "no"), "yes") == "yes":
             return on_disk, True, "file", path
     secret = _secret(app, "Token secret (not shown): ")

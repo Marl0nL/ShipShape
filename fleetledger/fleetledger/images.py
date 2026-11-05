@@ -276,7 +276,7 @@ def build(repo: Repo, *, recipes: Sequence[str] | None = None, backend: str = "v
     entry = {
         "created": doc["created"],
         "sha256": doc["sha256"],
-        "file": _tilde(out),
+        "file": paths.tilde(out),
         "ubuntu": {"release": base.release, "build": base.build},
         "tooling": doc["tooling"],
         "commit": doc["commit"],
@@ -284,13 +284,6 @@ def build(repo: Repo, *, recipes: Sequence[str] | None = None, backend: str = "v
         "recipes": doc["recipes"],
     }
     return Built(doc["id"], out, doc, entry)
-
-
-def _tilde(path: Path) -> str:
-    try:
-        return "~/" + str(path.resolve().relative_to(Path.home().resolve()))
-    except ValueError:
-        return str(path)
 
 
 # --- using recorded images ---------------------------------------------------------------

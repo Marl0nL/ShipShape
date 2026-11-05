@@ -206,9 +206,9 @@ def _fleet(s: _Setup):
 def _your_key(s: _Setup) -> str:
     default = Path.home() / ".ssh" / "id_ed25519.pub"
     if default.exists():
-        answer = s.ask(f"Your public key for attaching to Ships ({_tilde(default)}): ")
+        answer = s.ask(f"Your public key for attaching to Ships ({paths.tilde(default)}): ")
         chosen = paths.expand(answer) if answer else default
-    elif s.managed and s.yes(f"You have no {_tilde(default)}. Make a key for you now "
+    elif s.managed and s.yes(f"You have no {paths.tilde(default)}. Make a key for you now "
                              "(FleetLedger looks after it)"):
         from fleetledger.web.setup import YOUR_NEW_KEY
 
@@ -217,7 +217,7 @@ def _your_key(s: _Setup) -> str:
             keys.make(private, "shipshape-you", s.managed)
         s.made_yours = YOUR_NEW_KEY
         chosen = private.with_name(private.name + ".pub")
-    elif not s.managed and s.yes(f"You have no {_tilde(default)}. Make one now (ssh-keygen "
+    elif not s.managed and s.yes(f"You have no {paths.tilde(default)}. Make one now (ssh-keygen "
                                  "asks for a passphrase)"):
         private = default.with_suffix("")
         paths.private_dir(private.parent)
@@ -252,9 +252,9 @@ def _agent(s: _Setup, inv) -> bool:
     if held is None:
         s.app.say("No ssh-agent answers in this shell. FleetLedger logs in to Ships through\n"
                   "it. Start one and load the key, then run setup again:\n"
-                  f'  eval "$(ssh-agent)" && ssh-add {_tilde(admin)}\n'
+                  f'  eval "$(ssh-agent)" && ssh-add {paths.tilde(admin)}\n'
                   "Carrying on with the steps that do not need it.")
-        s.later.append(f'eval "$(ssh-agent)" && ssh-add {_tilde(admin)}')
+        s.later.append(f'eval "$(ssh-agent)" && ssh-add {paths.tilde(admin)}')
         return False
     fpr = firstrun.fingerprint(str(public), s.run_cmd)
     if fpr and fpr in held:
@@ -267,7 +267,7 @@ def _agent(s: _Setup, inv) -> bool:
             s.app.say("Loaded.")
             return True
         s.app.note("The key is still not in ssh-agent.")
-    s.later.append(f"ssh-add {_tilde(admin)}")
+    s.later.append(f"ssh-add {paths.tilde(admin)}")
     return False
 
 
@@ -398,9 +398,3 @@ def _first_ship(s: _Setup, agent_ok: bool) -> None:
     else:
         s.later.append(f"ship-fleet login {name} all")
 
-
-def _tilde(path) -> str:
-    try:
-        return "~/" + str(Path(path).resolve().relative_to(Path.home().resolve()))
-    except ValueError:
-        return str(path)
