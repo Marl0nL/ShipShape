@@ -208,6 +208,13 @@ next reboot.
 - `add ID...` / `remove ID...`: edit `[tools].install`, then `run`. `remove`
   stops managing the tool; it does not uninstall it in phase 1.
 
+### `ship-ctl grow-root [--json]`
+
+Grows the partition that holds `/` to fill its disk (`growpart`), then its ext4
+filesystem (`resize2fs`), online. FleetLedger runs it after it grows a Ship's disk
+through the hypervisor (`ship-fleet resize --disk-gb`). Nothing to grow is not an
+error: `changed` is empty. `data`: `{ "device": "/dev/sda1", "grown": true|false }`.
+
 ### `ship-ctl logs SOURCE [--lines N] [--json]`
 
 SOURCE is one of `provision`, `herdr`, `resume`, `tools`, `status`, `system`;

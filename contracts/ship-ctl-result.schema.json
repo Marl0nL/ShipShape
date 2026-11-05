@@ -19,6 +19,7 @@
         "tools",
         "version",
         "logs",
+        "grow-root",
         "ssh-trust",
         "net",
         "overlay"
