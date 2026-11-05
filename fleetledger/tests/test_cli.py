@@ -946,6 +946,19 @@ def test_destroy_drops_the_cached_status(env):
     assert not status.cache_path("ship-04").exists()
 
 
+def test_destroy_drops_the_ships_history(env):
+    import time
+
+    from fleetledger import history
+
+    store, now = history.History(), time.time()
+    store.add([history.Sample("ship-02", now, True, 5.0, 10.0, 20.0, 1, 0, 0),
+               history.Sample("ship-01", now, True, 5.0, 10.0, 20.0, 1, 0, 0)])
+    assert env.run("destroy", "ship-02", "--yes", "--forget")[0] == 0
+    left = store.since(0)
+    assert "ship-02" not in left and "ship-01" in left  # only its own charts go
+
+
 def test_destroy_runs_the_before_destroy_hook_first(env):
     env.run("new", "ship-04", "--on", "proxmox")
     seen = []

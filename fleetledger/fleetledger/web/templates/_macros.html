@@ -213,7 +213,8 @@
     {% endfor %}
     {% elif view.not_enrolled %}
     {{ enrol_form() }}
-    <span class="hint">Not enrolled yet: it may still be starting{% if ship.driver == "manual" %}, or its VM is still to be made by hand{% endif %}.</span>
+    {{ destroy_form(ship.name, by_hand=ship.driver == "manual") }}
+    <span class="hint">Not enrolled yet: it may still be starting{% if ship.driver == "manual" %}, or its VM is still to be made by hand{% endif %}. Not wanted after all? Destroy it.</span>
     {% elif view.problem == "unreachable" and ship.driver != "manual" %}
     {{ power_form("start", primary=True) }}
     <span class="hint">It does not answer: its VM may be off.</span>
@@ -255,10 +256,32 @@
           <button type="submit" class="ghost" title="ship-fleet ca sign {{ ship.name }}">Renew certificate</button>
         </form>
         {% endif %}
+        {{ destroy_form(ship.name, by_hand=by_hand) }}
       </div>
     </details>
   </div>
 </section>
+{% endmacro %}
+
+{# Destroy a Ship, or forget it (POST /ships/N/destroy|forget: ship-fleet destroy N
+   [--forget] --yes), behind the danger dialog and typing the Ship's name. Needs
+   csrf in the context; name is the Ship's. #}
+{% macro destroy_form(name, forget=False, by_hand=False, small=False) %}
+{% if forget %}
+<form method="post" action="/ships/{{ name }}/forget" class="inline"
+  data-confirm-title="Forget {{ name }}?"
+  data-confirm="FleetLedger removes {{ name }} from the inventory, with its seed and its charts. Its VM is not touched: delete it on the hypervisor first if it still exists."
+  data-confirm-action="Forget {{ name }}" data-confirm-type="{{ name }}" data-confirm-danger>
+{% else %}
+<form method="post" action="/ships/{{ name }}/destroy" class="inline"
+  data-confirm-title="Destroy {{ name }}?"
+  data-confirm="{% if by_hand %}FleetLedger gives you the steps to delete {{ name }}'s VM and disks on your hypervisor; once you have run them, Forget removes it here.{% else %}FleetLedger takes {{ name }} off the overlay, then stops and deletes its VM and disks, its seed, its inventory entry and its charts.{% endif %} The sign-ins on it go with it. This cannot be undone."
+  data-confirm-action="Destroy {{ name }}" data-confirm-type="{{ name }}" data-confirm-danger>
+{% endif %}
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label class="confirm">Type {{ name }} to confirm <input name="confirm_name" autocomplete="off" data-confirm-typed></label>
+  <button type="submit" class="ghost danger{{ ' small' if small }}" title="ship-fleet destroy {{ name }}{{ ' --forget' if forget }}">{{ "Forget" if forget else "Destroy" }} {{ name }}{{ "" if forget else "…" }}</button>
+</form>
 {% endmacro %}
 
 {# Start or stop the Ship's VM (POST /ships/N/power: ship-fleet start|stop); stop
