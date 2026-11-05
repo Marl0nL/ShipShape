@@ -71,12 +71,7 @@
 
 <section id="access" class="setup-step settings-group">
   <h2>Access</h2>
-  <h3>Overlay</h3>
-  {% if inv.overlay %}
-  <p>{{ "Headscale at " ~ inv.overlay.login_server if inv.overlay.provider == "headscale" else "Tailscale" }}{% if inv.overlay.tags %}, Ships tagged {{ inv.overlay.tags|join(", ") }}{% endif %}{% if inv.overlay.key_source == "tailscale-api" %}; FleetLedger makes each Ship's key{% else %}; you paste each Ship's key{% endif %}. <a href="/setup#overlay">Change in Setup</a></p>
-  {% else %}
-  <p>Not set up: Ships are reachable on your LAN only. <a href="/setup#overlay">Set it up</a></p>
-  {% endif %}
+  {% include "_settings_overlay.html" %}
   <h3>Keys and certificates</h3>
   <p>Inventory <code>{{ inventory_path }}</code>; fleet admin key <code>{{ inv.doc.fleet.admin_key }}</code>;
     your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.

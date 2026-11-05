@@ -51,6 +51,7 @@ SHIPS = {
     "ship-06": (["work"], False),
 }
 DOWN = {"ship-05"}
+LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
 DEMO_CA: dict[str, str] = {}  # the demo CA's fingerprints, once home() has made it
 
 INVENTORY = """\
@@ -337,10 +338,14 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
             {"code": "host-cert-expiring", "subject": "ssh",
              "message": "The SSH host certificate expires in 5 days."},
         ]
+    if name == "ship-06" or name in LEFT:
+        doc["overlay"] = None
+    else:  # each Ship its own overlay name and address
+        doc["overlay"].update(name=f"{name}.example-tailnet.ts.net", node_id=f"nDemo{index}",
+                              addresses=[f"192.0.2.{10 + index}"])
     if name == "ship-06":
         doc["herdr"]["agents"] = []
         doc["state"] = "ready"
-        doc["overlay"] = None
     if doc["herdr"]["agents"] and doc["state"] != "running":
         doc["state"] = "running"
     adc = doc["auth"]["gcloud_adc"]
@@ -405,6 +410,14 @@ def make_ssh(inventory):
                 answer = ctl_result("logs")
                 answer["data"] = {"lines": [f"{ship.name} {command[4]}: demo line {i}"
                                             for i in range(1, 6)]}
+                return Result(0, json.dumps(answer).encode(), "", ship.names[0])
+            if verb == "overlay":  # status and leave, as ship-ctl overlay answers
+                if command[4:5] == ["leave"]:
+                    LEFT.add(ship.name)
+                tags, _joined = SHIPS[ship.name]
+                doc = status_doc(ship.name, tags, names.index(ship.name) + 1, time.time())
+                answer = ctl_result("overlay")
+                answer["data"] = {"overlay": doc["overlay"]}
                 return Result(0, json.dumps(answer).encode(), "", ship.names[0])
             if verb in ("version", "ssh-trust"):  # so certificate jobs succeed
                 return Result(0, json.dumps(ctl_result(verb)).encode(), "", ship.names[0])

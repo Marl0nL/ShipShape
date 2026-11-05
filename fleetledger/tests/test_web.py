@@ -1241,8 +1241,9 @@ def test_an_agent_can_stop_being_started_from_the_ship_page(web):
 
 def test_the_ship_page_says_how_to_connect_as_yourself(web):
     web.sign_in()
-    page = web.client.get("/ships/ship-01").text
+    page = web.client.get("/ships/ship-01/access").text  # every way to attach
     assert "ship-fleet ssh ship-01 --as owner" in page
+    assert 'href="/ships/ship-01/access"' in web.client.get("/ships/ship-01").text
 
 
 def test_a_job_shows_on_the_fleet_page_its_ships_page_and_in_any_session(web, monkeypatch):

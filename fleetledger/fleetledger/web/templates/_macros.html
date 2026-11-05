@@ -19,6 +19,24 @@
 
 {% macro sev(level) %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span>{{ level|capitalize }}</span></span>{% endmacro %}
 
+{# The items of a check (overlay_setup.check_items: name, state, detail), as a
+   table: each state as an icon and a word, as Settings ▸ Health shows doctor's. #}
+{% macro check_rows(items) %}
+<table class="health checks">
+  <thead><tr><th>Check</th><th>State</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for c in items %}
+  {% set level, word = {"warn": ("warning", "warning"), "fail": ("critical", "failed")}.get(c.state, (None, "skipped" if c.state == "skip" else c.state)) %}
+  <tr>
+    <td>{{ c.name }}</td>
+    <td class="health-state">{% if level %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span>{{ word }}</span></span>{% else %}<span class="pill {{ 'good' if c.state == 'ok' else 'muted' }}">{{ word }}</span>{% endif %}</td>
+    <td>{{ c.detail }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endmacro %}
+
 {% macro alert_row(a, csrf, ship=True) %}
 <li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
   {{ sev(a.level) }}
@@ -249,6 +267,16 @@
         </form>
         <p class="hint">{{ ship.name }} is not on your overlay yet: join it to reach it from
           anywhere (its host certificate is re-signed with its overlay name).</p>
+        {% endif %}
+        {% if overlay_set and on_overlay %}
+        <form method="post" action="/ships/{{ ship.name }}/overlay/leave" class="inline"
+          data-confirm-title="Take {{ ship.name }} off the overlay?"
+          data-confirm="{{ ship.name }} leaves your overlay and forgets its overlay name: from then on it is reachable on your LAN only, and a sign-in or attach over the overlay stops. Its device stays in your overlay's admin console until you remove it there. Join it again at any time."
+          data-confirm-action="Leave the overlay" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost danger" title="ship-fleet overlay leave {{ ship.name }}">Leave the overlay</button>
+        </form>
         {% endif %}
         {% if renew %}
         <form method="post" action="/ships/{{ ship.name }}/certs/renew" class="inline">

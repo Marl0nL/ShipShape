@@ -1,0 +1,126 @@
+{# A Ship's Access tab (web.overlayweb): every way to attach from this computer, this
+   computer's trust, the overlay, and the host certificate. Read from what the page
+   already has (status document, inventory, cached revocation list): nothing is
+   contacted. Context: ship, doc, view, csrf, snap, attach_here, attach_until,
+   can_trust_here, overlay_set, on_overlay, cert (ca.judge, or None without a CA). #}
+{% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
+{% macro cmd(line, what) %}<tr><td><code>{{ line }}</code></td><td><button type="button" class="ghost small" data-copy="{{ line }}">Copy</button></td><td>{{ what }}</td></tr>{% endmacro %}
+{% set owner = snap.inventory.owner %}
+<section class="grid access-attach">
+  <div>
+  <h2>Attach from this computer</h2>
+  <table class="attach-commands">
+    <tbody>
+    {% if attach_here %}
+    {{ cmd("herdr --remote " ~ ship.name, "the agents, in herdr (as the agent: your key and the fleet's certificate)") }}
+    {{ cmd("ssh " ~ ship.name, "a shell as the agent (no sudo)") }}
+    {{ cmd("ssh " ~ owner ~ "@" ~ ship.name, "a shell as you, with sudo, for admin work") }}
+    {% endif %}
+    {{ cmd("ship-fleet ssh " ~ ship.name, "a shell as the agent, through FleetLedger (works without trusting this computer)") }}
+    {{ cmd("ship-fleet ssh " ~ ship.name ~ " --as owner", "a shell as you, with sudo, through FleetLedger") }}
+    </tbody>
+  </table>
+  <p class="hint">The agent's login has no sudo; its herdr session is the agent's own, so
+    <code>herdr --remote</code> logs in as the agent. (A Ship made before owner logins
+    existed gets one with <code>ship-fleet owner {{ owner }}</code>.)</p>
+
+  </div>
+</section>
+<section class="grid access">
+  <div>
+  <h2>This computer</h2>
+  {% if attach_here %}
+  <p>Trusted: its certificate is valid until {{ until(attach_until) }}; FleetLedger renews it
+    in its last day whenever it runs (this page, or <code>ship-fleet status</code>).</p>
+  {% elif attach_until %}
+  <p>Trusted (certificate valid until {{ until(attach_until) }}), but not for {{ ship.name }}
+    yet: its scope does not reach it, or {{ ship.name }} has no host certificate.</p>
+  {% else %}
+  <p>Not trusted: <code>ssh {{ ship.name }}</code> and <code>herdr --remote {{ ship.name }}</code> need it.</p>
+  {% endif %}
+  {% if can_trust_here %}
+  <form method="post" action="/attach-here" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ship" value="{{ ship.name }}">
+    <input type="hidden" name="from" value="access">
+    <button type="submit" class="ghost" title="ship-fleet trust --this-computer">{{ "Renew now" if attach_until else "Let this computer use ssh " ~ ship.name ~ " and herdr --remote " ~ ship.name }}</button>
+  </form>
+  <p class="hint">This trusts this computer with your own key (a short-lived certificate)
+    and adds the Ships to your SSH config (<code>~/.ssh/shipshape/</code>, included from
+    <code>~/.ssh/config</code>) and to herdr's saved machines. Other machines: Settings ▸
+    <a href="/settings?said=machines#machines">Trusted machines</a>.</p>
+  {% else %}
+  <p class="hint">The fleet has no certificate authority yet: make it in Settings ▸
+    <a href="/settings#access">Access</a>.</p>
+  {% endif %}
+
+  </div>
+  <div>
+  <h2>Overlay</h2>
+  {% set o = doc.overlay if doc else None %}
+  {% if not overlay_set %}
+  <p>No overlay is set up: {{ ship.name }} is reachable on your LAN only.
+    <a href="/setup#overlay">Set one up</a>.</p>
+  {% elif o and o.joined %}
+  <dl>
+    <dt>State</dt><dd><span class="pill {{ 'good' if o.state == 'running' else 'warn' }}">{{ o.state }}</span></dd>
+    <dt>Name</dt><dd>{{ o.name or "not yet" }}</dd>
+    <dt>Addresses</dt><dd>{{ o.addresses|join(", ") or "none yet" }}</dd>
+    <dt>SSH</dt><dd>{{ "on the overlay only (LAN logins refused)" if o.ssh_listen == "overlay" else "on the LAN and the overlay" }} · <a href="/ships/{{ ship.name }}/settings">change</a></dd>
+  </dl>
+  {% elif on_overlay and doc %}
+  <p>{{ ship.name }} says it is not on the overlay, though FleetLedger has a node recorded
+    for it: Leave clears that, then Join again.</p>
+  {% elif on_overlay %}
+  <p>On the overlay (node recorded); its state shows once it answers.</p>
+  {% else %}
+  <p>Not on the overlay: {{ ship.name }} is reachable on your LAN only.</p>
+  {% endif %}
+  {% if overlay_set and on_overlay %}
+  <form method="post" action="/ships/{{ ship.name }}/overlay/leave" class="inline"
+    data-confirm-title="Take {{ ship.name }} off the overlay?"
+    data-confirm="{{ ship.name }} leaves your overlay and forgets its overlay name: from then on it is reachable on your LAN only, and a sign-in or attach over the overlay stops. Its device stays in your overlay's admin console until you remove it there. Join it again at any time."
+    data-confirm-action="Leave the overlay" data-confirm-danger>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="from" value="access">
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" class="ghost danger" title="ship-fleet overlay leave {{ ship.name }}">Leave the overlay</button>
+  </form>
+  {% elif overlay_set and doc and not view.problem %}
+  {% set c = op_confirm("join", ship.name) %}
+  <form method="post" action="/operations" class="inline"
+    data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}" data-confirm-action="{{ c.action }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="operation" value="join">
+    <input type="hidden" name="ship" value="{{ ship.name }}">
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" title="ship-fleet overlay join {{ ship.name }}">Join the overlay</button>
+  </form>
+  {% endif %}
+
+  </div>
+  <div>
+  <h2>Host certificate</h2>
+  {% if cert is none %}
+  <p>The fleet has no certificate authority: {{ ship.name }} is reached with its pinned host key.</p>
+  {% elif not doc %}
+  <p>Not seen yet: {{ ship.name }} has not answered, so its certificate is not known.
+    Is it switched on? Then Check now.</p>
+  {% elif not cert.supported %}
+  <p>{{ ship.name }}'s tooling predates certificates: <a href="/ships/{{ ship.name }}">update it</a> first.</p>
+  {% else %}
+  <dl>
+    <dt>Valid until</dt><dd>{{ until(cert.cert.valid_before if cert.cert else None) }}</dd>
+    <dt>Names</dt><dd>{{ (cert.cert.principals if cert.cert else [])|join(", ") or "-" }}</dd>
+    <dt>State</dt><dd>{% if cert.needs_cert %}<span class="pill {{ 'bad' if cert.reason == 'expired' else 'warn' }}">{{ cert.reason }}</span>{% else %}<span class="pill good">ok</span>{% endif %}{% if cert.trust_behind %} <span class="pill warn">trust behind</span>{% endif %}</dd>
+  </dl>
+  {% if doc and not view.problem %}
+  <form method="post" action="/ships/{{ ship.name }}/certs/renew" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="from" value="access">
+    <button type="submit" class="ghost" title="ship-fleet ca sign {{ ship.name }}">Renew certificate</button>
+  </form>
+  {% endif %}
+  {% endif %}
+  </div>
+</section>

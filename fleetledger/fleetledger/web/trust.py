@@ -137,13 +137,16 @@ TO_MACHINES = "/settings?said=machines#machines"
 TO_CERTIFICATES = "/settings?said=certificates#certificates"
 
 
+PLACED = ("certificates", "machines", "overlay")  # Settings blocks that show their flashes
+
+
 def placed_flashes(request: Request) -> dict[str, Any]:
     """For the Settings page: when an action here sent it back (?said=BLOCK), its
     flashes, to show in that block instead of the top of the page."""
     from fleetledger.web.app import session_of
 
     said = request.query_params.get("said")
-    if said not in ("certificates", "machines"):
+    if said not in PLACED:
         return {}
     return {"flash_at": said, "placed": _ui(request).take_flashes(session_of(request)),
             "flashes": []}
@@ -197,6 +200,8 @@ async def renew_ship(request: Request) -> Response:
         return back("/")
     if where == "settings":
         return RedirectResponse(TO_CERTIFICATES, status_code=303)
+    if where == "access":
+        return back(f"/ships/{name}/access")
     return back(f"/ships/{name}")
 
 
