@@ -67,6 +67,20 @@ def test_app_js_reads_no_form_property_a_field_could_shadow():
         assert not names & risky, f"{template}: a field shadows {sorted(names & risky)}"
 
 
+def test_every_typed_confirmation_is_wired():
+    """A field the dialog fills with typed text (confirm_name) is marked
+    data-confirm-typed, in a form that says what to type (data-confirm-type)."""
+    typed = re.compile(rf'<input\b{TAG_PART}name="confirm_name"{TAG_PART}>')
+    found = 0
+    for path in sorted(TEMPLATES.glob("*.html")):
+        for form in FORM.finditer(path.read_text(encoding="utf-8")):
+            for field in typed.findall(form.group("body")):
+                found += 1
+                assert "data-confirm-typed" in field, f"{path.name}: {field}"
+                assert "data-confirm-type=" in form.group("attrs"), f"{path.name}: its form"
+    assert found >= 2  # snapshot rollback: from the list, and by name
+
+
 def test_no_confirm_field_is_prefilled():
     """A hidden confirm field with a value would make an action one click, with or
     without script. Confirm fields are tick boxes the dialog ticks (or you do)."""

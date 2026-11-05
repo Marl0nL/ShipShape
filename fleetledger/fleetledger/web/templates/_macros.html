@@ -212,10 +212,14 @@
     {% else %}
     <span class="hint">{{ view.message or view.problem or "Not checked yet." }}</span>
     {% endif %}
-    {% if overlay_set and not on_overlay %}
+    {% set by_hand = ship.driver == "manual" %}
+    {% if not by_hand %}<a class="button ghost" href="/ships/{{ ship.name }}/snapshots#take" title="ship-fleet snapshot take {{ ship.name }}">Snapshot</a>{% endif %}
+    {% if (overlay_set and not on_overlay) or by_hand %}
     <details class="menu">
       <summary>More</summary>
       <div class="menu-items">
+        {% if by_hand %}<a class="button ghost" href="/ships/{{ ship.name }}/snapshots#take">Snapshot (by hand)</a>{% endif %}
+        {% if overlay_set and not on_overlay %}
         {% set c = op_confirm("join", ship.name) %}
         <form method="post" action="/operations" class="inline"
           data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
@@ -228,6 +232,7 @@
         </form>
         <p class="hint">{{ ship.name }} is not on your overlay yet: join it to reach it from
           anywhere (its host certificate is re-signed with its overlay name).</p>
+        {% endif %}
       </div>
     </details>
     {% endif %}
