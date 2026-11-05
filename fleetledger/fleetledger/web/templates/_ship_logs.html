@@ -2,7 +2,8 @@
   <section>
     <h2>Logs</h2>
     <form method="get" action="/ships/{{ ship.name }}/logs" class="inline">
-      <select name="source">{% for s in sources %}<option value="{{ s }}"{% if s == source %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+      <select name="source" aria-label="Log">{% for s in sources %}<option value="{{ s }}"{% if s == source %} selected{% endif %}>{{ s }}</option>{% endfor %}</select>
+      <label>last <select name="lines">{% for n in line_choices %}<option{% if n|int == lines %} selected{% endif %}>{{ n }}</option>{% endfor %}</select> lines</label>
       <button type="submit">Show</button>
     </form>
     {% if log is not none %}
