@@ -104,17 +104,6 @@ def read_passphrase(key: Path, store: str) -> str:
     return secret_store.read_file(str(passphrase_file(key)), f"the passphrase for {key.name}")
 
 
-def forget_passphrase(key: Path, store: str) -> None:
-    """Drop a stored passphrase (after a failed make, so nothing dangles)."""
-    try:
-        if store == "keyring":
-            secret_store.delete_from_keyring(item(key))
-        else:
-            passphrase_file(key).unlink(missing_ok=True)
-    except (FleetError, OSError, KeyError):
-        pass
-
-
 def new_passphrase() -> str:
     return secrets.token_urlsafe(32)  # 256 bits
 
