@@ -40,6 +40,12 @@ If no valid status document can be produced, it prints a result document instead
 not run as root it prints the same with `not-root` and exits 3. FleetLedger tells
 the two shapes apart by their `schema` value.
 
+FleetLedger ignores a top-level block it does not know, so a Ship updated past
+the FleetLedger reading it (say, from a second computer on an older checkout)
+still shows; every block it does know is still checked against the schema. New
+fields therefore go in a new optional top-level block, or are optional inside
+one: a field added inside an existing block still breaks an older FleetLedger.
+
 - Finishes within 15 seconds. Each probe has its own timeout (5 seconds at most);
   a failed probe sets its fields to `unknown`/`null` and adds a line to `errors`.
 - `--write PATH` also writes the document atomically to PATH (mode 0644). The
