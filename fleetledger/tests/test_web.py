@@ -777,7 +777,8 @@ def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
     from fleetledger import lifecycle
 
     calls = []
-    monkeypatch.setattr(lifecycle, "resize", lambda app, store, name, size, restart=False:
+    monkeypatch.setattr(lifecycle, "resize",
+                        lambda app, store, name, size, restart=False, record_only=False:
                         calls.append((name, size, restart)) or ["Set 8 cores."])
     web.sign_in()
     text = web.client.get("/ships/ship-01/settings").text
@@ -787,6 +788,29 @@ def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
     assert calls == [("ship-01", {"cores": 8}, True)]  # only what changed
     web.post("/ships/ship-01/size", {"cores": "4", "memory_gb": "8", "disk_gb": "40"})
     assert len(calls) == 1  # nothing changed: nothing done
+    with web.store.edit() as ed:
+        ed.set_field("ship-02", "driver", "proxmox")
+    records = []
+    monkeypatch.setattr(lifecycle, "resize",
+                        lambda app, store, name, size, restart=False, record_only=False:
+                        records.append(record_only) or ["Set 8 cores."])
+    web.post("/ships/ship-02/size", {"cores": "8", "memory_gb": "8", "disk_gb": "40",
+                                     "record_only": "yes"})
+    assert records == [False]  # record only is for a Ship made by hand
+
+
+def test_record_only_notes_a_manual_ships_size_without_its_driver(web):
+    def no_driver(*args, **kw):
+        raise AssertionError("record only must not call the driver")
+
+    web.app.driver_factory = no_driver
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text  # ship-01 is on the manual driver
+    assert 'name="record_only" value="yes"' in page and 'name="restart"' not in page
+    web.post("/ships/ship-01/size", {"cores": "6", "memory_gb": "8", "disk_gb": "40",
+                                     "record_only": "yes"})
+    assert web.store.load().ship("ship-01").size["cores"] == 6
+    assert "its VM was not touched" in web.client.get("/ships/ship-01/settings").text
 
 
 def test_sign_ins_a_ship_does_not_use_are_off_everywhere(web):
@@ -1504,3 +1528,147 @@ def test_after_a_restart_a_half_made_ship_is_still_not_enrolled_yet(web, store):
     fleet = client.get("/partials/fleet").text
     assert "CRITICAL" not in fleet.split("ship-32")[0][-400:]  # not a critical alert
 
+
+
+# --- the Ship Settings tab, grouped, with current values (web.shipsettings) -------------
+
+
+def _reporting(web, ship="ship-01", **changes):
+    """The Ship reports its settings (ui-6s) and these tools."""
+    doc = copy.deepcopy(RUNNING)
+    doc["ship"]["name"], doc["ship"]["id"] = ship, web.store.load().ship(ship).id
+    doc["settings"] = json.loads(
+        (EXAMPLES / "ship-status" / "running-settings.json").read_text())["settings"]
+    doc["settings"]["ship"]["tags"] = list(web.store.load().ship(ship).tags)
+    doc["tools"] = {"gh-axi": {"state": "ok"}}
+    for key, value in changes.items():
+        doc[key] = value
+    web.ship.status_override[ship] = doc
+    web.fleet.poll()
+    return doc
+
+
+def test_settings_are_grouped_and_show_what_the_ship_reports(web):
+    _reporting(web)
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text
+    heads = [h for h in re.findall(r"<h2>([^<]+)</h2>", page)]
+    for group in ("Claude Code", "Agent", "Sign-ins it uses", "Tools", "Network", "Updates",
+                  "Size", "Tags"):
+        assert group in heads, group
+    assert heads.index("Claude Code") < heads.index("Tools") < heads.index("Network")
+    assert '<option value="Europe/Berlin"' not in page  # free text, not a choice
+    assert 'name="timezone" value="Europe/Berlin"' in page
+    assert 'name="session_prefix" value="ship-01"' in page
+    assert '<option value="latest" selected>' in page  # update_channel, as reported
+    assert "(unchanged" not in page  # it reports every value
+    assert 'name="ssh_listen"' not in page  # only for a Ship on the overlay
+
+
+def test_an_older_ship_keeps_unchanged_and_the_channel_from_its_claude_block(web):
+    doc = copy.deepcopy(RUNNING)
+    doc["claude"]["channel"] = "stable"
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text
+    assert "does not report its settings yet" in page
+    channel = page[page.index('name="update_channel"'):]
+    assert channel.index("(unchanged: stable)") < channel.index("</select>")
+    assert 'name="timezone" value=""' in page and 'placeholder="(unchanged)"' in page
+
+
+def test_applying_a_group_sends_only_what_changed(web):
+    _reporting(web)
+    web.sign_in()
+    web.post("/ships/ship-01/settings", {"auto_reboot": "true", "reboot_time": "04:00",
+                                         "timezone": "Europe/Berlin"})
+    sets = [c for _, c in web.ship.calls if c[3:4] == ["set"]]
+    assert sets[-1][4:-1] == ["updates.auto_reboot=true"]
+    web.post("/ships/ship-01/settings", {"timezone": "not a zone"})
+    assert "IANA zone name" in web.client.get("/ships/ship-01/settings").text
+    assert len([c for _, c in web.ship.calls if c[3:4] == ["set"]]) == len(sets)
+
+
+def test_ssh_listen_is_offered_on_the_overlay_behind_a_dialog(web, store):
+    with store.edit() as ed:
+        ed.doc["overlay"] = {"provider": "tailscale", "tags": ["tag:ship"]}
+        ed.set_field("ship-01", "overlay_node", "nAbC123")
+    _reporting(web)
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text
+    form = page[page.rindex("<form", 0, page.index('name="ssh_listen"')):]
+    form = form[:form.index("</form>")]
+    assert "data-confirm-title" in form and 'data-confirm-field' in form
+    assert "data-confirm-danger" in form  # Cancel has the focus
+    web.post("/ships/ship-01/settings", {"part": "ssh", "ssh_listen": "overlay"})  # no tick
+    assert "Tick the box to confirm" in web.client.get("/ships/ship-01/settings").text
+    assert not [c for _, c in web.ship.calls if c[3:4] == ["set"]]  # nothing sent
+    web.post("/ships/ship-01/settings", {"part": "ssh", "ssh_listen": "overlay",
+                                         "confirm": "yes", "sudo": "true"})
+    sets = [c for _, c in web.ship.calls if c[3:4] == ["set"]]
+    assert sets[-1][4:-1] == ["network.ssh_listen=overlay"]  # that form's key only
+
+
+def test_ssh_listen_is_refused_for_a_ship_off_the_overlay(web):
+    _reporting(web)
+    web.sign_in()
+    web.post("/ships/ship-01/settings", {"part": "ssh", "ssh_listen": "overlay",
+                                         "confirm": "yes"})
+    assert "not on the overlay" in web.client.get("/ships/ship-01/settings").text
+    assert not [c for _, c in web.ship.calls if c[3:4] == ["set"]]
+
+
+def test_tools_wait_for_the_ship_and_a_failed_add_removes_nothing(web, monkeypatch):
+    web.ship.down.add("ship-01")
+    web.fleet.poll()
+    web.sign_in()
+    web.post("/ships/ship-01/tools", {"tool": ["tasks-axi"]})
+    assert "not known until it answers" in web.client.get("/ships/ship-01/settings").text
+    assert web.app_ui.jobs.recent() == []
+    web.ship.down.discard("ship-01")
+    _reporting(web)
+    from fleetledger.web import jobs as jobs_mod
+
+    real = jobs_mod.run_cli
+    ran = []
+
+    def failing_add(app, argv, job):
+        ran.append(argv[:2])
+        return 1 if argv[:2] == ["tools", "add"] else real(app, argv, job)
+
+    monkeypatch.setattr(jobs_mod, "run_cli", failing_add)
+    web.post("/ships/ship-01/tools", {"tool": ["tasks-axi"]})  # add one, remove gh-axi
+    job = web.app_ui.jobs.recent()[0]
+    wait_for(lambda: job.done)
+    assert not job.ok and ran == [["tools", "add"]]  # the remove never ran
+
+
+def test_tools_are_ticked_from_the_ship_and_changed_as_a_job(web):
+    _reporting(web)
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text
+    assert 'name="tool" value="gh-axi" checked' in page
+    assert 'name="tool" value="tasks-axi">' in page
+    web.post("/ships/ship-01/tools", {"tool": ["gh-axi"]})
+    assert "Nothing to change" in web.client.get("/ships/ship-01/settings").text
+    web.post("/ships/ship-01/tools", {"tool": ["tasks-axi"]})  # add one, remove one
+    job = web.app_ui.jobs.recent()[0]
+    assert job.kind == "tools" and "add tasks-axi" in job.title and "remove gh-axi" in job.title
+    wait_for(lambda: job.done)
+    tools = [c[1][3:] for c in web.ship.calls if c[1][3:4] == ["tools"]]
+    assert ["tools", "add", "tasks-axi", "--json"] in tools
+    assert ["tools", "remove", "gh-axi", "--json"] in tools
+    web.post("/ships/ship-01/tools", {"tool": ["nope"]})
+    assert "not one of the catalogue" in web.client.get("/ships/ship-01/settings").text
+
+
+def test_logs_show_the_chosen_number_of_lines(web, monkeypatch):
+    seen = []
+    monkeypatch.setattr(webapp.actions, "logs",
+                        lambda app, ship, source, lines: seen.append(lines) or (True, ["x"]))
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/logs?source=provision&lines=1000").text
+    assert seen == [1000] and "<option selected>1000</option>" in page
+    web.client.get("/ships/ship-01/logs?source=provision&lines=999999")
+    assert seen[-1] == 300  # not a choice: the default
