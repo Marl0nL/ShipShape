@@ -33,7 +33,7 @@ from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, dashboard, network, settings, setup, snapshots
+from fleetledger.web import actions, dashboard, destroy, network, settings, setup, snapshots
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -79,6 +79,7 @@ class UI:
     health: Any = None  # web.settings.Health: the last "Check now" on Settings
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
     started: set[str] = dataclasses.field(default_factory=set)
+    destroyed: dict[str, float] = dataclasses.field(default_factory=dict)  # name -> when
     flashes: dict[str, list[tuple[str, str]]] = dataclasses.field(default_factory=dict)
 
     def flash(self, session: Session, kind: str, text: str) -> None:
@@ -346,6 +347,10 @@ async def ship_page(request: Request) -> Response:
     name = _ship_name(request)
     tab = request.path_params.get("tab", "overview")
     context = _ship_context(ui, name) if name else None
+    if context is None and name and (at := destroy.gone_since(ui, name)) is not None:
+        return render(request, "message.html", status_code=410, title=f"{name} is gone",
+                      text=f"{name} was destroyed at {_clock(at)}: its VM, its seed and its "
+                      "entry in the inventory are gone.")
     if context is None or tab not in TABS:
         return not_found(request, NO_SUCH_SHIP)
     if tab == "logs":
@@ -586,7 +591,10 @@ async def job_card(request: Request) -> Response:
         return Response(status_code=286)
     if request.query_params.get("v") == str(job.version):
         return Response(status_code=204)
-    return partial(request, "_job.html", job=job)
+    response = partial(request, "_job.html", job=job)
+    if job.done and job.result.get("gone"):  # destroyed: its page is gone too
+        response.headers["HX-Redirect"] = "/"
+    return response
 
 
 # --- network visibility ----------------------------------------------------------------
@@ -860,6 +868,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/jobs/{job}", job_card),
         *setup.routes(),
         *snapshots.routes(),
+        *destroy.routes(),
         *settings.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]

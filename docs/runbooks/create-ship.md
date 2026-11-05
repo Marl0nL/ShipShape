@@ -166,7 +166,11 @@ the VM's name first and refuses to touch a VM that is not this Ship. With the
 manual driver it prints the steps; once you have run them,
 `ship-fleet destroy ship-01 --forget` removes the inventory entry. Sign the Ship
 out of its services first (`ship-fleet logout ship-01 all`) if its sign-ins
-should not outlive it in any snapshot or backup.
+should not outlive it in any snapshot or backup. It also drops the Ship's charts
+(its rows in the history store).
+
+In the web UI: the Ship's **Settings** tab, **Danger zone**, or **More ▾ ▸ Destroy…**
+on any tab. You type the Ship's name to confirm; it runs this command as a job.
 
 ## If something goes wrong
 

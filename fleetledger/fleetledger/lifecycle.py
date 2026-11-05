@@ -6,9 +6,10 @@ here knows which hypervisor a Ship runs on.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 
-from fleetledger import enrol, images, overlay, status
+from fleetledger import enrol, history, images, overlay, status
 from fleetledger.commands import table
 from fleetledger.concierge import audit
 from fleetledger.drivers import NotSupported, PublishedImage
@@ -121,6 +122,10 @@ def cmd_destroy(args, app) -> int:
     if seed is not None:
         seed.unlink(missing_ok=True)
     status.cache_path(ship.name).unlink(missing_ok=True)
+    try:  # its charts go with it; a history that cannot be opened never stops this
+        history.History().forget(ship.name)
+    except (OSError, sqlite3.Error):
+        pass
     app.say(f"{ship.name} is removed from the inventory.")
     return 0
 
