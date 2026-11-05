@@ -91,8 +91,10 @@ def test_publish_runs_as_a_job_then_use_pins_it(imaged):
 def test_the_manual_driver_shows_the_steps(imaged):
     imaged.post("/settings/images/publish", {"image": IMG})
     job = _job(imaged)
-    assert job.result["outcome"].done is False
-    assert "Do this on your hypervisor" in imaged.client.get(f"/jobs/{job.id}").text
+    assert job.result["outcome"].done is False and job.result["by_hand"] is True
+    card = imaged.client.get(f"/jobs/{job.id}").text
+    assert "Do this on your hypervisor" in card
+    assert '<span class="pill muted">by hand</span>' in card
 
 
 def test_recording_a_template_vm_id(imaged):
