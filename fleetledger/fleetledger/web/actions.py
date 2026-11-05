@@ -186,3 +186,20 @@ def change_tools(jobs: Any, app: Any, name: str, ticked: list[str], view: Any):
     said = [*(["add " + ", ".join(add)] if add else []),
             *(["remove " + ", ".join(remove)] if remove else [])]
     return jobs.start("tools", [name], run, f"Tools on {name}: {'; '.join(said)}")
+
+
+POWER = {"start": "Start", "stop": "Stop"}
+
+
+def start_power(jobs: Any, app: Any, verb: str, name: str):
+    """Start or stop a Ship's VM: `ship-fleet start|stop NAME` itself, as a job.
+    Refused while something else runs on that Ship."""
+    from fleetledger.web.jobs import RecordingApp, run_cli
+
+    if verb not in POWER:
+        raise FleetError("Unknown power action.")
+    # RecordingApp: the driver's answer goes on the card (_outcome.html), so the
+    # manual driver's step shows as "by hand" with Copy, not as "done".
+    return jobs.start(verb, [name],
+                      lambda job: run_cli(RecordingApp(app, job), [verb, name], job),
+                      f"{POWER[verb]} {name}'s VM")

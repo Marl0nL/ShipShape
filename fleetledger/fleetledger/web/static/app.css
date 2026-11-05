@@ -375,6 +375,24 @@ fieldset.passphrase-choice .passphrases { margin-left: 24px; }
 .settings-nav a:hover { text-decoration: underline; }
 .settings-body { min-width: 0; }
 section.settings-group { scroll-margin-top: 12px; }
+/* Access: certificates and trusted machines (web.trust) */
+code.fp { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+table.machines td, table.certs td { vertical-align: top; }
+table.machines td:first-child code { overflow-wrap: anywhere; }
+table.machines td:not(:first-child), table.machines th { white-space: nowrap; }
+table.machines details.scope form label { white-space: nowrap; }
+details.scope { margin: 0; }
+details.scope form label { display: block; margin: 4px 0; font-size: 13px; }
+.this-computer { display: flex; gap: 4px 12px; align-items: baseline; flex-wrap: wrap; }
+.this-computer p { margin: 6px 0; }
+form.trust-machine { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px 16px; align-items: end; max-width: 60em; }
+form.trust-machine > label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+form.trust-machine > label.wide, form.trust-machine > fieldset { grid-column: 1 / -1; margin: 0; }
+form.trust-machine textarea { width: 100%; font-family: var(--mono); }
+fieldset.scopes { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: 0 12px; }
+fieldset.scopes legend { grid-column: 1 / -1; }
+form.trust-machine > button { justify-self: start; }
 @media (min-width: 641px) {  /* on a phone the health table wraps to fit instead */
   table.health td.health-state { white-space: nowrap; }
   table.health td:nth-child(-n+2) { white-space: nowrap; overflow-wrap: normal; }
@@ -386,6 +404,12 @@ section.settings-group { scroll-margin-top: 12px; }
   table.health td { display: inline; border: 0; padding: 0 6px 0 0; }
   table.health td:nth-child(n+4) { display: block; padding: 2px 0 0; }
   table.health td:empty { display: none; }
+}
+@media (max-width: 640px) {  /* a certificate or machine per block, like health items */
+  table.certs thead, table.machines thead { display: none; }
+  table.certs tr, table.machines tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.certs td { display: inline-block; border: 0; padding: 2px 8px 2px 0; }
+  table.machines td { display: block; border: 0; padding: 2px 0; white-space: normal; }
 }
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); }

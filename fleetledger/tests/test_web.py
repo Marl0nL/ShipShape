@@ -516,6 +516,7 @@ def test_unreachable_ship_is_shown_not_fatal(web):
     ("/ships/{}/settings", {"remote_control": "on"}),
     ("/ships/{}/logout", {"service": "claude", "confirm": "yes"}),
     ("/ships/{}/network/refresh", {}),
+    ("/ships/{}/power", {"power": "start"}),
 ])
 def test_actions_on_a_ship_the_poller_does_not_know_are_404(web, path, data):
     """Every per-Ship action route checks the Ship exists (app._known_ship)."""
@@ -544,8 +545,11 @@ def test_every_ship_tab_has_the_action_bar_above_the_tabs(web, tab):
     assert 'name="operation" value="update"' in bar and 'name="operation" value="reboot"' in bar
     assert 'class="ops"' not in page  # nothing left at the bottom of the Overview
     forms = bar.split("<form")[1:]
-    assert len(forms) == 3 and all('name="csrf"' in f for f in forms)  # else the gate refuses
+    assert len(forms) == 5 and all('name="csrf"' in f for f in forms)  # else the gate refuses
     update, reboot = forms[1], forms[2]
+    start, stop = forms[3], forms[4]  # under More
+    assert 'value="start"' in start and "data-confirm" not in start
+    assert 'value="stop"' in stop and "data-confirm-danger" in stop
     assert 'data-confirm-title="Update ship-01?"' in update and "data-confirm-danger" not in update
     assert 'data-confirm-title="Reboot ship-01?"' in reboot and "data-confirm-danger" in reboot
 
@@ -1257,6 +1261,109 @@ def test_a_job_shows_on_the_fleet_page_its_ships_page_and_in_any_session(web, mo
     assert card.status_code == 200 and "updated" in card.text and "hx-get" not in card.text
     assert web.client.get("/jobs/9999").status_code == 286  # gone: stop polling
     assert web.client.get("/jobs/nope").status_code == 286
+
+
+# --- start and stop the VM (ship-fleet start|stop) --------------------------------------
+
+
+def _on_a_fake_hypervisor(web, store, ship="ship-02"):
+    from fleetledger.drivers import get_driver
+    from test_cli import FakeDriver
+
+    driver = FakeDriver()
+    with store.edit() as ed:
+        ed.set_field(ship, "driver", "proxmox")
+    web.app.driver_factory = lambda inv, d, **kw: (
+        driver if d == "proxmox" else get_driver(inv, d, **kw))
+    return driver
+
+
+def test_an_unreachable_ship_on_a_hypervisor_offers_start_the_vm(web, store):
+    driver = _on_a_fake_hypervisor(web, store)
+    web.ship.down.add("ship-02")
+    web.fleet.poll()
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-02").text)
+    primary = bar[:bar.index('<details class="menu">')]
+    assert 'name="power" value="start"' in primary and "Start the VM" in primary
+    assert 'value="stop"' not in primary  # Stop only under More, behind its dialog
+    response = web.post("/ships/ship-02/power", {"power": "start"})
+    assert response.status_code == 303 and response.headers["location"] == "/ships/ship-02"
+    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
+    job = web.app_ui.jobs.recent()[0]
+    assert job.ok and job.title == "Start ship-02's VM" and "Started ship-02." in job.snapshot()
+    assert driver.power == [("start", "ship-02")]
+    card = web.client.get(f"/jobs/{job.id}")
+    assert card.headers.get("HX-Refresh") == "true"  # on now: the page redraws its bar
+
+
+def test_stop_needs_its_dialog_and_runs_ship_fleet_stop(web, store):
+    driver = _on_a_fake_hypervisor(web, store)
+    web.fleet.poll()
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-02").text)
+    stop = bar[bar.rindex("<form", 0, bar.index('value="stop"')):]
+    stop = stop[:stop.index("</form>")]
+    assert "data-confirm-danger" in stop and "herdr saves every agent" in stop
+    assert 'name="confirm" value="yes" data-confirm-field' in stop
+    assert 'name="action"' not in stop  # the dialog script owns that name
+    web.post("/ships/ship-02/power", {"power": "stop"})  # no tick: refused
+    assert "Tick the box" in web.client.get("/ships/ship-02").text
+    assert not web.app_ui.jobs.recent() and not getattr(driver, "power", [])
+    web.post("/ships/ship-02/power", {"power": "stop", "confirm": "yes"})
+    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
+    assert driver.power == [("stop", "ship-02")]
+    assert web.app_ui.jobs.recent()[0].title == "Stop ship-02's VM"
+    web.post("/ships/ship-02/power", {"power": "reboot-hard", "confirm": "yes"})
+    assert "Unknown power action" in web.client.get("/ships/ship-02").text
+    assert len(web.app_ui.jobs.recent()) == 1
+
+
+def test_stop_waits_for_an_open_sign_in(web, store, monkeypatch):
+    driver = _on_a_fake_hypervisor(web, store)
+    web.fleet.poll()
+    web.sign_in()
+
+    class Flow:
+        ship, needs_you = "ship-02", False
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr(web.concierge, "active", lambda: [Flow()])
+    web.post("/ships/ship-02/power", {"power": "stop", "confirm": "yes"})
+    assert "a sign-in is open on ship-02" in web.client.get("/ships/ship-02").text
+    assert not web.app_ui.jobs.recent() and not getattr(driver, "power", [])
+    web.post("/ships/ship-02/power", {"power": "start"})  # starting cuts nothing
+    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
+    assert driver.power == [("start", "ship-02")]
+
+
+def test_power_on_the_manual_driver_shows_the_steps_and_waits_its_turn(web, monkeypatch):
+    web.ship.down.add("ship-01")
+    web.fleet.poll()
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-01").text)
+    primary = bar[:bar.index('<details class="menu">')]
+    assert 'name="power"' not in primary  # no primary Start on the manual driver
+    web.ship.down.discard("ship-01")
+    web.fleet.poll()
+    bar = _action_bar(web.client.get("/ships/ship-01").text)
+    assert 'value="start"' in bar[bar.index('<details class="menu">'):]  # under More only
+    assert "FleetLedger shows the step to run" in bar
+    release = threading.Event()
+    web.app_ui.jobs.start("update", ["ship-01"], lambda job: release.wait(10))
+    web.post("/ships/ship-01/power", {"power": "start"})  # busy: refused
+    assert "already running" in web.client.get("/ships/ship-01").text
+    release.set()
+    wait_for(lambda: web.app_ui.jobs.recent()[0].done)
+    web.post("/ships/ship-01/power", {"power": "start"})
+    wait_for(lambda: len(web.app_ui.jobs.recent()) == 2 and web.app_ui.jobs.recent()[0].done)
+    job = web.app_ui.jobs.recent()[0]
+    assert job.ok and job.result["by_hand"]  # not "done": nothing has started it yet
+    card = web.client.get(f"/jobs/{job.id}").text
+    assert 'class="pill muted">by hand' in card and "Do this on your hypervisor" in card
+    assert 'data-copy="Start ship-01' in card or 'data-copy="qm start' in card
 
 
 # --- New Ship (/new) and "Not enrolled yet" --------------------------------------------

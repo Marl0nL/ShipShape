@@ -57,8 +57,8 @@ class Confirm:
 
 
 def op_confirm(op: str, ship: str) -> Confirm:
-    """The dialog for updating, rebooting or joining one Ship: the same words on
-    the Ship's action bar and on an alert's button."""
+    """The dialog for updating, rebooting, joining or stopping one Ship: the same
+    words on the Ship's action bar and on an alert's button."""
     texts = {
         "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
                    "agents keep running. If its herdr changed it reboots, and its agents "
@@ -70,8 +70,12 @@ def op_confirm(op: str, ship: str) -> Confirm:
                  "anywhere. Its host certificate is re-signed with its overlay name, and this "
                  "computer's SSH config is updated. Progress shows on this page.", False),
     }
+    texts["stop"] = (f"{ship}'s VM shuts down cleanly (never a power-off), so herdr saves "
+                     "every agent first. Its agents stop until you start it again, then "
+                     "resume in their modes. Progress shows on this page.", True)
     text, danger = texts[op]
-    label = {"join": f"Join {ship} to the overlay"}.get(op, f"{op.capitalize()} {ship}")
+    label = {"join": f"Join {ship} to the overlay",
+             "stop": f"Stop {ship}'s VM"}.get(op, f"{op.capitalize()} {ship}")
     return Confirm(f"{label}?", text, label, danger)
 
 
@@ -113,6 +117,15 @@ def range_key(value: str | None) -> str:
 # --- alerts -----------------------------------------------------------------------
 
 
+# Certificate alerts -> the few words before their Renew button.
+CERT_CODES = {
+    "host-cert-expired": "Renew its certificate:",
+    "host-cert-expiring": "Renew its certificate:",
+    "host-cert-missing": "Sign its host key:",
+    "ssh-trust-behind": "Bring its trust up to date:",
+}
+
+
 def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
                attach_here: bool = False) -> Action:
     """The one action that fixes an attention code on a Ship. attach_here: this
@@ -129,6 +142,9 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         return _operation("update", ship, "Update", f"ship-fleet update {ship}")
     if code == "not-on-overlay":
         return _operation("join", ship, "Join", f"ship-fleet overlay join {ship}")
+    if code in CERT_CODES:  # renewing changes no access: no dialog
+        return Action("post", "Renew", f"/ships/{ship}/certs/renew",
+                      hint=CERT_CODES[code], title=f"ship-fleet ca sign {ship}")
     if code == "unreachable":  # checking again changes nothing: no dialog
         return Action("post", "Check now", f"/ships/{ship}/refresh",
                       hint="Switched on and on the network? Then:",
@@ -136,10 +152,6 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     commands = {
         "agent-waiting": ("Attach to answer it:",
                           f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
-        "host-cert-expired": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
-        "host-cert-expiring": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
-        "host-cert-missing": ("Sign its host key:", f"ship-fleet ca sign {ship}"),
-        "ssh-trust-behind": ("Bring its trust up to date:", f"ship-fleet ca sign {ship}"),
         "overlay-down": ("Find out why:", "ship-fleet overlay check"),
         "disk-nearly-full": ("See what fills it:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),

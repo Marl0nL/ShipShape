@@ -97,7 +97,7 @@ def test_access_forms_posted_from_settings_return_there(chosen, tmp_path):  # no
                                "logins": ["agent"]})
     page = settings_page(chosen)
     access = page[page.index('id="access"'):page.index('id="images"')]
-    forms = access.split("<form")[1:]
+    forms = [f for f in access.split("<form")[1:] if 'action="/setup/' in f.split(">")[0]]
     assert forms and all('name="back" value="settings"' in f for f in forms)
     for path, data in (("/setup/owner", {"owner": "sam"}),
                        ("/setup/machine", {"machine": "lap", "logins": "agent"}),

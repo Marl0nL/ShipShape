@@ -82,8 +82,10 @@
     your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.
     {% if admin_managed %}FleetLedger looks after its keys.{% endif %}
     {% if inv.doc.ca %}The fleet has a certificate authority.{% endif %}</p>
+  {% if certs %}{% include "_certificates.html" %}{% endif %}
   <h3>Your login on Ships</h3>
   {% include "_fleet_access.html" %}
+  {% if certs %}{% include "_machines.html" %}{% endif %}
 </section>
 
 <section id="images" class="setup-step settings-group">
