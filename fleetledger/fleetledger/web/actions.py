@@ -1,13 +1,13 @@
 """What the web UI can change on a Ship, in one place.
 
-The UI never reimplements an operation: settings, tags, logs, update and
-reboot are the shared day-2 operations (fleetledger.ops) that `ship-fleet` runs
-too; sign-out is the `ship-fleet logout` command itself. So the CLI and the UI
-always do exactly the same thing.
+The UI never reimplements an operation: settings, tags, logs, update, reboot
+and joining the overlay are the shared day-2 operations (fleetledger.ops) that
+`ship-fleet` runs too; sign-out is the `ship-fleet logout` command itself. So
+the CLI and the UI always do exactly the same thing.
 
-Update and reboot take minutes, so they run in the background (Operations):
-the page that starts one returns at once, and the fleet page shows each one's
-progress and outcome.
+Update, reboot and join take minutes, so they run in the background
+(Operations): the page that starts one returns at once, and the fleet page
+shows each one's progress and outcome.
 """
 
 from __future__ import annotations
@@ -86,13 +86,13 @@ def logout(app: Any, ship: str, service: str) -> Outcome:
     return Outcome(ship, code == 0, lines[0] if lines else "Done.", tuple(lines[1:]))
 
 
-# --- update and reboot, in the background ---------------------------------------
+# --- update, reboot and join, in the background ------------------------------
 
 
 @dataclasses.dataclass
 class Operation:
     id: int
-    kind: str  # update | reboot
+    kind: str  # update | reboot | join
     ships: list[str]
     started: float = dataclasses.field(default_factory=time.time)
     events: deque[str] = dataclasses.field(default_factory=lambda: deque(maxlen=MAX_EVENTS))
@@ -144,8 +144,11 @@ def _join(app: Any, ships, event) -> list[ops.Outcome]:
     return results
 
 
+KINDS = ("update", "reboot", "join")  # what Operations.start runs
+
+
 class Operations:
-    """Update and reboot runs started from the browser."""
+    """Update, reboot and overlay-join runs started from the browser."""
 
     def __init__(self, app: Any, on_finished: Callable[[list[str]], None] | None = None):
         self.app = app
@@ -168,7 +171,7 @@ class Operations:
             return any(not o.done and set(o.ships) & set(ships) for o in self._ops)
 
     def start(self, kind: str, ships: list[str]) -> Operation:
-        if kind not in ("update", "reboot", "join"):
+        if kind not in KINDS:
             raise FleetError(f"Unknown operation '{kind}'.")
         if self.busy(ships):
             raise FleetError("An operation is already running on one of those Ships.")

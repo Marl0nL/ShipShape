@@ -128,7 +128,7 @@ class Fleet:
     def touch(self) -> None:
         """Someone is looking: keep polling (and poll now if it is overdue)."""
         self._last_seen = self.clock()
-        if self._last_poll is None or self.clock() - self._last_poll >= self.interval:
+        if self._due():
             self._wake.set()
 
     def bump(self) -> None:

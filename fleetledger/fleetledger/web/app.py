@@ -3,8 +3,8 @@
 Every change the UI makes goes through the same `ship-fleet` command functions
 the CLI uses (fleetledger.commands), so the CLI stays complete and the two can
 never disagree. Pages read the background poller's cached views (fleet.py) and
-never wait on SSH, except for the few actions that are SSH by nature (logs,
-settings, sign-out, refresh), which run in a worker thread.
+never wait on SSH, except for the actions that are SSH by nature (logs,
+per-Ship changes, sign-out, refresh), which run in a worker thread.
 """
 
 from __future__ import annotations
@@ -36,11 +36,10 @@ from fleetledger.errors import FleetError
 from fleetledger.web import actions, dashboard, network, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
-from fleetledger.web.forms import form, one
+from fleetledger.web.forms import NAME_RE, form, one
 from fleetledger.web.security import Gate, GateMiddleware, Session
 
 HERE = Path(__file__).resolve().parent
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 TAG_RE = NAME_RE
 FLOW_ID_RE = re.compile(r"^[0-9]{1,9}-[0-9a-f]{8}$")
 BATCH_RE = re.compile(r"^[0-9a-f]{12}$")
@@ -536,14 +535,15 @@ async def ship_logout(request: Request) -> Response:
 
 
 async def fleet_operation(request: Request) -> Response:
-    """Update or reboot one Ship, or every Ship with a tag (fleetledger.ops)."""
+    """Update, reboot or join one Ship, every Ship with a tag, or the whole fleet
+    (fleetledger.ops)."""
     ui = ui_of(request)
     session = session_of(request)
     fields = await form(request)
     operation = one(fields, "operation")
     name, tag = one(fields, "ship"), one(fields, "tag")
     where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
-    if operation not in ("update", "reboot", "join"):
+    if operation not in actions.KINDS:
         ui.flash(session, "bad", "Unknown operation.")
         return back(where)
     if one(fields, "confirm") != "yes":

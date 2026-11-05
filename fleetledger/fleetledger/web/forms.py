@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import parse_qs
 
 from starlette.requests import Request
+
+# A Ship name or tag (contracts: shipName, tag).
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 
 
 async def form(request: Request) -> dict[str, list[str]]:

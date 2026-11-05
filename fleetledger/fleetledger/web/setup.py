@@ -30,10 +30,10 @@ from starlette.routing import Route
 
 from fleetledger import keys, paths
 from fleetledger.errors import FleetError
+from fleetledger.web.forms import NAME_RE
 from fleetledger.web.forms import form as _form
 from fleetledger.web.forms import one as _one
 
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 ADMIN_KEY = "~/.ssh/shipshape_fleet_ed25519"
 HOST_CA_KEY = "~/.ssh/shipshape_host_ca_ed25519"
 USER_CA_KEY = "~/.ssh/shipshape_user_ca_ed25519"
