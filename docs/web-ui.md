@@ -141,7 +141,7 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 | Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |
 | **Network** (`/network`) | Across the fleet, filterable by tag: destinations first seen in the last day, a "who talked to this domain" search (the domain or any subdomain), and each Ship's collector and traffic (`ship-fleet net --new`, `--who`). |
 | **Sign-ins** (`/signin`) | The concierge: start a sign-in for one Ship, or for every Ship with a tag; each sign-in's link, code box and countdown; results. |
-| **Audit log** (`/audit`) | Who, what and when for every sign-in and sign-out. |
+| **Audit log** (`/audit`) | Who, what and when for sign-ins, sign-outs and changes to Ships: made (create), destroyed, forgotten, rolled back to a snapshot, snapshot deleted, host key re-pinned, and a machine untrusted, each with its outcome (ok, failed, or steps for the manual driver). The command functions record them, so `ship-fleet` and the UI write the same entries. Never a code, link, token or path. |
 
 **Needs attention** is `ship-fleet attention`'s list, ranked the same way, plus
 two alerts the dashboard adds itself: a disk 80% full (warning) or 90% full
