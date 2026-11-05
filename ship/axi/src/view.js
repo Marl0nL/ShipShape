@@ -92,6 +92,6 @@ export const RULES = {
     "Do not stop or restart the herdr server: every agent on this Ship runs inside it.",
     "Install tools for yourself with npm (they go to ~/.local) or uv; ask a person for system packages.",
   ],
-  logs: "Ship logs are read from FleetLedger (`ship-fleet logs <ship> provision|herdr|resume|tools`).",
+  logs: "Ship logs are read from FleetLedger (`ship-fleet logs <ship> provision|herdr|resume|tools|status|system`).",
   help: ["Run `ship-axi` for this Ship's status"],
 };
