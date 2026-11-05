@@ -22,7 +22,7 @@
     0 4px 12px -6px rgba(60, 35, 15, .35);
   /* text */
   --ink: #2a1c10;
-  --muted: #6a4f35;
+  --muted: #634830;
   --accent: #0b5a53;        /* verdigris: links */
   /* the hull (header) */
   --hull: #3a2416;
@@ -35,7 +35,7 @@
   --rope-1: #c9a56a; --rope-2: #8c6a3a;
   /* states: text on their own backgrounds, and marks for charts */
   --good: #2d6a2f; --good-bg: #dfe9c9;
-  --warn: #74470a; --warn-bg: #f6e0a8; --warn-mark: #c98a00;
+  --warn: #74470a; --warn-bg: #f6e0a8; --warn-mark: #b87e00;
   --bad: #9e1f17; --bad-bg: #f6d3c8; --bad-mark: #b3261e;
   /* chart series (validated: colourblind-safe and >= 3:1 on parchment) */
   --s1: #008a7c; --s2: #c0571f; --s3: #5260c0;
@@ -308,6 +308,7 @@ fieldset.passphrase-choice .passphrases { margin-left: 24px; }
     radial-gradient(circle at 3px 3px, var(--brass-hi) 0 1px, var(--brass-lo) 1.6px 2.4px, transparent 2.8px) 100% 100% / 6px 6px no-repeat;
 }
 .tile.warn { border-top-color: var(--warn-mark); }
+.tiles.stale .tile { border-top-style: dashed; }
 .tile.bad { border-top-color: var(--bad-mark); }
 .tile-label { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
 .tile-value { font-size: 30px; font-weight: 700; line-height: 1.1; }
@@ -323,6 +324,7 @@ ul.alerts { list-style: none; padding: 0; margin: 0; border: 1px solid var(--lin
 li.alert { display: grid; grid-template-columns: 7.5em 7em minmax(12em, 1fr) minmax(0, auto); gap: 6px 12px;
   align-items: center; padding: 7px 12px 7px 10px; border-bottom: 1px solid var(--line);
   border-left: 5px solid transparent; }
+ul.alerts.no-ship li.alert { grid-template-columns: 7.5em minmax(12em, 1fr) minmax(0, auto); }
 li.alert:last-child { border-bottom: 0; }
 li.alert.lvl-critical { border-left: 5px double var(--bad-mark); background-color: var(--bad-bg); background-image: none; }
 li.alert.lvl-warning { border-left: 5px solid var(--warn-mark); }
@@ -335,7 +337,7 @@ li.alert .fix .hint { font-size: 12px; }
 code.cmd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
   overflow-wrap: anywhere; color: var(--ink); }
 @media (max-width: 900px) {
-  li.alert { grid-template-columns: 7.5em minmax(0, 1fr); }
+  li.alert, ul.alerts.no-ship li.alert { grid-template-columns: 7.5em minmax(0, 1fr); }
   li.alert .msg, li.alert .fix { grid-column: 1 / -1; justify-content: flex-start; }
 }
 .sev-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;

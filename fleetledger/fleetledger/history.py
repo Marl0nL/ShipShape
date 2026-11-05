@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS sample (
   PRIMARY KEY (ship, at)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS sample_at ON sample (at);
+PRAGMA user_version = 1;
 """
 FIELDS = ("ship", "at", "up", "cpu", "mem", "disk", "agents", "working", "waiting")
 
@@ -94,20 +95,18 @@ class History:
         self._lock = threading.Lock()
         self._last: dict[str, float] = {}
         self._pruned = 0.0
-        self._ready = False
 
     @contextlib.contextmanager
     def _db(self) -> Iterator[sqlite3.Connection]:
-        if not self._ready:
+        # Every open checks the file and its table, so deleting the file while
+        # FleetLedger runs just starts a new history (docs/web-ui.md).
+        if not self.path.exists():
             paths.private_dir(self.path.parent)
-            if not self.path.exists():
-                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600)
-                os.close(fd)
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600)
+            os.close(fd)
         conn = sqlite3.connect(self.path, timeout=5)
         try:
-            if not self._ready:
-                conn.executescript(SCHEMA)
-                self._ready = True
+            conn.executescript(SCHEMA)
             with conn:
                 yield conn
         finally:
@@ -141,13 +140,6 @@ class History:
                 conn.execute("DELETE FROM sample WHERE at < ?", (now - self.keep,))
                 self._pruned = now
         return len(rows)
-
-    def forget(self, keep_ships: Iterable[str]) -> None:
-        """Drop the samples of Ships no longer in the inventory."""
-        keep = sorted(set(keep_ships))
-        with self._db() as conn:
-            marks = ", ".join("?" * len(keep))
-            conn.execute(f"DELETE FROM sample WHERE ship NOT IN ({marks})", keep)
 
     # --- reading -----------------------------------------------------------
     def since(self, start: float, ships: Iterable[str] | None = None

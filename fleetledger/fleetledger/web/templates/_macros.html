@@ -18,6 +18,30 @@
 
 {% macro sev(level) %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span class="word">{{ level|capitalize }}</span></span>{% endmacro %}
 
+{% macro alert_row(a, csrf, ship=True) %}
+<li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
+  {{ sev(a.level) }}
+  {% if ship %}<a href="/ships/{{ a.ship }}" class="ship">{{ a.ship }}</a>{% endif %}
+  <span class="msg">{{ a.message }} <code class="code">{{ a.code }}</code></span>
+  <span class="fix">
+  {% if a.action.kind == "signin" %}
+    <form method="post" action="/signin" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="ship" value="{{ a.ship }}">
+      <input type="hidden" name="service" value="{{ a.action.value }}">
+      <button type="submit">Sign in</button>
+    </form>
+  {% elif a.action.kind == "command" %}
+    <span class="hint">{{ a.action.hint }}</span>
+    <code class="cmd">{{ a.action.value }}</code>
+    <button type="button" class="ghost small" data-copy="{{ a.action.value }}">Copy</button>
+  {% else %}
+    <a class="button ghost" href="{{ a.action.value }}">{{ a.action.label }}</a>
+  {% endif %}
+  </span>
+</li>
+{% endmacro %}
+
 {% macro axes(c) %}
   {% for t in c.yticks %}
   <line class="gridline" x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ t.y }}" y2="{{ t.y }}"/>

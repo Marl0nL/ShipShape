@@ -1,11 +1,12 @@
-{% from "_macros.html" import sev, sev_icon, sparkline %}
+{% from "_macros.html" import alert_row, sev_icon, sparkline %}
 <div id="fleet" hx-get="/partials/fleet?{% if tag %}tag={{ tag }}&amp;{% endif %}v={{ version }}" hx-trigger="every 5s" hx-swap="outerHTML">
 {% set s = summary %}
-<section class="tiles" aria-label="The fleet at a glance">
+{% set stale = not snap.polled_at %}
+<section class="tiles{% if stale %} stale{% endif %}" aria-label="The fleet at a glance">
   <div class="tile{% if s.down %} bad{% endif %}">
     <span class="tile-label">Ships up</span>
     <span class="tile-value">{{ s.up }}<small> of {{ s.ships }}</small></span>
-    <span class="tile-note">{% if s.down %}{{ sev_icon("critical") }} {{ s.down }} not answering{% elif s.starting %}{{ s.starting }} starting{% else %}all answering{% endif %}</span>
+    <span class="tile-note">{% if stale %}last known; not checked yet{% elif s.down %}{{ sev_icon("critical") }} {{ s.down }} not answering{% elif s.starting %}{{ s.starting }} starting{% else %}all answering{% endif %}</span>
   </div>
   <div class="tile{% if s.waiting %} warn{% endif %}">
     <span class="tile-label">Agents</span>
@@ -46,27 +47,7 @@
   {% else %}
   <ul class="alerts">
     {% for a in alerts %}
-    <li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
-      {{ sev(a.level) }}
-      <a href="/ships/{{ a.ship }}" class="ship">{{ a.ship }}</a>
-      <span class="msg">{{ a.message }} <code class="code">{{ a.code }}</code></span>
-      <span class="fix">
-      {% if a.action.kind == "signin" %}
-        <form method="post" action="/signin" class="inline">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input type="hidden" name="ship" value="{{ a.ship }}">
-          <input type="hidden" name="service" value="{{ a.action.value }}">
-          <button type="submit">Sign in</button>
-        </form>
-      {% elif a.action.kind == "command" %}
-        <span class="hint">{{ a.action.hint }}</span>
-        <code class="cmd">{{ a.action.value }}</code>
-        <button type="button" class="ghost small" data-copy="{{ a.action.value }}">Copy</button>
-      {% else %}
-        <a class="button ghost" href="{{ a.action.value }}">{{ a.action.label }}</a>
-      {% endif %}
-      </span>
-    </li>
+    {{ alert_row(a, csrf) }}
     {% endfor %}
   </ul>
   {% endif %}

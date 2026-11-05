@@ -67,7 +67,7 @@ def test_history_samples_an_unreachable_ship_as_down(store, home):
     assert sample == Sample("ship-01", NOW, up=False)
 
 
-def test_history_prunes_old_samples_and_forgets_removed_ships(store, home):
+def test_history_prunes_old_samples(store, home):
     wall = Wall()
     h = History(wall=wall)
     h.add([Sample("ship-01", NOW - 8 * 86400, True, cpu=1.0),
@@ -76,8 +76,23 @@ def test_history_prunes_old_samples_and_forgets_removed_ships(store, home):
     h.add([Sample("ship-01", NOW, True, cpu=3.0)])
     found = h.since(0)
     assert [s.cpu for s in found["ship-01"]] == [3.0]  # the 8-day-old one is gone
-    h.forget(["ship-01"])
-    assert set(h.since(0)) == {"ship-01"}
+
+
+def test_history_starts_again_when_the_file_is_deleted(store, home):
+    """docs/web-ui.md: delete the file to start again, while FleetLedger runs."""
+    h = History()
+    h.record([view(store)], NOW)
+    h.path.unlink()
+    assert h.since(0) == {}
+    assert h.record([view(store)], NOW + 600) == 1
+    assert [s.at for s in h.since(0)["ship-01"]] == [NOW + 600]
+    assert stat.S_IMODE(h.path.stat().st_mode) == 0o600
+
+
+def test_cpu_is_capped_at_100(store):
+    doc = copy.deepcopy(RUNNING)
+    doc["host"].update(load1=9.0, cpus=4)
+    assert sample_of(view(store, doc=doc), NOW).cpu == 100.0
 
 
 def test_history_holds_no_text_but_ship_names(store, home):
@@ -109,6 +124,8 @@ def test_a_broken_history_file_never_stops_a_poll(web):  # noqa: F811
 
 def test_the_poller_records_history(web, home):  # noqa: F811
     web.fleet.history = History()
+    web.fleet.poll(["ship-02"])  # one Ship re-checked (Check now) is sampled too
+    assert set(web.fleet.history.since(0)) == {"ship-02"}
     web.fleet.poll()
     assert set(web.fleet.history.since(0)) == {"ship-01", "ship-02"}
 
@@ -145,13 +162,14 @@ def test_alerts_are_ranked_with_a_fix_each(store):
     assert by_code["disk-nearly-full"].action.kind == "command"
 
 
-def test_disk_thresholds(store):
+@pytest.mark.parametrize("disk, level", [
+    (79.9, None), (80.0, "medium"), (85.0, "medium"), (89.9, "medium"), (90.0, "high"),
+])
+def test_disk_thresholds(store, disk, level):
     doc = copy.deepcopy(RUNNING)
-    doc["host"]["disk_used_pct"] = 85.0
-    item = dashboard.derived([view(store, doc=doc)], None, [])[0]
-    assert (item.code, item.level) == ("disk-nearly-full", "medium")
-    doc["host"]["disk_used_pct"] = 79.9
-    assert dashboard.derived([view(store, doc=doc)], None, []) == []
+    doc["host"]["disk_used_pct"] = disk
+    found = dashboard.derived([view(store, doc=doc)], None, [])
+    assert [(i.code, i.level) for i in found] == ([("disk-nearly-full", level)] if level else [])
 
 
 def test_off_the_overlay_only_when_one_is_configured(store):
@@ -179,13 +197,17 @@ def test_summary_counts(store):
     doc = copy.deepcopy(RUNNING)
     doc["host"]["reboot_required"] = True
     doc["host"]["updates_pending"] = 4
+    doc["herdr"]["agents"].append({"name": "extra", "kind": "claude", "state": "working",
+                                   "mode": "auto"})
     views = [view(store, "ship-01", doc), view(store, "ship-02", problem="unreachable")]
     alerts = dashboard.alerts(views, attention_items(views), [], store.load())
     s = dashboard.summary(views, alerts, store.load())
-    agents = RUNNING["herdr"]["agents"]
+    agents = doc["herdr"]["agents"]
     assert (s["ships"], s["up"], s["down"]) == (2, 1, 1)
     assert s["agents"] == len(agents)
     assert s["waiting"] == sum(a["state"] == "blocked" for a in agents)
+    assert s["working"] == sum(a["state"] == "working" for a in agents)
+    assert s["working"] != s["waiting"]  # the fixture can tell them apart
     assert s["remote_control"] == (len(agents) if RUNNING["claude"]["remote_control"] == "on"
                                    else 0)
     assert s["reboots"] == 1 and (s["os_updates"], s["os_update_ships"]) == (4, 1)
@@ -293,6 +315,26 @@ def test_dashboard_page(web, home):  # noqa: F811
     assert '<svg class="plot"' in page and "spark-plot" in page
     assert not re.search(r"\sstyle=", page)  # the CSP allows no inline styles
     assert "<script>" not in page
+
+
+def test_tiles_say_last_known_before_the_first_poll(web):  # noqa: F811
+    """Until a poll finishes, the cached status is not news: no "all answering"."""
+    web.ship.down.add("ship-02")
+    web.fleet.load_cached()  # as at start-up: the last good status, not polled yet
+    web.sign_in()
+    page = web.client.get("/").text
+    assert "all answering" not in page and "not checked yet" in page
+    assert 'class="tiles stale"' in page
+    web.fleet.poll()
+    page = web.client.get("/").text
+    assert "not checked yet" not in page and "1 not answering" in page
+
+
+def test_ship_page_alerts_match_the_dashboard(web):  # noqa: F811
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    assert 'class="sev-tag lvl-warning"' in page  # the waiting agent: icon and word
+    assert 'data-copy="herdr --remote agent@ship-01.local"' in page  # and its fix
 
 
 def test_charts_partial_answers_204_when_nothing_changed(web):  # noqa: F811
