@@ -47,7 +47,16 @@ class ShipView:
     attention: list[dict[str, str]] = field(default_factory=list)
 
     @property
+    def not_enrolled(self) -> bool:
+        """In the inventory but not enrolled yet (being made, made by hand, or cut
+        short), and not answering: the inventory says so, not a running job."""
+        return (self.problem == "unreachable" and self.ship is not None
+                and self.ship.enrolled is None)
+
+    @property
     def state(self) -> str:
+        if self.not_enrolled:
+            return "not-enrolled"
         if self.problem:
             return self.problem
         if self.status is not None:

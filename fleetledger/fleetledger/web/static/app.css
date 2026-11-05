@@ -528,3 +528,14 @@ dialog.confirm-dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
 .confirm-buttons button { font-size: 14px; padding: 6px 16px; }
 .confirm-buttons button.danger { background: var(--bad-mark); border-color: var(--bad-mark); color: #fff; }
 @media (prefers-color-scheme: dark) { .confirm-buttons button.danger { color: #1d0f0f; } }
+
+/* New Ship (/new): the dashed card at the end of the Ship cards, and the form. */
+.ship-card.new-ship-card { display: flex; align-items: center; justify-content: center;
+  min-height: 120px; border: 2px dashed var(--deck-muted); background: transparent;
+  box-shadow: none; --ink: var(--deck-ink); color: var(--deck-ink);
+  font-family: var(--serif); font-size: 18px; text-decoration: none; }
+.ship-card.new-ship-card:hover { border-color: var(--brass); }
+header.top nav a.new-ship-link { margin-left: 10px; color: var(--brass-ink); }
+form.new-ship fieldset { margin: 10px 0; }
+form.new-ship fieldset.ship-tools label { display: inline-block; margin-right: 14px; }
+form.new-ship textarea { width: 100%; max-width: 32em; }

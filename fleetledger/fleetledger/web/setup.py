@@ -30,7 +30,6 @@ from starlette.routing import Route
 
 from fleetledger import keys, paths
 from fleetledger.errors import FleetError
-from fleetledger.web.forms import NAME_RE
 from fleetledger.web.forms import form as _form
 from fleetledger.web.forms import one as _one
 
@@ -263,6 +262,9 @@ async def page(request: Request) -> Response:
         context["policy"] = _policy_text()
         context.update(await run_in_threadpool(_machines_context, inv))
         context["size"] = inv.effective_size()
+        from fleetledger.web import newship
+
+        context["new_form"] = await run_in_threadpool(newship.choices, ui.app, inv)
     from fleetledger import proxmox_setup
 
     context["px"] = state.proxmox
@@ -968,34 +970,6 @@ async def overlay_skip(request: Request) -> Response:
 # --- the first Ship -------------------------------------------------------------------------
 
 
-def _make_ship(app, name: str, tag: str, extra: list[str]):
-    """The first Ship's job: `ship-fleet new` itself (web.jobs.run_cli), then this
-    computer trusted so `ssh <ship>` and `herdr --remote <ship>` work at once."""
-    from fleetledger import trustcmd
-    from fleetledger.enrol import StillStarting
-    from fleetledger.web.jobs import BrowserApp, run_cli
-
-    def run(job) -> None:
-        try:
-            job.result["manual"] = app.store_factory().load().defaults.get(
-                "driver", "manual") == "manual"
-        except FleetError:
-            pass
-        code = run_cli(app, ["new", name, *(["--tag", tag] if tag else []), *extra], job)
-        job.result["still_starting"] = code == StillStarting.exit_code
-        try:
-            ship = app.store_factory().load().ship(name)
-        except FleetError:
-            ship = None
-        job.result["enrolled"] = bool(ship is not None and ship.enrolled)
-        if job.result["enrolled"]:
-            job.result["attach_here"] = trustcmd.trust_this_computer(
-                BrowserApp(app, job), app.store_factory(), job.say)
-        job.ok = code == 0
-
-    return run
-
-
 def setup_job(ui, state):
     """The session's first-Ship job, as the page shows it (None: not started)."""
     job = ui.jobs.get(state.ship) if state.ship is not None else None
@@ -1019,57 +993,21 @@ def size_from_form(fields) -> dict[str, int]:
                        "memory_mb": memory_gb * 1024 if memory_gb is not None else None})
 
 
-def _size_args(fields) -> list[str]:
-    """--cores / --memory-mb / --disk-gb for ship-fleet new, from the form."""
-    flags = {"cores": "--cores", "memory_mb": "--memory-mb", "disk_gb": "--disk-gb"}
-    return [arg for key, value in size_from_form(fields).items()
-            for arg in (flags[key], str(value))]
-
-
 async def ship_start(request: Request) -> Response:
+    """Setup's first Ship: the New Ship form without its Advanced part (web.newship)."""
+    from fleetledger.web import newship
+
     ui = _ui(request)
     state = _state(request)
     fields = await _form(request)
-    name, tag = _one(fields, "name") or "ship-01", _one(fields, "tag")
-    if not NAME_RE.match(name) or (tag and not NAME_RE.match(tag)):
-        _flash(request, "bad", "A Ship name (and tag) uses a-z, 0-9 and -, up to 31 "
-               "characters.")
-        return _back("ship")
-    extra: list[str] = []
-    try:
-        extra += _size_args(fields)
-    except FleetError as exc:
-        _flash(request, "bad", exc.message)
-        return _back("ship")
-    from fleetledger import signins
-
-    try:
-        chosen = signins.check(fields.get("signin", []) if _one(fields, "signins_shown")
-                               else list(signins.CHOICES))
-    except FleetError as exc:
-        _flash(request, "bad", exc.message)
-        return _back("ship")
-    if chosen != list(signins.CHOICES):
-        extra += ["--signins", ",".join(chosen)]
-    if _one(fields, "agent_on") == "yes":
-        from fleetledger import github, ops
-
-        agent, cwd = _one(fields, "agent") or "main", _one(fields, "cwd") or "~/work"
-        try:
-            ops.parse_autostart_change("autostart.add", f"{agent}:{cwd}")
-            repo = github.check_name(_one(fields, "repo")) if _one(fields, "repo") else None
-        except FleetError as exc:
-            _flash(request, "bad", exc.message)
-            return _back("ship")
-        extra += ["--autostart", f"{agent}:{cwd}", *(["--repo", repo] if repo else [])]
-    if _one(fields, "overlay") != "yes":
-        extra.append("--no-overlay")
     current = setup_job(ui, state)
     if current is not None and not current.done:
         return _back("ship")
     try:
-        job = ui.jobs.start("create", [name], _make_ship(ui.app, name, tag, extra),
-                            f"Make {name}")
+        inv = await run_in_threadpool(lambda: ui.app.store_factory().load())
+        name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv,
+                                             advanced=False)
+        job = newship.start(ui, name, argv)
     except FleetError as exc:
         _flash(request, "bad", exc.message)
         return _back("ship")

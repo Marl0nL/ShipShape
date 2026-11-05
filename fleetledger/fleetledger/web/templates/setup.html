@@ -459,48 +459,7 @@
   <p>A Ship is a VM where your agents work. FleetLedger makes it, waits until it is
     provisioned and checked, and then you sign it in to Claude (and GitHub and Google Cloud
     if you use them).</p>
-  <form method="post" action="/setup/ship" class="inline">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>Name <input name="name" value="ship-01" pattern="[a-z0-9][a-z0-9\-]{0,30}" required></label>
-    <label>Tag <input name="tag" placeholder="e.g. work (optional)" pattern="[a-z0-9][a-z0-9\-]{0,30}"></label>
-    <fieldset class="ship-size">
-      <label>CPU cores <input name="cores" type="number" min="{{ SIZE.cores_min }}" max="{{ SIZE.cores_max }}" value="{{ size.cores }}"></label>
-      <label>Memory (GB) <input name="memory_gb" type="number" min="{{ SIZE.mem_min }}" max="{{ SIZE.mem_max }}" value="{{ size.memory_mb // 1024 }}"></label>
-      <label>Disk (GB) <input name="disk_gb" type="number" min="{{ SIZE.disk_min }}" max="{{ SIZE.disk_max }}" value="{{ size.disk_gb }}"></label>
-      <p class="hint">Change it later on the Ship's Settings: cores and memory with a
-        restart, and the disk can grow (never shrink).</p>
-    </fieldset>
-    <fieldset class="ship-signins">
-      <legend>Sign-ins it uses</legend>
-      <input type="hidden" name="signins_shown" value="yes">
-      {% for choice in SIGNIN_CHOICES %}
-      <label><input type="checkbox" name="signin" value="{{ choice }}" checked> {{ SIGNIN_LABELS[choice] }}</label>
-      {% endfor %}
-      <p class="hint">Untick what this Ship never needs: it then gets no sign-in for it
-        (and no credentials). Change it later in the Ship's Settings.</p>
-    </fieldset>
-    <fieldset class="ship-agent">
-      <label><input type="checkbox" name="agent_on" value="yes" checked> Start a Claude agent
-        on it, with Remote Control</label>
-      <label>named <input name="agent" value="main" pattern="[a-z][a-z0-9_\-]{0,31}"></label>
-      <label>working in <input name="cwd" value="~/work"></label>
-      <label>or in a GitHub repo <input name="repo" placeholder="e.g. someone/agent-setup (optional)"></label>
-      <p class="hint">It starts once you sign the Ship in to Claude (the next step), and on
-        every boot. With Remote Control on, it shows in the Claude app (phone, desktop or
-        claude.ai) under your account, so you can talk to it from anywhere. Add more later
-        on the Ship's page.</p>
-      <p class="hint">A repo chooses what kind of agent it is: the Ship clones it into
-        <code>~/work/&lt;name&gt;</code> and starts the agent there, so the repo's own
-        CLAUDE.md or AGENTS.md, skills and settings apply. A public repo is cloned as the
-        Ship starts; a private one once you sign the Ship in to GitHub (its page says it is
-        waiting until then).</p>
-    </fieldset>
-    {% if inv.overlay %}
-    <label><input type="checkbox" name="overlay" value="yes" checked> Join the overlay
-      ({{ inv.overlay.provider|capitalize }}) once it is up, so you reach it from anywhere</label>
-    {% endif %}
-    <button type="submit">Make it</button>
-  </form>
+  {% with nf=new_form, form_action="/setup/ship", advanced=False %}{% include "_new_ship_form.html" %}{% endwith %}
   {% endif %}
 {% endif %}
 </section>

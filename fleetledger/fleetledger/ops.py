@@ -86,6 +86,7 @@ SEVERITY = {
     "agent-repo-waiting": "medium",  # its agent starts once GitHub is signed in
     "agent-repo-failed": "medium",
     "behind-tooling": "low",
+    "not-enrolled": "low",  # in the inventory, not enrolled yet, and not answering
     "tool-waiting": "low",
     "tags-differ": "low",
     "ssh-trust-behind": "low",
@@ -771,10 +772,18 @@ def fleet_logs(
 # --- Needs attention ------------------------------------------------------------
 
 
+NOT_ENROLLED = ("Not enrolled yet: it may still be starting, or its VM is still to be "
+                "made by hand. Finish enrolling it once it is up.")
+
+
 def attention(views: Iterable[status_mod.ShipView]) -> list[AttentionItem]:
     """Everything across the fleet a person should look at, most urgent first."""
     items = []
     for view in views:
+        if view.not_enrolled:  # being made, or made by hand: not an outage
+            items.append(AttentionItem(view.ship.name, "not-enrolled", NOT_ENROLLED, None,
+                                       SEVERITY["not-enrolled"]))
+            continue
         if view.problem:
             items.append(AttentionItem(view.ship.name, view.problem,
                                        view.message or view.problem, None,

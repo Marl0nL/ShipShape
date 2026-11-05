@@ -1242,3 +1242,87 @@ def test_a_job_shows_on_the_fleet_page_its_ships_page_and_in_any_session(web, mo
     assert card.status_code == 200 and "updated" in card.text and "hx-get" not in card.text
     assert web.client.get("/jobs/9999").status_code == 286  # gone: stop polling
     assert web.client.get("/jobs/nope").status_code == 286
+
+
+# --- New Ship (/new) and "Not enrolled yet" --------------------------------------------
+
+
+def _form_fields(page, action):
+    form = page.split(f'action="{action}"', 1)[1].split("</form>", 1)[0]
+    return set(re.findall(r'name="([^"]+)"', form)), len(re.findall(r'\bname="', form))
+
+
+def test_the_new_ship_page_offers_every_option_under_the_field_cap(web):
+    web.sign_in()
+    page = web.client.get("/new").text
+    names, count = _form_fields(page, "/new")
+    for field in ("name", "tag", "cores", "memory_gb", "disk_gb", "signin", "agent_on",
+                  "agent", "cwd", "repo", "image", "hosts", "mode", "agent_mode", "prompt",
+                  "allow_bypass", "agent_sudo", "timezone", "tool", "profile"):
+        assert field in names, field
+    assert count < 100  # the gate's parse_qs(max_num_fields=100)
+    assert 'href="/new"' in web.client.get("/").text  # the header's + New Ship
+
+
+def test_bad_input_on_new_is_flashed_and_starts_nothing(web):
+    web.sign_in()
+    web.post("/new", {"name": "ship-01"})  # taken
+    web.post("/new", {"name": "ship-31", "cores": "0"})
+    page = web.client.get("/new").text
+    assert "already in the inventory" in page and "cores: 1 to" in page
+    assert web.app_ui.jobs.recent() == []
+    assert not web.store.load().has_ship("ship-31")
+
+
+def test_a_ship_made_from_new_by_hand_shows_not_enrolled_yet_with_finish_enrolling(web):
+    web.sign_in()
+    response = web.post("/new", {"name": "ship-31", "tag": "work", "agent_on": "yes",
+                                 "agent": "main", "cwd": "~/work"})
+    assert response.status_code == 303 and response.headers["location"] == "/"
+    job = web.app_ui.jobs.recent()[0]
+    assert job.kind == "create" and job.ships == ["ship-31"]
+    wait_for(lambda: job.done)
+    assert job.ok and job.result["manual"] and not job.result["enrolled"]
+    assert any("Create the VM" in line for line in job.snapshot())  # the manual steps
+    ship = web.store.load().ship("ship-31")
+    assert ship.enrolled is None and ship.tags == ("work",)
+    web.ship.down.add("ship-31")  # its VM is not made yet
+    web.fleet.poll()
+    page = web.client.get("/ships/ship-31").text
+    assert "not-enrolled" in page and 'action="/ships/ship-31/enrol"' in page
+    fleet = web.client.get("/partials/fleet").text
+    assert "not-enrolled" in fleet and "Not enrolled yet" in fleet
+    alert = [a for a in web.app_ui.fleet.snapshot.views if a.ship.name == "ship-31"][0]
+    assert alert.state == "not-enrolled"
+    from fleetledger import ops
+
+    items = [i for i in ops.attention(web.fleet.snapshot.views) if i.ship == "ship-31"]
+    assert [(i.code, i.severity) for i in items] == [("not-enrolled", "low")]  # no outage
+    # Finish enrolling: `ship-fleet status ship-31 --wait` as a job.
+    web.ship.down.discard("ship-31")
+    web.post("/ships/ship-31/enrol")
+    enrol = web.app_ui.jobs.recent()[0]
+    assert enrol.kind == "enrol" and enrol.title == "Finish enrolling ship-31"
+    wait_for(lambda: enrol.done)
+    assert web.store.load().ship("ship-31").enrolled is not None
+
+
+def test_after_a_restart_a_half_made_ship_is_still_not_enrolled_yet(web, store):
+    """Jobs live in memory; the inventory says what state a Ship is in."""
+    from fleetledger.inventory import Ship
+    from fleetledger.store import ship_entry
+
+    with store.edit() as ed:  # what a create cut short by Ctrl-C leaves behind
+        ed.add_ship("ship-32", ship_entry(Ship(
+            name="ship-32", id="0c3d1f2e-1111-4222-8333-944455566677", driver="manual",
+            names=("ship-32.local",), host_key="ssh-ed25519 AAAA ship-32")))
+    web.ship.down.add("ship-32")
+    fresh = webapp.create_app(web.app, web.gate, fleet=web.fleet, concierge_=web.concierge)
+    client = TestClient(fresh, base_url=BASE, follow_redirects=False)
+    web.sign_in(client)
+    web.fleet.poll()
+    page = client.get("/ships/ship-32").text
+    assert "not-enrolled" in page and 'action="/ships/ship-32/enrol"' in page
+    fleet = client.get("/partials/fleet").text
+    assert "CRITICAL" not in fleet.split("ship-32")[0][-400:]  # not a critical alert
+
