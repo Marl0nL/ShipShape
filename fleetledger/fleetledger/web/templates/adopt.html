@@ -28,7 +28,7 @@
   <h2>Adopt a Ship</h2>
   {% if fingerprint %}
   <p>{{ form.host }} presents the host key</p>
-  <p class="fingerprint"><code>{{ fingerprint }}</code></p>
+  <p><code class="fingerprint">{{ fingerprint }}</code></p>
   <p>Compare it with the fingerprint cloud-init printed on {{ form.name }}'s VM console
     (<code>SHA256:...</code>). Only if they match, adopt it: FleetLedger then pins this key
     and trusts nothing else for {{ form.name }}.</p>
@@ -51,7 +51,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Name <input name="name" value="{{ form.name }}" required pattern="[a-z0-9][a-z0-9\-]{0,30}" autocomplete="off"></label>
     <label>Host <input name="host" value="{{ form.host }}" maxlength="253" placeholder="its name or address (default: name.local)" autocomplete="off" spellcheck="false"></label>
-    <label>Tags <input name="tags" value="{{ form.tags }}" placeholder="optional: the tags it reports" autocomplete="off"></label>
+    <label>Tags <input name="tags" value="{{ form.tags }}" placeholder="optional: blank keeps the tags it reports" autocomplete="off"></label>
     <button type="submit">Check its key</button>
   </form>
   {% endif %}

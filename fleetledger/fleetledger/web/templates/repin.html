@@ -4,8 +4,8 @@
 <h1>Re-pin {{ name }}'s host key</h1>
 <section class="setup-step">
   <p>{{ host }} presents the host key</p>
-  <p class="fingerprint"><code>{{ fingerprint }}</code></p>
-  <p class="quiet">Pinned now: {% if pinned %}<code>{{ pinned }}</code>{% else %}a key FleetLedger cannot read{% endif %}</p>
+  <p><code class="fingerprint">{{ fingerprint }}</code></p>
+  <p class="quiet">Pinned now: {% if pinned %}<code class="fingerprint">{{ pinned }}</code>{% else %}a key FleetLedger cannot read{% endif %}</p>
   {% if same %}
   <p>That is the key FleetLedger already trusts: there is nothing to re-pin.</p>
   <a class="button ghost" href="/ships/{{ name }}">Back to {{ name }}</a>

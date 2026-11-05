@@ -30,9 +30,14 @@ def test_scan_runs_as_a_job_and_lists_what_it_heard(web):  # noqa: F811
     ]
     web.sign_in()
     assert 'href="/new/existing"' in web.client.get("/new").text  # the second tab
+    form = web.client.get("/new/existing").text
+    form = form[form.index('action="/new/scan"'):]
+    assert 'name="csrf"' in form[:form.index("</form>")]  # else the gate refuses it
     web.post("/new/scan")
     job = last_job(web)
     assert job.kind == "scan" and job.ok
+    card = web.client.get(f"/jobs/{job.id}")
+    assert card.headers.get("HX-Refresh") == "true"  # the page redraws with the list
     page = web.client.get("/new/existing").text
     assert '<a href="/ships/ship-01">ship-01</a>' in page  # known
     assert 'href="/new/existing?name=ship-09&amp;host=ship-09.local"' in page  # Adopt
@@ -123,3 +128,40 @@ def test_repin_says_so_when_the_pinned_key_cannot_be_read(web):  # noqa: F811
     response = web.post("/ships/ship-01/repin")
     assert response.status_code == 200 and fp in response.text
     assert "a key FleetLedger cannot read" in response.text
+
+
+def test_one_scan_at_a_time(web):  # noqa: F811
+    import threading
+
+    release = threading.Event()
+    web.app.browse = lambda timeout: release.wait(5) and []
+    web.sign_in()
+    web.post("/new/scan")
+    web.post("/new/scan")
+    assert "A scan is already running" in web.client.get("/new/existing").text
+    assert len(web.app_ui.jobs.recent()) == 1
+    release.set()
+    last_job(web)
+
+
+def test_a_host_that_does_not_answer_is_said_so_at_step_one(web):  # noqa: F811
+    from fleetledger.errors import FleetError
+
+    def silent(host):
+        raise FleetError(f"{host} did not answer within 10s.")
+
+    web.app.keyscan = silent
+    web.sign_in()
+    response = web.post("/new/existing/check", {"name": "ship-07", "host": "192.0.2.17"})
+    assert response.status_code == 400 and "did not answer within 10s" in response.text
+    assert 'name="host" value="192.0.2.17"' in response.text  # the form keeps it
+
+
+def test_repin_needs_it_matches(web):  # noqa: F811
+    key, fp = new_key("ship-01")
+    web.app.keyscan = lambda host: key
+    web.sign_in()
+    web.post("/ships/ship-01/repin/confirm", {"fingerprint": fp})  # no "it matches"
+    assert "Compare the fingerprint" in web.client.get("/ships/ship-01").text
+    assert web.app_ui.jobs.recent() == []
+    assert not web.store.load().ship("ship-01").host_key.startswith(key)

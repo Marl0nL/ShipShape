@@ -113,6 +113,10 @@ async def scan(request: Request) -> Response:
     from fleetledger.web.jobs import run_cli
 
     ui = ui_of(request)
+    running = last_scan(ui)
+    if running is not None and not running.done:  # no Ship to lock: refuse a second one here
+        ui.flash(session_of(request), "bad", "A scan is already running; its results show here.")
+        return back("/new/existing")
     try:
         ui.jobs.start("scan", [], lambda job: run_cli(_ScanApp(ui.app, job), ["scan"], job),
                       "Scan the LAN for Ships")

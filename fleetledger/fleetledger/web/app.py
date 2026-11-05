@@ -719,6 +719,8 @@ async def job_card(request: Request) -> Response:
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind in trust.KINDS:  # certificates or machines changed: redraw
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
+        response.headers["HX-Refresh"] = "true"
     return response
 
 
