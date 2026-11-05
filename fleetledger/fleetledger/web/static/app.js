@@ -34,16 +34,16 @@
   }
   function notifyNewWaiting(first) {
     const known = seen();
-    const now = new Set();
+    const current = new Set();
     document.querySelectorAll("[data-waiting]").forEach(function (el) {
       const key = el.dataset.key;
-      now.add(key);
+      current.add(key);
       if (!first && !known.has(key) && window.Notification &&
           Notification.permission === "granted") {
         new Notification("FleetLedger", { body: el.dataset.waiting, tag: key });
       }
     });
-    sessionStorage.setItem(SEEN, JSON.stringify(Array.from(now)));
+    sessionStorage.setItem(SEEN, JSON.stringify(Array.from(current)));
   }
   document.addEventListener("DOMContentLoaded", function () {
     notifyNewWaiting(true);
@@ -75,8 +75,11 @@
   //                        {s} an "s" unless it is 1, {value:NAME} a field's value
   //   data-confirm-count   a selector: matched fields that are ticked or filled in
   //   data-confirm-none    shown instead when that count is 0 (nothing is sent)
-  //   data-confirm-when    a selector: ask only when a field matching it is ticked
+  //   data-confirm-when    a selector: ask only when it matches inside the form
+  //                        (e.g. "input[name='protect'][value='yes']:checked")
   //   data-confirm-danger  destructive: Cancel has the focus, not the action
+  //   data-confirmed       set by this script for the one re-submit after OK;
+  //                        never set it in a template
   // A submit button with data-confirm-skip sends the form without asking (and
   // without ticking anything), e.g. "Keep it" next to "Remove it".
   const canDialog = typeof document.createElement("dialog").showModal === "function";
@@ -212,19 +215,19 @@
     const csrf = document.querySelector('meta[name="csrf-token"]').content;
     const url = "ws://" + location.host + "/flows/" + screen.dataset.flow + "/ws";
     const socket = new WebSocket(url);
-    const MAX = 200000;
+    const MAX_SCREEN_CHARS = 200000;  // keep the last 200k characters of output
 
-    function send(text) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ in: text }));
+    function send(message) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
     }
     socket.addEventListener("open", function () {
-      socket.send(JSON.stringify({ csrf: csrf }));
+      send({ csrf: csrf });
       state.textContent = "Connected. Nothing you type here is recorded.";
     });
     socket.addEventListener("message", function (event) {
       const data = JSON.parse(event.data);
       if (typeof data.out === "string") {
-        screen.textContent = (screen.textContent + data.out).slice(-MAX);
+        screen.textContent = (screen.textContent + data.out).slice(-MAX_SCREEN_CHARS);
         screen.scrollTop = screen.scrollHeight;
       }
       if (data.ended) {
@@ -238,14 +241,17 @@
     });
     document.getElementById("terminal-input").addEventListener("submit", function (event) {
       event.preventDefault();
-      send(line.value + "\r");
+      send({ in: line.value + "\r" });
       line.value = "";
     });
-    document.querySelectorAll("#terminal-input button[data-key]").forEach(function (b) {
-      b.addEventListener("click", function () { send(b.dataset.key); line.focus(); });
+    document.querySelectorAll("#terminal-input button[data-key]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        send({ in: button.dataset.key });
+        line.focus();
+      });
     });
     document.getElementById("terminal-leave").addEventListener("click", function () {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ leave: true }));
+      send({ leave: true });
     });
   });
 })();
