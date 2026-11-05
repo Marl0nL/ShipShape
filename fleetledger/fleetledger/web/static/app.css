@@ -315,7 +315,7 @@ pre.terminal { min-height: 40vh; }
 pre.log.bad { color: var(--term-bad); }
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; align-items: end; }
 .settings label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.signout { margin-top: 8px; }
+td.row-actions form.inline { margin: 0 6px 4px 0; }
 
 /* --- sign-ins and operations ------------------------------------------------------------ */
 .batch { margin-top: 16px; }  /* the Sign-ins page's start forms */

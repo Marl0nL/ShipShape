@@ -65,3 +65,14 @@ def test_app_js_reads_no_form_property_a_field_could_shadow():
              "setAttribute", "removeAttribute", "documentElement"}
     for template, names in confirm_forms():
         assert not names & risky, f"{template}: a field shadows {sorted(names & risky)}"
+
+
+def test_no_confirm_field_is_prefilled():
+    """A hidden confirm field with a value would make an action one click, with or
+    without script. Confirm fields are tick boxes the dialog ticks (or you do)."""
+    names = "|".join(CONFIRM_NAMES)
+    prefilled = re.compile(rf'<input\b[^>]*type="hidden"[^>]*name="(?:{names})"[^>]*value="[^"]+"'
+                           rf'|<input\b[^>]*name="(?:{names})"[^>]*type="hidden"[^>]*value="[^"]+"')
+    for path in sorted(TEMPLATES.glob("*.html")):
+        found = prefilled.findall(path.read_text(encoding="utf-8"))
+        assert not found, f"{path.name}: {found}"
