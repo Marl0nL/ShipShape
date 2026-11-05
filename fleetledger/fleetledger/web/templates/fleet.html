@@ -42,6 +42,19 @@
           <button type="submit" class="ghost">{{ op|capitalize }} {{ every }}</button>
         </form>
         {% endfor %}
+        {% if overlay_set %}
+        {% set off = views|rejectattr("ship.overlay_node")|list %}
+        <form method="post" action="/operations" class="inline"
+          data-confirm-title="Join {{ off|length }} Ship{{ "s" if off|length != 1 }} to the overlay?"
+          data-confirm="{{ off|map(attribute='ship.name')|join(', ') or 'None' }} join{{ "s" if off|length == 1 }} your overlay, each with a one-off key; its host certificate is re-signed with its overlay name. Progress shows on this page."
+          data-confirm-action="Join {{ off|length }} Ship{{ "s" if off|length != 1 }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="operation" value="join">
+          {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost"{% if not off %} disabled{% endif %} title="ship-fleet overlay join SHIP ...">Join {{ every }} not on the overlay ({{ off|length }})</button>
+        </form>
+        {% endif %}
         <p class="hint">Each sign-in needs its own approval in your browser; they run one after another on the Sign-ins page.</p>
       </div>
     </details>

@@ -66,7 +66,7 @@ def _ui(request: Request):
 
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
-    from fleetledger.web import setup, trust
+    from fleetledger.web import overlayweb, setup, trust
     from fleetledger.web.app import render
 
     ui = _ui(request)
@@ -83,8 +83,10 @@ async def page(request: Request) -> Response:
         entries = []
     context = await setup.access_context(inv)
     context.update(await run_in_threadpool(trust.section_context, ui, inv))
+    context.update(overlayweb.section_context(ui, inv))
     context.update(trust.placed_flashes(request))
-    if context.get("certs") is None and "placed" in context:  # no such block: the top
+    if (context.get("certs") is None and context.get("flash_at") != "overlay"
+            and "placed" in context):  # no such block: the top
         context["flashes"] = context.pop("placed")
     return render(request, "settings.html", inv=inv, health=ui.health, STATES=STATES,
                   FIX=FIX, entries=list(reversed(entries)), back="settings",

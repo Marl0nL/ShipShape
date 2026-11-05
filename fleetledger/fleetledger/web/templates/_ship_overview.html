@@ -124,33 +124,8 @@
       With a repo, the Ship clones it into <code>~/work/&lt;name&gt;</code> first (a private
       one once GitHub is signed in) and the agent works there. One you stop starting keeps
       running until it is stopped or the Ship reboots.</p>
-    {% if attach_here %}
-    <p>Attach from here: <code>herdr --remote {{ ship.name }}</code> or
-      <code>ssh {{ ship.name }}</code> (your key, with the fleet's certificates), or
-      <code>ship-fleet ssh {{ ship.name }}</code>.</p>
-    <p>As yourself, for admin work with sudo: <code>ssh {{ snap.inventory.owner }}@{{ ship.name }}</code>
-      or <code>ship-fleet ssh {{ ship.name }} --as owner</code>. The agent's login has no
-      sudo; its herdr session is the agent's own, so <code>herdr --remote {{ ship.name }}</code>
-      logs in as the agent (the same key and certificate) to reach it. (A Ship made before
-      owner logins existed gets one with <code>ship-fleet owner {{ snap.inventory.owner }}</code>.)</p>
-    {% if attach_until %}<p class="hint">This computer's certificate is valid until
-      {{ attach_until }}; FleetLedger renews it in its last day whenever it runs (this page,
-      or <code>ship-fleet status</code>). To renew it now:
-      <code>ship-fleet trust --this-computer</code>.</p>{% endif %}
-    {% else %}
-    <p>Attach from here: <code>ship-fleet ssh {{ ship.name }}</code>; as yourself, for admin
-      work with sudo: <code>ship-fleet ssh {{ ship.name }} --as owner</code>.</p>
-    {% if can_trust_here %}
-    <form method="post" action="/attach-here" class="inline">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="ship" value="{{ ship.name }}">
-      <button type="submit" class="ghost">Let this computer use ssh {{ ship.name }} and herdr --remote {{ ship.name }}</button>
-    </form>
-    <p class="hint">This trusts this computer with your own key (a short-lived certificate)
-      and adds the Ships to your SSH config (<code>~/.ssh/shipshape/</code>, included from
-      <code>~/.ssh/config</code>) and to herdr's saved machines.</p>
-    {% endif %}
-    {% endif %}
+    <p>Attach from here: <code>{{ ("herdr --remote " if attach_here else "ship-fleet ssh ") ~ ship.name }}</code>.
+      Every way to attach, as the agent or as you, is on the <a href="/ships/{{ ship.name }}/access">Access</a> tab.</p>
   </section>
 
   <section class="grid">
