@@ -200,9 +200,10 @@ ship-fleet: Proxmox POST failed: 500 storage full
 In the web UI, the failed job's card (under Activity, also after a restart) has
 **Edit and retry**: it opens the New Ship form filled in with everything that
 attempt was given. Change what you need and **Make it again**. The New Ship page
-lists every saved attempt, each with Edit and retry and **Discard**. An attempt
-goes once a Ship of that name is made, or when you discard it; FleetLedger keeps the
-last 20.
+lists every saved attempt, each with Edit and retry and **Discard**, and a new
+Ship's default name skips their names. An attempt goes once a Ship of that name is
+made, or when you discard it (one that still names something it left on the
+hypervisor stays until that is removed); FleetLedger keeps the last 20.
 
 Nothing secret is kept: there are no passphrases, tokens or keys in a Ship's
 options, and sign-ins happen after the Ship is up, as always. The first agent's
@@ -214,7 +215,7 @@ What blocks a retry, and what to do:
 | The attempt | What happens next |
 |---|---|
 | failed before the VM was made, or the driver removed what it made | nothing to clear: try again |
-| left a VM or seed volume the driver could not remove (it says which) | the next `new` of that name removes it first (after checking its name), so there is never a second VM of that Ship; the web form asks before that. If it still cannot, it says what is left: delete it on the hypervisor and try again, or discard the attempt |
+| left a VM or seed volume the driver could not remove (it says which) | the next `new` of that name removes it first (after checking its name), so there is never a second VM of that Ship; the web form asks before that, whether you came from Edit and retry or typed the name. If it still cannot, it says what is left: delete it on the hypervisor and try again, or discard the attempt |
 | made the VM, but the Ship did not finish enrolling | the Ship stays in the inventory: finish it (`ship-fleet status ship-03 --wait`, or **Finish enrolling** on its page) or remove it (`ship-fleet destroy ship-03`, or **Destroy…**) before trying again under that name, or give the retry another name |
 | a name that is taken now | the form says so, as for any new Ship: choose another name |
 

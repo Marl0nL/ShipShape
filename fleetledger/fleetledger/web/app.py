@@ -99,6 +99,15 @@ def _clock(wall: float | None) -> str:
     return datetime.fromtimestamp(wall, UTC).astimezone().strftime("%H:%M:%S")
 
 
+def _clock_dated(wall: float) -> str:
+    """A time for a record that outlives the day (a saved attempt): the date too,
+    unless it is today."""
+    when = datetime.fromtimestamp(wall, UTC).astimezone()
+    if when.date() == datetime.now(UTC).astimezone().date():
+        return when.strftime("%H:%M:%S")
+    return f"{when.day} {when:%b %Y} {when:%H:%M}"
+
+
 def make_env() -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(HERE / "templates")),
@@ -112,6 +121,8 @@ def make_env() -> Environment:
         usage_cell=commands.usage_cell,
         notes_cell=commands.notes_cell,
         clock=_clock,
+        clock_dated=_clock_dated,
+        attempt_saved_at=attempts.saved_at,
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
@@ -244,12 +255,16 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
 def _saved_attempts(inv: Any, jobs: list[Any]) -> list[Any]:
     """Failed attempts at making a Ship (attempts.py) no job card here shows already,
     so a failure is still in Activity after a restart."""
-    shown = {j.result.get("retry") for j in jobs} | {s for j in jobs if j.running
-                                                     for s in j.ships}
     try:
-        return [a for a in attempts.current(inv) if a.name not in shown]
+        saved = attempts.current(inv)
     except OSError:
         return []
+    # A card offers Edit and retry only for the attempt as saved when its job ended.
+    shown = {j.result.get("retry") for j in jobs
+             if any(a.name == j.result.get("retry") and a.at == j.result.get("retry_at")
+                    for a in saved)}
+    shown |= {s for j in jobs if j.running for s in j.ships}
+    return [a for a in saved if a.name not in shown]
 
 
 def _has_ca(inv: Any) -> bool:
@@ -708,7 +723,16 @@ async def new_ship_page(request: Request) -> Response:
     if retry is not None:
         nf = newship.refill(nf, newship.fields_from(retry.options, nf))
     return render(request, "new.html", nf=nf, retry=retry, saved=saved,
-                  blocker=retry and attempts.blocker(inv, retry))
+                  blocker=retry and retry.blocked,
+                  clearing=[retry] if retry is not None and retry.left else [])
+
+
+def _clearing(retry: Any, name: str) -> list[Any]:
+    """The saved attempts whose leftovers making name removes first: the one retried,
+    and the one saved at name itself (`new` clears that one whatever form posted)."""
+    at_name = attempts.get(name) if NAME_RE.match(name or "") else None
+    out = [a for a in (retry, at_name) if a is not None and a.left]
+    return [a for i, a in enumerate(out) if a.name not in {b.name for b in out[:i]}]
 
 
 async def new_ship_start(request: Request) -> Response:
@@ -723,10 +747,18 @@ async def new_ship_start(request: Request) -> Response:
         ui.flash(session, "bad", exc.message)
         return back("/new")
     retry = await run_in_threadpool(newship.retry_of, fields)
+    clearing = await run_in_threadpool(_clearing, retry, one(fields, "name"))
     try:
         name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv)
-        if retry is not None and retry.left and one(fields, "confirm") != "yes":
-            raise FleetError("Confirm removing what the failed attempt left, to try again.")
+        # Nothing on the hypervisor is removed unless the dialog named it: the plain
+        # form too, when its name is a failed attempt's that left something.
+        confirmed = set(fields.get("clear_left", [])) if one(fields, "confirm") == "yes" else set()
+        unasked = [a for a in clearing if a.name not in confirmed]
+        if unasked:
+            raise FleetError(
+                "; ".join(f"The failed attempt at {a.name} left "
+                          f"{', '.join(a.describe_left())}" for a in unasked)
+                + ". Making the Ship removes that first: confirm it in the dialog.")
         newship.start(ui, name, argv, retry_of=retry.name if retry else None)
     except FleetError as exc:  # back to the form as it was posted, with the reason
         try:
@@ -735,8 +767,10 @@ async def new_ship_start(request: Request) -> Response:
             ui.flash(session, "bad", exc.message)
             return back("/new")
         saved = await run_in_threadpool(attempts.current, inv)
+        shown = retry or next(iter(clearing), None)  # making that name retries its attempt
         return render(request, "new.html", status_code=400, flashes=[("bad", exc.message)],
-                      nf=newship.refill(nf, fields), retry=retry, saved=saved, blocker=None)
+                      nf=newship.refill(nf, fields), retry=shown, saved=saved, blocker=None,
+                      clearing=clearing)
     ui.flash(session, "ok", f"Making {name}; its progress is under Activity. Once it is "
              "up, it has a page of its own.")
     return back("/")

@@ -1,14 +1,17 @@
 {# The New Ship form (web/newship.py maps it to `ship-fleet new`). Shared by /new and
    setup's first Ship, which leaves out Advanced. Expects: nf (newship.FormChoices),
    form_action, advanced, csrf, SIZE, SIGNIN_CHOICES, SIGNIN_LABELS; and retry (a saved
-   attempts.Attempt this form tries again), if any: when it left something on the
-   hypervisor, the dialog asks before that is removed. #}
-<form method="post" action="{{ form_action }}" class="new-ship"{% if retry and retry.left %}
+   attempts.Attempt this form tries again), if any, and clearing (the attempts whose
+   leftovers on the hypervisor making it removes first): the dialog names them before
+   anything is removed, and the server removes only what it named (clear_left). #}
+{% set clearing = clearing|default([]) %}
+<form method="post" action="{{ form_action }}" class="new-ship"{% if clearing %}
   data-confirm-title="Remove what the failed attempt left?"
-  data-confirm="Before making the Ship, FleetLedger deletes {{ retry.describe_left()|join(", ") }}: what the failed attempt at {{ retry.name }} made on the hypervisor but could not remove. It checks each is still that attempt's first, and skips what is gone already."
+  data-confirm="Before making the Ship, FleetLedger deletes {% for a in clearing %}{{ a.describe_left()|join(", ") }}{{ ", " if not loop.last }}{% endfor %}: what the failed attempt at {{ clearing|map(attribute="name")|join(" and ") }} made on the hypervisor but could not remove. It checks each is still that attempt's first, and skips what is gone already."
   data-confirm-action="Remove it and make the Ship" data-confirm-danger{% endif %}>
   <input type="hidden" name="csrf" value="{{ csrf }}">
   {% if retry %}<input type="hidden" name="retry_of" value="{{ retry.name }}">{% endif %}
+  {% for a in clearing %}<input type="hidden" name="clear_left" value="{{ a.name }}">{% endfor %}
   <fieldset class="ship-name">
     <label>Name <input name="name" value="{{ nf.name }}" pattern="[a-z0-9][a-z0-9\-]{0,30}" required
       title="a-z, 0-9 and -, up to 31 characters"></label>
@@ -87,6 +90,6 @@
     </fieldset>
   </details>
   {% endif %}
-  {% if retry and retry.left %}<label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>{% endif %}
+  {% if clearing %}<label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>{% endif %}
   <button type="submit" title="ship-fleet new">{{ "Make it again" if retry else "Make it" }}</button>
 </form>

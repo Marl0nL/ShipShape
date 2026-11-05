@@ -63,6 +63,7 @@ class Attempt:
     driver: str = "manual"
     left: list[dict[str, Any]] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)  # options left out (re-enter them)
+    blocked: str | None = None  # not saved: why a retry under its name waits (current())
 
     def argv(self) -> list[str]:
         return to_argv(self.options)
@@ -236,19 +237,31 @@ def record(args: Any, *, error: str, stage: str, driver: str,
 
 
 def current(inv: Any) -> list[Attempt]:
-    """The attempts still worth offering: one whose Ship has since been made and
-    enrolled (Finish enrolling, or made another way) is dropped."""
+    """The attempts still worth offering, each with why a retry under its name waits
+    (blocked), if it does. One whose Ship has since been made and enrolled (Finish
+    enrolling, or made another way) is dropped, unless it still names something it
+    left on the hypervisor: that stays the only record of it."""
     out = []
     for attempt in load():
         ship = inv.ship(attempt.name) if inv is not None and inv.has_ship(attempt.name) else None
-        if ship is not None and ship.enrolled is not None:
+        if ship is not None and ship.enrolled is not None and not attempt.left:
             try:
                 drop(attempt.name)
             except OSError:
                 pass
             continue
+        attempt.blocked = blocker(inv, attempt)
         out.append(attempt)
     return out
+
+
+def saved_at(name: str) -> float | None:
+    """When the saved attempt at name was made, or None if there is none."""
+    try:
+        attempt = get(name)
+    except OSError:
+        return None
+    return attempt.at if attempt is not None else None
 
 
 def blocker(inv: Any, attempt: Attempt, name: str | None = None) -> str | None:

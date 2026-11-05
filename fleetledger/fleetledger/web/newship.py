@@ -24,8 +24,15 @@ def _one(fields: dict[str, list[str]], key: str) -> str:
 
 
 def next_name(inv) -> str:
-    """The first free ship-NN."""
+    """The first free ship-NN: not in the inventory, nor the name of a saved failed
+    attempt (attempts.py), so a plain new Ship never takes over an attempt's name."""
+    from fleetledger import attempts
+
     taken = {s.name for s in inv.ships()} if inv is not None else set()
+    try:
+        taken |= {a.name for a in attempts.load()}
+    except OSError:
+        pass
     n = 1
     while f"ship-{n:02d}" in taken:
         n += 1
@@ -337,15 +344,15 @@ def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None):
             inv = None
         source = attempts.get(retry_of) if retry_of and retry_of != name else None
         if source is not None and source.left:  # renamed: `new` would not see it
-            job.result["retry"] = source.name  # if this fails, offer that one again
+            _offer(job, source.name)  # if this fails, offer that one again
             attempts.clear_left(BrowserApp(app, job), inv, source, job.say)
         try:
             code = run_cli(app, argv_, job)
         except BaseException:  # `new` saved it before this reached the job
-            job.result["retry"] = name if attempts.get(name) is not None else None
+            _offer(job, name)
             raise
         if code != 0 and code != StillStarting.exit_code:
-            job.result["retry"] = name if attempts.get(name) is not None else None
+            _offer(job, name)
         elif source is not None:
             job.result.pop("retry", None)
             attempts.drop(source.name)
@@ -361,6 +368,16 @@ def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None):
         job.ok = code == 0
 
     return run
+
+
+def _offer(job, name: str) -> None:
+    """The job card offers Edit and retry of the attempt saved at name, as it is now
+    (retry_at: a later attempt at that name, or none, and the card stops offering it)."""
+    from fleetledger import attempts
+
+    at = attempts.saved_at(name)
+    job.result["retry"] = name if at is not None else None
+    job.result["retry_at"] = at
 
 
 def start(ui: Any, name: str, argv_: list[str], retry_of: str | None = None):

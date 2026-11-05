@@ -282,6 +282,35 @@ def test_a_saved_attempt_is_listed_until_its_ship_is_enrolled(env, home):  # noq
     assert attempts.get("ship-01") is None
 
 
+def test_an_enrolled_ships_attempt_is_kept_while_it_names_a_leftover(env, home):  # noqa: F811
+    attempts.save(attempts.Attempt("ship-01", 5.0, {"name": "ship-01"}, "x",
+                                   left=[{"kind": "vm", "vmid": 9101, "name": "ship-01"}]))
+    [kept] = attempts.current(env.store.load())  # ship-01 is enrolled: adopted, say
+    assert kept.name == "ship-01" and kept.left and attempts.get("ship-01") is not None
+
+
+def test_a_saved_attempt_must_be_under_its_own_name(home):
+    path = saved_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"attempts": [
+        {"name": "ship-07", "at": 1, "options": {"name": "ship-08"}}]}))
+    assert attempts.load() == []
+
+
+def test_proxmox_cleanup_leaves_alone_a_vmid_that_holds_another_vm():
+    class Taken(FakeAPI):
+        def wait_task(self, node, upid, timeout=600):
+            if upid == "UPID:pve:2":
+                raise FleetError("Proxmox task failed: clone failed")
+
+    api = Taken(vm_status="stopped", vm_name="someone-else")
+    with pytest.raises(FleetError, match="clone failed") as exc:
+        ProxmoxDriver(PX, api=api, read_seed=lambda s: b"ISO").create(ship(vmid=9102), SEED,
+                                                                        SIZE)
+    assert not isinstance(exc.value, LeftBehind)  # not ours: nothing recorded as left
+    assert ("DELETE", "/nodes/pve/qemu/9102") not in [c[:2] for c in mutating(api)]
+
+
 def test_remove_left_is_refused_by_drivers_that_leave_nothing(env):  # noqa: F811
     from fleetledger.drivers import get_driver
 

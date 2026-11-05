@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 
+from fleetledger.errors import FleetError
 from fleetledger.web import app as webapp
 from starlette.testclient import TestClient
 from test_attempts import LeavingDriver
@@ -96,14 +97,16 @@ def test_a_retry_removes_what_the_attempt_left_once_confirmed(web):  # noqa: F81
     form = page.split('class="new-ship"')[1].split(">")[0]
     assert "data-confirm=" in form and "VM 9101 (ship-31)" in html.unescape(form)
     assert 'name="confirm" value="yes" data-confirm-field' in page
-    assert "That attempt left VM 9101 (ship-31)" in page
+    assert "The failed attempt at ship-31 left VM 9101 (ship-31)" in page
+    assert 'name="clear_left" value="ship-31"' in page
 
     leaving.leave = False
     refused = web.post("/new", {"name": "ship-31", "retry_of": "ship-31"})
-    assert refused.status_code == 400 and "Confirm removing what the failed attempt" in refused.text
+    assert refused.status_code == 400 and "confirm it in the dialog" in refused.text
     assert leaving.removed == [] and leaving.created == []
 
-    job = _make(web, {"name": "ship-31", "retry_of": "ship-31", "confirm": "yes"})
+    job = _make(web, {"name": "ship-31", "retry_of": "ship-31", "confirm": "yes",
+                     "clear_left": "ship-31"})
     assert job.ok, job.snapshot()
     assert leaving.removed == [("ship-31", [{"kind": "vm", "vmid": 9101, "name": "ship-31"}])]
     assert [c[0] for c in leaving.created] == ["ship-31"]
@@ -115,7 +118,8 @@ def test_a_renamed_retry_still_removes_what_the_old_attempt_left(web):  # noqa: 
     leaving = _fail_with(web, LeavingDriver())
     _make(web, {"name": "ship-31"})
     leaving.leave = False
-    job = _make(web, {"name": "ship-32", "retry_of": "ship-31", "confirm": "yes"})
+    job = _make(web, {"name": "ship-32", "retry_of": "ship-31", "confirm": "yes",
+                     "clear_left": "ship-31"})
     assert job.ok, job.snapshot()
     assert leaving.removed == [("ship-31", [{"kind": "vm", "vmid": 9101, "name": "ship-31"}])]
     assert attempts.get("ship-31") is None and attempts.get("ship-32") is None
@@ -126,7 +130,8 @@ def test_a_retry_blocked_by_a_leftover_says_what_to_do(web):  # noqa: F811
     leaving = _fail_with(web, LeavingDriver())
     _make(web, {"name": "ship-31"})
     leaving.leave, leaving.remove_fails = False, True
-    job = _make(web, {"name": "ship-31", "retry_of": "ship-31", "confirm": "yes"})
+    job = _make(web, {"name": "ship-31", "retry_of": "ship-31", "confirm": "yes",
+                     "clear_left": "ship-31"})
     assert not job.ok and leaving.created == []
     log = "\n".join(job.snapshot())
     assert "cannot remove it: Proxmox DELETE failed: 500 VM is locked (clone)" in log
@@ -184,3 +189,111 @@ def test_discard_needs_the_csrf_token(web):  # noqa: F811
                                headers={"Origin": BASE})
     assert response.status_code == 403
     assert attempts.get("ship-31") is not None
+
+
+# --- review fixes ---------------------------------------------------------------------
+
+
+def test_the_plain_form_never_removes_leftovers_without_the_dialog(web):  # noqa: F811
+    web.sign_in()
+    leaving = _fail_with(web, LeavingDriver())
+    _make(web, {"name": "ship-31"})
+    leaving.leave = False
+    fresh = web.client.get("/new").text
+    assert 'name="name" value="ship-31"' not in fresh  # the default skips a saved attempt
+    form = fresh.split('class="new-ship"')[1].split(">")[0]
+    assert "data-confirm" not in form
+    refused = web.post("/new", {"name": "ship-31"})  # typed by hand: no retry_of
+    assert refused.status_code == 400
+    assert "The failed attempt at ship-31 left VM 9101 (ship-31)" in refused.text
+    form = refused.text.split('class="new-ship"')[1].split(">")[0]
+    assert "data-confirm=" in form and 'name="clear_left" value="ship-31"' in refused.text
+    assert leaving.removed == [] and leaving.created == []
+    job = _make(web, {"name": "ship-31", "confirm": "yes", "clear_left": "ship-31"})
+    assert job.ok, job.snapshot()
+    assert leaving.removed == [("ship-31", [{"kind": "vm", "vmid": 9101, "name": "ship-31"}])]
+
+
+def test_confirming_one_attempts_leftovers_does_not_remove_anothers(web):  # noqa: F811
+    web.sign_in()
+    leaving = _fail_with(web, LeavingDriver())
+    _make(web, {"name": "ship-31"})
+    _make(web, {"name": "ship-32"})
+    leaving.leave = False
+    refused = web.post("/new", {"name": "ship-32", "retry_of": "ship-31", "confirm": "yes",
+                                "clear_left": "ship-31"})
+    assert refused.status_code == 400 and "The failed attempt at ship-32 left" in refused.text
+    assert 'name="clear_left" value="ship-31"' in refused.text
+    assert 'name="clear_left" value="ship-32"' in refused.text
+    assert leaving.removed == [] and leaving.created == []
+    job = _make(web, {"name": "ship-32", "retry_of": "ship-31", "confirm": "yes",
+                      "clear_left": ["ship-31", "ship-32"]})
+    assert job.ok, job.snapshot()
+    assert sorted(n for n, _ in leaving.removed) == ["ship-31", "ship-32"]
+
+
+def test_an_older_card_stops_offering_an_attempt_it_no_longer_holds(web):  # noqa: F811
+    web.sign_in()
+    _fail_with(web, FakeDriver(fail=True))
+    first = _make(web, {"name": "ship-31", "cores": "2"})
+    second = _make(web, {"name": "ship-31", "cores": "3"})
+    old, new = (web.client.get(f"/jobs/{j.id}").text for j in (first, second))
+    assert 'href="/new?retry=ship-31"' in new
+    assert 'href="/new?retry=ship-31"' not in old and "A later attempt at ship-31" in old
+    fleet = web.client.get("/partials/fleet").text
+    assert fleet.count('href="/new?retry=ship-31"') == 1  # no second card for it
+    web.post("/new/attempts/ship-31/discard")
+    assert 'href="/new?retry=ship-31"' not in web.client.get(f"/jobs/{second.id}").text
+
+
+def test_a_saved_attempt_shows_once_in_activity(web):  # noqa: F811
+    web.sign_in()
+    attempts.save(attempts.Attempt("ship-31", 1.0, {"name": "ship-31"}, "x"))
+    assert web.client.get("/partials/fleet").text.count('id="attempt-ship-31"') == 1
+
+
+def test_a_destroyed_ships_attempt_no_longer_says_it_is_in_the_inventory(web, monkeypatch):  # noqa: F811
+    from fleetledger.errors import FleetError
+
+    from fleetledger import commands
+
+    def no_enrol(*a, **kw):
+        raise FleetError("cloud-init failed.")
+
+    monkeypatch.setattr(commands, "_enrol", no_enrol)
+    web.sign_in()
+    _fail_with(web, FakeDriver())
+    _make(web, {"name": "ship-31"})
+    assert "still in the inventory" in web.client.get("/new").text
+    with web.store.edit() as ed:
+        ed.remove_ship("ship-31")  # destroyed from its page
+    page = web.client.get("/new").text
+    assert "still in the inventory" not in page and 'href="/ships/ship-31"' not in page
+
+
+def test_two_retries_of_one_attempt_cannot_run_at_once(web):  # noqa: F811
+    import threading
+
+    from fleetledger.web import newship
+
+    web.sign_in()
+    attempts.save(attempts.Attempt("ship-31", 1.0, {"name": "ship-31"}, "x"))
+    gate = threading.Event()
+    jobs = web.app_ui.jobs
+    jobs.start("create", ["ship-32"], lambda job: gate.wait(5), locks=["attempt ship-31"])
+    try:
+        import pytest
+
+        with pytest.raises(FleetError, match="already running on attempt ship-31"):
+            newship.start(web.app_ui, "ship-33", ["new", "ship-33"], retry_of="ship-31")
+    finally:
+        gate.set()
+
+
+def test_saved_attempts_show_their_date_once_it_is_not_today():
+    import time
+
+    from fleetledger.web.app import _clock_dated
+
+    assert ":" in _clock_dated(time.time()) and len(_clock_dated(time.time())) == 8
+    assert "2024" in _clock_dated(time.mktime((2024, 3, 5, 9, 30, 0, 0, 0, -1)))
