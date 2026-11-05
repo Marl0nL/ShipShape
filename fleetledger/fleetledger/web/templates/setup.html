@@ -64,7 +64,12 @@
     <p>Use the fleet admin key and CA keys you already have, from another computer for
       example. FleetLedger uses them where they are.</p>
     <details><summary>Use my keys</summary>
-    <form method="post" action="/setup/fleet/import" autocomplete="off">
+    <form method="post" action="/setup/fleet/import" autocomplete="off"
+      data-confirm-when="input[name='protect'][value='yes']:checked"
+      data-confirm-title="Hand {n} key{s} over to FleetLedger?"
+      data-confirm="FleetLedger checks each passphrase, then re-encrypts the key file{s} with passphrases it keeps in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}. The keys stay the same, but their old passphrases no longer open them."
+      data-confirm-count="input[name='admin_key'], input[name='host_ca_key'], input[name='user_ca_key']"
+      data-confirm-action="Hand over {n} key{s}" data-confirm-danger>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label class="field">Fleet admin key (private key file) <input name="admin_key" required placeholder="~/.ssh/shipshape_fleet_ed25519"></label>
       <label class="field">Host CA key <input name="host_ca_key" placeholder="~/.ssh/shipshape_host_ca_ed25519"></label>
@@ -132,7 +137,12 @@
     keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys
     themselves stay the same (Ships, certificates and trusted machines keep working); the
     old passphrase no longer opens the file. Nothing changes unless you tick the boxes.</p>
-  <form method="post" action="/setup/fleet/adopt" autocomplete="off">
+  <form method="post" action="/setup/fleet/adopt" autocomplete="off"
+    data-confirm-title="Hand {n} key{s} over to FleetLedger?"
+    data-confirm="FleetLedger checks each passphrase, then re-encrypts the ticked key file{s} with passphrases it keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys stay the same (Ships, certificates and trusted machines keep working), but the old passphrases no longer open them."
+    data-confirm-count="input[name^='take_']"
+    data-confirm-none="Tick the keys FleetLedger should look after first."
+    data-confirm-action="Hand over {n} key{s}" data-confirm-danger>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     {% for what, path in unmanaged %}
     <div class="adopt-row">
@@ -141,7 +151,7 @@
     </div>
     {% endfor %}
     <input type="hidden" name="store" value="{{ default_store }}">
-    <label class="confirm"><input type="checkbox" name="confirm" value="yes"> Re-encrypt the ticked key files</label>
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> Re-encrypt the ticked key files</label>
     <button type="submit">Let FleetLedger look after them</button>
   </form>
 </div>
@@ -167,7 +177,16 @@
       host.</p>
   </div>
   {% endif %}
-  <form method="post" action="/setup/proxmox/token" autocomplete="off">
+  <form method="post" action="/setup/proxmox/token" autocomplete="off"
+    {% if px.pinned %}
+    data-confirm-title="Trust the NEW certificate?"
+    data-confirm="It is different from the one you confirmed before. Only continue if you know the host's certificate was renewed and you have checked the new fingerprint on the host: {{ px.fingerprint }}"
+    data-confirm-action="Trust the new certificate" data-confirm-danger
+    {% elif not px.known %}{# a certificate confirmed before is pre-ticked: no need to ask #}
+    data-confirm-title="Trust this certificate?"
+    data-confirm="FleetLedger pins it and then talks to Proxmox only through it, starting with checking your token. Trust it only if it matches the fingerprint on the host: {{ px.fingerprint }}"
+    data-confirm-action="Trust this certificate"
+    {% endif %}>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <p>The server's certificate (SHA-256):<br><code class="fingerprint">{{ px.fingerprint }}</code></p>
     <p class="hint">Compare it with the one on the Proxmox host (as root), so you know you are
@@ -176,8 +195,8 @@
       <button type="button" class="ghost" data-copy="openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256">Copy</button>
       (or the web interface: the node, then System, then Certificates).</p>
     {% if px.known %}<p class="notice">This is the certificate you confirmed before.</p>{% endif %}
-    <label class="confirm"><input type="checkbox" name="matches" value="yes"{% if px.known %} checked{% endif %}> It matches: pin it</label>
-    {% if px.pinned %}<label class="confirm"><input type="checkbox" name="changed_ok" value="yes"> I know the host's certificate was renewed</label>{% endif %}
+    <label class="confirm"><input type="checkbox" name="matches" value="yes"{% if px.known %} checked{% else %} data-confirm-field{% endif %}> It matches: pin it</label>
+    {% if px.pinned %}<label class="confirm"><input type="checkbox" name="changed_ok" value="yes" data-confirm-field> I know the host's certificate was renewed</label>{% endif %}
     {% if px_here.in_keyring %}
     <p class="notice">This token's secret is already in your keyring: leave the secret
       empty to use it (it is checked with Proxmox first, never shown).</p>
@@ -296,11 +315,15 @@
   {% endif %}
 {% endif %}
 {% if state.old_copy %}
-  <form method="post" action="/setup/proxmox/forget-old" class="inline">
+  <form method="post" action="/setup/proxmox/forget-old" class="inline"
+    data-confirm-title="Remove the previous token secret?"
+    data-confirm="FleetLedger deletes the old Proxmox token secret from {{ 'your keyring' if state.old_copy.kind == 'keyring' else state.old_copy.where }}. It no longer uses it; this cannot be undone."
+    data-confirm-action="Remove it" data-confirm-danger>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <span>The previous token secret is still in {{ 'your keyring' if state.old_copy.kind == 'keyring' else state.old_copy.where }}, which FleetLedger no longer uses.</span>
-    <label class="confirm"><input type="checkbox" name="confirm" value="yes"> remove it</label>
-    <button type="submit" class="ghost">OK</button>
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> remove it</label>
+    <button type="submit" class="ghost" data-confirm-skip>Keep it</button>
+    <button type="submit" class="ghost danger">Remove it</button>
   </form>
 {% endif %}
 </section>

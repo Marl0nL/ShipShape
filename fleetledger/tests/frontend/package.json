@@ -1,0 +1,16 @@
+{
+  "name": "fleetledger-web-frontend-tests",
+  "version": "0.1.0",
+  "description": "Tests for the FleetLedger web UI's script (static/app.js) in a simulated browser",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test *.test.js"
+  },
+  "devDependencies": {
+    "happy-dom": "21.0.4"
+  }
+}

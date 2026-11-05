@@ -28,12 +28,23 @@
       </label>
       <button type="submit">Start sign-ins</button>
     </form>
+    {% set n = views|length %}
+    {% set every = ("every " ~ tag ~ " Ship") if tag else "every Ship" %}
     {% for op in ("update", "reboot") %}
-    <form method="post" action="/operations" class="inline">
+    <form method="post" action="/operations" class="inline"
+      {% if op == "update" %}
+      data-confirm-title="Update {{ every }}?"
+      data-confirm="FleetLedger copies this checkout's tooling to {{ n }} Ship{{ "s" if n != 1 }} and converges each one; agents keep running. A Ship whose herdr changed reboots, and its agents resume in their modes. Progress shows on this page."
+      data-confirm-action="Update {{ n }} Ship{{ "s" if n != 1 }}"
+      {% else %}
+      data-confirm-title="Reboot {{ every }}?"
+      data-confirm="{{ n }} Ship{{ "s" if n != 1 }} restart{{ "s" if n == 1 }}, each out of reach for a minute or two. herdr saves every agent first and resumes it in its mode afterwards. Progress shows on this page."
+      data-confirm-action="Reboot {{ n }} Ship{{ "s" if n != 1 }}" data-confirm-danger
+      {% endif %}>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="operation" value="{{ op }}">
       {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
-      <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
       <button type="submit" class="ghost">{{ op|capitalize }} {% if tag %}every {{ tag }} Ship{% else %}every Ship{% endif %}</button>
     </form>
     {% endfor %}

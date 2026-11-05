@@ -61,6 +61,133 @@
     if (document.getElementById("fleet")) notifyNewWaiting(false);
   });
 
+  // --- confirmations ---------------------------------------------------------------
+  // A form with data-confirm asks in a <dialog> before it is sent, saying what
+  // will happen, with the action named on the button. The tick boxes the server
+  // requires (inputs with data-confirm-field) stay in the page for browsers
+  // without script or <dialog>: then nothing changes. With them, the boxes are
+  // hidden and the dialog ticks them only when the person confirms, so the
+  // server's check is exactly as before and nothing becomes one click.
+  //
+  //   data-confirm         what will happen (required)
+  //   data-confirm-title   the question (default: the button's own text + "?")
+  //   data-confirm-action  the confirm button's label; {n} is the count below,
+  //                        {s} an "s" unless it is 1, {value:NAME} a field's value
+  //   data-confirm-count   a selector: matched fields that are ticked or filled in
+  //   data-confirm-none    shown instead when that count is 0 (nothing is sent)
+  //   data-confirm-when    a selector: ask only when a field matching it is ticked
+  //   data-confirm-danger  destructive: Cancel has the focus, not the action
+  // A submit button with data-confirm-skip sends the form without asking (and
+  // without ticking anything), e.g. "Keep it" next to "Remove it".
+  const canDialog = typeof document.createElement("dialog").showModal === "function";
+  let dialog = null;
+
+  function confirmFields(form) {
+    return Array.from(form.querySelectorAll("input[data-confirm-field]"));
+  }
+
+  function counted(form) {
+    const selector = form.dataset.confirmCount;
+    if (!selector) return null;
+    return Array.from(form.querySelectorAll(selector)).filter(function (el) {
+      return el.type === "checkbox" || el.type === "radio" ? el.checked : el.value.trim() !== "";
+    }).length;
+  }
+
+  function fill(text, form, n) {
+    return text
+      .replace(/\{n\}/g, String(n))
+      .replace(/\{s\}/g, n === 1 ? "" : "s")
+      .replace(/\{value:([A-Za-z0-9_-]+)\}/g, function (_m, name) {
+        const field = form.elements.namedItem(name);
+        return field && "value" in field ? field.value : "";
+      });
+  }
+
+  function buildDialog() {
+    const d = document.createElement("dialog");
+    d.className = "confirm-dialog";
+    d.id = "confirm-dialog";
+    d.setAttribute("aria-labelledby", "confirm-dialog-title");
+    d.setAttribute("aria-describedby", "confirm-dialog-text");
+    const inner = document.createElement("form");
+    inner.method = "dialog";
+    const title = document.createElement("h2");
+    title.id = "confirm-dialog-title";
+    const text = document.createElement("p");
+    text.id = "confirm-dialog-text";
+    const buttons = document.createElement("div");
+    buttons.className = "confirm-buttons";
+    const cancel = document.createElement("button");
+    cancel.value = "cancel";
+    cancel.className = "ghost";
+    cancel.textContent = "Cancel";
+    const ok = document.createElement("button");
+    ok.value = "ok";
+    buttons.append(cancel, ok);
+    inner.append(title, text, buttons);
+    d.append(inner);
+    document.body.append(d);
+    return { el: d, title: title, text: text, cancel: cancel, ok: ok };
+  }
+
+  function ask(form, submitter) {
+    dialog = dialog || buildDialog();
+    const n = counted(form);
+    const none = n === 0 && form.dataset.confirmNone;
+    const danger = form.hasAttribute("data-confirm-danger");
+    const label = submitter ? submitter.textContent.trim() : "Continue";
+    dialog.title.textContent = none ? label : fill(form.dataset.confirmTitle || label + "?", form, n);
+    dialog.text.textContent = none ? form.dataset.confirmNone : fill(form.dataset.confirm, form, n);
+    dialog.ok.hidden = Boolean(none);
+    dialog.ok.textContent = fill(form.dataset.confirmAction || label, form, n);
+    dialog.ok.className = danger ? "danger" : "";
+    dialog.cancel.textContent = none ? "OK" : "Cancel";
+    dialog.el.classList.toggle("danger", danger);
+    dialog.el.returnValue = "";
+    dialog.el.onclose = function () {
+      if (dialog.el.returnValue !== "ok" || none) return;
+      confirmFields(form).forEach(function (box) { box.checked = true; });
+      form.dataset.confirmed = "yes";
+      if (submitter && submitter.form === form) form.requestSubmit(submitter);
+      else form.requestSubmit();
+    };
+    dialog.el.showModal();
+    (danger || none ? dialog.cancel : dialog.ok).focus();
+  }
+
+  function enhance(root) {
+    if (!canDialog) return;  // the tick boxes stay: the server still needs them
+    root.querySelectorAll("form[data-confirm]").forEach(function (form) {
+      confirmFields(form).forEach(function (box) {
+        box.checked = false;
+        const label = box.closest("label");
+        (label || box).hidden = true;
+      });
+    });
+  }
+
+  document.addEventListener("submit", function (event) {
+    const form = event.target;
+    if (!canDialog || !(form instanceof HTMLFormElement) || !form.matches("form[data-confirm]")) {
+      return;
+    }
+    if (event.submitter && event.submitter.hasAttribute("data-confirm-skip")) return;
+    if (form.dataset.confirmed === "yes") {
+      delete form.dataset.confirmed;  // this once: the next submit asks again
+      return;
+    }
+    const when = form.dataset.confirmWhen;
+    if (when && !form.querySelector(when)) return;
+    event.preventDefault();
+    confirmFields(form).forEach(function (box) { box.checked = false; });
+    ask(form, event.submitter);
+  });
+  document.addEventListener("DOMContentLoaded", function () { enhance(document); });
+  document.addEventListener("htmx:afterSwap", function (event) { enhance(event.target); });
+  // Coming back to a page from the browser's history: no box stays ticked.
+  window.addEventListener("pageshow", function () { enhance(document); });
+
   // --- the live terminal --------------------------------------------------------
   document.addEventListener("DOMContentLoaded", function () {
     const screen = document.getElementById("terminal");

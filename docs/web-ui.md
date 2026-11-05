@@ -43,14 +43,14 @@ Then, each step showing **done** or **next**:
 
 1. **Where Ships run.** For Proxmox: the address; the server's certificate
    fingerprint, shown with the command to compare it on the host, then pinned
-   when you tick that it matches; the API token id and secret, checked through
+   when you confirm that it matches; the API token id and secret, checked through
    the pin before anything is stored. FleetLedger then finds the node, pool,
    storages, bridge and template the token can see and fills them in. Anything
    missing on the host comes back as the exact root commands, with a copy
    button and a **Check again**; nothing is saved until everything is there, and
    a last connection test runs before saving. A certificate that differs from
    the one you confirmed before is flagged, with both fingerprints, and needs its
-   own tick. New Ships get VM ids 9100-9199 (ids already taken are skipped), away
+   own confirmation. New Ships get VM ids 9100-9199 (ids already taken are skipped), away
    from the low ids Proxmox hands out to your own VMs; Advanced changes the range,
    or `any` for any free id. Or manual: FleetLedger writes each Ship's first-boot
    ISO and prints the steps.
@@ -227,6 +227,14 @@ Following Jupyter's model, adapted to "one person, one computer":
   server exactly. Only small plain form posts are accepted (64 KiB).
 - **The live terminal's WebSocket** needs the session cookie and an exact
   `Origin`; its first message must carry the CSRF token.
+- **Confirmations.** Anything hard to undo (reboot, update, sign out, trusting a
+  certificate, handing keys over, removing an old secret) asks first, in a
+  dialog that says what will happen and names the action on its button; for
+  destructive ones Cancel has the focus. The server still requires the same
+  confirmation field it always did: the dialog ticks the form's hidden confirm
+  box only when you confirm. Without script (or a browser without `<dialog>`)
+  the tick box shows instead, so nothing ever becomes one click
+  (`static/app.js`; tests in `fleetledger/tests/frontend/`).
 - **Content-Security-Policy** on every response: scripts, styles and connections
   from this server only, no inline code, no framing; `no-store` caching.
   `Referrer-Policy: same-origin` (not `no-referrer`, which makes browsers send

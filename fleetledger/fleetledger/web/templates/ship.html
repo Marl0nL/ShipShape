@@ -58,12 +58,15 @@
       {% endfor %}
       </tbody>
     </table>
-    <form method="post" action="/ships/{{ ship.name }}/logout" class="inline signout">
+    <form method="post" action="/ships/{{ ship.name }}/logout" class="inline signout"
+      data-confirm-title="Sign {{ ship.name }} out of {value:service}?"
+      data-confirm="{{ ship.name }} forgets this sign-in. Agents and tools that use it stop working there until you sign in again."
+      data-confirm-action="Sign out of {value:service}" data-confirm-danger>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>Sign out of
         <select name="service">{% for s in SERVICES %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select>
       </label>
-      <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
       <button type="submit" class="ghost danger">Sign out</button>
     </form>
     {% if flows %}
@@ -199,11 +202,17 @@
       anywhere (its host certificate is re-signed with its overlay name).</span>
     {% endif %}
     {% for op in ("update", "reboot") %}
-    <form method="post" action="/operations" class="inline">
+    <form method="post" action="/operations" class="inline"
+      {% if op == "update" %}
+      data-confirm="FleetLedger copies this checkout's tooling to {{ ship.name }} and converges it; agents keep running. If its herdr changed it reboots, and its agents resume in their modes. Progress shows on the Fleet page."
+      {% else %}
+      data-confirm="{{ ship.name }} restarts and is out of reach for a minute or two. herdr saves every agent first and resumes it in its mode afterwards. Progress shows on the Fleet page."
+      data-confirm-danger
+      {% endif %}>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="operation" value="{{ op }}">
       <input type="hidden" name="ship" value="{{ ship.name }}">
-      <label class="confirm"><input type="checkbox" name="confirm" value="yes"> sure</label>
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
       <button type="submit" class="ghost">{{ op|capitalize }} {{ ship.name }}</button>
     </form>
     {% endfor %}
