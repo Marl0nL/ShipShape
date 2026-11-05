@@ -327,25 +327,18 @@ def _image_build(args, app) -> int:
 
 def _image_ls(args, app) -> int:
     inv = app.store_factory().load()
-    pinned = inv.pinned_image
-    if not inv.images:
+    found = images.listing(inv)
+    if not found:
         app.say("No baked images yet; new Ships use the stock template. "
                 "Build one with ship-fleet image build.")
         return 0
-    using: dict[str, int] = {}
-    for ship in inv.ships():
-        if ship.image:
-            using[ship.image] = using.get(ship.image, 0) + 1
-    rows = []
-    for image_id, entry in sorted(inv.images.items()):
-        where = ", ".join(f"{d} {'/'.join(str(v) for v in ref.values())}"
-                          for d, ref in sorted(entry.get("published", {}).items())) or "-"
-        rows.append([("* " if image_id == pinned else "  ") + image_id,
-                     entry["ubuntu"]["build"], entry["tooling"] + (" dirty" if entry.get(
-                         "dirty") else ""), ",".join(entry.get("recipes", [])) or "-", where,
-                     str(using.get(image_id, 0)), "kept" if "file" in entry else "-"])
+    rows = [[("* " if i["pinned"] else "  ") + i["id"], i["ubuntu"],
+             i["tooling"] + (" dirty" if i["dirty"] else ""), ",".join(i["recipes"]) or "-",
+             ", ".join(f"{d} {'/'.join(str(v) for v in ref.values())}"
+                       for d, ref in i["published"].items()) or "-",
+             str(i["ships"]), "kept" if i["file"] else "-"] for i in found]
     app.say(table(rows, ["IMAGE", "UBUNTU", "TOOLING", "BAKED", "PUBLISHED", "SHIPS", "FILE"]))
-    app.say("* pinned: new Ships start from it" if pinned != STOCK_IMAGE
+    app.say("* pinned: new Ships start from it" if inv.pinned_image != STOCK_IMAGE
             else "New Ships use the stock template (ship-fleet image use ID to pin one).")
     return 0
 

@@ -153,6 +153,15 @@ class DemoDriver(Driver):
     def finish_enrolment(self, ship) -> Outcome:
         return self._done(f"Detached {ship.name}'s seed")
 
+    # --- baked images ----------------------------------------------------------------
+    def publish_image(self, image) -> Outcome:
+        self.templates = getattr(self, "templates", 9180) + 1
+        return self._done(f"Made image {image.id} into template {self.templates}",
+                          template_vmid=self.templates)
+
+    def remove_image(self, image) -> Outcome:
+        return self._done(f"Removed image {image.id}'s template")
+
     # --- snapshots -------------------------------------------------------------------
     def snapshots(self, ship) -> list:
         return list(self._vm(ship)["snapshots"])
@@ -193,6 +202,27 @@ def make_driver():
     return factory
 
 
+def demo_images(base: Path) -> str:
+    """Two made-up baked images: one published to the demo hypervisor, one only on
+    this computer (a small stand-in file, not a real qcow2)."""
+    import hashlib
+
+    folder = base / "data" / "images"
+    folder.mkdir(parents=True, mode=0o700)
+    local = "26.04-20261104-4e5f6a7b"
+    qcow = folder / f"{local}.qcow2"
+    qcow.write_bytes(b"demo image")
+    common = ('ubuntu = {{ release = "26.04", build = "{build}" }}\ntooling = "0.1.0"\n'
+              'commit = "0123456789abcdef0123456789abcdef01234567"\n')
+    return (f'\n[image."26.04-20261102-0a1b2c3d"]\ncreated = "2026-11-02T10:00:00Z"\n'
+            f'sha256 = "{"ab" * 32}"\n' + common.format(build="20261016")
+            + 'recipes = ["chrome-devtools-axi"]\n'
+            'published = { proxmox = { template_vmid = 9181 } }\n'
+            f'\n[image."{local}"]\ncreated = "2026-11-04T10:00:00Z"\n'
+            f'sha256 = "{hashlib.sha256(qcow.read_bytes()).hexdigest()}"\nfile = "{qcow}"\n'
+            + common.format(build="20261030") + 'recipes = ["chrome-devtools-axi", "gh-axi"]\n')
+
+
 def ship_id(index: int) -> str:
     return f"00000000-0000-4000-8000-{index:012d}"
 
@@ -218,6 +248,7 @@ def home(base: Path) -> None:
         host_key = " ".join((base / "keys" / f"host-{name}.pub").read_text().split()[:2])
         text += SHIP_ENTRY.format(name=name, id=ship_id(i), tags=json.dumps(tags),
                                   host_key=host_key, overlay=overlay, driver=driver)
+    text += demo_images(base)
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
     path.chmod(0o600)

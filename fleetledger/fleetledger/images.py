@@ -320,6 +320,28 @@ def published(inventory: Inventory, image_id: str, driver_id: str) -> PublishedI
     return PublishedImage(image_id, dict(ref))
 
 
+def listing(inventory: Inventory) -> list[dict[str, Any]]:
+    """Every baked image, by id, as data (ship-fleet image ls prints it; the web UI's
+    Settings shows it): its Ubuntu build, tooling, baked recipes, where it is
+    published (driver -> ref), how many Ships were made from it, whether its file is
+    kept here, and whether new Ships start from it."""
+    using: dict[str, int] = {}
+    for ship in inventory.ships():
+        if ship.image:
+            using[ship.image] = using.get(ship.image, 0) + 1
+    return [{
+        "id": image_id,
+        "ubuntu": entry["ubuntu"]["build"],
+        "tooling": entry["tooling"],
+        "dirty": bool(entry.get("dirty")),
+        "recipes": list(entry.get("recipes", [])),
+        "published": {d: dict(ref) for d, ref in sorted(entry.get("published", {}).items())},
+        "ships": using.get(image_id, 0),
+        "file": "file" in entry,
+        "pinned": image_id == inventory.pinned_image,
+    } for image_id, entry in sorted(inventory.images.items())]
+
+
 def remove_local(inventory: Inventory, image_id: str) -> None:
     entry = inventory.image(image_id)
     if "file" in entry:

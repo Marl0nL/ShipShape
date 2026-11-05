@@ -37,6 +37,8 @@ class Job:
     kind: str  # update | reboot | join | create | ...
     ships: list[str]
     title: str
+    # What else it holds besides Ships, e.g. "image noble-2026": one job per lock.
+    locks: list[str] = dataclasses.field(default_factory=list)
     started: float = dataclasses.field(default_factory=time.time)
     lines: deque[str] = dataclasses.field(default_factory=lambda: deque(maxlen=MAX_LINES))
     done: bool = False
@@ -141,21 +143,32 @@ class Jobs:
     def _busy_locked(self, ships: list[str]) -> bool:
         return any(j.running and set(j.ships) & set(ships) for j in self._jobs)
 
-    def busy(self, ships: list[str]) -> bool:
+    def _held_locked(self, locks: list[str]) -> str | None:
+        """The first of locks a running job holds, if any."""
+        held = {lock for j in self._jobs if j.running for lock in j.locks}
+        return next((lock for lock in locks if lock in held), None)
+
+    def busy(self, ships: list[str], locks: list[str] = ()) -> bool:
         with self._lock:
-            return self._busy_locked(ships)
+            return self._busy_locked(ships) or self._held_locked(list(locks)) is not None
 
     def start(self, kind: str, ships: list[str], run: Callable[[Job], Any],
-              title: str = "") -> Job:
-        """Start run(job) in the background. Refused if one of the Ships is busy: the
-        check and the insert are one critical section."""
+              title: str = "", locks: list[str] = ()) -> Job:
+        """Start run(job) in the background. Refused if one of the Ships is busy, or a
+        running job holds one of locks (a resource that is not a Ship, such as an
+        image): the check and the insert are one critical section."""
         with self._lock:
             if self._stopping:
                 raise FleetError("FleetLedger is stopping; try again once it is back.")
             if self._busy_locked(ships):
                 raise FleetError("Something is already running on one of those Ships; "
                                  "wait for it to finish.")
-            job = Job(next(self._ids), kind, list(ships), title or kind.capitalize())
+            held = self._held_locked(list(locks))
+            if held:
+                raise FleetError(f"Something is already running on {held}; wait for it "
+                                 "to finish.")
+            job = Job(next(self._ids), kind, list(ships), title or kind.capitalize(),
+                      locks=list(locks))
             self._jobs.append(job)
             finished = [j for j in self._jobs if j.done]
             for old in finished[: max(0, len(finished) - KEEP_FINISHED)]:
