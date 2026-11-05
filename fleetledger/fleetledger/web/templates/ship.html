@@ -19,7 +19,7 @@
 </section>
 {% endif %}
 <nav class="tabs">
-  {% for t, label in (("overview", "Overview"), ("settings", "Settings"), ("logs", "Logs"), ("network", "Network")) %}
+  {% for t, label in (("overview", "Overview"), ("settings", "Settings"), ("snapshots", "Snapshots"), ("logs", "Logs"), ("network", "Network")) %}
   <a href="/ships/{{ ship.name }}{% if t != "overview" %}/{{ t }}{% endif %}" class="{% if tab == t %}on{% endif %}">{{ label }}</a>
   {% endfor %}
 </nav>
@@ -28,6 +28,8 @@
 {% include "_ship_overview.html" %}
 {% elif tab == "settings" %}
 {% include "_ship_settings.html" %}
+{% elif tab == "snapshots" %}
+{% include "_ship_snapshots.html" %}
 {% elif tab == "logs" %}
 {% include "_ship_logs.html" %}
 {% elif tab == "network" %}
