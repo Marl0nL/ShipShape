@@ -170,12 +170,10 @@ def _size_limits_for_forms() -> dict[str, int]:
 def render(request: Request, template: str, status_code: int = 200, **context: Any) -> Response:
     ui = ui_of(request)
     session = session_of(request)
-    waiting = [f for f in ui.concierge.active() if f.needs_you]
     context.setdefault("flashes", ui.take_flashes(session))
     html = ui.env.get_template(template).render(
         csrf=session.csrf,
-        waiting_count=len(waiting),
-        snapshot=ui.fleet.snapshot,
+        waiting_count=sum(1 for f in ui.concierge.active() if f.needs_you),
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
@@ -223,11 +221,9 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
     return {
         "tag": tag,
         "views": views,
-        "items": items,
         "alerts": alerts,
         "summary": dashboard.summary(views, alerts, snap.inventory),
         "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
-        "flows_waiting": flows_waiting,
         "operations": ui.operations.recent(),
         "version": _fleet_version(ui),
         "snap": snap,
