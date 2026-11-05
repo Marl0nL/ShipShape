@@ -148,6 +148,7 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         hint, command = commands[code]
         return Action("command", "Copy", command, hint)
     links = {
+        "not-enrolled": ("Finish enrolling", f"/ships/{ship}"),
         "provision-failed": ("Provisioning log", f"/ships/{ship}/logs?source=provision"),
         "unit-failed": ("System log", f"/ships/{ship}/logs?source=system"),
         "tool-failed": ("Tools log", f"/ships/{ship}/logs?source=tools"),

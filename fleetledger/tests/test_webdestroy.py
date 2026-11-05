@@ -139,3 +139,15 @@ def test_unknown_ships_are_404(web):  # noqa: F811
     web.sign_in()
     for path in ("/ships/nope/destroy", "/ships/nope/forget", "/ships/BAD!/destroy"):
         assert web.post(path, {"confirm_name": "nope"}).status_code == 404
+
+
+def test_a_ship_not_enrolled_yet_offers_destroy_beside_finish_enrolling(web):  # noqa: F811
+    with web.store.edit() as ed:
+        ed.set_field("ship-02", "enrolled", None)
+    web.ship.down.add("ship-02")
+    web.fleet.poll()
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-02").text)
+    primary = bar[:bar.index('<details class="menu">')]
+    assert 'action="/ships/ship-02/enrol"' in primary
+    assert 'data-confirm-type="ship-02"' in _form(primary, "/ships/ship-02/destroy")
