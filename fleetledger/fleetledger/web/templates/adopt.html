@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Add an existing Ship · FleetLedger{% endblock %}
+{% block body %}
+<h1>New Ship</h1>
+{% with new_tab="existing" %}{% include "_new_tabs.html" %}{% endwith %}
+<section class="setup-step new-ship-page">
+  <h2>Ships on your LAN</h2>
+  <p class="hint">A Ship announces itself on the local network. Announcements are hints:
+    a Ship may be there and not heard. <span class="quiet">The same as <code>ship-fleet scan</code>.</span></p>
+  <form method="post" action="/new/scan" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="ghost" title="ship-fleet scan">Scan the LAN</button>
+  </form>
+  {% if scan and (not scan.done or not scan.ok or not rows) %}{% with job=scan %}{% include "_job.html" %}{% endwith %}{% endif %}
+  {% if rows %}
+  <div class="table-scroll"><table>
+    <thead><tr><th>Ship</th><th>Host</th><th>Addresses</th><th>Inventory</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr><td>{{ r.name }}</td><td>{{ r.host }}</td><td>{{ r.addresses|join(", ") or "-" }}</td>
+      <td>{% if r.known %}<a href="/ships/{{ r.known }}">{{ r.known }}</a>{% else %}not yet{% endif %}</td>
+      <td>{% if not r.known %}<a class="button ghost small" href="/new/existing?{{ {"name": r.name, "host": r.host}|urlencode }}">Adopt</a>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+
+  <h2>Adopt a Ship</h2>
+  {% if fingerprint %}
+  <p>{{ form.host }} presents the host key</p>
+  <p><code class="fingerprint">{{ fingerprint }}</code></p>
+  <p>Compare it with the fingerprint cloud-init printed on {{ form.name }}'s VM console
+    (<code>SHA256:...</code>). Only if they match, adopt it: FleetLedger then pins this key
+    and trusts nothing else for {{ form.name }}.</p>
+  <form method="post" action="/new/existing/adopt" class="inline"
+    data-confirm-title="Adopt {{ form.name }}?"
+    data-confirm="Only if {{ fingerprint }} is the fingerprint on {{ form.name }}'s VM console: FleetLedger then trusts this key for {{ form.name }}."
+    data-confirm-action="Adopt {{ form.name }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for k in ("name", "host", "tags") %}<input type="hidden" name="{{ k }}" value="{{ form[k] }}">{% endfor %}
+    <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
+    <label class="confirm"><input type="checkbox" name="matches" value="yes" data-confirm-field> it matches</label>
+    <button type="submit" title="ship-fleet adopt {{ form.name }} --host {{ form.host }} --fingerprint {{ fingerprint }}">It matches: adopt {{ form.name }}</button>
+  </form>
+  <a class="button ghost" href="/new/existing">It does not match</a>
+  {% else %}
+  <p class="hint">For a Ship you made by hand, or one another FleetLedger made: FleetLedger
+    asks its host for its key, and you check it against the VM console before anything is
+    trusted. <span class="quiet">The same as <code>ship-fleet adopt</code>.</span></p>
+  <form method="post" action="/new/existing/check" class="settings adopt">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Name <input name="name" value="{{ form.name }}" required pattern="[a-z0-9][a-z0-9\-]{0,30}" autocomplete="off"></label>
+    <label>Host <input name="host" value="{{ form.host }}" maxlength="253" placeholder="its name or address (default: name.local)" autocomplete="off" spellcheck="false"></label>
+    <label>Tags <input name="tags" value="{{ form.tags }}" placeholder="optional: blank keeps the tags it reports" autocomplete="off"></label>
+    <button type="submit">Check its key</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

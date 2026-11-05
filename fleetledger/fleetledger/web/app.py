@@ -35,6 +35,7 @@ from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
 from fleetledger.web import (
     actions,
+    adopt,
     dashboard,
     destroy,
     images,
@@ -740,6 +741,8 @@ async def job_card(request: Request) -> Response:
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind in trust.KINDS:  # certificates or machines changed: redraw
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
+        response.headers["HX-Refresh"] = "true"
     return response
 
 
@@ -1019,6 +1022,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
         *snapshots.routes(),
+        *adopt.routes(),
         *destroy.routes(),
         *settings.routes(),
         *images.routes(),
