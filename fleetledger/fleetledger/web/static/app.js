@@ -158,6 +158,8 @@
     dialog.ok.className = danger ? "danger" : "";
     dialog.cancel.textContent = none ? "OK" : "Cancel";
     dialog.el.classList.toggle("danger", danger);
+    // Escape closes without touching returnValue: clear the last "ok" first, or
+    // Escape on this dialog would send the form (tested in confirm.test.js).
     dialog.el.returnValue = "";
     dialog.el.onclose = function () {
       if (dialog.el.returnValue !== "ok" || none) return;

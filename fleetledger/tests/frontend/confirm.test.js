@@ -212,7 +212,9 @@ test("Escape after an earlier confirmation sends nothing", on({}, (p) => {
   assert.equal(p.sent.length, 1);
   p.click("#reboot button");
   assert.equal(p.dialog().open, true);
-  p.dialog().close();  // Escape: no button chosen, so no "ok" left over from last time
+  // Escape as browsers do it: returnValue is left as it was ("ok" from last time).
+  // (happy-dom's close() with no argument would clear it and hide the bug.)
+  p.dialog().close(p.dialog().returnValue);
   assert.equal(p.sent.length, 1);
   assert.equal(p.$("#reboot input[name=confirm]").checked, false);
 }));
