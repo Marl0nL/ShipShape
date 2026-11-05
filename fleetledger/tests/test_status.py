@@ -152,3 +152,33 @@ def test_never_provisioned_counts_as_running():
     view = ShipView(ship=None, status={"provision": {"result": "never"}, "state": "provisioning"})
     assert view.provision_result == "running"
     assert status_mod.ShipView(ship=None).state == "unknown"
+
+
+def test_a_ships_reported_settings_are_read_when_present(store, fake_ssh):
+    inv = store.load()
+    with_settings = json.loads(
+        (EXAMPLES / "ship-status" / "running-settings.json").read_text())
+    with_settings["ship"]["name"], with_settings["ship"]["id"] = "ship-01", RUNNING["ship"]["id"]
+    view = fetch(fake_ssh(answer(with_settings)), inv, inv.ship("ship-01"))
+    assert view.problem is None
+    assert view.settings["updates"] == {"auto_reboot": False, "reboot_time": "04:00"}
+    assert view.settings["owner"] == "human"
+    older = fetch(fake_ssh(answer(RUNNING)), inv, inv.ship("ship-01"))  # older tooling
+    assert older.problem is None and older.settings is None
+    assert ShipView(inv.ship("ship-01")).settings is None  # no status at all
+
+
+def test_a_newer_ships_unknown_top_level_block_is_ignored(store, fake_ssh):
+    """Forward compatibility: a Ship updated past this FleetLedger may report a block
+    it does not know yet. The block is dropped; everything known is still checked."""
+    inv = store.load()
+    newer = json.loads(json.dumps(RUNNING))
+    newer["from_the_future"] = {"anything": [1, 2, 3]}
+    view = fetch(fake_ssh(answer(newer)), inv, inv.ship("ship-01"))
+    assert view.problem is None, view.message
+    assert "from_the_future" not in view.status
+    assert view.state == ShipView(inv.ship("ship-01"), status=RUNNING).state
+    broken = json.loads(json.dumps(newer))
+    broken["herdr"]["server"] = "sideways"  # a known block that breaks the contract
+    view = fetch(fake_ssh(answer(broken)), inv, inv.ship("ship-01"))
+    assert view.problem == "invalid" and "herdr" in view.message

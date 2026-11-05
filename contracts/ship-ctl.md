@@ -40,6 +40,12 @@ If no valid status document can be produced, it prints a result document instead
 not run as root it prints the same with `not-root` and exits 3. FleetLedger tells
 the two shapes apart by their `schema` value.
 
+FleetLedger ignores a top-level block it does not know, so a Ship updated past
+the FleetLedger reading it (say, from a second computer on an older checkout)
+still shows; every block it does know is still checked against the schema. New
+fields therefore go in a new optional top-level block, or are optional inside
+one: a field added inside an existing block still breaks an older FleetLedger.
+
 - Finishes within 15 seconds. Each probe has its own timeout (5 seconds at most);
   a failed probe sets its fields to `unknown`/`null` and adds a line to `errors`.
 - `--write PATH` also writes the document atomically to PATH (mode 0644). The
@@ -61,6 +67,7 @@ How fields are worked out:
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
 | `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
 | `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
+| `settings` | `ship.toml` with its defaults filled in: the values `set` manages (tags, time zone, the Claude settings, agent sudo, LAN guard and its allowed addresses, SSH listen, OS-update reboots), the owner login's name, and the `[[autostart]]` agents (name, folder, mode, repo). Optional in the schema: Ships with older tooling leave it out, and FleetLedger then shows their settings as unknown. |
 | `overlay` | `null` when the overlay tooling is absent; otherwise the overlay record (see `overlay` below) plus `tailscale status --json` (`BackendState`, `Self.DNSName`, `Self.TailscaleIPs`, `Self.Tags`). |
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),

@@ -136,6 +136,7 @@ def test_ssh_listen_overlay_after_joining(ov):
     code, status, _ = ov.ctl("status", "--json")
     assert_valid("ship-status", status)
     assert status["overlay"]["ssh_listen"] == "overlay"
+    assert status["settings"]["network"]["ssh_listen"] == "overlay"
 
 
 def test_leave_listens_everywhere_first(ov):
