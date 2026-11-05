@@ -2126,7 +2126,15 @@ def test_doctor_checks_the_oauth_secret_file(env, home, monkeypatch, state, row)
 def test_doctor_lists_ships_still_enrolling(env, monkeypatch):
     doctor_tools(env, monkeypatch)
     with env.store.edit() as ed:
-        ed.mark_enrolled("ship-02", "2026-11-01T00:00:00Z")
+        ed.set_field("ship-01", "enrolled", None)  # still being made
     code, out, err = env.run("doctor", "--offline")
     assert "ship-fleet status ship-02 --wait" not in out  # enrolled: not flagged
-    assert "ship-fleet status ship-01 --wait" in out  # the fixture's Ships have no enrolled
+    assert "ship-fleet status ship-01 --wait" in out
+
+
+def test_ship_fleet_attention_agrees_on_not_enrolled(env):
+    with env.store.edit() as ed:
+        ed.set_field("ship-02", "enrolled", None)
+    env.ship.down.add("ship-02")
+    code, out, _ = env.run("attention")
+    assert "not-enrolled" in out and "Not enrolled yet" in out

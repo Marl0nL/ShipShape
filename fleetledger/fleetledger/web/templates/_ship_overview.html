@@ -1,5 +1,5 @@
 {# The Ship page's Overview tab (included by ship.html; same context). #}
-  {% if view.problem %}<p class="flash bad">{{ view.message }}</p>{% endif %}
+  {% if view.problem and not view.not_enrolled %}<p class="flash bad">{{ view.message }}</p>{% endif %}
   {% if alerts %}
   {% from "_macros.html" import alert_row %}
   <section>
