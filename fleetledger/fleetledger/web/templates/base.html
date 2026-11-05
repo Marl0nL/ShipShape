@@ -18,9 +18,8 @@
     <a href="/">Fleet</a>
     <a href="/signin">Sign-ins{% if waiting_count %} <span class="badge warn">{{ waiting_count }}</span>{% endif %}</a>
     <a href="/network">Network</a>
-    <a href="/audit">Audit log</a>
-    <a href="/setup">Setup</a>
-    <a class="button new-ship-link" href="/new" title="ship-fleet new">+ New Ship</a>
+    {% if fleet_exists %}<a href="/settings">Settings</a>{% else %}<a href="/setup">Setup</a>{% endif %}
+    {% if fleet_exists %}<a class="button new-ship-link" href="/new" title="ship-fleet new">+ New Ship</a>{% endif %}
   </nav>
   <span class="local" title="Listens on 127.0.0.1 only">this computer only</span>
 </header>

@@ -575,3 +575,50 @@ def test_a_ship_without_tags_still_gets_the_owners_principals(ship):
     assert rc == 0, doc
     principals = ship.p("/etc/ssh/shipshape/principals")
     assert (principals / "human").read_text() == "owner:all\nowner:ship:ship-01\n"
+
+
+def test_status_reports_the_settings_set_last_applied(ship):
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert_valid("ship-status", doc)
+    assert doc["settings"] == {  # BASIC_TOML, with every default filled in
+        "ship": {"tags": ["work"], "timezone": "UTC"},
+        "claude": {"remote_control": "on", "default_mode": "auto", "allow_bypass": True,
+                   "update_channel": "latest", "session_prefix": "ship-01"},
+        "agent": {"sudo": False},
+        "network": {"lan_guard": False, "lan_guard_allow": [], "ssh_listen": "any"},
+        "updates": {"auto_reboot": False, "reboot_time": "04:00"},
+        "owner": None,
+        "autostart": [{"name": "main", "cwd": "~/work/main"},
+                      {"name": "grinder", "cwd": "~/work/grinder",
+                       "mode": "bypassPermissions"}],
+    }
+    rc, _, out = ship.ctl("set", "claude.remote_control=off", "updates.auto_reboot=true",
+                    "updates.reboot_time=03:30", "ship.tags=work,lab", "agent.sudo=true",
+                    "network.lan_guard=true", "network.lan_guard_allow=192.0.2.0/24",
+                    "ship.timezone=Europe/Berlin", "claude.default_mode=plan",
+                    "claude.update_channel=stable",
+                    "owner.name=human", f"owner.keys={OWNER_KEY}",
+                    "--json")
+    assert rc == 0, out
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert_valid("ship-status", doc)
+    s = doc["settings"]
+    assert s["ship"] == {"tags": ["work", "lab"], "timezone": "Europe/Berlin"}
+    assert s["claude"] == {"remote_control": "off", "default_mode": "plan",
+                           "allow_bypass": True, "update_channel": "stable",
+                           "session_prefix": "ship-01"}
+    assert s["agent"] == {"sudo": True}
+    assert s["network"] == {"lan_guard": True, "lan_guard_allow": ["192.0.2.0/24"],
+                            "ssh_listen": "any"}
+    assert s["updates"] == {"auto_reboot": True, "reboot_time": "03:30"}
+    assert s["owner"] == "human"
+    assert [a["name"] for a in s["autostart"]] == ["main", "grinder"]
+    # bypass may only go off once no agent starts in bypassPermissions
+    toml = ship.p("/etc/shipshape/ship.toml")
+    toml.write_text(toml.read_text().replace('mode = "bypassPermissions"\n', ""))
+    rc, _, out = ship.ctl("set", "claude.allow_bypass=false", "claude.session_prefix=lab",
+                          "--json")
+    assert rc == 0, out
+    s = ship.ctl("status", "--json")[1]["settings"]
+    assert s["claude"]["allow_bypass"] is False and s["claude"]["session_prefix"] == "lab"
+    assert s["autostart"][1] == {"name": "grinder", "cwd": "~/work/grinder"}

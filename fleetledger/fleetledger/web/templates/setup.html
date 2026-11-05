@@ -120,55 +120,6 @@
   fleet admin key <code>{{ inv.doc.fleet.admin_key }}</code>,
   your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.
   {% if admin_managed %}FleetLedger looks after its keys.{% endif %}</p>
-<form method="post" action="/setup/owner" class="inline"
-  data-confirm-title="Use {value:owner} as your login on Ships?"
-  data-confirm="{value:owner} becomes your login, with sudo, on every Ship now and on new ones. A previous login can no longer log in (its files stay)."
-  data-confirm-action="Use {value:owner}">
-  <input type="hidden" name="csrf" value="{{ csrf }}">
-  <label>Your own login on Ships <input name="owner" value="{{ inv.owner }}" pattern="[a-z_][a-z0-9_\-]{0,31}" required></label>
-  <button type="submit" class="ghost">Use this name</button>
-</form>
-<p class="hint">Each Ship has a login for you, apart from the agent's: it has sudo, your
-  key and your certificates, for admin work (<code>ssh {{ inv.owner }}@&lt;ship&gt;</code>).
-  The agent's login keeps no sudo. Changing the name sets it on every Ship now, and on new
-  ones.</p>
-{% if machines %}
-<h3>Trusted machines</h3>
-<p class="hint">Each machine you attach from gets short-lived certificates, for the logins
-  you choose here: the agent's (to attach to it, <code>herdr --remote</code>) and your own
-  (sudo). A machine that should only attach to agents, a shared one say, needs only the
-  agent's. Trust another: <code>ship-fleet trust NAME --key its.pub --logins agent</code>
-  (or <code>owner</code>, or <code>both</code>). Machines trusted before your login had
-  certificates of its own keep both. A Ship not updated yet still lets any of the
-  agent's certificates log in as you: update every Ship before relying on "the agent
-  only".</p>
-<table>
-  <thead><tr><th>Machine</th><th>Ships</th><th>May log in as</th></tr></thead>
-  <tbody>
-  {% for m in machines %}
-  <tr>
-    <td>{{ m.name }}{% if m.name == this_machine %} <span class="quiet">(this computer)</span>{% endif %}</td>
-    <td>{{ m.scope|join(", ") }}</td>
-    <td>
-      <form method="post" action="/setup/machine" class="inline"
-        data-confirm-title="Change what {{ m.name }} may log in as?"
-        data-confirm="{{ m.name }}'s certificates will log in as the login you chose and nothing else. A certificate it holds now for more is revoked on every Ship at once; it gets a new one at its next renewal. Your own login has sudo."
-        data-confirm-action="Save for {{ m.name }}" data-confirm-danger>
-        <input type="hidden" name="csrf" value="{{ csrf }}">
-        <input type="hidden" name="machine" value="{{ m.name }}">
-        <select name="logins">
-          {% for value, label in (("agent", "the agent only"), ("owner", "you only (sudo)"), ("both", "the agent and you")) %}
-          <option value="{{ value }}"{% if (m.logins|list == ["agent", "owner"] and value == "both") or (m.logins|list == [value]) %} selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="ghost">Save</button>
-      </form>
-    </td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
 {% if not inv.doc.ca %}
 <form method="post" action="/setup/fleet/ca" class="inline">
   <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -177,35 +128,8 @@
   <button type="submit">Make it</button>
 </form>
 {% endif %}
-{% if unmanaged %}
-<div class="warning adopt">
-  <p><strong>You look after these keys' passphrases.</strong> FleetLedger needs the admin
-    key loaded in ssh-agent whenever it connects to a Ship; when it is not, you are asked
-    for its passphrase{% if desktop_agent %}, in a desktop pop-up from your keyring, each
-    time{% endif %}. Let FleetLedger look after them instead and you are not asked again:
-    type each current passphrase once, and it re-encrypts the key file with a passphrase it
-    keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys
-    themselves stay the same (Ships, certificates and trusted machines keep working); the
-    old passphrase no longer opens the file. Nothing changes unless you tick the boxes.</p>
-  <form method="post" action="/setup/fleet/adopt" autocomplete="off"
-    data-confirm-title="Hand {n} key{s} over to FleetLedger?"
-    data-confirm="FleetLedger checks each passphrase, then re-encrypts the ticked key file{s} with passphrases it keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys stay the same (Ships, certificates and trusted machines keep working), but the old passphrases no longer open them."
-    data-confirm-count="input[name^='take_']"
-    data-confirm-none="Tick the keys FleetLedger should look after first."
-    data-confirm-action="Hand over {n} key{s}" data-confirm-danger>
-    <input type="hidden" name="csrf" value="{{ csrf }}">
-    {% for what, path in unmanaged %}
-    <div class="adopt-row">
-      <label><input type="checkbox" name="take_{{ loop.index0 }}" value="yes"> {{ what }} <code>{{ path }}</code></label>
-      <label class="field">its passphrase now <input type="password" name="passphrase_{{ loop.index0 }}" autocomplete="off"></label>
-    </div>
-    {% endfor %}
-    <input type="hidden" name="store" value="{{ default_store }}">
-    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> Re-encrypt the ticked key files</label>
-    <button type="submit">Let FleetLedger look after them</button>
-  </form>
-</div>
-{% endif %}
+<p class="hint">Your login on Ships, trusted machines and the keys FleetLedger looks after
+  are in <a href="/settings#access">Settings</a>.</p>
 {% endif %}
 </section>
 

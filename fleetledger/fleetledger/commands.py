@@ -414,7 +414,10 @@ def cmd_adopt(args, app) -> int:
         report = json.loads(result.text)
     except json.JSONDecodeError as exc:
         raise FleetError(f"{host} did not answer ship-ctl status; is it a Ship?") from exc
-    if report.get("schema") != STATUS_SCHEMA or not schemas.is_valid("ship-status", report):
+    if not isinstance(report, dict) or report.get("schema") != STATUS_SCHEMA:
+        raise FleetError(f"{host} did not give a valid status document.")
+    report = schemas.known_part("ship-status", report)  # a newer Ship's unknown blocks go
+    if not schemas.is_valid("ship-status", report):
         raise FleetError(f"{host} did not give a valid status document.")
     if report["ship"]["name"] != name:
         raise FleetError(f"{host} says it is {report['ship']['name']}, not {name}.")

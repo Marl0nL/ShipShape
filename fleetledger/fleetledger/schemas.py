@@ -32,6 +32,20 @@ def errors(name: str, doc: object, contracts: Path | None = None) -> list[str]:
     return found
 
 
+def known_top_level(name: str, contracts: Path | None = None) -> frozenset[str]:
+    """The top-level keys contracts/<name>.schema.json defines."""
+    validator = _validator(contracts or find_root() / "contracts", name)
+    return frozenset(validator.schema.get("properties", {}))
+
+
+def known_part(name: str, doc: dict) -> dict:
+    """doc without the top-level keys the contract does not define: a newer Ship may
+    report a block this FleetLedger does not know yet (forward compatibility).
+    Everything kept is still checked against the contract by the caller."""
+    known = known_top_level(name)
+    return {k: v for k, v in doc.items() if k in known}
+
+
 def is_valid(name: str, doc: object, contracts: Path | None = None) -> bool:
     return not errors(name, doc, contracts)
 

@@ -33,7 +33,7 @@ from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, dashboard, network, setup
+from fleetledger.web import actions, dashboard, network, settings, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -76,6 +76,7 @@ class UI:
     jobs: Jobs  # every background job: update, reboot, join, making a Ship ...
     env: Environment
     setups: Any = None  # web.setup.Setups: each session's progress through /setup
+    health: Any = None  # web.settings.Health: the last "Check now" on Settings
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
     started: set[str] = dataclasses.field(default_factory=set)
     flashes: dict[str, list[tuple[str, str]]] = dataclasses.field(default_factory=dict)
@@ -175,6 +176,7 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
     html = ui.env.get_template(template).render(
         csrf=session.csrf,
         waiting_count=sum(1 for f in ui.concierge.active() if f.needs_you),
+        fleet_exists=ui.app.store_factory().exists(),  # the nav: Settings, else Setup
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
@@ -913,6 +915,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/new", new_ship_start, methods=["POST"]),
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
+        *settings.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)

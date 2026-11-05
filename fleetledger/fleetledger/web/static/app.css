@@ -364,6 +364,32 @@ fieldset.passphrase-choice { padding: 8px 12px; }
 fieldset.passphrase-choice label.option { display: block; margin: 8px 0; }
 fieldset.passphrase-choice .passphrases { margin-left: 24px; }
 
+/* --- Settings (/settings) ------------------------------------------------------------- */
+.settings-layout { display: grid; grid-template-columns: 11em minmax(0, 1fr); gap: 20px; align-items: start; }
+.settings-nav { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 2px;
+  border-left: 3px solid var(--brass-lo); padding-left: 10px; }
+.settings-nav a { text-decoration: none; padding: 4px 0; font-family: var(--serif); font-weight: 600; }
+.settings-nav a:hover { text-decoration: underline; }
+.settings-body { min-width: 0; }
+section.settings-group { scroll-margin-top: 12px; }
+@media (min-width: 641px) {  /* on a phone the health table wraps to fit instead */
+  table.health td.health-state { white-space: nowrap; }
+  table.health td:nth-child(-n+2) { white-space: nowrap; overflow-wrap: normal; }
+  table.health td:last-child { min-width: 12em; }
+}
+@media (max-width: 640px) {  /* each health item as a small block: area, check, state; detail; fix */
+  table.health thead { display: none; }
+  table.health tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.health td { display: inline; border: 0; padding: 0 6px 0 0; }
+  table.health td:nth-child(n+4) { display: block; padding: 2px 0 0; }
+  table.health td:empty { display: none; }
+}
+@media (max-width: 900px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 4px 16px;
+    border-left: 0; border-bottom: 2px solid var(--brass-lo); padding: 0 0 6px; }
+}
+
 /* --- the dashboard: summary tiles ---------------------------------------------------------- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 12px;
   margin: 14px 0 6px; }

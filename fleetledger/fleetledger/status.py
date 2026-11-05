@@ -77,6 +77,14 @@ class ShipView:
             )
         return "unknown"
 
+    @property
+    def settings(self) -> dict[str, Any] | None:
+        """The Ship's settings as it reports them (status `settings`), or None: no
+        status, or older tooling that does not report them (shown as unknown)."""
+        if self.status is None:
+            return None
+        return self.status.get("settings")
+
     def auth(self, service: str) -> dict[str, Any] | None:
         if self.status is None:
             return None
@@ -179,6 +187,7 @@ def fetch(
     if not isinstance(doc, dict) or doc.get("schema") != STATUS_SCHEMA:
         view.problem, view.message = "invalid", "Unknown status document version."
         return view
+    doc = schemas.known_part("ship-status", doc)  # a newer Ship's unknown blocks go
     problems = schemas.errors("ship-status", doc)
     if problems:
         view.problem, view.message = "invalid", f"Status breaks the contract: {problems[0]}"

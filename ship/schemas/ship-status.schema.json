@@ -304,6 +304,78 @@
         }
       }
     },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What ship.toml says now, with defaults filled in: the values `ship-ctl set` manages, so FleetLedger shows a Ship's settings as the Ship has them. Optional: Ships with older tooling do not report it, and FleetLedger then shows their settings as unknown.",
+      "required": ["ship", "claude", "agent", "network", "updates", "owner", "autostart"],
+      "properties": {
+        "ship": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tags", "timezone"],
+          "properties": {
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "timezone": { "type": "string" }
+          }
+        },
+        "claude": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["remote_control", "default_mode", "allow_bypass", "update_channel", "session_prefix"],
+          "properties": {
+            "remote_control": { "$ref": "#/$defs/remoteControl" },
+            "default_mode": { "$ref": "#/$defs/permissionMode" },
+            "allow_bypass": { "type": "boolean" },
+            "update_channel": { "$ref": "#/$defs/updateChannel" },
+            "session_prefix": { "type": "string" }
+          }
+        },
+        "agent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sudo"],
+          "properties": { "sudo": { "type": "boolean" } }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lan_guard", "lan_guard_allow", "ssh_listen"],
+          "properties": {
+            "lan_guard": { "type": "boolean" },
+            "lan_guard_allow": { "type": "array", "items": { "type": "string" } },
+            "ssh_listen": { "enum": ["any", "overlay"] }
+          }
+        },
+        "updates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["auto_reboot", "reboot_time"],
+          "properties": {
+            "auto_reboot": { "type": "boolean" },
+            "reboot_time": { "type": "string" }
+          }
+        },
+        "owner": {
+          "type": ["string", "null"],
+          "description": "The owner login's name, or null without one."
+        },
+        "autostart": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "cwd"],
+            "properties": {
+              "name": { "type": "string" },
+              "cwd": { "type": "string" },
+              "mode": { "$ref": "#/$defs/permissionMode" },
+              "repo": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
     "errors": {
       "type": "array",
       "description": "Probes that failed while building this document (non-fatal).",

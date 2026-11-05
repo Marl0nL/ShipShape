@@ -106,6 +106,11 @@ def page(env) -> str:
     return env.get("/setup").text
 
 
+def settings_page(env) -> str:
+    """Settings: where your login, trusted machines and key care live once the fleet exists."""
+    return env.get("/settings").text
+
+
 # --- getting there ------------------------------------------------------------------------
 
 
@@ -200,7 +205,7 @@ def test_bringing_keys_keeps_their_passphrases_by_default(ws, tmp_path):
     inv = ws.store.load()
     assert inv.admin_key == other / "admin" and keys.managed(inv) == (None, [])
     assert {n: (other / n).read_bytes() for n in before} == before  # untouched
-    text = page(ws)
+    text = settings_page(ws)
     assert "You look after these keys' passphrases" in text  # said, and offered
     assert "Let FleetLedger look after them</button>" in text
 
@@ -511,7 +516,7 @@ def test_a_passphrase_is_used_exactly_as_typed(partway):
 def test_a_key_without_its_pub_is_not_offered(partway):
     pub = partway.user_home / ".ssh" / "shipshape_fleet_ed25519.pub"
     pub.unlink()
-    text = page(partway)
+    text = settings_page(partway)
     form = text.split('action="/setup/fleet/adopt"')[1].split("</form>")[0]
     assert "shipshape_fleet_ed25519</code>" not in form  # not offered: no .pub beside it
     assert "shipshape_host_ca_ed25519</code>" in form
@@ -915,12 +920,14 @@ def test_the_first_agent_can_work_in_a_github_repo(chosen, monkeypatch):
     assert args.repo == "someone/agent-setup"
 
 
-def test_your_login_name_on_ships_from_the_setup_page(chosen):
-    assert 'name="owner" value="human"' in page(chosen)
+def test_your_login_name_on_ships_from_the_setup_settings_page(chosen):
+    assert 'name="owner" value="human"' in settings_page(chosen)
     chosen.post("/setup/owner", {"owner": "sam"})
-    assert chosen.store.load().owner == "sam" and "New Ships get the login sam" in page(chosen)
+    assert chosen.store.load().owner == "sam"
+    assert "New Ships get the login sam" in settings_page(chosen)
     chosen.post("/setup/owner", {"owner": "agent"})
-    assert chosen.store.load().owner == "sam" and "cannot be your login name" in page(chosen)
+    assert chosen.store.load().owner == "sam"
+    assert "cannot be your login name" in settings_page(chosen)
 
 
 # --- what each trusted machine may log in as ------------------------------------------
@@ -934,16 +941,16 @@ def test_each_trusted_machine_logs_in_as_what_you_choose(chosen, tmp_path):
         ed.set_machine("shared", {"public_key": (tmp_path / "shared.pub").read_text().strip(),
                                   "added": "2026-01-01T00:00:00Z", "scope": ["all"],
                                   "logins": ["agent", "owner"]})
-    text = page(chosen)
+    text = settings_page(chosen)
     assert "Trusted machines" in text and '<option value="both" selected>' in text
     assert 'data-confirm-title="Change what shared may log in as?"' in text
     chosen.post("/setup/machine", {"machine": "shared", "logins": "agent"})
     assert ca.machine(chosen.store.load(), "shared").logins == ("agent",)
-    assert "may now log in as the agent" in page(chosen)
+    assert "may now log in as the agent" in settings_page(chosen)
     chosen.post("/setup/machine", {"machine": "shared", "logins": "root"})
     assert ca.machine(chosen.store.load(), "shared").logins == ("agent",)
     chosen.post("/setup/machine", {"machine": "nobody-here", "logins": "both"})
-    assert "No trusted machine called nobody-here" in page(chosen)
+    assert "No trusted machine called nobody-here" in settings_page(chosen)
 
 
 def test_a_revocation_that_did_not_reach_every_ship_flashes_as_a_problem(chosen, tmp_path,
@@ -964,9 +971,9 @@ def test_a_revocation_that_did_not_reach_every_ship_flashes_as_a_problem(chosen,
         raise trustcmd.PushFailed(["ship-02"])
 
     monkeypatch.setattr(trustcmd, "set_logins", partly)
-    text = page(chosen)
+    text = settings_page(chosen)
     assert 'name="machine" value="lap"' in text
     assert 'name="machine" value="gone"' not in text  # untrusted: not listed
     chosen.post("/setup/machine", {"machine": "lap", "logins": "agent"})
-    text = page(chosen)
+    text = settings_page(chosen)
     assert "NOT YET REVOKED on ship-02" in text and 'class="flash bad"' in text
