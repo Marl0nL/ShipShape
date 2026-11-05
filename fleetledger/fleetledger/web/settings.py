@@ -66,7 +66,7 @@ def _ui(request: Request):
 
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
-    from fleetledger.web import overlayweb, setup, trust
+    from fleetledger.web import images, overlayweb, setup, trust
     from fleetledger.web.app import render
 
     ui = _ui(request)
@@ -82,6 +82,7 @@ async def page(request: Request) -> Response:
     except (OSError, ValueError):
         entries = []
     context = await setup.access_context(inv)
+    context.update(await run_in_threadpool(images.section_context, ui, inv))
     context.update(await run_in_threadpool(trust.section_context, ui, inv))
     context.update(overlayweb.section_context(ui, inv))
     context.update(trust.placed_flashes(request))

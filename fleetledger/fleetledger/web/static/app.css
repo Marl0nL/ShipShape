@@ -599,6 +599,18 @@ dialog.confirm-dialog p { margin: 0 0 16px; overflow-wrap: anywhere; }
 @media (prefers-color-scheme: dark) { .confirm-buttons button.danger { color: #1d0f0f; } }
 
 form.by-name { display: flex; align-items: end; margin: 0 0 10px; }
+/* Settings ▸ Images: short columns stay on one line (the id and the actions wrap) */
+@media (min-width: 641px) {
+  table.images th, table.images td:nth-child(n+2):nth-child(-n+7) { white-space: nowrap; overflow-wrap: normal; }
+}
+/* a driver's steps and paths in Settings are long unbroken lines: wrap them anywhere */
+.outcome code, .settings-group code { overflow-wrap: anywhere; }
+@media (max-width: 640px) {  /* an image per block, like health items */
+  table.images thead { display: none; }
+  table.images tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.images td { display: inline-block; border: 0; padding: 2px 10px 2px 0; }
+  table.images td:first-child, table.images td.row-actions { display: block; }
+}
 
 /* New Ship (/new): the dashed card at the end of the Ship cards, and the form. */
 .ship-card.new-ship-card { display: flex; align-items: center; justify-content: center;

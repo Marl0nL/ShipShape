@@ -35,7 +35,10 @@ from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
 from fleetledger.web import (
     actions,
+    adopt,
     dashboard,
+    destroy,
+    images,
     network,
     overlayweb,
     settings,
@@ -75,6 +78,8 @@ class UI:
     health: Any = None  # web.settings.Health: the last "Check now" on Settings
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
     started: set[str] = dataclasses.field(default_factory=set)
+    destroyed: dict[str, tuple[float, bool]] = dataclasses.field(  # name -> (when, forgot)
+        default_factory=dict)
     flashes: dict[str, list[tuple[str, str]]] = dataclasses.field(default_factory=dict)
 
     def flash(self, session: Session, kind: str, text: str) -> None:
@@ -345,6 +350,14 @@ async def ship_page(request: Request) -> Response:
     name = _ship_name(request)
     tab = request.path_params.get("tab", "overview")
     context = _ship_context(ui, name) if name else None
+    if context is None and name and (gone := destroy.gone_since(ui, name)) is not None:
+        at, forgotten = gone
+        text = (f"{name} was forgotten at {_clock(at)}: it is no longer in the inventory, and "
+                "its VM was not touched." if forgotten else
+                f"{name} was destroyed at {_clock(at)}: its VM, its seed and its entry in the "
+                "inventory are gone.")
+        return render(request, "message.html", status_code=410, title=f"{name} is gone",
+                      text=text)
     if context is None or tab not in TABS:
         return not_found(request, NO_SUCH_SHIP)
     if tab == "logs":
@@ -715,6 +728,14 @@ async def finish_enrolling(request: Request) -> Response:
     return back(f"/ships/{name}")
 
 
+def _on_ship_page(request: Request, ships: list[str]) -> bool:
+    """Whether htmx polled from one of these Ships' pages (not, say, the Fleet page)."""
+    from urllib.parse import urlsplit
+
+    path = urlsplit(request.headers.get("HX-Current-URL", "")).path
+    return any(path == f"/ships/{s}" or path.startswith(f"/ships/{s}/") for s in ships)
+
+
 async def job_card(request: Request) -> Response:
     """One job's card, for htmx polling: 204 while unchanged, 286 (stop) once gone."""
     ui = ui_of(request)
@@ -725,9 +746,13 @@ async def job_card(request: Request) -> Response:
     if request.query_params.get("v") == str(job.version):
         return Response(status_code=204)
     response = partial(request, "_job.html", job=job)
+    if job.done and job.result.get("gone") and _on_ship_page(request, job.ships):
+        response.headers["HX-Redirect"] = "/"  # destroyed: the page it was on is gone too
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind in (*trust.KINDS, "leave"):  # what the page shows changed
+        response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
         response.headers["HX-Refresh"] = "true"
     return response
 
@@ -1008,7 +1033,10 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
         *snapshots.routes(),
+        *adopt.routes(),
+        *destroy.routes(),
         *settings.routes(),
+        *images.routes(),
         *trust.routes(),
         *overlayweb.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),

@@ -1,8 +1,12 @@
-{# One background job (web.jobs): its progress while it runs, its outcome once done. #}
-<article class="flow job {{ ("ok" if job.ok else "failed") if job.done else "working" }}" id="job-{{ job.id }}"
+{# One background job (web.jobs): its progress while it runs, its outcome once done.
+   A job whose driver left the work to you (result.by_hand) reads "by hand", even when
+   the command then exits non-zero to say it is not finished (image rm on the manual
+   driver): its card shows the steps and the command's own next step, not "failed". #}
+{% set by_hand = job.done and job.result.by_hand and not job.error %}
+<article class="flow job {{ ("ok" if job.ok or by_hand else "failed") if job.done else "working" }}" id="job-{{ job.id }}"
   {% if not job.done %}hx-get="/jobs/{{ job.id }}?v={{ job.version }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
   <header><strong>{{ job.title }}</strong>{% if job.ships %} · {{ job.ships|join(", ") }}{% endif %} 
-    {% if job.done and job.ok and job.result.by_hand %}<span class="pill muted">by hand</span>
+    {% if by_hand %}<span class="pill muted">by hand</span>
     {% else %}<span class="pill {{ (("ok" if job.ok else "failed") if job.done else "working")|pill }}">{{ ("done" if job.ok else "failed") if job.done else "running" }}</span>{% endif %}
     <span class="when">started {{ clock(job.started) }}</span></header>
   {% if job.error %}<p class="flash bad">{{ job.error }}</p>{% endif %}
@@ -13,6 +17,15 @@
   {% for o in job.outcomes %}
   <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
   {% endfor %}
+  {% if job.kind == "destroy" and job.done and not job.result.gone and not job.result.forgotten %}
+  {% from "_macros.html" import destroy_form with context %}
+  <p class="hint">{{ "Once you have run those steps" if job.ok else "If its VM is gone already, or once you have deleted it by hand" }}, forget it here:</p>
+  {{ destroy_form(job.ships[0], forget=True, small=True) }}
+  {% endif %}
   {% set lines = job.snapshot() %}
-  {% if lines and (not job.done or not (job.outcomes or job.result.outcome or job.result.checks)) %}<pre class="log{% if job.done and not job.ok %} bad{% endif %}">{{ lines|join("\n") }}</pre>{% endif %}
+  {% if job.done and job.result.outcome %}{# what the outcome above does not say: notes such as an overlay step to do by hand, or the command's next step (image rm on the manual driver) #}
+  {% set said = job.result.outcome.messages|list + job.result.outcome.instructions|list %}
+  {% set lines = lines|map("trim")|reject("in", said)|list %}
+  {% endif %}
+  {% if lines and (not job.done or not (job.outcomes or job.result.checks)) %}<pre class="log{% if job.done and not job.ok and not by_hand %} bad{% endif %}">{{ lines|join("\n") }}</pre>{% endif %}
 </article>

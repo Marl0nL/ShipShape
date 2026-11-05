@@ -545,11 +545,13 @@ def test_every_ship_tab_has_the_action_bar_above_the_tabs(web, tab):
     assert 'name="operation" value="update"' in bar and 'name="operation" value="reboot"' in bar
     assert 'class="ops"' not in page  # nothing left at the bottom of the Overview
     forms = bar.split("<form")[1:]
-    assert len(forms) == 5 and all('name="csrf"' in f for f in forms)  # else the gate refuses
+    assert len(forms) == 7 and all('name="csrf"' in f for f in forms)  # else the gate refuses
+    assert 'action="/ships/ship-01/repin"' in forms[5]  # under More
     update, reboot = forms[1], forms[2]
     start, stop = forms[3], forms[4]  # under More
     assert 'value="start"' in start and "data-confirm" not in start
     assert 'value="stop"' in stop and "data-confirm-danger" in stop
+    assert 'action="/ships/ship-01/destroy"' in forms[6]  # under More, typed, last
     assert 'data-confirm-title="Update ship-01?"' in update and "data-confirm-danger" not in update
     assert 'data-confirm-title="Reboot ship-01?"' in reboot and "data-confirm-danger" in reboot
 

@@ -2,6 +2,7 @@
 {% block title %}New Ship · FleetLedger{% endblock %}
 {% block body %}
 <h1>New Ship</h1>
+{% with new_tab="new" %}{% include "_new_tabs.html" %}{% endwith %}
 <section class="setup-step new-ship-page">
   <p class="hint">FleetLedger writes its first-boot settings (with a host key it pins),
     makes its VM{% if "proxmox" not in nf.drivers %} (or, by hand, shows you how){% endif %},
