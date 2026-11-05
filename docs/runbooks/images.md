@@ -74,7 +74,7 @@ ship-fleet image ls                            # * marks the pinned image
 ```
 
 Only new Ships change. Existing Ships are never re-imaged: they are updated in
-place (phase 2's `ship-fleet update`). Each Ship records the image it was made from
+place (`ship-fleet update`, [update-fleet.md](update-fleet.md)). Each Ship records the image it was made from
 (`ship.<name>.image` in `ships.toml`, the `SHIPS` column of `image ls`).
 `ship-fleet new --image <id>` picks another image for one Ship.
 

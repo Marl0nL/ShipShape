@@ -42,6 +42,10 @@ FleetLedger is a Python tool, `ship-fleet`, that runs on your own computer.
 - **Login concierge:** it runs each tool's no-browser sign-in on the Ship
   (Claude Code, gcloud, GitHub), relays the link and the pasted code, and checks
   the signed-in account against the Ship's tag. Tokens stay on the Ship.
+- **Setup and web UI:** `ship-fleet setup` (the guided first run) and
+  `ship-fleet ui` (dashboard, concierge) in your browser ([web-ui.md](web-ui.md)).
+- **Access:** an SSH certificate authority for your own machines
+  (`ship-fleet trust`) and the optional overlay network.
 
 ## How the two parts work together
 
@@ -81,12 +85,14 @@ your computer                                   Proxmox (or any hypervisor)
 Ships never depend on FleetLedger to keep running: a Ship boots, resumes its
 agents and serves Remote Control with FleetLedger switched off.
 
-More: [security.md](security.md), and the runbooks in [runbooks/](runbooks/):
+Start here: [guide/your-own-fleet.md](guide/your-own-fleet.md). More:
+[security.md](security.md), and the runbooks in [runbooks/](runbooks/):
 [setting up Proxmox](runbooks/proxmox-setup.md),
 [creating a Ship](runbooks/create-ship.md),
 [baked images](runbooks/images.md),
 [access from outside the LAN](runbooks/remote-access.md),
 [signing in](runbooks/sign-in.md),
+[updating the fleet](runbooks/update-fleet.md),
 [SSH certificates and attaching from other machines](runbooks/trust-machines.md),
 [retiring the old stack](runbooks/retire-old-stack.md).
 
@@ -99,8 +105,8 @@ More: [security.md](security.md), and the runbooks in [runbooks/](runbooks/):
 | `contracts/` | the interfaces between them: schemas, examples, prose |
 | `versions.toml` | pinned versions both tracks use |
 | `scripts/check` | every check CI runs |
-| `docs/tracks.md` | who owns what while phase 1 is built |
+| `docs/tracks.md` | who owns which paths, and the contract-PR rule |
 | `docs/hygiene.md` | the public repo rule and its check |
-| `docs/security.md`, `docs/runbooks/` | security model; how to set up, create, sign in and retire |
+| `docs/security.md`, `docs/runbooks/` | security model; how to set up Proxmox, create, sign in, update, attach from anywhere, bake images and retire |
 | `tests/e2e/` | end-to-end tests on a real hypervisor pool, and the guided acceptance run |
 | `docs/archive/` | design notes from the previous container-based stack (its code: tag `container-stack-final`) |

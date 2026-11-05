@@ -32,19 +32,22 @@ can reach from anywhere. Each step links to the runbook with the details.
    **Check again** carries on. It then offers the overlay (step 6) and a first
    Ship (step 4). `ship-fleet doctor` shows where things stand at any time. Put
    your tags and the accounts each tag should use in
-   `~/.config/fleetledger/ships.toml`.
+   `~/.config/fleetledger/ships.toml`
+   ([an example](../runbooks/create-ship.md#2-set-up-your-fleet-once)).
 2. **Snapshots and baked images (optional).** Section 4 of
    [runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md) adds the rights.
 3. **A baked image (optional).** `ship-fleet image build`, `image publish`,
    `image use` ([runbooks/images.md](../runbooks/images.md)): new Ships then need
    a few minutes rather than ten.
-4. **A Ship.** `ship-fleet new ship-01 --tag work`, then
-   `ship-fleet login ship-01 all` ([runbooks/sign-in.md](../runbooks/sign-in.md)).
+4. **A Ship.** The setup page's first Ship, or `ship-fleet new ship-01 --tag work`;
+   then sign it in (**Sign it in** on the page, or `ship-fleet login ship-01 all`;
+   [runbooks/sign-in.md](../runbooks/sign-in.md)).
 5. **Your other machines (optional).** `ship-fleet trust laptop`
    ([runbooks/trust-machines.md](../runbooks/trust-machines.md)) gives a machine a
    short-lived certificate to attach to Ships with herdr.
-6. **Access off the LAN (optional).** `ship-fleet overlay setup`, then
-   `ship-fleet overlay check` ([runbooks/remote-access.md](../runbooks/remote-access.md)).
+6. **Access off the LAN (optional).** The setup page's **Reach Ships from
+   anywhere** step (Tailscale with an OAuth client), or `ship-fleet overlay setup`
+   for every option (pasted keys, Headscale); then `ship-fleet overlay check` ([runbooks/remote-access.md](../runbooks/remote-access.md)).
    The rest of this guide is about the one real choice in it.
 
 ## Choosing how Ships get overlay keys

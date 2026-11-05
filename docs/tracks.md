@@ -1,7 +1,7 @@
 # Build tracks: who owns what
 
-Phase 1 is built by two tracks working in parallel. They never edit each other's
-directories; everything they share is written down in `contracts/`.
+ShipShape is built in two tracks that never edit each other's directories;
+everything they share is written down in `contracts/`.
 
 ## Ownership
 
