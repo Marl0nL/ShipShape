@@ -267,10 +267,13 @@ def render_dropin(ctx: Context) -> str:
     if _p(ctx, REVOKED).exists():
         lines.append(f"RevokedKeys {REVOKED}")
     keys = _p(ctx, KEYS_DIR)
-    if keys.is_dir() and any(keys.iterdir()):
+    owners = sorted(f.name for f in keys.iterdir()) if keys.is_dir() else []
+    if owners:
         # The owner's keys live here, root-owned, so nothing is written into a home;
-        # everyone else keeps ~/.ssh/authorized_keys.
+        # everyone else keeps ~/.ssh/authorized_keys. sshd adds up AllowUsers lines, so
+        # this lets the owner in beside fleet and agent (10-shipshape.conf).
         lines.append(f"AuthorizedKeysFile .ssh/authorized_keys {KEYS_DIR}/%u")
+        lines.append("AllowUsers " + " ".join(owners))
     return "\n".join(lines) + "\n"
 
 

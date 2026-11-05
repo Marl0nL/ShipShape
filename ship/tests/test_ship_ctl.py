@@ -505,6 +505,7 @@ def test_an_owner_login_with_sudo_its_keys_and_certificates(ship):
     assert (principals / "human").read_text() == (principals / "agent").read_text()
     dropin = next(ship.p("/etc/ssh/sshd_config.d").glob("*shipshape*")).read_text()
     assert "AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/shipshape/keys/%u" in dropin
+    assert "\nAllowUsers human\n" in dropin  # beside 10-shipshape.conf's fleet and agent
     assert not ship.p("/etc/sudoers.d/91-shipshape-agent").exists()  # agent: still no sudo
     # Applied again: the user is not made twice.
     ship.ctl("apply", "--json")
