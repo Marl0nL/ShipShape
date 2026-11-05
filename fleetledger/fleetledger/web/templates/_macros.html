@@ -215,6 +215,9 @@
     {{ enrol_form() }}
     {{ destroy_form(ship.name, by_hand=ship.driver == "manual") }}
     <span class="hint">Not enrolled yet: it may still be starting{% if ship.driver == "manual" %}, or its VM is still to be made by hand{% endif %}. Not wanted after all? Destroy it.</span>
+    {% elif view.problem == "unreachable" and ship.driver != "manual" %}
+    {{ power_form("start", primary=True) }}
+    <span class="hint">It does not answer: its VM may be off.</span>
     {% elif view.problem == "unreachable" %}
     <span class="hint">It does not answer: check its VM is on, then Check now.</span>
     {% elif view.cloud_init %}
@@ -228,6 +231,10 @@
       <summary>More</summary>
       <div class="menu-items">
         {% if by_hand %}<a class="button ghost" href="/ships/{{ ship.name }}/snapshots#take">Snapshot (by hand)</a>{% endif %}
+        {{ power_form("start") }}
+        {{ power_form("stop") }}
+        <p class="hint">{% if by_hand %}Made by hand, so FleetLedger shows the step to run.{% else %}Through {{ "Proxmox" if ship.driver == "proxmox" else ship.driver }}.{% endif %}
+          Stopping is a clean shutdown: herdr saves every agent, and they resume when it starts.</p>
         {% if overlay_set and not on_overlay %}
         {% set c = op_confirm("join", ship.name) %}
         <form method="post" action="/operations" class="inline"
@@ -267,5 +274,19 @@
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label class="confirm">Type {{ name }} to confirm <input name="confirm_name" autocomplete="off" data-confirm-typed></label>
   <button type="submit" class="ghost danger{{ ' small' if small }}" title="ship-fleet destroy {{ name }}{{ ' --forget' if forget }}">{{ "Forget" if forget else "Destroy" }} {{ name }}{{ "" if forget else "…" }}</button>
+</form>
+{% endmacro %}
+
+{# Start or stop the Ship's VM (POST /ships/N/power: ship-fleet start|stop); stop
+   behind the confirm dialog. Needs ship, csrf and op_confirm in the context. #}
+{% macro power_form(verb, primary=False) %}
+<form method="post" action="/ships/{{ ship.name }}/power" class="inline"
+  {%- if verb == "stop" %}{% set c = op_confirm("stop", ship.name) %}
+  data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
+  data-confirm-action="{{ c.action }}"{% if c.danger %} data-confirm-danger{% endif %}{% endif %}>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="power" value="{{ verb }}">
+  {% if verb == "stop" %}<label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>{% endif %}
+  <button type="submit" class="{{ '' if primary else 'ghost' }}{{ ' danger' if verb == 'stop' }}" title="ship-fleet {{ verb }} {{ ship.name }}">{{ verb|capitalize }} the VM</button>
 </form>
 {% endmacro %}
