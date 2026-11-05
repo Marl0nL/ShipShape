@@ -291,6 +291,10 @@ details.menu[open] > summary { border-color: var(--accent); }
 @media (prefers-color-scheme: dark) {
   .action-bar, .menu-items { background: var(--plates), var(--panel); }
 }
+@media (max-width: 640px) {  /* menus open in place, full width, on a phone */
+  details.menu { flex-basis: 100%; }
+  .menu-items { position: static; width: auto; max-width: none; margin-top: 6px; }
+}
 nav.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--brass-lo); margin: 12px 0; }
 nav.tabs a { padding: 6px 14px; text-decoration: none; color: var(--ink);
   font-family: var(--serif); font-weight: 600; }
