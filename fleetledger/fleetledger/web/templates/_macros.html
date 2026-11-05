@@ -158,3 +158,59 @@
   {% for key in ranges %}<a href="{{ base }}range={{ key }}" class="chip{% if key == current %} on{% endif %}"{% if key == current %} aria-current="true"{% endif %}>{{ key }}</a>{% endfor %}
 </nav>
 {% endmacro %}
+
+{# The Ship page's action bar, on every tab above the tabs (sticky, so it stays in
+   reach). Import it "with context": it reads ship, view, doc, csrf, attach_here,
+   overlay_set and on_overlay from the page. Rules: Check now always; Update and
+   Reboot only while the Ship answers; More holds the rest, one item per action,
+   each a one-click form with its confirm dialog (later PRs append theirs here). #}
+{% macro ship_action_bar() %}
+<section class="action-bar">
+  {% set attach = ("herdr --remote " if attach_here else "ship-fleet ssh ") ~ ship.name %}
+  <p class="attach">Attach: <code>{{ attach }}</code>
+    <button type="button" class="ghost small" data-copy="{{ attach }}">Copy</button></p>
+  <div class="actions">
+    <form method="post" action="/ships/{{ ship.name }}/refresh" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="ghost" title="ship-fleet status {{ ship.name }}">Check now</button>
+    </form>
+    {% if doc and not view.problem %}
+    {% for op in ("update", "reboot") %}
+    <form method="post" action="/operations" class="inline"
+      data-confirm-title="{{ op|capitalize }} {{ ship.name }}?"
+      data-confirm-action="{{ op|capitalize }} {{ ship.name }}"
+      {% if op == "update" %}
+      data-confirm="FleetLedger copies this checkout's tooling to {{ ship.name }} and converges it; agents keep running. If its herdr changed it reboots, and its agents resume in their modes. Progress shows on the Fleet page."
+      {% else %}
+      data-confirm="{{ ship.name }} restarts and is out of reach for a minute or two. herdr saves every agent first and resumes it in its mode afterwards. Progress shows on the Fleet page."
+      data-confirm-danger
+      {% endif %}>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="{{ op }}">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+      <button type="submit" title="ship-fleet {{ op }} {{ ship.name }}">{{ op|capitalize }}</button>
+    </form>
+    {% endfor %}
+    {% else %}
+    <span class="hint">It does not answer: check its VM is on, then Check now.</span>
+    {% endif %}
+    {% if overlay_set and not on_overlay %}
+    <details class="menu">
+      <summary>More</summary>
+      <div class="menu-items">
+        <form method="post" action="/operations" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="operation" value="join">
+          <input type="hidden" name="ship" value="{{ ship.name }}">
+          <input type="hidden" name="confirm" value="yes">
+          <button type="submit" class="ghost">Join the overlay</button>
+        </form>
+        <p class="hint">{{ ship.name }} is not on your overlay yet: join it to reach it from
+          anywhere (its host certificate is re-signed with its overlay name).</p>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</section>
+{% endmacro %}

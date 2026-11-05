@@ -528,6 +528,52 @@ def test_actions_on_a_ship_the_poller_does_not_know_are_404(web, path, data):
         assert web.post(path.format("ship-01"), data).status_code == 303  # a known Ship works
 
 
+def _action_bar(page):
+    start = page.index('<section class="action-bar">')
+    return page[start:page.index("</section>", start)]
+
+
+@pytest.mark.parametrize("tab", ["", "/settings", "/logs", "/network"])
+def test_every_ship_tab_has_the_action_bar_above_the_tabs(web, tab):
+    web.sign_in()
+    page = web.client.get(f"/ships/ship-01{tab}").text
+    bar = _action_bar(page)
+    assert page.index('class="action-bar"') < page.index('<nav class="tabs">')
+    assert 'data-copy="ship-fleet ssh ship-01"' in bar  # this computer is not trusted here
+    assert 'action="/ships/ship-01/refresh"' in bar  # Check now
+    assert 'name="operation" value="update"' in bar and 'name="operation" value="reboot"' in bar
+    assert 'class="ops"' not in page  # nothing left at the bottom of the Overview
+
+
+def test_a_ship_that_does_not_answer_keeps_check_now_only(web):
+    web.ship.down.add("ship-02")
+    web.fleet.poll()
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-02").text)
+    assert 'action="/ships/ship-02/refresh"' in bar
+    assert 'name="operation"' not in bar  # no Update or Reboot for a Ship that is not there
+    assert "It does not answer" in bar
+
+
+def test_the_ship_header_shows_its_overlay(web):
+    web.sign_in()
+    assert "overlay:" not in web.client.get("/ships/ship-01").text.split("</section>")[0]
+    doc = json.loads((EXAMPLES / "ship-status" / "running-overlay.json").read_text())
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    head = web.client.get("/ships/ship-01").text.split("</section>")[0]
+    assert "overlay: ship-01.example-tailnet.ts.net (running), SSH on the overlay only" in head
+
+
+def test_the_fleet_page_offers_every_ship_actions_above_the_tiles(web):
+    web.sign_in()
+    page = web.client.get("/?tag=work").text
+    menu = page.index('<details class="menu">')
+    assert menu < page.index('class="tiles')
+    assert "Every work Ship" in page[menu:menu + 200]
+    assert 'name="tag" value="work"' in page[menu:page.index('class="tiles')]
+
+
 def test_ship_page(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
