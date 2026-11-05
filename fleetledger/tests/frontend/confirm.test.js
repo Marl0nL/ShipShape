@@ -70,6 +70,14 @@ const PAGE = `
   <label><input type="checkbox" name="protect" value="yes"> Hand these keys over</label>
   <button type="submit">Use these keys</button>
 </form>
+<form id="rollback" method="post" action="/ships/ship-01/snapshots/rollback"
+  data-confirm-title="Roll ship-01 back to snap-1?"
+  data-confirm="Everything since then is lost."
+  data-confirm-action="Roll back ship-01" data-confirm-type="ship-01" data-confirm-danger>
+  <input type="hidden" name="snapshot" value="snap-1">
+  <label class="confirm">Type ship-01 to confirm <input name="confirm_name" autocomplete="off" data-confirm-typed></label>
+  <button type="submit">Roll back</button>
+</form>
 <form id="forget" method="post" action="/setup/proxmox/forget-old"
   data-confirm="It deletes the old secret." data-confirm-action="Remove it" data-confirm-danger>
   <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> remove it</label>
@@ -286,3 +294,56 @@ test("dialog text is set as text, never as markup", on({}, (p) => {
   assert.equal(p.dialog().querySelector("p").textContent, "<img src=x onerror=alert(1)>");
   assert.equal(p.dialog().querySelector("img"), null);
 }));
+
+test("typed confirmation: the action works only once the value is typed", on({}, (p) => {
+  const field = p.$("#rollback input[name=confirm_name]");
+  assert.equal(field.closest("label").hidden, true, "the form's own field is hidden");
+  p.click("#rollback button");
+  const d = p.dialog();
+  const typed = d.querySelector(".confirm-typed");
+  const input = typed.querySelector("input");
+  const ok = d.querySelector("button[value=ok]");
+  assert.equal(typed.hidden, false);
+  assert.equal(typed.textContent, "Type ship-01 to confirm");
+  assert.equal(p.document.activeElement, input, "the field has the focus");
+  assert.equal(ok.disabled, true);
+  input.value = "ship-0";
+  input.dispatchEvent(new p.window.Event("input"));
+  assert.equal(ok.disabled, true);
+  input.value = "ship-01";
+  input.dispatchEvent(new p.window.Event("input"));
+  assert.equal(ok.disabled, false);
+  p.choose("ok");
+  assert.deepEqual(p.sent, [{ form: "rollback",
+    data: { snapshot: "snap-1", confirm_name: "ship-01" } }]);
+}));
+
+test("typed confirmation: Escape, or closing with the wrong text, sends nothing", on({}, (p) => {
+  p.click("#rollback button");
+  const input = p.dialog().querySelector(".confirm-typed input");
+  input.value = "ship-01";
+  p.dialog().close(p.dialog().returnValue);  // Escape as browsers do it
+  assert.deepEqual(p.sent, []);
+  p.click("#rollback button");
+  assert.equal(p.dialog().querySelector(".confirm-typed input").value, "", "starts empty");
+  p.dialog().close("ok");  // even an "ok" close without the text typed
+  assert.deepEqual(p.sent, []);
+}));
+
+test("typed confirmation does not leak into the next dialog", on({}, (p) => {
+  p.click("#rollback button");
+  p.choose("cancel");
+  p.click("#update button");
+  assert.equal(p.dialog().querySelector(".confirm-typed").hidden, true);
+  assert.equal(p.dialog().querySelector("button[value=ok]").disabled, false);
+}));
+
+test("typed confirmation without <dialog>: the field shows and is sent as typed", on(
+  { dialogs: false }, (p) => {
+    const field = p.$("#rollback input[name=confirm_name]");
+    assert.equal(field.closest("label").hidden, false);
+    field.value = "ship-01";
+    p.click("#rollback button");
+    assert.deepEqual(p.sent, [{ form: "rollback",
+      data: { snapshot: "snap-1", confirm_name: "ship-01" } }]);
+  }));

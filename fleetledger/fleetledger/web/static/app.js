@@ -78,6 +78,12 @@
   //   data-confirm-when    a selector: ask only when it matches inside the form
   //                        (e.g. "input[name='protect'][value='yes']:checked")
   //   data-confirm-danger  destructive: Cancel has the focus, not the action
+  //   data-confirm-type    a value to type before the action button works (e.g.
+  //                        the Ship's name, for destroy or a rollback): the dialog
+  //                        shows a labelled field, focused, and on OK copies what
+  //                        was typed into the form's data-confirm-typed field(s),
+  //                        which the server checks. Without script that field is a
+  //                        visible input in the form: type the value there.
   //   data-confirmed       set by this script for the one re-submit after OK;
   //                        never set it in a template
   // A submit button with data-confirm-skip sends the form without asking (and
@@ -101,6 +107,10 @@
 
   function confirmFields(form) {
     return all(form, "input[data-confirm-field]");
+  }
+
+  function typedFields(form) {
+    return all(form, "input[data-confirm-typed]");
   }
 
   function counted(form) {
@@ -133,6 +143,13 @@
     title.id = "confirm-dialog-title";
     const text = document.createElement("p");
     text.id = "confirm-dialog-text";
+    const typed = document.createElement("label");
+    typed.className = "field confirm-typed";
+    const typedText = document.createElement("span");
+    const typedInput = document.createElement("input");
+    typedInput.autocomplete = "off";
+    typedInput.spellcheck = false;
+    typed.append(typedText, typedInput);
     const buttons = document.createElement("div");
     buttons.className = "confirm-buttons";
     const cancel = document.createElement("button");
@@ -142,10 +159,11 @@
     const ok = document.createElement("button");
     ok.value = "ok";
     buttons.append(cancel, ok);
-    inner.append(title, text, buttons);
+    inner.append(title, text, typed, buttons);
     d.append(inner);
     document.body.append(d);
-    return { el: d, title: title, text: text, cancel: cancel, ok: ok };
+    return { el: d, title: title, text: text, cancel: cancel, ok: ok,
+             typed: typed, typedText: typedText, typedInput: typedInput };
   }
 
   function ask(form, submitter) {
@@ -161,26 +179,38 @@
     dialog.ok.className = danger ? "danger" : "";
     dialog.cancel.textContent = none ? "OK" : "Cancel";
     dialog.el.classList.toggle("danger", danger);
+    // Typed confirmation: the action works only once the value is typed exactly.
+    const want = none ? null : attr(form, "data-confirm-type");
+    dialog.typed.hidden = !want;
+    dialog.typedInput.value = "";
+    dialog.typedText.textContent = want ? "Type " + want + " to confirm" : "";
+    dialog.ok.disabled = Boolean(want);
+    dialog.typedInput.oninput = function () {
+      dialog.ok.disabled = Boolean(want) && dialog.typedInput.value !== want;
+    };
     // Escape closes without touching returnValue: clear the last "ok" first, or
     // Escape on this dialog would send the form (tested in confirm.test.js).
     dialog.el.returnValue = "";
     dialog.el.onclose = function () {
       if (dialog.el.returnValue !== "ok" || none) return;
+      if (want && dialog.typedInput.value !== want) return;
       confirmFields(form).forEach(function (box) { box.checked = true; });
+      typedFields(form).forEach(function (field) { field.value = dialog.typedInput.value; });
       E.setAttribute.call(form, "data-confirmed", "yes");
       submit(form, submitter && submitter.form === form ? submitter : null);
     };
     dialog.el.showModal();
-    (danger || none ? dialog.cancel : dialog.ok).focus();
+    (want ? dialog.typedInput : danger || none ? dialog.cancel : dialog.ok).focus();
   }
 
   function enhance(root) {
     if (!canDialog) return;  // the tick boxes stay: the server still needs them
     E.querySelectorAll.call(root.documentElement || root, "form[data-confirm]").forEach(function (form) {
-      confirmFields(form).forEach(function (box) {
-        box.checked = false;
-        const label = box.closest("label");
-        (label || box).hidden = true;
+      confirmFields(form).concat(typedFields(form)).forEach(function (field) {
+        if (field.type === "checkbox") field.checked = false;
+        else field.value = "";
+        const label = field.closest("label");
+        (label || field).hidden = true;
       });
     });
   }
@@ -199,6 +229,7 @@
     if (when && !E.querySelector.call(form, when)) return;
     event.preventDefault();
     confirmFields(form).forEach(function (box) { box.checked = false; });
+    typedFields(form).forEach(function (field) { field.value = ""; });
     ask(form, event.submitter);
   });
   document.addEventListener("DOMContentLoaded", function () { enhance(document); });
