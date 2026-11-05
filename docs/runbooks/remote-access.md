@@ -139,7 +139,7 @@ FleetLedger's admin key"). If the overlay itself breaks, the Proxmox console
 still works, and `sudo ship-ctl set network.ssh_listen=any` there opens the LAN
 again.
 
-**With the LAN guard on** (`lan_guard=true`, phase 2), the Ship also refuses new
+**With the LAN guard on** (`lan_guard=true`), the Ship also refuses new
 outgoing connections to `100.64.0.0/10`, the overlay's own address range, and to
 your LAN. That matches the access rules (Ships open nothing), and replies to
 connections your devices start are let through. The one effect: the Ship cannot

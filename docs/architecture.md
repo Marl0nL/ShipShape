@@ -23,7 +23,8 @@ A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
 - **Interface:** `ship-ctl` reports status as one JSON document and applies
   changes (`contracts/ship-ctl.md`).
 - **Network:** no proxy or internet filter; the optional LAN guard refuses new
-  connections to your local network other than the gateway and DNS. SSH is the
+  connections to your local network other than the gateway, DNS and addresses
+  you allow (`lan_guard_allow`). SSH is the
   only way in, on the LAN or, once a Ship joins the overlay network, from your other machines
   anywhere ([runbooks/remote-access.md](runbooks/remote-access.md)). A collector
   records which programs reach which domains, for review ([network.md](network.md)).

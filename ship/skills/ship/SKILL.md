@@ -35,8 +35,8 @@ agents may and may not change.
   or `herdr`.
 - There is no network allow-list: the internet is open. The Ship records which
   programs connect where, for the person to review, and if its LAN guard is on,
-  new connections to the local network (other than its gateway and DNS) are
-  refused. Neither is permission to probe the local network.
+  new connections to the local network (other than its gateway, DNS and any
+  addresses the person has allowed) are refused. Neither is permission to probe the local network.
 - Ship logs are read from FleetLedger (`ship-fleet logs <ship> SOURCE`), not here;
   `ship-axi rules` says the same.
 
