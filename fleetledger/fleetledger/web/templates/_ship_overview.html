@@ -102,7 +102,7 @@
     </p>
     <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>Add an agent <input name="agent" value="{{ 'main' if not running else '' }}" placeholder="e.g. main" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <label>Add an agent <input name="agent" value="{{ 'main' if not running else '' }}" placeholder="e.g. main" pattern="[a-z][a-z0-9_\-]{0,31}" required></label>
       <label>in <input name="cwd" value="~/work"></label>
       <label>or a GitHub repo <input name="repo" placeholder="e.g. someone/agent-setup"></label>
       <label>mode <select name="mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
@@ -114,7 +114,7 @@
       data-confirm-action="Stop starting {value:agent}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="do" value="remove">
-      <label>Stop starting an agent <input name="agent" placeholder="its name" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <label>Stop starting an agent <input name="agent" placeholder="its name" pattern="[a-z][a-z0-9_\-]{0,31}" required></label>
       <button type="submit" class="ghost">Stop starting it</button>
     </form>
     <p class="hint">An added agent starts now (once Claude is signed in) and on every boot.

@@ -39,7 +39,7 @@ def boxes():
 def test_every_confirm_box_is_wired_to_the_dialog():
     found = list(boxes())
     confirm = [(f, attrs, box) for f, attrs, name, box in found if name in CONFIRM_NAMES]
-    assert len(confirm) >= 7  # fleet: 1 (in a loop), ship: 2, setup: 4
+    assert len(confirm) >= 7  # fleet 1 (in a loop), _macros 1, _ship_overview 1, setup 4
     for template, attrs, box in confirm:
         assert "data-confirm-field" in box, f"{template}: {box}"
         assert "data-confirm=" in attrs, f"{template}: its form has no data-confirm"

@@ -292,6 +292,7 @@ details.menu[open] > summary { border-color: var(--accent); }
   .action-bar, .menu-items { background: var(--plates), var(--panel); }
 }
 @media (max-width: 640px) {  /* menus open in place, full width, on a phone */
+  .action-bar { position: static; }  /* not pinned: it would take a third of the screen */
   details.menu { flex-basis: 100%; }
   .menu-items { position: static; width: auto; max-width: none; margin-top: 6px; }
 }

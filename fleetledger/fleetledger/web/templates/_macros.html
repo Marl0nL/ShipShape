@@ -189,11 +189,15 @@
       <input type="hidden" name="operation" value="{{ op }}">
       <input type="hidden" name="ship" value="{{ ship.name }}">
       <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
-      <button type="submit" title="ship-fleet {{ op }} {{ ship.name }}">{{ op|capitalize }}</button>
+      <button type="submit"{% if op == "reboot" %} class="ghost danger"{% endif %} title="ship-fleet {{ op }} {{ ship.name }}">{{ op|capitalize }}</button>
     </form>
     {% endfor %}
-    {% else %}
+    {% elif view.problem == "unreachable" %}
     <span class="hint">It does not answer: check its VM is on, then Check now.</span>
+    {% elif view.cloud_init %}
+    <span class="hint">First boot: not ready yet.</span>
+    {% else %}
+    <span class="hint">{{ view.message or view.problem or "Not checked yet." }}</span>
     {% endif %}
     {% if overlay_set and not on_overlay %}
     <details class="menu">

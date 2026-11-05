@@ -543,6 +543,11 @@ def test_every_ship_tab_has_the_action_bar_above_the_tabs(web, tab):
     assert 'action="/ships/ship-01/refresh"' in bar  # Check now
     assert 'name="operation" value="update"' in bar and 'name="operation" value="reboot"' in bar
     assert 'class="ops"' not in page  # nothing left at the bottom of the Overview
+    forms = bar.split("<form")[1:]
+    assert len(forms) == 3 and all('name="csrf"' in f for f in forms)  # else the gate refuses
+    update, reboot = forms[1], forms[2]
+    assert 'data-confirm-title="Update ship-01?"' in update and "data-confirm-danger" not in update
+    assert 'data-confirm-title="Reboot ship-01?"' in reboot and "data-confirm-danger" in reboot
 
 
 def test_a_ship_that_does_not_answer_keeps_check_now_only(web):
@@ -553,6 +558,29 @@ def test_a_ship_that_does_not_answer_keeps_check_now_only(web):
     assert 'action="/ships/ship-02/refresh"' in bar
     assert 'name="operation"' not in bar  # no Update or Reboot for a Ship that is not there
     assert "It does not answer" in bar
+
+
+def test_a_ship_with_another_problem_says_what_it_is(web):
+    """Only a Ship that does not answer gets 'check its VM is on': one that answered
+    with something wrong says what was wrong, on every tab."""
+    doc = copy.deepcopy(RUNNING)
+    del doc["attention"]  # breaks the status contract: the view's problem is "invalid"
+    web.ship.status_override["ship-02"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    for tab in ("", "/settings"):
+        bar = _action_bar(web.client.get(f"/ships/ship-02{tab}").text)
+        assert 'name="operation"' not in bar and "It does not answer" not in bar
+        assert "Status breaks the contract" in bar
+
+
+def test_the_attach_line_uses_herdr_once_this_computer_is_trusted(web, monkeypatch):
+    from fleetledger import trustcmd
+
+    monkeypatch.setattr(trustcmd, "attaches_here", lambda inv, ship: True)
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-01").text)
+    assert 'data-copy="herdr --remote ship-01"' in bar and "ship-fleet ssh" not in bar
 
 
 def test_the_ship_header_shows_its_overlay(web):
@@ -571,7 +599,9 @@ def test_the_fleet_page_offers_every_ship_actions_above_the_tiles(web):
     menu = page.index('<details class="menu">')
     assert menu < page.index('class="tiles')
     assert "Every work Ship" in page[menu:menu + 200]
-    assert 'name="tag" value="work"' in page[menu:page.index('class="tiles')]
+    forms = page[menu:page.index('class="tiles')].split("<form")[1:]
+    assert len(forms) == 3  # sign in, update, reboot: each for the work Ships only
+    assert all('name="tag" value="work"' in f and 'name="csrf"' in f for f in forms)
 
 
 def test_ship_page(web):
