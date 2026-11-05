@@ -23,6 +23,13 @@
           "items": { "$ref": "#/$defs/path" },
           "description": "Public key files placed in the agent user's authorized_keys (your keys for attaching)."
         },
+        "owner": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "not": { "enum": ["root", "fleet", "agent"] },
+          "default": "human",
+          "description": "Your own login name on every Ship (ship.toml [owner]): sudo, your keys and certificates, apart from agent, which keeps no sudo."
+        },
         "known_hosts": {
           "$ref": "#/$defs/path",
           "default": "~/.config/fleetledger/known_hosts",

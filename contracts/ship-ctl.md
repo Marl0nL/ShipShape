@@ -94,7 +94,8 @@ atomically, then runs `apply`.
   `claude.default_mode`, `claude.allow_bypass`, `claude.update_channel`,
   `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
   `network.lan_guard_allow` (comma-separated; empty clears it),
-  `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`. Booleans are `true` or `false`.
+  `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`, `owner.name`,
+  `owner.keys` (comma-separated public keys). Booleans are `true` or `false`.
 - `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
   that name), and `autostart.add=NAME:github:OWNER/REPO[:MODE]` adds one that works
   in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it; a running

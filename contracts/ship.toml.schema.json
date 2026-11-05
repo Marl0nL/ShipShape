@@ -81,6 +81,20 @@
         }
       }
     },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "description": "Your own login on the Ship, apart from agent: made by ship-ctl apply with useradd, with passwordless sudo, your keys (kept root-owned under /etc/ssh/shipshape/keys/) and the same user certificates agent takes. agent keeps no sudo.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "not": { "enum": ["root", "fleet", "agent"] }
+        },
+        "keys": { "type": "array", "items": { "type": "string", "pattern": "^ssh-[a-z0-9-]+ [A-Za-z0-9+/=]+( .*)?$" } }
+      }
+    },
     "autostart": {
       "type": "array",
       "description": "Agents ship-ctl autostart starts when they are not already running. Names must be unique (checked by ship-ctl).",
