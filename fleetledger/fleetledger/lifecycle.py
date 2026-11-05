@@ -14,8 +14,6 @@ from fleetledger.drivers import NotSupported, PublishedImage
 from fleetledger.errors import FleetError
 from fleetledger.inventory import STOCK_IMAGE
 
-COMMANDS = ("destroy", "resize", "snapshot", "image")
-
 SNAPSHOT_WARNING = (
     "A snapshot holds the Ship's sign-ins (Claude, gcloud, GitHub) as they were: "
     "treat it like the Ship itself."

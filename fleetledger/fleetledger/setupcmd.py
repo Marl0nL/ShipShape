@@ -20,8 +20,6 @@ from fleetledger import ca, firstrun, keys, paths
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 
-COMMANDS = ("setup", "doctor")
-
 MARK = {"ok": "ok", "info": "info", "warn": "WARN", "missing": "MISSING", "fail": "FAIL",
         "skip": "-"}
 REDO = ("hypervisor", "overlay")

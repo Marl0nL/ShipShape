@@ -11,8 +11,6 @@ from fleetledger.commands import table
 from fleetledger.errors import FleetError
 from fleetledger.shipctl import ShipCtl
 
-COMMANDS = ("overlay",)
-
 
 def add_parsers(sub, add) -> None:
     p = add(sub, "overlay", "join Ships to the overlay network (access off the LAN)",

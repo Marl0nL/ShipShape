@@ -40,11 +40,6 @@ def default_opener(request: urllib.request.Request, timeout: float) -> Any:
     return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310 (https only)
 
 
-def read_secret(path_value: str) -> str:
-    """The secret from a 0600 file (kept for callers; see secret_store)."""
-    return secret_store.read_file(path_value)
-
-
 @dataclass(frozen=True)
 class Answer:
     status: int
@@ -179,13 +174,6 @@ class TailscaleAPI:
         answer = self.call("GET", f"/tailnet/{self.tailnet}/acl", "reading the policy",
                            accept="application/hujson")
         return answer.body.decode("utf-8"), answer.etag
-
-    def policy_json(self) -> dict:
-        doc = self._json(self.call("GET", f"/tailnet/{self.tailnet}/acl",
-                                   "reading the policy"), "reading the policy")
-        if not isinstance(doc, dict):
-            raise FleetError("Tailscale API: the policy is not an object.")
-        return doc
 
     def validate(self, text: str) -> list[str]:
         """Problems Tailscale finds in a policy, its tests included (empty: none)."""

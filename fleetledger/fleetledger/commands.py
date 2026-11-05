@@ -28,9 +28,6 @@ from fleetledger.trustcmd import after_enrol, cmd_ca, cmd_trust, cmd_untrust  # 
 MODES = ops.MODES
 LOG_SOURCES = ops.LOG_SOURCES
 NAME_RE = ops.NAME_RE
-TAG_RE = ops.TAG_RE
-SET_KEYS = ops.SET_KEYS
-parse_assignments = ops.parse_assignments
 
 
 # --- shared helpers --------------------------------------------------------
@@ -697,7 +694,6 @@ def cmd_owner(args, app) -> int:
 
 def set_owner(app, store, name: str, say) -> bool:
     """fleet.owner, and the owner login on every Ship (ship-ctl set owner.*)."""
-    from fleetledger.seed import cloudinit
     from fleetledger.shipctl import ShipCtl, ShipCtlError
 
     if not OWNER_RE.match(name) or name in ("root", "fleet", "agent", "nobody"):
