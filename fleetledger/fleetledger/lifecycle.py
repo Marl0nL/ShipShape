@@ -1,4 +1,4 @@
-"""ship-fleet destroy, snapshot and image (phase 4).
+"""ship-fleet destroy, resize, snapshot and image (phase 4).
 
 Hypervisor work goes through the driver interface (drivers/base.py); nothing
 here knows which hypervisor a Ship runs on.

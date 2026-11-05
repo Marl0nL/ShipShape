@@ -10,13 +10,13 @@ Visibility only: nothing here blocks anything.
 
 The web UI and the CLI use these functions (all return plain JSON-able dicts):
 
-- `refresh(app_ssh, inventory, ships)`: fetch and cache summaries; returns
+- `refresh(ssh, inventory, ships)`: fetch and cache summaries; returns
   {ship name: Fetched}.
 - `ship_view(inventory, ship, summary)`: one Ship's tab: totals and hourly
   traffic, top destinations for 24 hours and 7 days (each with its programs),
   programs, and first-seen flags.
-- `new_destinations(inventory, tag=None, hours=24)`: first-seen destinations
-  across Ships, filterable by tag.
+- `new_destinations(inventory, tag=None, *, window=NEW_WINDOW)`: destinations
+  first seen within the window (24 hours) across Ships, filterable by tag.
 - `who_talked(inventory, domain, tag=None)`: which Ships reached a domain (or
   any of its subdomains), when, how often, and with which programs.
 

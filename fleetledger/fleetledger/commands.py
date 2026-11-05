@@ -774,7 +774,7 @@ def _confirm_many(app, ships: list[Ship], what: str, yes: bool) -> None:
 
 
 def _split_names(values: list[str]) -> tuple[list[str], list[str]]:
-    """Positional words before the first KEY=VALUE are Ship names."""
+    """Words without '=' are Ship names, wherever they come; the rest are KEY=VALUE."""
     names = [v for v in values if "=" not in v]
     pairs = [v for v in values if "=" in v]
     return names, pairs

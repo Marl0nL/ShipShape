@@ -40,7 +40,7 @@ class Finding:
 
 
 def _rules(doc: dict) -> list[dict]:
-    """acls and grants, in one shape: {src, dst (host:port strings or tags), kind}."""
+    """acls and grants, in one shape: {src, dst (host:port strings or tags), ports, kind}."""
     out = []
     for rule in doc.get("acls") or []:
         if isinstance(rule, dict) and rule.get("action", "accept") == "accept":
@@ -83,7 +83,8 @@ def _covers_port_22(rule: dict, dst: str) -> bool:
 
 
 def ship_sources(doc: dict, tags: list[str]) -> list[dict]:
-    """Rules that let a Ship start a connection: their source is a Ship tag or "*"."""
+    """Rules that let a Ship start a connection: their source is a Ship tag, "*",
+    autogroup:tagged or autogroup:danger-all."""
     return [r for r in _rules(doc) if set(r["src"]) & (SHIP_COVERING_SOURCES | set(tags))]
 
 
