@@ -178,6 +178,10 @@ def fetch(
     if not isinstance(doc, dict) or doc.get("schema") != STATUS_SCHEMA:
         view.problem, view.message = "invalid", "Unknown status document version."
         return view
+    # A newer Ship may report a block this FleetLedger does not know yet: drop it
+    # (forward compatibility) and hold everything it does know to the contract.
+    known = schemas.known_top_level("ship-status")
+    doc = {k: v for k, v in doc.items() if k in known}
     problems = schemas.errors("ship-status", doc)
     if problems:
         view.problem, view.message = "invalid", f"Status breaks the contract: {problems[0]}"

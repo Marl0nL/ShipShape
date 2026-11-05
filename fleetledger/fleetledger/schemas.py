@@ -32,6 +32,12 @@ def errors(name: str, doc: object, contracts: Path | None = None) -> list[str]:
     return found
 
 
+def known_top_level(name: str, contracts: Path | None = None) -> frozenset[str]:
+    """The top-level keys contracts/<name>.schema.json defines."""
+    validator = _validator(contracts or find_root() / "contracts", name)
+    return frozenset(validator.schema.get("properties", {}))
+
+
 def is_valid(name: str, doc: object, contracts: Path | None = None) -> bool:
     return not errors(name, doc, contracts)
 
