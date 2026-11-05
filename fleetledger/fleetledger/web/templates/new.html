@@ -9,6 +9,32 @@
     waits for it to provision and enrols it. It runs in the background: its progress shows
     under Activity on the Fleet page, from any browser.
     <span class="quiet">The same as <code>ship-fleet new</code>.</span></p>
+  {% if retry %}
+  <div class="retry-of" id="retry">
+    <h2>Trying again: {{ retry.name }}</h2>
+    <p class="flash bad">It failed {{ clock(retry.at) }}{% if retry.error %}: {{ retry.error }}{% endif %}</p>
+    {% if blocker %}<p class="warning">{{ blocker }}
+      <a href="/ships/{{ retry.name }}">Open {{ retry.name }}</a></p>{% endif %}
+    {% if retry.left %}<p class="warning">That attempt left {{ retry.describe_left()|join(", ") }}
+      on the hypervisor, which FleetLedger could not remove. Make it removes that first
+      (after checking it is still that attempt's), so there is never a second VM of
+      this name.</p>{% endif %}
+    <p class="hint">The form holds everything that attempt was given: change what you
+      need and make it again. Nothing secret was kept; sign-ins happen once the Ship is
+      up, as always.{% if "autostart_prompt" in retry.dropped %} <strong>The first
+      agent's first prompt was left out</strong>, as it might hold a secret: type it
+      again under Advanced.{% endif %}</p>
+  </div>
+  {% endif %}
   {% with form_action="/new", advanced=True %}{% include "_new_ship_form.html" %}{% endwith %}
 </section>
+{% set others = saved|default([])|rejectattr("name", "equalto", retry.name if retry else "")|list %}
+{% if others %}
+<section class="operations activity saved-attempts">
+  <h2>Failed attempts</h2>
+  <p class="hint">Each keeps what it was given, so you can try it again without filling in
+    every field. They stay until a Ship of that name is made, or you discard them.</p>
+  {% for a in others %}{% include "_attempt.html" %}{% endfor %}
+</section>
+{% endif %}
 {% endblock %}

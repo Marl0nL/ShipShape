@@ -163,11 +163,57 @@ def refill(nf: FormChoices, fields: dict[str, list[str]]) -> FormChoices:
     return out
 
 
+def fields_from(options: dict[str, Any], nf: FormChoices) -> dict[str, list[str]]:
+    """The form fields that make these `ship-fleet new` options (a saved attempt,
+    attempts.py): what refill() takes, so the form shows what was tried."""
+    o = options
+    out: dict[str, list[str]] = {"name": [str(o["name"])]}
+    if o.get("tag"):
+        out["tag"] = [" ".join(o["tag"])]
+    for key in ("cores", "disk_gb"):
+        if o.get(key) is not None:
+            out[key] = [str(o[key])]
+    if o.get("memory_mb") is not None:
+        out["memory_gb"] = [str(max(1, round(o["memory_mb"] / 1024)))]
+    if o.get("signins") is not None:
+        out["signins_shown"], out["signin"] = ["yes"], o["signins"].split(",")
+    first = (o.get("autostart") or [""])[0].split(":")
+    if len(first) >= 2 or o.get("repo"):
+        out["agent_on"] = ["yes"]
+        if len(first) >= 2:
+            out["agent"], out["cwd"] = [first[0]], [first[1]]
+        if len(first) == 3:
+            out["agent_mode"] = [first[2]]
+        if o.get("repo"):
+            out["repo"] = [o["repo"]]
+    if o.get("autostart_prompt"):
+        out["prompt"] = [o["autostart_prompt"]]
+    out["overlay"] = [] if o.get("no_overlay") else ["yes"]
+    for key, field_ in (("driver", "driver"), ("image", "image"), ("mode", "mode"),
+                        ("timezone", "timezone")):
+        if o.get(key):
+            out[field_] = [o[key]]
+    if o.get("vmid") is not None:
+        out["vmid"] = [str(o["vmid"])]
+    if o.get("host"):
+        out["hosts"] = ["\n".join(o["host"])]
+    for flag in ("allow_bypass", "agent_sudo"):
+        if o.get(flag):
+            out[flag] = ["yes"]
+    extra = [t.strip() for t in (o.get("tools") or "").split(",") if t.strip()]
+    if o.get("no_default_tools") or extra:
+        base = [] if o.get("no_default_tools") else [t for t, _, on in nf.tools if on]
+        out["tools_shown"], out["tool"] = ["yes"], list(dict.fromkeys([*base, *extra]))
+    if o.get("profile"):
+        out["profile"] = list(o["profile"])
+    return out
+
+
 def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
          ) -> tuple[str, list[str]]:
     """(name, the `ship-fleet new` argv) from the form, checked: raises FleetError with
     a plain message on anything `new` would refuse."""
-    from fleetledger import github, ops, signins
+    from fleetledger import attempts, github, ops, signins
     from fleetledger.overlay import HOST_RE
     from fleetledger.seed.shiptoml import TIMEZONE_RE, known_timezone
     from fleetledger.web import setup
@@ -176,7 +222,9 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
     if not NAME_RE.match(name):
         raise FleetError("A Ship name uses a-z, 0-9 and -, up to 31 characters.")
     if inv is not None and inv.has_ship(name):
-        raise FleetError(f"{name} is already in the inventory: choose another name.")
+        tried = attempts.get(name)
+        raise FleetError((tried and attempts.blocker(inv, tried))
+                         or f"{name} is already in the inventory: choose another name.")
     out = ["new", name]
 
     raw_tags = _one(fields, "tag").replace(",", " ").split()
@@ -270,10 +318,12 @@ def _advanced(fields, app, inv, host_re, timezone_re, known_timezone) -> list[st
     return out
 
 
-def make_ship(app, name: str, argv_: list[str]):
+def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None):
     """The job that makes a Ship: `ship-fleet new` itself, then this computer trusted
-    so `ssh <ship>` and `herdr --remote <ship>` work at once."""
-    from fleetledger import trustcmd
+    so `ssh <ship>` and `herdr --remote <ship>` work at once. retry_of: the saved
+    attempt this one tries again (attempts.py); what it left is removed first, and
+    it goes once this one works. A failure is saved by `new` itself."""
+    from fleetledger import attempts, trustcmd
     from fleetledger.enrol import StillStarting
     from fleetledger.web.jobs import BrowserApp, run_cli
 
@@ -284,8 +334,21 @@ def make_ship(app, name: str, argv_: list[str]):
                           inv.defaults.get("driver", "manual"))
             job.result["manual"] = driver == "manual"
         except FleetError:
-            pass
-        code = run_cli(app, argv_, job)
+            inv = None
+        source = attempts.get(retry_of) if retry_of and retry_of != name else None
+        if source is not None and source.left:  # renamed: `new` would not see it
+            job.result["retry"] = source.name  # if this fails, offer that one again
+            attempts.clear_left(BrowserApp(app, job), inv, source, job.say)
+        try:
+            code = run_cli(app, argv_, job)
+        except BaseException:  # `new` saved it before this reached the job
+            job.result["retry"] = name if attempts.get(name) is not None else None
+            raise
+        if code != 0 and code != StillStarting.exit_code:
+            job.result["retry"] = name if attempts.get(name) is not None else None
+        elif source is not None:
+            job.result.pop("retry", None)
+            attempts.drop(source.name)
         job.result["still_starting"] = code == StillStarting.exit_code
         try:
             ship = app.store_factory().load().ship(name)
@@ -300,6 +363,17 @@ def make_ship(app, name: str, argv_: list[str]):
     return run
 
 
-def start(ui: Any, name: str, argv_: list[str]):
-    """Start making it (refused while something runs on that name)."""
-    return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_), f"Make {name}")
+def start(ui: Any, name: str, argv_: list[str], retry_of: str | None = None):
+    """Start making it (refused while something runs on that name, or on the
+    attempt it retries)."""
+    ships = [name] + ([retry_of] if retry_of and retry_of != name else [])
+    return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_, retry_of),
+                         f"Make {name}", locks=[f"attempt {s}" for s in ships])
+
+
+def retry_of(fields: dict[str, list[str]]):
+    """The saved attempt a posted form retries, if any (attempts.py)."""
+    from fleetledger import attempts
+
+    name = _one(fields, "retry_of")
+    return attempts.get(name) if name and NAME_RE.match(name) else None

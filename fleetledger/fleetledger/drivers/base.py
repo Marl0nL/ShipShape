@@ -21,6 +21,16 @@ class NotSupported(FleetError):
     """The driver cannot do this."""
 
 
+class LeftBehind(FleetError):
+    """create() failed, and so did removing part of what it had made. left says what
+    is still there ({"kind": "vm", "vmid": N, "name": NAME} or {"kind": "volume",
+    "volume": ID}), so the next attempt can remove it first (Driver.remove_left)."""
+
+    def __init__(self, message: str, left: list[dict], *, hint: str | None = None) -> None:
+        super().__init__(message, hint=hint)
+        self.left_behind = list(left)
+
+
 @dataclass(frozen=True)
 class SeedFile:
     """A seed ISO ready to attach: the local file and its instance id."""
@@ -131,6 +141,12 @@ class Driver(ABC):
     def host_key_fingerprints(self, ship: Ship) -> list[str] | None:
         """Fingerprints the hypervisor can vouch for, or None if it cannot."""
         return None
+
+    def remove_left(self, name: str, left: list[dict]) -> list[str]:
+        """Remove what a failed create() of Ship name left (LeftBehind.left), checking
+        each is still that Ship's before touching it; what is gone already is skipped.
+        Returns what was done, in words; raises FleetError if something stays."""
+        raise NotSupported(f"The {self.id} driver cannot remove it.")
 
     # --- size (optional) --------------------------------------------------
     def resize(self, ship: Ship, size: Mapping[str, int]) -> Outcome:

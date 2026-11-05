@@ -41,6 +41,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)) |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
+| `fleetledger/attempts.py` | | failed `ship-fleet new` attempts, kept (without secrets) to edit and try again, with what each left on the hypervisor |
 | `fleetledger/pins.py` | phase 2 | `ship-fleet pins`: check and move the `versions.toml` pins with their checksums and signatures |
 | `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
 | `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |
@@ -64,6 +65,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
 | `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts (0600) |
+| `~/.local/share/fleetledger/attempts.json` | the last 20 failed `ship-fleet new` attempts: their options (no secrets), error and what each left, for Edit and retry (0600) |
 | `~/.local/share/fleetledger/net/` | the last network summary per Ship and the first-seen ledger (0600) |
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
@@ -196,7 +198,10 @@ alike.
   client sends with it), full-clones the template into the pool, attaches the
   seed on `ide2`, sets cores, memory and bridge, grows `scsi0`, starts the VM,
   and waits for every Proxmox task. It reads addresses from the guest agent and
-  destroys the VM again. If creation fails part-way, it removes what it made.
+  destroys the VM again. If creation fails part-way, it removes what it made;
+  what it cannot remove it names (`LeftBehind`), so `new` saves it with the failed
+  attempt and the next `new` of that Ship removes it first (`remove_left`, which
+  checks each VM's name like every destructive call).
   At enrolment it ejects the seed media (applied at once on a running VM) and
   deletes the ISO. A VM or volume counts as already gone only when Proxmox says
   it "does not exist". Proxmox answers HTTP 500 for most failures (locked, in
@@ -300,7 +305,7 @@ covers the core ones; the rest are documented with their feature: `setup`,
 | Command | What it does |
 |---|---|
 | `init` | makes the fleet admin key (with a passphrase unless `--no-passphrase`) and an empty inventory |
-| `new NAME` | pins a new host key, writes the seed, records the Ship, and has the driver create it. Options: `--tag`, `--mode` (bypass implies `allow_bypass`), `--tools`, `--profile`, `--autostart NAME:CWD[:MODE]`, `--agent-sudo`, size, `--driver manual\|proxmox`. With proxmox it waits and enrols. If the driver fails, the inventory entry and seed are removed. |
+| `new NAME` | pins a new host key, writes the seed, records the Ship, and has the driver create it. Options: `--tag`, `--mode` (bypass implies `allow_bypass`), `--tools`, `--profile`, `--autostart NAME:CWD[:MODE]`, `--agent-sudo`, size, `--driver manual\|proxmox`. With proxmox it waits and enrols. If the driver fails, the inventory entry and seed are removed. A failure is saved (`attempts.py`) and the exact command to try again is printed; see "Try a failed Ship again" in [create-ship.md](../docs/runbooks/create-ship.md). |
 | `adopt NAME` | for a Ship FleetLedger did not create (or to re-pin one with `--replace`): fetches its host key and shows the fingerprint for you to compare with the VM console (or checks `--fingerprint`). It then asks the Ship who it is over a connection pinned to that key, and records it. |
 | `scan` | lists `_shipshape._tcp` announcements and whether each is in the inventory (hints only) |
 | `ls` | one row per Ship: state, agents, the four sign-ins (OK / Missing / Wrong account ...), cpu · memory · disk, and the first note. `--tag`, `--json`, `--offline`. |

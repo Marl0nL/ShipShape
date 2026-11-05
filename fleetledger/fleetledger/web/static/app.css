@@ -328,6 +328,10 @@ article.flow { border: 1px solid var(--line-strong); padding: 10px 14px; box-sha
 article.flow.link, article.flow.code, article.flow.live-offered { border-color: var(--warn-mark);
   box-shadow: 0 0 0 1px var(--warn-mark) inset, var(--shadow); }
 article.flow header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* A failed attempt at making a Ship: Edit and retry (and Discard) under its card. */
+.attempt-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0 2px; }
+.retry-of { margin: 10px 0 4px; }
+.retry-of > h2 { margin: 8px 0; }
 code.device-code { font-size: 20px; letter-spacing: 2px; padding: 2px 8px; background: var(--warn-bg);
   color: var(--ink); border: 1px dashed var(--warn-mark); }
 .code-form input { min-width: 22em; max-width: 100%; }
