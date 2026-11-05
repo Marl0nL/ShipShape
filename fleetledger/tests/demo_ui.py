@@ -321,6 +321,16 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
     doc["net"] = {"window_h": 24, "rx_mb": 120.0 * index, "tx_mb": 14.0 * index,
                   "new_destinations": [], "collector": "running", "source": "ebpf",
                   "destinations": 10 + index, "connections": 200 * index}
+    doc["tools"] = {"gh-axi": {"state": "ok", "version": "1.4.0"},  # catalogue tools
+                    "tasks-axi": {"state": "ok", "version": "0.9.2"}}
+    if name != "ship-06":  # its settings, as newer tooling reports them; ship-06 is older
+        settings = json.loads((EXAMPLES / "ship-status" / "running-settings.json")
+                              .read_text())["settings"]
+        settings["ship"]["tags"] = list(tags)
+        settings["claude"]["session_prefix"] = name
+        settings["network"]["ssh_listen"] = doc["overlay"]["ssh_listen"] if doc.get(
+            "overlay") else "any"
+        doc["settings"] = settings
     return doc
 
 
