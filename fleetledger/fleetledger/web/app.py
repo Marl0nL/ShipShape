@@ -60,6 +60,7 @@ SETTINGS_TEXT = {
     "reboot_time": "Reboot time for OS updates (HH:MM)",
     "lan_guard_allow": "LAN guard also allows (addresses or CIDRs, comma-separated)",
 }
+NO_SUCH_SHIP = "No such Ship in the inventory."
 TABS = ("overview", "settings", "logs", "network")
 
 
@@ -218,6 +219,12 @@ def _ship_name(request: Request) -> str | None:
     return name if NAME_RE.match(name) else None
 
 
+def _known_ship(request: Request) -> str | None:
+    """The {name} in the path, if it is a Ship the poller knows."""
+    name = _ship_name(request)
+    return name if name and name in ui_of(request).fleet.snapshot.by_name else None
+
+
 def not_found(request: Request, what: str) -> Response:
     return render(request, "message.html", status_code=404, title="Not found", text=what)
 
@@ -362,7 +369,7 @@ async def ship_page(request: Request) -> Response:
     tab = request.path_params.get("tab", "overview")
     context = _ship_context(ui, name) if name else None
     if context is None or tab not in TABS:
-        return not_found(request, "No such Ship in the inventory.")
+        return not_found(request, NO_SUCH_SHIP)
     if tab == "logs":
         source = request.query_params.get("source", "provision")
         if source not in commands.LOG_SOURCES:
@@ -391,9 +398,9 @@ async def ship_page(request: Request) -> Response:
 
 async def ship_refresh(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     await run_in_threadpool(ui.fleet.poll, [name])
     ui.flash(session_of(request), "ok", f"Checked {name}.")
     return back(f"/ships/{name}")
@@ -401,9 +408,9 @@ async def ship_refresh(request: Request) -> Response:
 
 async def ship_settings(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     assignments = []
     for key, (set_key, allowed, _label) in SETTINGS.items():
@@ -431,9 +438,9 @@ async def ship_settings(request: Request) -> Response:
 async def ship_agents(request: Request) -> Response:
     """Add an autostart agent to a Ship (or stop starting one)."""
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     session = session_of(request)
     try:
@@ -457,9 +464,9 @@ async def ship_agents(request: Request) -> Response:
 async def ship_signins(request: Request) -> Response:
     """Choose the sign-ins a Ship uses; the ones turned off are signed out there."""
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     session = session_of(request)
     said: list[str] = []
@@ -479,9 +486,9 @@ async def ship_size(request: Request) -> Response:
     from fleetledger import lifecycle
 
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     session = session_of(request)
     try:
@@ -521,9 +528,9 @@ async def attach_here(request: Request) -> Response:
 
 async def ship_tags(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     wanted = [t for t in re.split(r"[\s,]+", one(fields, "tags")) if t]
     session = session_of(request)
@@ -539,9 +546,9 @@ async def ship_tags(request: Request) -> Response:
 
 async def ship_logout(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     service = one(fields, "service")
     session = session_of(request)
@@ -589,9 +596,9 @@ async def fleet_operation(request: Request) -> Response:
 
 async def ship_network_refresh(request: Request) -> Response:
     ui = ui_of(request)
-    name = _ship_name(request)
-    if not name or name not in ui.fleet.snapshot.by_name:
-        return not_found(request, "No such Ship in the inventory.")
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
     session = session_of(request)
     try:
         problems = await run_in_threadpool(network.refresh, ui.app, [name])
