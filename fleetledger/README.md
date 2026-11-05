@@ -307,13 +307,11 @@ Every command is tested in `tests/test_cli.py` against a fake Ship behind a real
 ## Names
 
 Ships are reached by the names in `ships.toml`, tried in order: `<ship>.local`
-by default (each Ship announces itself over mDNS). Your computer needs mDNS name
-resolution for `.local` names (`libnss-mdns` on Ubuntu), or give Ships a DNS name
-with `ship-fleet new --host`. When the proxmox driver brings a Ship up and none
-of its names resolves on this computer, `new` adds the address the hypervisor
-reports as the last name to try, so creation still finishes. The host key is
-pinned either way (`HostKeyAlias`), so an address is as safe to dial as a name.
-See also `docs/runbooks/create-ship.md`.
+by default or a DNS name from `new --host`. If none resolves when the proxmox
+driver brings a Ship up, `new` adds the address the hypervisor reports as the
+last name to try. The host key is pinned either way
+(`HostKeyAlias`). What your computer needs to resolve them:
+[create-ship.md](../docs/runbooks/create-ship.md#names).
 
 ## Day-2 operations (phase 2)
 
