@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}New Ship · FleetLedger{% endblock %}
+{% block body %}
+<h1>New Ship</h1>
+<section class="setup-step new-ship-page">
+  <p class="hint">FleetLedger writes its first-boot settings (with a host key it pins),
+    makes its VM{% if "proxmox" not in nf.drivers %} (or, by hand, shows you how){% endif %},
+    waits for it to provision and enrols it. It runs in the background: its progress shows
+    under Activity on the Fleet page, from any browser.
+    <span class="quiet">The same as <code>ship-fleet new</code>.</span></p>
+  {% with form_action="/new", advanced=True %}{% include "_new_ship_form.html" %}{% endwith %}
+</section>
+{% endblock %}

@@ -137,7 +137,7 @@ def _pill(value: str | None) -> str:
                  "invalid", "provision-failed"):
         return "bad"
     if value in ("missing", "expiring", "needs-sign-in", "unreachable", "waiting", "blocked",
-                 "provisioning", "timeout"):
+                 "provisioning", "timeout", "not-enrolled"):
         return "warn"
     return "muted"
 
@@ -577,6 +577,74 @@ async def fleet_operation(request: Request) -> Response:
     return back("/", tag=tag)
 
 
+async def new_ship_page(request: Request) -> Response:
+    """/new: make a Ship with every `ship-fleet new` option (web.newship)."""
+    from fleetledger.web import newship
+
+    ui = ui_of(request)
+    try:
+        inv = await run_in_threadpool(lambda: ui.app.store_factory().load())
+    except FleetError:
+        return RedirectResponse("/setup", status_code=303)  # not set up yet
+    try:
+        nf = await run_in_threadpool(newship.choices, ui.app, inv)
+    except FleetError as exc:  # no ShipShape checkout to read the catalogue from
+        return render(request, "message.html", status_code=503,
+                      title="Cannot make a Ship here", text=exc.message)
+    return render(request, "new.html", nf=nf)
+
+
+async def new_ship_start(request: Request) -> Response:
+    from fleetledger.web import newship
+
+    ui = ui_of(request)
+    session = session_of(request)
+    fields = await form(request)
+    try:
+        inv = await run_in_threadpool(lambda: ui.app.store_factory().load())
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back("/new")
+    try:
+        name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv)
+        newship.start(ui, name, argv)
+    except FleetError as exc:  # back to the form as it was posted, with the reason
+        try:
+            nf = await run_in_threadpool(newship.choices, ui.app, inv)
+        except FleetError:
+            ui.flash(session, "bad", exc.message)
+            return back("/new")
+        return render(request, "new.html", status_code=400, flashes=[("bad", exc.message)],
+                      nf=newship.refill(nf, fields))
+    ui.flash(session, "ok", f"Making {name}; its progress is under Activity. Once it is "
+             "up, it has a page of its own.")
+    return back("/")
+
+
+async def finish_enrolling(request: Request) -> Response:
+    """A Ship in the inventory but not enrolled: `ship-fleet status N --wait` as a job."""
+    from fleetledger.web.jobs import run_cli
+
+    ui = ui_of(request)
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
+    session = session_of(request)
+    try:
+        ship = ui.app.store_factory().load().ship(name)
+        if ship.enrolled is not None:
+            raise FleetError(f"{name} is enrolled already.")
+        ui.jobs.start("enrol", [name],
+                      lambda job: run_cli(ui.app, ["status", name, "--wait"], job),
+                      f"Finish enrolling {name}")
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(f"/ships/{name}")
+    ui.flash(session, "ok", f"Waiting for {name} to finish its first boot, then enrolling "
+             "it; its progress is below.")
+    return back(f"/ships/{name}")
+
+
 async def job_card(request: Request) -> Response:
     """One job's card, for htmx polling: 204 while unchanged, 286 (stop) once gone."""
     ui = ui_of(request)
@@ -858,6 +926,9 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         WebSocketRoute("/flows/{flow}/ws", flow_socket),
         Route("/audit", audit_page),
         Route("/jobs/{job}", job_card),
+        Route("/new", new_ship_page),
+        Route("/new", new_ship_start, methods=["POST"]),
+        Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
         *snapshots.routes(),
         *settings.routes(),

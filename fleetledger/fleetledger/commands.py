@@ -332,7 +332,7 @@ HEARTBEAT = 60  # seconds between "still ..." lines while a Ship's first boot ru
 def _first_boot_phase(view) -> str:
     """What a status poll during the first boot means, in words. Not answering (or
     refusing the admin key before cloud-init has set it up) is normal for a while."""
-    if view.state == "unreachable":
+    if view.state in ("unreachable", "not-enrolled"):
         return "not answering yet: still booting"
     if view.state == "provisioning":
         return "first boot: cloud-init is installing (the slow part)"
