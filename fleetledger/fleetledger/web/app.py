@@ -396,8 +396,15 @@ async def ship_settings(request: Request) -> Response:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     view = ui.fleet.snapshot.by_name.get(name)
+    ssh = one(fields, "part") == "ssh"
+    if ssh and one(fields, "confirm") != "yes":  # it can cut the LAN path to the Ship
+        ui.flash(session_of(request), "bad", "Tick the box to confirm.")
+        return back(f"/ships/{name}/settings")
+    if ssh and (view is None or view.ship.overlay_node is None):
+        ui.flash(session_of(request), "bad", f"{name} is not on the overlay.")
+        return back(f"/ships/{name}/settings")
     try:  # only what changed; the ssh_listen form sends that one key
-        keys = ("ssh_listen",) if one(fields, "part") == "ssh" else None
+        keys = ("ssh_listen",) if ssh else None
         assignments = shipsettings.assignments(fields, view, keys)
     except FleetError as exc:
         ui.flash(session_of(request), "bad", exc.message)

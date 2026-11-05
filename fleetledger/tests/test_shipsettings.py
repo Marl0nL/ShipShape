@@ -17,7 +17,8 @@ REPORTED = {  # a status `settings` block, as ship-ctl status reports it (ui-6s)
     "claude": {"remote_control": "on", "default_mode": "auto", "allow_bypass": True,
                "update_channel": "latest", "session_prefix": "ship-01"},
     "agent": {"sudo": False},
-    "network": {"lan_guard": True, "lan_guard_allow": ["192.0.2.0/24"], "ssh_listen": "any"},
+    "network": {"lan_guard": True, "lan_guard_allow": ["192.0.2.0/24", "198.51.100.7"],
+                "ssh_listen": "any"},
     "updates": {"auto_reboot": False, "reboot_time": "04:00"},
     "owner": None,
     "autostart": [],
@@ -45,7 +46,7 @@ def test_current_values_come_from_the_ships_report():
     view = View(status={"claude": {}}, settings=REPORTED)
     now = {k: shipsettings.current(view, f) for k, f in shipsettings.FIELDS.items()}
     assert now["allow_bypass"] == "true" and now["sudo"] == "false"
-    assert now["lan_guard_allow"] == "192.0.2.0/24" and now["timezone"] == "UTC"
+    assert now["lan_guard_allow"] == "192.0.2.0/24,198.51.100.7" and now["timezone"] == "UTC"
     assert now["session_prefix"] == "ship-01" and now["reboot_time"] == "04:00"
     assert shipsettings.current(view, shipsettings.SSH_LISTEN) == "any"
 
@@ -67,7 +68,8 @@ def test_only_what_changed_is_sent():
     unchanged = {k: [shipsettings.current(view, f)] for k, f in shipsettings.FIELDS.items()}
     assert shipsettings.assignments(unchanged, view) == []
     changed = {**unchanged, **posted(sudo="true", timezone="Europe/Berlin",
-                                     session_prefix="lab", lan_guard_allow="192.0.2.0/24, ")}
+                                     session_prefix="lab",
+                                     lan_guard_allow="192.0.2.0/24, 198.51.100.7, ")}
     assert shipsettings.assignments(changed, view) == [
         "session_prefix=lab", "sudo=true", "timezone=Europe/Berlin"]
     # a group posts only its own fields: the rest are left alone

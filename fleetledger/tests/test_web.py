@@ -788,6 +788,15 @@ def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
     assert calls == [("ship-01", {"cores": 8}, True)]  # only what changed
     web.post("/ships/ship-01/size", {"cores": "4", "memory_gb": "8", "disk_gb": "40"})
     assert len(calls) == 1  # nothing changed: nothing done
+    with web.store.edit() as ed:
+        ed.set_field("ship-02", "driver", "proxmox")
+    records = []
+    monkeypatch.setattr(lifecycle, "resize",
+                        lambda app, store, name, size, restart=False, record_only=False:
+                        records.append(record_only) or ["Set 8 cores."])
+    web.post("/ships/ship-02/size", {"cores": "8", "memory_gb": "8", "disk_gb": "40",
+                                     "record_only": "yes"})
+    assert records == [False]  # record only is for a Ship made by hand
 
 
 def test_record_only_notes_a_manual_ships_size_without_its_driver(web):
@@ -1591,10 +1600,48 @@ def test_ssh_listen_is_offered_on_the_overlay_behind_a_dialog(web, store):
     form = page[page.rindex("<form", 0, page.index('name="ssh_listen"')):]
     form = form[:form.index("</form>")]
     assert "data-confirm-title" in form and 'data-confirm-field' in form
+    assert "data-confirm-danger" in form  # Cancel has the focus
+    web.post("/ships/ship-01/settings", {"part": "ssh", "ssh_listen": "overlay"})  # no tick
+    assert "Tick the box to confirm" in web.client.get("/ships/ship-01/settings").text
+    assert not [c for _, c in web.ship.calls if c[3:4] == ["set"]]  # nothing sent
     web.post("/ships/ship-01/settings", {"part": "ssh", "ssh_listen": "overlay",
                                          "confirm": "yes", "sudo": "true"})
     sets = [c for _, c in web.ship.calls if c[3:4] == ["set"]]
     assert sets[-1][4:-1] == ["network.ssh_listen=overlay"]  # that form's key only
+
+
+def test_ssh_listen_is_refused_for_a_ship_off_the_overlay(web):
+    _reporting(web)
+    web.sign_in()
+    web.post("/ships/ship-01/settings", {"part": "ssh", "ssh_listen": "overlay",
+                                         "confirm": "yes"})
+    assert "not on the overlay" in web.client.get("/ships/ship-01/settings").text
+    assert not [c for _, c in web.ship.calls if c[3:4] == ["set"]]
+
+
+def test_tools_wait_for_the_ship_and_a_failed_add_removes_nothing(web, monkeypatch):
+    web.ship.down.add("ship-01")
+    web.fleet.poll()
+    web.sign_in()
+    web.post("/ships/ship-01/tools", {"tool": ["tasks-axi"]})
+    assert "not known until it answers" in web.client.get("/ships/ship-01/settings").text
+    assert web.app_ui.jobs.recent() == []
+    web.ship.down.discard("ship-01")
+    _reporting(web)
+    from fleetledger.web import jobs as jobs_mod
+
+    real = jobs_mod.run_cli
+    ran = []
+
+    def failing_add(app, argv, job):
+        ran.append(argv[:2])
+        return 1 if argv[:2] == ["tools", "add"] else real(app, argv, job)
+
+    monkeypatch.setattr(jobs_mod, "run_cli", failing_add)
+    web.post("/ships/ship-01/tools", {"tool": ["tasks-axi"]})  # add one, remove gh-axi
+    job = web.app_ui.jobs.recent()[0]
+    wait_for(lambda: job.done)
+    assert not job.ok and ran == [["tools", "add"]]  # the remove never ran
 
 
 def test_tools_are_ticked_from_the_ship_and_changed_as_a_job(web):

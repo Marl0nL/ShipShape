@@ -69,7 +69,7 @@
     <form method="post" action="/ships/{{ ship.name }}/settings" class="inline ssh-listen"
       data-confirm-title="SSH on {{ ship.name }}: {value:ssh_listen}?"
       data-confirm="With &quot;overlay&quot;, {{ ship.name }} answers SSH only on your overlay and refuses it from the LAN: this computer then reaches it only while it is on the overlay too. With &quot;any&quot;, it answers on every network again."
-      data-confirm-action="Set SSH to {value:ssh_listen}">
+      data-confirm-action="Set SSH to {value:ssh_listen}" data-confirm-danger>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="part" value="ssh">
       <label>{{ SSH_LISTEN.label }}
