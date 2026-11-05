@@ -157,7 +157,7 @@ def merge_claude_json(existing: dict, trusted: list[str]) -> dict:
     return doc
 
 
-def expand_cwd(cwd: str, agent_home: str = "/home/agent") -> str:
+def expand_cwd(cwd: str, agent_home: str) -> str:
     return agent_home + cwd[1:] if cwd.startswith("~/") else cwd
 
 

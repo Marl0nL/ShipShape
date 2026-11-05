@@ -23,10 +23,6 @@ def read_json(path: Path, default: object = None) -> object:
         return default
 
 
-def dump_json(doc: object) -> str:
-    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
-
-
 def write_atomic(
     path: Path,
     data: bytes | str,
