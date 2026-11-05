@@ -241,9 +241,9 @@ def _back(anchor: str = "") -> RedirectResponse:
 
 
 def _secret_field(fields, key: str) -> str:
-    """A token or client secret (surrounding whitespace removed); never logged."""
-    values = fields.get(key, [])
-    return values[0].strip() if len(values) == 1 else ""
+    """A token or client secret (surrounding whitespace removed); never logged.
+    The same as _one(), named so a secret field reads as one."""
+    return _one(fields, key)
 
 
 def _passphrase_field(fields, key: str) -> str:
@@ -522,7 +522,7 @@ async def owner_name(request: Request) -> Response:
     said: list[str] = []
     try:
         ok = await run_in_threadpool(commands.set_owner, app, app.store_factory(),
-                                     _one(fields, "owner").strip(), said.append)
+                                     _one(fields, "owner"), said.append)
     except FleetError as exc:
         ok, said = False, [exc.message]
     _flash(request, "ok" if ok else "bad", " ".join(said))
@@ -1025,7 +1025,7 @@ def size_from_form(fields) -> dict[str, int]:
     from fleetledger.lifecycle import check_size
 
     def number(key: str) -> int | None:
-        value = _one(fields, key).strip()
+        value = _one(fields, key)
         if not value:
             return None
         if not value.isdigit():

@@ -354,14 +354,13 @@ async def ship_page(request: Request) -> Response:
             ok, lines = await run_in_threadpool(actions.logs, ui.app, name, source, 300)
             context["log"] = clean("\n".join(lines))
             context["log_ok"] = ok
-    if tab == "network":
-        snap = ui.fleet.snapshot
-        context["netview"] = network.ship_view(snap.inventory, context["ship"])
+    if tab == "network":  # the same snapshot the rest of the page shows
+        context["netview"] = network.ship_view(context["snap"].inventory, context["ship"])
         context["net"] = network.status_digest(context["view"])
         context["week"] = request.query_params.get("week") == "1"
     if tab == "overview":
         context["alerts"] = dashboard.alerts([context["view"]], context["items"], [],
-                                             ui.fleet.snapshot.inventory)
+                                             context["snap"].inventory)
         range_ = dashboard.range_key(request.query_params.get("range"))
         context["history"] = _quietly(dashboard.ship_charts, ui.fleet.history,
                                       context["view"], range_, time.time())
