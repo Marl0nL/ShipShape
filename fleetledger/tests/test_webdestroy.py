@@ -70,11 +70,15 @@ def test_the_right_name_destroys_it_once_and_the_page_says_so(web):  # noqa: F81
     assert not web.store.load().has_ship("ship-02")
     assert ("ship-02", "destroy", "proxmox", "ok") in [
         (e["ship"], e["action"], e["service"], e["outcome"]) for e in audit.read()]
-    card = web.client.get(f"/jobs/{job.id}")
+    from_ship = {"HX-Current-URL": "http://127.0.0.1:8765/ships/ship-02/settings"}
+    card = web.client.get(f"/jobs/{job.id}", headers=from_ship)
     assert card.headers.get("HX-Redirect") == "/"  # its page is gone: to the Fleet page
+    from_fleet = {"HX-Current-URL": "http://127.0.0.1:8765/?tag=work"}
+    card = web.client.get(f"/jobs/{job.id}", headers=from_fleet)
+    assert "HX-Redirect" not in card.headers  # the Fleet page keeps its filter
     gone = web.client.get("/ships/ship-02")
     assert gone.status_code == 410 and "ship-02 was destroyed at" in gone.text
-    web.app_ui.destroyed["ship-02"] = time.time() - 3700  # an hour later: just not found
+    web.app_ui.destroyed["ship-02"] = (time.time() - 3700, False)  # an hour later: not found
     assert web.client.get("/ships/ship-02").status_code == 404
 
 
@@ -116,6 +120,11 @@ def test_the_manual_driver_gives_steps_then_forget_removes_it(web):  # noqa: F81
     job = last_job(web)
     assert job.kind == "forget" and job.ok and job.result["gone"]
     assert not web.store.load().has_ship("ship-01")
+    first = web.app_ui.jobs.recent()[1]  # the destroy's card: nothing left to forget
+    assert 'action="/ships/ship-01/forget"' not in web.client.get(f"/jobs/{first.id}").text
+    gone = web.client.get("/ships/ship-01")
+    assert gone.status_code == 410 and "was forgotten at" in gone.text
+    assert "its VM was not touched" in gone.text
 
 
 def test_a_failed_destroy_can_still_be_forgotten(web):  # noqa: F811
@@ -151,3 +160,20 @@ def test_a_ship_not_enrolled_yet_offers_destroy_beside_finish_enrolling(web):  #
     primary = bar[:bar.index('<details class="menu">')]
     assert 'action="/ships/ship-02/enrol"' in primary
     assert 'data-confirm-type="ship-02"' in _form(primary, "/ships/ship-02/destroy")
+
+
+def test_notes_printed_during_destroy_stay_on_the_card(web, monkeypatch):  # noqa: F811
+    """The overlay's by-hand step (no API to remove the device) shows beside the
+    driver's answer, as the CLI prints both."""
+    from fleetledger import lifecycle
+
+    on_a_fake_hypervisor(web)
+    monkeypatch.setattr(lifecycle.overlay, "before_destroy", lambda app, inv, ship: app.note(
+        "ship-02: remove its device in your overlay's admin console."))
+    web.sign_in()
+    web.post("/ships/ship-02/destroy", {"confirm_name": "ship-02"})
+    job = last_job(web)
+    card = web.client.get(f"/jobs/{job.id}").text
+    assert "remove its device in your overlay&#39;s admin console" in card
+    assert "ship-02 is removed from the inventory." in card
+    assert card.count("Destroyed VM 9102.") == 1  # the driver's answer, once

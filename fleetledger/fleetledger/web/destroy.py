@@ -27,10 +27,10 @@ from fleetledger.errors import FleetError
 REMEMBER = 3600  # seconds a destroyed Ship's address says so
 
 
-def gone_since(ui: Any, name: str) -> float | None:
-    """When this Ship was destroyed from the UI, if that was within the hour."""
-    at = ui.destroyed.get(name)
-    return at if at is not None and time.time() - at < REMEMBER else None
+def gone_since(ui: Any, name: str) -> tuple[float, bool] | None:
+    """(when, forgotten) for a Ship destroyed or forgotten from the UI within the hour."""
+    gone = ui.destroyed.get(name)
+    return gone if gone is not None and time.time() - gone[0] < REMEMBER else None
 
 
 def _start(request: Request, name: str, forget: bool) -> None:
@@ -51,7 +51,10 @@ def _start(request: Request, name: str, forget: bool) -> None:
                 gone = False
             job.result["gone"] = gone
             if gone:
-                ui.destroyed[name] = time.time()
+                ui.destroyed[name] = (time.time(), forget)
+                for earlier in ui.jobs.for_ship(name):  # their Forget has nothing left to do
+                    if earlier is not job and earlier.kind == "destroy":
+                        earlier.result["forgotten"] = True
 
     verb = "Forget" if forget else "Destroy"
     try:
