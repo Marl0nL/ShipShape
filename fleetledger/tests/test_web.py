@@ -991,7 +991,7 @@ def test_audit_page(web):
 def test_an_agent_can_stop_being_started_from_the_ship_page(web):
     web.sign_in()
     assert "Stop starting it" in web.client.get("/ships/ship-01").text
-    web.post("/ships/ship-01/agents", {"action": "remove", "agent": "docs"})
+    web.post("/ships/ship-01/agents", {"do": "remove", "agent": "docs"})
     assert ["set", "autostart.remove=docs", "--json"] in [c[3:] for _, c in web.ship.calls]
 
 

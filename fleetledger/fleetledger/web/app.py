@@ -422,7 +422,7 @@ async def ship_agents(request: Request) -> Response:
     fields = await form(request)
     session = session_of(request)
     try:
-        if one(fields, "action") == "remove":
+        if one(fields, "do") == "remove":
             pair = ops.parse_autostart_change("autostart.remove", one(fields, "agent"))
         else:
             mode = one(fields, "mode")

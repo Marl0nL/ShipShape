@@ -119,7 +119,10 @@
   fleet admin key <code>{{ inv.doc.fleet.admin_key }}</code>,
   your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.
   {% if admin_managed %}FleetLedger looks after its keys.{% endif %}</p>
-<form method="post" action="/setup/owner" class="inline">
+<form method="post" action="/setup/owner" class="inline"
+  data-confirm-title="Use {value:owner} as your login on Ships?"
+  data-confirm="{value:owner} becomes your login, with sudo, on every Ship now and on new ones. A previous login can no longer log in (its files stay)."
+  data-confirm-action="Use {value:owner}">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label>Your own login on Ships <input name="owner" value="{{ inv.owner }}" pattern="[a-z_][a-z0-9_\-]{0,31}" required></label>
   <button type="submit" class="ghost">Use this name</button>

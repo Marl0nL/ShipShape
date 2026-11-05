@@ -130,9 +130,12 @@
       <label>mode <select name="mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
       <button type="submit" class="ghost">Add</button>
     </form>
-    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
+    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline"
+      data-confirm-title="Stop starting {value:agent} on {{ ship.name }}?"
+      data-confirm="{{ ship.name }} no longer starts {value:agent} at boot. If it is running, it keeps running until it is stopped or the Ship reboots."
+      data-confirm-action="Stop starting {value:agent}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <input type="hidden" name="action" value="remove">
+      <input type="hidden" name="do" value="remove">
       <label>Stop starting an agent <input name="agent" placeholder="its name" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
       <button type="submit" class="ghost">Stop starting it</button>
     </form>
@@ -257,7 +260,10 @@
   </section>
   <section>
     <h2>Sign-ins it uses</h2>
-    <form method="post" action="/ships/{{ ship.name }}/signins" class="inline">
+    <form method="post" action="/ships/{{ ship.name }}/signins" class="inline"
+      data-confirm-title="Change the sign-ins {{ ship.name }} uses?"
+      data-confirm="Each sign-in you unticked is signed out on {{ ship.name }}, so its credentials go, and is never offered there again until you tick it. Agents and tools that use it stop working there."
+      data-confirm-action="Save the sign-ins" data-confirm-danger>
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% for choice in SIGNIN_CHOICES %}
       <label><input type="checkbox" name="signin" value="{{ choice }}"{% if choice in signins_used %} checked{% endif %}> {{ SIGNIN_LABELS[choice] }}</label>
@@ -271,7 +277,10 @@
   <section>
     <h2>Size</h2>
     {% set size = snap.inventory.effective_size(ship) %}
-    <form method="post" action="/ships/{{ ship.name }}/size" class="inline">
+    <form method="post" action="/ships/{{ ship.name }}/size" class="inline"
+      data-confirm-title="Resize {{ ship.name }}?"
+      data-confirm="A bigger disk is grown now, with the Ship's filesystem, and can never shrink again. Cores and memory change when the VM next restarts through the hypervisor; with &quot;restart it now&quot; ticked that is now, and its agents stop for a minute and start again."
+      data-confirm-action="Resize {{ ship.name }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>CPU cores <input name="cores" type="number" min="1" max="128" value="{{ size.cores }}"></label>
       <label>Memory (GB) <input name="memory_gb" type="number" min="1" max="1024" value="{{ size.memory_mb // 1024 }}"></label>
