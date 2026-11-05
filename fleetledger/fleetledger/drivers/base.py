@@ -135,8 +135,8 @@ class Driver(ABC):
     # --- size (optional) --------------------------------------------------
     def resize(self, ship: Ship, size: Mapping[str, int]) -> Outcome:
         """Change cores, memory_mb and/or disk_gb (a disk only grows). Cores and memory
-        apply at the next restart through the hypervisor; the disk grows at once and
-        the Ship's filesystem fills it at its next boot."""
+        apply at the next restart through the hypervisor; the disk grows at once (then
+        ship-ctl grow-root grows the Ship's filesystem into it)."""
         raise NotSupported(f"The {self.id} driver cannot resize a Ship; change its VM on "
                            "your hypervisor, then record the size with ship-fleet resize "
                            "--record-only.")

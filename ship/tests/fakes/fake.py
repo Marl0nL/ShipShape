@@ -417,6 +417,32 @@ def tailscale(s: dict, a: list[str]) -> int:
     return 0
 
 
+def findmnt(s: dict, a: list[str]) -> int:
+    print(s.get("disk", {}).get("root", "/dev/sda1"))
+    return 0
+
+
+def lsblk(s: dict, a: list[str]) -> int:
+    print(s.get("disk", {}).get("parent", "sda"))
+    return 0
+
+
+def growpart(s: dict, a: list[str]) -> int:
+    disk = s.setdefault("disk", {})
+    if disk.get("full"):
+        print("NOCHANGE: partition 1 is size 50329567. it cannot be grown")
+        return 1
+    disk["full"] = True
+    save(s)
+    return 0
+
+
+def resize2fs(s: dict, a: list[str]) -> int:
+    s.setdefault("disk", {}).setdefault("resized", []).append(a[-1])
+    save(s)
+    return 0
+
+
 def useradd(s: dict, a: list[str]) -> int:
     """Adds the user to the sandbox's /etc/passwd, as the real one would."""
     name = a[-1]
@@ -434,6 +460,10 @@ HANDLERS = {
     "gh": gh,
     "git": git,
     "useradd": useradd,
+    "findmnt": findmnt,
+    "lsblk": lsblk,
+    "growpart": growpart,
+    "resize2fs": resize2fs,
     "npm": npm,
     "dpkg-query": dpkg_query,
     "apt-get": apt_get,

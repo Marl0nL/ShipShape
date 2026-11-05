@@ -247,8 +247,7 @@ class ProxmoxDriver(Driver):
                                  f"cannot become {wanted} GB.")
             if current_gb is None or wanted > current_gb:
                 self._task(self.api.put(path + "/resize", disk=disk, size=f"{wanted}G"))
-                messages.append(f"Grew {ship.name}'s disk to {wanted} GB; its filesystem fills "
-                                "it at the next boot.")
+                messages.append(f"Grew {ship.name}'s disk to {wanted} GB.")
         changes = {k: size[s] for k, s in (("cores", "cores"), ("memory", "memory_mb"))
                    if size.get(s) is not None}
         if changes:

@@ -116,6 +116,7 @@ def build_parser() -> Parser:
     sv.add_argument("--file", required=True, metavar="-", help="read the document from stdin")
     cmd("net", "Show where this Ship connects: the 7-day network visibility summary.")
     cmd("version", "Print the tooling version and contract versions.")
+    cmd("grow-root", "Grow / to fill its disk (after the disk was grown).")
     o = cmd("overlay", "Join or leave the overlay network (the auth key comes on stdin).")
     o.add_argument("action", choices=["join", "leave", "status"])
     o.add_argument("--hostname", help="join: the Ship's name on the overlay")
@@ -439,7 +440,31 @@ def cmd_lan_guard(ctx: Context, args) -> dict:
     return result("apply", changed=changed, messages=[f"LAN guard {state}.", *messages])
 
 
+def cmd_grow_root(ctx: Context, args) -> dict:
+    """growpart the partition holding /, then resize2fs it, online."""
+    import re as _re
+
+    src = ctx.runner.run(["findmnt", "-n", "-o", "SOURCE", "/"], timeout=10).out.strip()
+    match = _re.match(r"^/dev/([a-z0-9]+?)p?([0-9]+)$", src)
+    disk = ctx.runner.run(["lsblk", "-n", "-o", "PKNAME", src], timeout=10).out.strip()
+    if not match or not _re.match(r"^[a-z0-9]+$", disk):
+        raise CtlError("internal", f"cannot tell the partition holding / ({src!r})")
+    grown = ctx.runner.run(["growpart", f"/dev/{disk}", match.group(2)], timeout=60)
+    if grown.rc not in (0, 1):  # 1: NOCHANGE, already as big as the disk
+        why = (grown.err or grown.out).strip().splitlines()[-1:] or ["growpart failed"]
+        raise CtlError("internal", f"growpart: {why[0][:200]}")
+    if grown.rc == 1:
+        return result("grow-root", messages=[f"{src} already fills its disk."],
+                      data={"device": src, "grown": False})
+    fs = ctx.runner.run(["resize2fs", src], timeout=300)
+    if not fs.ok:
+        raise CtlError("internal", f"resize2fs {src} failed")
+    return result("grow-root", changed=[src], messages=[f"Grew {src} to fill its disk."],
+                  data={"device": src, "grown": True})
+
+
 COMMANDS = {
+    "grow-root": cmd_grow_root,
     "overlay": cmd_overlay,
     "status": cmd_status,
     "apply": cmd_apply,

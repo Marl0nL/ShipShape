@@ -401,6 +401,9 @@ def test_resize_through_the_driver_and_recorded(env):
     assert sized == [{"cores": 8}]
     code, _, _ = env.run("resize", "ship-01", "--disk-gb", "80", "--record-only")
     assert code == 0 and env.store.load().ship("ship-01").size["disk_gb"] == 80
+    code, out, _ = env.run("resize", "ship-16", "--disk-gb", "60")
+    assert code == 0  # the disk, then the Ship's filesystem with it
+    assert any(c[3:4] == ["grow-root"] for name, c in env.ship.calls if name == "ship-16")
 
 
 def test_a_new_ship_can_start_its_first_agent_in_a_github_repo(env, home):

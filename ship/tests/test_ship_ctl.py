@@ -525,3 +525,14 @@ def test_the_owner_cannot_be_a_system_account(ship):
     rc, doc, _ = ship.ctl("set", "owner.name=daemon", "--json")
     assert rc == 4 and "system account" in doc["error"]["message"]
     assert not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()
+
+
+def test_grow_root_fills_the_disk_once(ship):
+    rc, doc, _ = ship.ctl("grow-root", "--json")
+    assert rc == 0, doc
+    assert_valid("ship-ctl-result", doc)
+    assert doc["data"] == {"device": "/dev/sda1", "grown": True}
+    assert ship.calls("growpart") == [["growpart", "/dev/sda", "1"]]
+    assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]
+    rc, doc, _ = ship.ctl("grow-root", "--json")  # already full: not an error
+    assert rc == 0 and doc["data"]["grown"] is False and doc["changed"] == []

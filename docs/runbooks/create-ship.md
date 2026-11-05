@@ -79,7 +79,7 @@ Useful options (`ship-fleet new --help` lists them all):
 | `--no-overlay` | with `[overlay]` set up, do not join it after enrolling (it joins by default) |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
-| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults); later `ship-fleet resize SHIP --cores 8 --restart` (cores and memory apply at a restart through the hypervisor; a disk only grows, and the Ship's filesystem fills it at its next boot) |
+| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults); later `ship-fleet resize SHIP --cores 8 --restart` (cores and memory apply at a restart through the hypervisor; a disk only grows, at once, with the Ship's filesystem: ship-ctl grow-root) |
 | `--agent-sudo` | give the agent user sudo (off by default) |
 | `--on proxmox` | where to create it (the same as `--driver`; default `defaults.driver`) |
 | `--image <id>` | the base image (default: the pinned one, see [images.md](images.md)); `stock` for the plain cloud image |

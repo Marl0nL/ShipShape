@@ -38,7 +38,7 @@ def add_parsers(sub, add) -> None:
             "  ship-fleet resize ship-01 --disk-gb 80 --restart\n\n"
             "Cores and memory apply when the VM next restarts through the hypervisor\n"
             "(--restart does it now; a reboot from inside the Ship does not). A disk only\n"
-            "grows: it grows at once, and the Ship's filesystem fills it at its next boot.")
+            "grows: it grows at once, and the Ship's filesystem with it (ship-ctl grow-root).")
     p.add_argument("name")
     p.add_argument("--cores", type=int)
     p.add_argument("--memory-mb", type=int)
@@ -149,11 +149,26 @@ def resize(app, store, name: str, size: dict, *, restart: bool = False,
     if not record_only:
         driver = app.driver_factory(inv, ship.driver)
         said += driver.resize(ship, wanted).messages
+        if "disk_gb" in wanted:
+            said.append(_grow_root(app, inv, ship))
         if restart:
             said += driver.reboot(ship).messages
     with store.edit() as ed:
         ed.set_field(name, "size", {**ship.size, **wanted})
     return said
+
+
+def _grow_root(app, inv, ship) -> str:
+    """The Ship's root filesystem, grown online into the bigger disk."""
+    from fleetledger.shipctl import ShipCtl, ShipCtlError
+
+    try:
+        result = ShipCtl(app.ssh_factory(inv), ship).call("grow-root", timeout=600)
+    except (FleetError, ShipCtlError) as exc:
+        return (f"The filesystem was not grown yet ({exc.message}); run ship-fleet update "
+                f"{ship.name} if its tooling is older, then ship-fleet resize {ship.name} "
+                "--disk-gb again.")
+    return " ".join(result.messages) or "Its filesystem fills the disk."
 
 
 def cmd_resize(args, app) -> int:
