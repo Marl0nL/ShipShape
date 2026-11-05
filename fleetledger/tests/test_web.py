@@ -534,7 +534,7 @@ def _action_bar(page):
     return page[start:page.index("</section>", start)]
 
 
-@pytest.mark.parametrize("tab", ["", "/settings", "/logs", "/network"])
+@pytest.mark.parametrize("tab", ["", "/settings", "/snapshots", "/logs", "/network"])
 def test_every_ship_tab_has_the_action_bar_above_the_tabs(web, tab):
     web.sign_in()
     page = web.client.get(f"/ships/ship-01{tab}").text

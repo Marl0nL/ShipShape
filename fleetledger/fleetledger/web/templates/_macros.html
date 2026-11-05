@@ -209,12 +209,15 @@
     {% else %}
     <span class="hint">{{ view.message or view.problem or "Not checked yet." }}</span>
     {% endif %}
+    {% set by_hand = ship.driver == "manual" %}
+    {% if not by_hand %}<a class="button ghost" href="/ships/{{ ship.name }}/snapshots#take" title="ship-fleet snapshot take {{ ship.name }}">Snapshot</a>{% endif %}
     <details class="menu">
       <summary>More</summary>
       <div class="menu-items">
+        {% if by_hand %}<a class="button ghost" href="/ships/{{ ship.name }}/snapshots#take">Snapshot (by hand)</a>{% endif %}
         {{ power_form("start") }}
         {{ power_form("stop") }}
-        <p class="hint">{% if ship.driver == "manual" %}Made by hand, so FleetLedger shows the step to run.{% else %}Through {{ "Proxmox" if ship.driver == "proxmox" else ship.driver }}.{% endif %}
+        <p class="hint">{% if by_hand %}Made by hand, so FleetLedger shows the step to run.{% else %}Through {{ "Proxmox" if ship.driver == "proxmox" else ship.driver }}.{% endif %}
           Stopping is a clean shutdown: herdr saves every agent, and they resume when it starts.</p>
         {% if overlay_set and not on_overlay %}
         {% set c = op_confirm("join", ship.name) %}

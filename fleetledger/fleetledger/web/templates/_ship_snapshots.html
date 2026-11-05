@@ -1,0 +1,78 @@
+{# The Ship page's Snapshots tab (included by ship.html). Context from
+   web/snapshots.py: snapshots, snap_unsupported, snap_error, snap_by_hand,
+   SNAPSHOT_WARNING. Take, Roll back and Delete run as jobs, shown under the header. #}
+<section>
+  <h2>Snapshots</h2>
+  <p class="hint">Disk snapshots only, never memory. {{ SNAPSHOT_WARNING }}</p>
+  {% if snap_error %}<p class="flash bad">{{ snap_error }}</p>{% endif %}
+  {% if snap_unsupported %}
+  {% with outcome=None, unsupported=snap_unsupported %}{% include "_outcome.html" %}{% endwith %}
+  {% elif not snap_error %}
+  {% if snapshots %}
+  <table class="snapshots">
+    <thead><tr><th>Snapshot</th><th>Taken (UTC)</th><th>Note</th><th></th></tr></thead>
+    <tbody>
+    {% for s in snapshots %}
+    <tr>
+      <td>{{ s.name }}</td><td>{{ s.created or "-" }}</td><td>{{ s.description or "" }}</td>
+      <td class="row-actions">
+        <form method="post" action="/ships/{{ ship.name }}/snapshots/rollback" class="inline"
+          data-confirm-title="Roll {{ ship.name }} back to {{ s.name }}?"
+          data-confirm="{{ ship.name }} goes back to how its disk was at {{ s.name }}: everything since then is lost, sign-ins included."
+          data-confirm-action="Roll back {{ ship.name }}" data-confirm-type="{{ ship.name }}" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="snapshot" value="{{ s.name }}">
+          <label class="confirm">Type {{ ship.name }} to confirm <input name="confirm_name" autocomplete="off" data-confirm-typed></label>
+          <button type="submit" class="ghost danger small" title="ship-fleet snapshot rollback {{ ship.name }} {{ s.name }}">Roll back</button>
+        </form>
+        <form method="post" action="/ships/{{ ship.name }}/snapshots/delete" class="inline"
+          data-confirm-title="Delete snapshot {{ s.name }}?"
+          data-confirm="The snapshot {{ s.name }} of {{ ship.name }} is deleted on the hypervisor. The Ship itself is not changed."
+          data-confirm-action="Delete {{ s.name }}" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="snapshot" value="{{ s.name }}">
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost small" title="ship-fleet snapshot rm {{ ship.name }} {{ s.name }}">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="quiet">No snapshots yet.</p>
+  {% endif %}
+  {% endif %}
+
+  <h3 id="take">Take a snapshot{% if snap_by_hand %} (by hand){% endif %}</h3>
+  {% if snap_by_hand %}<p class="hint">{{ ship.name }}'s driver is manual: FleetLedger shows the steps to do on your hypervisor.</p>{% endif %}
+  <form method="post" action="/ships/{{ ship.name }}/snapshots/take" class="inline take-snapshot">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">Name <input name="snapshot" placeholder="snap-&lt;date&gt;-&lt;time&gt; (the default)" pattern="[A-Za-z][A-Za-z0-9_\-]{1,39}"></label>
+    <label class="field">Note <input name="note" maxlength="200" placeholder="optional"></label>
+    <button type="submit" title="ship-fleet snapshot take {{ ship.name }}">Take a snapshot</button>
+  </form>
+
+  {% if snap_unsupported %}
+  <h3>Roll back or delete, by name</h3>
+  <p class="hint">FleetLedger cannot list this Ship's snapshots; name the one you mean.</p>
+  <form method="post" action="/ships/{{ ship.name }}/snapshots/rollback" class="inline by-name"
+    data-confirm-title="Roll {{ ship.name }} back to {value:snapshot}?"
+    data-confirm="{{ ship.name }} goes back to how its disk was at {value:snapshot}: everything since then is lost, sign-ins included."
+    data-confirm-action="Roll back {{ ship.name }}" data-confirm-type="{{ ship.name }}" data-confirm-danger>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">Snapshot <input name="snapshot" required pattern="[A-Za-z][A-Za-z0-9_\-]{1,39}"></label>
+    <label class="confirm">Type {{ ship.name }} to confirm <input name="confirm_name" autocomplete="off" data-confirm-typed></label>
+    <button type="submit" class="ghost danger">Roll back</button>
+  </form>
+  <form method="post" action="/ships/{{ ship.name }}/snapshots/delete" class="inline by-name"
+    data-confirm-title="Delete snapshot {value:snapshot}?"
+    data-confirm="The snapshot {value:snapshot} of {{ ship.name }} is deleted on the hypervisor."
+    data-confirm-action="Delete it" data-confirm-danger>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">Snapshot <input name="snapshot" required pattern="[A-Za-z][A-Za-z0-9_\-]{1,39}"></label>
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" class="ghost">Delete</button>
+  </form>
+  {% endif %}
+</section>

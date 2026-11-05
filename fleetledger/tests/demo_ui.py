@@ -27,6 +27,19 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 EXAMPLES = ROOT / "contracts" / "examples"
+sys.path.insert(0, str(ROOT / "fleetledger"))
+
+from fleetledger.drivers.base import (  # noqa: E402 - after the path is set
+    Driver,
+    Outcome,
+    PowerState,
+    Snapshot,
+    check_snapshot_name,
+)
+
+# Ships on the in-memory demo hypervisor (DemoDriver, as "proxmox"); the rest are manual.
+ON_DEMO_DRIVER = {"ship-01", "ship-02", "ship-03", "ship-04"}
+DEMO_FINGERPRINT = ":".join(["AB", "CD", "EF", "01", "23", "45", "67", "89"] * 4)  # made up
 
 SHIPS = {
     # name: (tags, host key tail, on the overlay)
@@ -61,16 +74,121 @@ github = "example-user"
 [overlay]
 provider = "tailscale"
 tags = ["tag:ship"]
+
+# Never contacted: DemoDriver stands in for this Proxmox (see make_driver).
+[drivers.proxmox]
+api_url = "https://pve.example.invalid:8006/api2/json"
+node = "pve"
+pool = "shipshape"
+template_vmid = 9000
+seed_storage = "shipshape-seeds"
+disk_storage = "local-lvm"
+bridge = "vmbr0"
+token_id = "shipshape@pve!demo"
+token_file = "{keys}/proxmox-token"  # never written: nothing reads it in the demo
+tls_fingerprint = "{fingerprint}"
+vmid_range = [9100, 9199]
 """
 
 SHIP_ENTRY = """
 [ship.{name}]
 id = "{id}"
 tags = {tags}
-driver = "manual"
+driver = "{driver}"
 names = ["{name}.example.invalid"]
 host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZX{tail}"
 {overlay}"""
+
+
+class DemoDriver(Driver):
+    """A hypervisor in memory, for the demo: each Ship's VM and its snapshots live in
+    this process, and every call succeeds at once. It stands in for the "proxmox"
+    driver (make_driver), so anything the UI does through a driver (snapshots here;
+    making, destroying, starting and stopping a Ship) works in the demo without a
+    hypervisor. Nothing is contacted."""
+
+    id = "proxmox"
+
+    def __init__(self) -> None:
+        self.vms: dict[str, dict] = {}  # ship name -> {"state", "vmid", "snapshots"}
+
+    def _vm(self, ship) -> dict:
+        return self.vms.setdefault(ship.name, {"state": "running",
+                                               "vmid": 9100 + len(self.vms),
+                                               "snapshots": []})
+
+    def _done(self, text: str, **ref) -> Outcome:
+        return Outcome(True, [f"{text} (demo hypervisor)."], driver_ref=ref)
+
+    # --- the VM ---------------------------------------------------------------------
+    def create(self, ship, seed, size, image=None) -> Outcome:
+        vm = self._vm(ship)
+        vm["state"] = "running"
+        return self._done(f"Made {ship.name}'s VM", vmid=vm["vmid"])
+
+    def start(self, ship) -> Outcome:
+        self._vm(ship)["state"] = "running"
+        DOWN.discard(ship.name)  # it answers again
+        return self._done(f"Started {ship.name}")
+
+    def stop(self, ship) -> Outcome:
+        self._vm(ship)["state"] = "stopped"
+        DOWN.add(ship.name)  # and stops answering, as a stopped VM does
+        return self._done(f"Stopped {ship.name}")
+
+    def reboot(self, ship) -> Outcome:
+        self._vm(ship)["state"] = "running"
+        return self._done(f"Rebooted {ship.name}")
+
+    def destroy(self, ship) -> Outcome:
+        self.vms.pop(ship.name, None)
+        return self._done(f"Destroyed {ship.name}'s VM")
+
+    def status(self, ship) -> PowerState:
+        vm = self.vms.get(ship.name)
+        return PowerState(vm["state"] if vm else "unknown")
+
+    def finish_enrolment(self, ship) -> Outcome:
+        return self._done(f"Detached {ship.name}'s seed")
+
+    # --- snapshots -------------------------------------------------------------------
+    def snapshots(self, ship) -> list:
+        return list(self._vm(ship)["snapshots"])
+
+    def snapshot(self, ship, name, description="") -> Outcome:
+        check_snapshot_name(name)
+        taken = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._vm(ship)["snapshots"].append(Snapshot(name, taken, description))
+        return self._done(f"Took snapshot {name} of {ship.name}")
+
+    def rollback(self, ship, name) -> Outcome:
+        check_snapshot_name(name)
+        return self._done(f"Rolled {ship.name} back to {name}")
+
+    def delete_snapshot(self, ship, name) -> Outcome:
+        check_snapshot_name(name)
+        vm = self._vm(ship)
+        vm["snapshots"] = [s for s in vm["snapshots"] if s.name != name]
+        return self._done(f"Deleted snapshot {name} of {ship.name}")
+
+
+def make_driver():
+    """The demo's driver_factory: DemoDriver for "proxmox", the real one otherwise."""
+    from fleetledger.drivers import get_driver
+
+    demo = DemoDriver()
+    now = datetime.now(UTC)
+    for name, days, note in (("ship-01", 6, "before the herdr upgrade"),
+                             ("ship-01", 1, "known good"), ("ship-02", 3, "")):
+        taken = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        vm = demo.vms.setdefault(name, {"state": "running", "vmid": 9100 + len(demo.vms),
+                                        "snapshots": []})
+        vm["snapshots"].append(Snapshot(f"snap-{taken[:10].replace('-', '')}", taken, note))
+
+    def factory(inventory, driver_id):
+        return demo if driver_id == "proxmox" else get_driver(inventory, driver_id)
+
+    return factory
 
 
 def ship_id(index: int) -> str:
@@ -86,11 +204,12 @@ def home(base: Path) -> None:
     for key in ("fleet_admin", "you"):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", key,
                         "-f", str(base / "keys" / key)], check=True)
-    text = INVENTORY.format(keys=base / "keys")
+    text = INVENTORY.format(keys=base / "keys", fingerprint=DEMO_FINGERPRINT)
     for i, (name, (tags, tail, joined)) in enumerate(SHIPS.items(), start=1):
         overlay = f'overlay_node = "nDemo{i}"\n' if joined else ""
+        driver = "proxmox" if name in ON_DEMO_DRIVER else "manual"
         text += SHIP_ENTRY.format(name=name, id=ship_id(i), tags=json.dumps(tags),
-                                  tail=tail, overlay=overlay)
+                                  tail=tail, overlay=overlay, driver=driver)
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
     path.chmod(0o600)
@@ -243,7 +362,6 @@ def main() -> int:
     args = parser.parse_args()
     base = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="fleetledger-demo-"))
     home(base)
-    sys.path.insert(0, str(ROOT / "fleetledger"))
     from fleetledger.repo import Repo
     from fleetledger.store import TomlFileStore
     from fleetledger.web import server
@@ -254,7 +372,7 @@ def main() -> int:
     seed_net()
     seed_history()
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
-                  ssh_factory=make_ssh, sleep=time.sleep,
+                  ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
                   stdin_isatty=lambda: False)
     print(f"Demo FleetLedger home: {base}", flush=True)
     return server.serve(app, port=args.port, open_browser=False, interval=10)
