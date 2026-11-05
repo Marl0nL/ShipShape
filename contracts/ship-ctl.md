@@ -128,7 +128,10 @@ attention item `agent-repo-waiting`; it is retried when GitHub becomes signed in
 (see "Reacting to sign-ins"). The status refresh clones each entry's repo as soon
 as it can, without waiting for Claude (a public repo needs no sign-in), so the
 folder is ready when the agent starts. A clone that fails while signed in is
-`agent-repo-failed`. Other agents start regardless.
+`agent-repo-failed`. When github.com cannot be reached at all (no network or DNS
+yet), the item says so, not that a sign-in is missing, and the clone is tried again
+at every status refresh. An agent removed from `[[autostart]]` takes its repo state
+and attention item with it. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
 
@@ -173,8 +176,8 @@ previous refresh:
 
 - a service that changed to `ok`: run `tools run` for the recipes waiting on it;
 - `claude` changed to `ok`: then run `autostart` once;
-- `github` changed to `ok`, with an `[[autostart]]` entry that has a `repo`: run
-  `autostart` once (its clone may need the sign-in).
+- `github` changed to `ok`: clone the repos that waited for it, then start just
+  those agents (never one you stopped).
 
 This is triggered by the change, not by the state, so an agent you stop later is
 not restarted until the next boot or the next time Claude goes from signed out
@@ -211,7 +214,8 @@ next reboot.
 ### `ship-ctl grow-root [--json]`
 
 Grows the partition that holds `/` to fill its disk (`growpart`), then its ext4
-filesystem (`resize2fs`), online. FleetLedger runs it after it grows a Ship's disk
+filesystem (`resize2fs`, always, so a partition grown earlier without its
+filesystem is caught up), online. FleetLedger runs it after it grows a Ship's disk
 through the hypervisor (`ship-fleet resize --disk-gb`). Nothing to grow is not an
 error: `changed` is empty. `data`: `{ "device": "/dev/sda1", "grown": true|false }`.
 
