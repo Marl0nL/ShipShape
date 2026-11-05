@@ -115,9 +115,13 @@ table, ul.alerts, .grid > div, article.flow, section.setup-step, .tile, .ship-ca
 figure.chart, dialog.confirm-dialog, .flash, .warning, .notice, .pill, .chip,
 input, select, textarea, nav.tabs a.on, code.cmd {
   --ink: var(--paper-ink); --muted: var(--paper-muted); --accent: var(--paper-accent);
-  --focus: var(--s1);
   color: var(--ink);
 }
+/* The focus ring is drawn outside the element, so its colour follows the surface
+   around it: verdigris inside parchment panels, brass (from body) on the deck.
+   Inputs, selects and tabs inherit whichever they sit on. */
+table, ul.alerts, .grid > div, article.flow, section.setup-step, .tile, .ship-card,
+figure.chart, dialog.confirm-dialog, .flash, .warning, .notice { --focus: var(--s1); }
 a { color: var(--accent); text-underline-offset: 2px; }
 a:hover { text-decoration-thickness: 2px; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -458,9 +462,13 @@ details.table-view summary { font-size: 12px; }
 @media (forced-colors: active) {
   .mark-line { stroke: CanvasText; } .mark-fill, .mark-end, .mark-dot { fill: CanvasText; }
   .sev-icon .shape { fill: CanvasText; } .sev-icon .mark { fill: Canvas; }
+  /* Forced colours drop box-shadow, and a clip would cut the system outline:
+     plain shapes and a real outline here. */
+  .pill, .chip, .count, .badge { clip-path: none; }
+  .chip:focus-visible { outline: 3px solid; }
 }
 @media print {
-  body, header.top { background: none; color: #000; }
+  html, body, header.top { background: none; color: #000; }
   body { --ink: var(--paper-ink); --muted: var(--paper-muted); --accent: var(--paper-accent); }
   header.top::after, .tile::before { display: none; }
 }
