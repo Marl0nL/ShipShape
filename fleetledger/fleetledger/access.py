@@ -1,6 +1,6 @@
 """ship-fleet overlay (phase 5): join Ships to the overlay network, leave it, show it.
 
-See overlay.py for how keys are handled and docs/runbooks/remote-access.md for
+See fleetledger/overlay/__init__.py for how keys are handled and docs/runbooks/remote-access.md for
 the whole setup, including your laptop.
 """
 
@@ -10,8 +10,6 @@ from fleetledger import overlay
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 from fleetledger.shipctl import ShipCtl
-
-COMMANDS = ("overlay",)
 
 
 def add_parsers(sub, add) -> None:

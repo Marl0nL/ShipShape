@@ -26,7 +26,7 @@ from fleetledger import paths
 from fleetledger.drivers import proxmox_api
 from fleetledger.errors import FleetError
 from fleetledger.overlay import secret_store
-from fleetledger.overlay_setup import _ask, _choose, _plausible_secret, _secret, _tilde
+from fleetledger.overlay_setup import _ask, _choose, _plausible_secret, _secret
 
 SECRET_FILE = "proxmox-token"
 TOKEN_ID_RE = re.compile(r"^[^@!\s]+@[^!\s]+![A-Za-z][A-Za-z0-9_.-]*$")  # as the schema
@@ -149,13 +149,18 @@ def seed_storage_commands(n: Names, *, grants: bool = True) -> list[str]:
     return out
 
 
+def _needed_grants(n: Names) -> tuple[tuple[str, str], ...]:
+    """(path, role) for each path the token needs a role on."""
+    return ((f"/pool/{n.pool}", "ShipShapeVM"),
+            (f"/storage/{n.seeds}", "ShipShapeSeeds"),
+            (f"/storage/{n.disk}", "ShipShapeDisks"),
+            (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser"))
+
+
 def grant_commands(n: Names) -> list[str]:
     seen: set[str] = set()
     out = []
-    for path, role in ((f"/pool/{n.pool}", "ShipShapeVM"),
-                       (f"/storage/{n.seeds}", "ShipShapeSeeds"),
-                       (f"/storage/{n.disk}", "ShipShapeDisks"),
-                       (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser")):
+    for path, role in _needed_grants(n):
         for line in _grant(path, role, n):
             if line not in seen:
                 seen.add(line)
@@ -207,10 +212,7 @@ def effective(perms: Mapping[str, Mapping[str, Any]], path: str) -> set[str]:
 def missing_grants(perms, n: Names) -> list[tuple[str, str, list[str]]]:
     """(path, role, privileges lacking) for each path the token needs."""
     out = []
-    for path, role in ((f"/pool/{n.pool}", "ShipShapeVM"),
-                       (f"/storage/{n.seeds}", "ShipShapeSeeds"),
-                       (f"/storage/{n.disk}", "ShipShapeDisks"),
-                       (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser")):
+    for path, role in _needed_grants(n):
         lacking = [p for p in role_privs(role, n.pve_major) if p not in effective(perms, path)]
         if lacking:
             out.append((path, role, lacking))
@@ -374,7 +376,7 @@ def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused:
     if not reused:
         paths.private_dir(path.parent)
         paths.write_private(path, (secret + "\n").encode("utf-8"))
-    config["token_file"] = _tilde(path)
+    config["token_file"] = paths.tilde(path)
     config.pop("token_store", None)
     config.pop("keyring_item", None)
     return f"{path} (0600)"
@@ -472,7 +474,7 @@ def _token_secret(app, token_id: str, old: Mapping[str, Any], *, keyring_ok: boo
         except FleetError:
             continue
         if _plausible_token(on_disk) and _choose(
-                app, f"A token secret is already in {_tilde(path)}. Use it (checked with "
+                app, f"A token secret is already in {paths.tilde(path)}. Use it (checked with "
                 "Proxmox first, never shown)", ("yes", "no"), "yes") == "yes":
             return on_disk, True, "file", path
     secret = _secret(app, "Token secret (not shown): ")

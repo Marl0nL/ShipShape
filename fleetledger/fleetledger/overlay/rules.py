@@ -40,7 +40,7 @@ class Finding:
 
 
 def _rules(doc: dict) -> list[dict]:
-    """acls and grants, in one shape: {src, dst (host:port strings or tags), kind}."""
+    """acls and grants, in one shape: {src, dst (host:port strings or tags), ports, kind}."""
     out = []
     for rule in doc.get("acls") or []:
         if isinstance(rule, dict) and rule.get("action", "accept") == "accept":
@@ -83,7 +83,8 @@ def _covers_port_22(rule: dict, dst: str) -> bool:
 
 
 def ship_sources(doc: dict, tags: list[str]) -> list[dict]:
-    """Rules that let a Ship start a connection: their source is a Ship tag or "*"."""
+    """Rules that let a Ship start a connection: their source is a Ship tag, "*",
+    autogroup:tagged or autogroup:danger-all."""
     return [r for r in _rules(doc) if set(r["src"]) & (SHIP_COVERING_SOURCES | set(tags))]
 
 
@@ -123,9 +124,10 @@ def findings(doc: dict, tags: list[str]) -> list[Finding]:
                                "a device look like a Ship. Own it by admins only."))
         else:
             out.append(Finding(f"tag owner {tag}", True, f"{tag} owned by {', '.join(who)}"))
-    out.append(Finding("your devices reach Ships on port 22", members_reach_ships(doc, tags),
+    reach = members_reach_ships(doc, tags)
+    out.append(Finding("your devices reach Ships on port 22", reach,
                        "a rule from autogroup:member to the Ships on port 22"
-                       if members_reach_ships(doc, tags) else
+                       if reach else
                        "no rule lets your devices reach the Ships on port 22"))
     wide = ship_sources(doc, tags)
     out.append(Finding(
@@ -135,8 +137,9 @@ def findings(doc: dict, tags: list[str]) -> list[Finding]:
         "these rules let Ships reach other devices (a Ship could reach your laptop or "
         "another Ship): " + "; ".join(json.dumps({"src": r["src"], "dst": r["dst"]})
                                      for r in wide[:3])))
-    out.append(Finding("policy test: Ships cannot reach each other", _has_ship_test(doc, tags),
-                       "present" if _has_ship_test(doc, tags) else
+    tested = _has_ship_test(doc, tags)
+    out.append(Finding("policy test: Ships cannot reach each other", tested,
+                       "present" if tested else
                        "missing: nothing stops a later edit from letting Ships reach each "
                        "other", severity="warn"))
     return out

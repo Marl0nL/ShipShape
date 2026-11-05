@@ -1,4 +1,4 @@
-"""ship-fleet destroy, snapshot and image (phase 4).
+"""ship-fleet destroy, resize, snapshot and image (phase 4).
 
 Hypervisor work goes through the driver interface (drivers/base.py); nothing
 here knows which hypervisor a Ship runs on.
@@ -8,13 +8,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fleetledger import enrol, images, overlay, paths
+from fleetledger import enrol, images, overlay, status
 from fleetledger.commands import table
 from fleetledger.drivers import NotSupported, PublishedImage
 from fleetledger.errors import FleetError
 from fleetledger.inventory import STOCK_IMAGE
-
-COMMANDS = ("destroy", "resize", "snapshot", "image")
 
 SNAPSHOT_WARNING = (
     "A snapshot holds the Ship's sign-ins (Claude, gcloud, GitHub) as they were: "
@@ -115,7 +113,7 @@ def cmd_destroy(args, app) -> int:
     seed = enrol.local_seed(ship)
     if seed is not None:
         seed.unlink(missing_ok=True)
-    (paths.status_cache_dir() / f"{ship.name}.json").unlink(missing_ok=True)
+    status.cache_path(ship.name).unlink(missing_ok=True)
     app.say(f"{ship.name} is removed from the inventory.")
     return 0
 

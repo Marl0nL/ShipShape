@@ -13,8 +13,6 @@ import os
 from fleetledger import paths
 from fleetledger.inventory import now_timestamp
 
-FIELDS = ("at", "ship", "action", "service", "outcome", "account")
-
 
 def record(
     ship: str, action: str, service: str, outcome: str, account: str | None = None

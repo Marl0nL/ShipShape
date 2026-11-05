@@ -28,9 +28,6 @@ from fleetledger.trustcmd import after_enrol, cmd_ca, cmd_trust, cmd_untrust  # 
 MODES = ops.MODES
 LOG_SOURCES = ops.LOG_SOURCES
 NAME_RE = ops.NAME_RE
-TAG_RE = ops.TAG_RE
-SET_KEYS = ops.SET_KEYS
-parse_assignments = ops.parse_assignments
 
 
 # --- shared helpers --------------------------------------------------------
@@ -41,14 +38,6 @@ def table(rows: list[list[str]], headers: list[str]) -> str:
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths, strict=True)).rstrip()
              for row in [headers, *rows]]
     return "\n".join(lines)
-
-
-def _tilde(path: Path) -> str:
-    home = Path.home()
-    try:
-        return "~/" + str(path.resolve().relative_to(home.resolve()))
-    except ValueError:
-        return str(path)
 
 
 def _ssh(app, inventory: Inventory):
@@ -130,8 +119,8 @@ def cmd_init(args, app) -> int:
     admin = make_fleet(app, store, args.admin_key, args.agent_key,
                        no_passphrase=args.no_passphrase)
     app.say("Next:")
-    app.say(f"  ssh-add {_tilde(admin)}                 # FleetLedger uses ssh-agent")
-    app.say(f"  edit {_tilde(store.path)}   # tags, expected accounts, [drivers.proxmox]")
+    app.say(f"  ssh-add {paths.tilde(admin)}                 # FleetLedger uses ssh-agent")
+    app.say(f"  edit {paths.tilde(store.path)}   # tags, expected accounts, [drivers.proxmox]")
     app.say("  ship-fleet new ship-01 --tag work")
     return 0
 
@@ -178,10 +167,10 @@ def make_fleet(app, store, admin_key: str, agent_key_values: list[str], *,
     for key in agent_keys:
         cloudinit.read_public_keys(key, "an agent key")
 
-    store.create(new_inventory(_tilde(admin), [_tilde(k) for k in agent_keys]))
+    store.create(new_inventory(paths.tilde(admin), [paths.tilde(k) for k in agent_keys]))
     if made_managed:
         with store.edit() as ed:
-            keys.record(ed, managed, [_tilde(admin)])
+            keys.record(ed, managed, [paths.tilde(admin)])
     app.say(f"Wrote {store.path}.")
     return admin
 
@@ -697,7 +686,6 @@ def cmd_owner(args, app) -> int:
 
 def set_owner(app, store, name: str, say) -> bool:
     """fleet.owner, and the owner login on every Ship (ship-ctl set owner.*)."""
-    from fleetledger.seed import cloudinit
     from fleetledger.shipctl import ShipCtl, ShipCtlError
 
     if not OWNER_RE.match(name) or name in ("root", "fleet", "agent", "nobody"):
@@ -778,7 +766,7 @@ def _confirm_many(app, ships: list[Ship], what: str, yes: bool) -> None:
 
 
 def _split_names(values: list[str]) -> tuple[list[str], list[str]]:
-    """Positional words before the first KEY=VALUE are Ship names."""
+    """Words without '=' are Ship names, wherever they come; the rest are KEY=VALUE."""
     names = [v for v in values if "=" not in v]
     pairs = [v for v in values if "=" in v]
     return names, pairs

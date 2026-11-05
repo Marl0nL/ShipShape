@@ -11,6 +11,8 @@ from typing import Any
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Ship
 
+DEFAULT_TAGS = ("tag:ship",)  # [overlay] tags when ships.toml names none
+
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{16,500}$")
 
 
@@ -32,7 +34,7 @@ class PromptKeys:
         self.isatty = isatty
 
     def key(self, ship: Ship) -> str:
-        wanted = ", ".join(self.config.get("tags", ("tag:ship",)))
+        wanted = ", ".join(self.config.get("tags", DEFAULT_TAGS))
         headscale = self.config.get("provider") == "headscale" or self.config.get("login_server")
         if not self.isatty():
             raise FleetError(

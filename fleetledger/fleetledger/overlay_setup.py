@@ -22,7 +22,6 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from fleetledger import overlay, paths
@@ -45,13 +44,6 @@ MANAGE_WARNING = (
     "Most people should keep the default: paste the rules once, and `ship-fleet\n"
     "overlay check` keeps verifying them."
 )
-
-
-def _tilde(path) -> str:
-    try:
-        return "~/" + str(path.resolve().relative_to(Path.home().resolve()))
-    except ValueError:
-        return str(path)
 
 
 # --- small prompts --------------------------------------------------------------
@@ -295,7 +287,7 @@ def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, stor
     if store_kind == "keyring":
         api_cfg.update(secret_store="keyring", keyring_item=item)
     else:
-        api_cfg.update(secret_store="file", oauth_secret_file=_tilde(secret_path))
+        api_cfg.update(secret_store="file", oauth_secret_file=paths.tilde(secret_path))
     api_cfg.update(key_expiry_s=600, remove_devices=remove, manage_policy=manage)
 
     notes: list[str] = []

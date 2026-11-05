@@ -20,6 +20,7 @@ from fleetledger.drivers.base import (
     SeedFile,
     check_snapshot_name,
 )
+from fleetledger.drivers.proxmox import seed_volume, template_name
 from fleetledger.inventory import Ship
 
 GENERIC = (
@@ -43,7 +44,7 @@ class ManualDriver(Driver):
 
     def _volume(self, instance_id: str) -> str:
         storage = self.px["seed_storage"] if self.px else "<seed-storage>"
-        return f"{storage}:iso/{instance_id}.iso"
+        return seed_volume(storage, instance_id)
 
     def _free_seed(self, ship: Ship) -> str:
         return shlex.join(["pvesm", "free", self._volume(str(ship.driver_ref["seed"]))])
@@ -158,7 +159,7 @@ class ManualDriver(Driver):
             f"# 1. Copy {image.path} to the Proxmox host as {remote}.",
             "# 2. On the host, as root, with VMID set to a free VM id (e.g. VMID=9050):",
             f"echo {q(image.sha256 + '  ' + remote)} | sha256sum -c",
-            f'qm create "$VMID" --name {q("shipshape-img-" + image.id)} --pool {q(px["pool"])} '
+            f'qm create "$VMID" --name {q(template_name(image.id))} --pool {q(px["pool"])} '
             "--memory 2048 --cores 2 --cpu host --ostype l26 "
             f"--net0 {q('virtio,bridge=' + px['bridge'])} --scsihw virtio-scsi-pci "
             f"--scsi0 {q(px['disk_storage'] + ':0,import-from=' + remote)} "

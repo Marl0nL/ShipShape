@@ -116,9 +116,9 @@ def fleet(app) -> tuple[list[Item], Any]:
     if not admin.exists() or not public.exists():
         gone = admin if not admin.exists() else public
         out.append(Item("fleet", "admin key", "missing", f"no {gone}",
-                        f"ssh-keygen -t ed25519 -C fleetledger-admin -f {_tilde(admin)}"
+                        f"ssh-keygen -t ed25519 -C fleetledger-admin -f {paths.tilde(admin)}"
                         if not admin.exists() else
-                        f"ssh-keygen -y -f {_tilde(admin)} > {_tilde(public)}"))
+                        f"ssh-keygen -y -f {paths.tilde(admin)} > {paths.tilde(public)}"))
     elif admin in _managed(inv)[1]:
         out.append(Item("fleet", "admin key", "ok", str(admin)))
         out.extend(_managed_items(inv))
@@ -129,7 +129,7 @@ def fleet(app) -> tuple[list[Item], Any]:
         if held is None and not os.environ.get("SSH_AUTH_SOCK"):
             out.append(Item("fleet", "ssh-agent", "missing",
                             "no ssh-agent (SSH_AUTH_SOCK is not set)",
-                            'eval "$(ssh-agent)" && ssh-add ' + _tilde(admin)))
+                            'eval "$(ssh-agent)" && ssh-add ' + paths.tilde(admin)))
         elif held is None:
             out.append(Item("fleet", "ssh-agent", "fail",
                             "the ssh-agent named by SSH_AUTH_SOCK does not answer "
@@ -138,16 +138,16 @@ def fleet(app) -> tuple[list[Item], Any]:
         elif fpr is None:
             out.append(Item("fleet", "ssh-agent", "fail",
                             f"cannot read the fingerprint of {public} (ssh-keygen -lf failed)",
-                            f"ssh-keygen -lf {_tilde(public)}   (shows what is wrong)"))
+                            f"ssh-keygen -lf {paths.tilde(public)}   (shows what is wrong)"))
         elif fpr in held:
             out.append(Item("fleet", "ssh-agent", "ok", f"holds the admin key ({fpr})"))
         else:
             out.append(Item("fleet", "ssh-agent", "missing", "the admin key is not loaded",
-                            f"ssh-add {_tilde(admin)}"))
+                            f"ssh-add {paths.tilde(admin)}"))
     absent = [str(p) for p in inv.agent_key_paths if not p.exists()]
     out.append(Item("fleet", "your keys for Ships", "fail" if absent else "ok",
                     ("missing: " + ", ".join(absent)) if absent else
-                    ", ".join(_tilde(p) for p in inv.agent_key_paths),
+                    ", ".join(paths.tilde(p) for p in inv.agent_key_paths),
                     "make one: ssh-keygen -t ed25519, then edit fleet.agent_keys in ships.toml"
                     if absent else ""))
     ca = inv.doc.get("ca")
@@ -156,12 +156,17 @@ def fleet(app) -> tuple[list[Item], Any]:
                         "no [ca]: other machines cannot be trusted with certificates",
                         "ship-fleet setup   (or: ship-fleet ca init)"))
     else:
-        keys = [paths.expand(ca[k]) for k in ("host_key", "user_key") if k in ca]
-        gone = [str(k) for k in keys if not k.exists()]
+        gone = [str(k) for k in missing_ca_keys(ca)]
         out.append(Item("fleet", "certificate authority", "fail" if gone else "ok",
                         ("missing key files: " + ", ".join(gone)) if gone else "host and user CA",
                         "ship-fleet ca init --force" if gone else ""))
     return out, inv
+
+
+def missing_ca_keys(ca) -> list[Path]:
+    """The [ca] host and user key files that are not on disk."""
+    named = [paths.expand(ca[k]) for k in ("host_key", "user_key") if k in ca]
+    return [k for k in named if not k.exists()]
 
 
 def _managed(inv):
@@ -190,13 +195,6 @@ def _managed_items(inv) -> list[Item]:
     return problems or [Item("fleet", "managed keys", "ok",
                              f"{len(managed)} key(s); passphrases in {keys.describe(store)}; "
                              "loaded into ssh-agent when needed")]
-
-
-def _tilde(path) -> str:
-    try:
-        return "~/" + str(path.resolve().relative_to(Path.home().resolve()))
-    except ValueError:
-        return str(path)
 
 
 # --- the hypervisor ---------------------------------------------------------------------

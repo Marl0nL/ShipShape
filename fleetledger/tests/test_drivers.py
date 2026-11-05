@@ -551,6 +551,10 @@ def test_manual_driver_images_and_snapshots(tmp_path):
     assert "qm clone 9181 9105" in text
     published = "\n".join(driver.publish_image(image_file(tmp_path)).instructions)
     assert "qm template \"$VMID\"" in published and "sha256sum -c" in published
+    # ProxmoxDriver.create refuses a template named anything else
+    from fleetledger.drivers.proxmox import template_name
+
+    assert f"--name {template_name(IMG)} " in published
     assert "--template-vmid" in published
     assert driver.snapshot(ship(vmid=9105), "s1").instructions == ["qm snapshot 9105 s1"]
     assert "qm rollback 9105 s1 --start 1" in driver.rollback(ship(vmid=9105), "s1").instructions

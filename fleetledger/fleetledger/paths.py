@@ -71,6 +71,14 @@ def expand(path: str | os.PathLike[str]) -> Path:
     return Path(os.fspath(path)).expanduser()
 
 
+def tilde(path: str | os.PathLike[str]) -> str:
+    """path as ~/... when it is under your home folder (for messages), else as given."""
+    try:
+        return "~/" + str(Path(path).resolve().relative_to(Path.home().resolve()))
+    except ValueError:
+        return str(path)
+
+
 def private_dir(path: Path) -> Path:
     """Create a folder only you can read (0700) and return it."""
     path.mkdir(parents=True, exist_ok=True, mode=0o700)

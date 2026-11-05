@@ -53,7 +53,8 @@ class Child(Protocol):
 
 
 class Prompter(Protocol):
-    """How the engine talks to you (terminal now, the web UI in phase 2)."""
+    """How the engine talks to you: concierge/terminal.TerminalPrompter in a terminal,
+    web/flows.WebPrompter in the browser."""
 
     def show_link(self, url: str, code: str | None, expires_in: float) -> None: ...
 

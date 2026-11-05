@@ -86,10 +86,7 @@ class InventoryEditor:
         ships = self.doc["ship"]
         if name in ships:
             raise FleetError(f"A Ship named '{name}' is already in the inventory.")
-        table = tomlkit.table()
-        for key, value in entry.items():
-            table[key] = _item(value)
-        ships[name] = table
+        ships[name] = _table(entry)
 
     def remove_ship(self, name: str) -> None:
         self._ship_table(name)
@@ -97,12 +94,7 @@ class InventoryEditor:
 
     def set_field(self, name: str, key: str, value: Any) -> None:
         """Set a top-level key of a Ship entry; None removes it."""
-        table = self._ship_table(name)
-        if value is None:
-            if key in table:
-                del table[key]
-        else:
-            table[key] = _item(value)
+        _assign(self._ship_table(name), key, value)
 
     def set_tags(self, name: str, tags: list[str]) -> None:
         self.set_field(name, "tags", sorted(dict.fromkeys(tags)))
@@ -123,9 +115,7 @@ class InventoryEditor:
     # --- certificate authority (phase 3) --------------------------------------
     def set_ca(self, entry: Mapping[str, Any]) -> None:
         """Create or replace the [ca] table."""
-        table = tomlkit.table()
-        for key, value in entry.items():
-            table[key] = _item(value)
+        table = _table(entry)
         if "ca" in self.doc:
             self.doc["ca"] = table
         else:
@@ -144,20 +134,13 @@ class InventoryEditor:
         if "machine" not in self.doc:
             self.doc.add(tomlkit.nl())
             self.doc["machine"] = tomlkit.table(is_super_table=True)
-        table = tomlkit.table()
-        for key, value in entry.items():
-            table[key] = _item(value)
-        self.doc["machine"][name] = table
+        self.doc["machine"][name] = _table(entry)
 
     def set_machine_field(self, name: str, key: str, value: Any) -> None:
         machines = self.doc.get("machine")
         if machines is None or name not in machines:
             raise NotFound(f"No machine named '{name}' in the inventory.")
-        if value is None:
-            if key in machines[name]:
-                del machines[name][key]
-        else:
-            machines[name][key] = _item(value)
+        _assign(machines[name], key, value)
 
     # --- images (contracts/image.md) -----------------------------------------
     def _images(self) -> Table:
@@ -169,20 +152,13 @@ class InventoryEditor:
         images = self._images()
         if image_id in images:
             raise FleetError(f"Image {image_id} is already in the inventory.")
-        table = tomlkit.table()
-        for key, value in entry.items():
-            table[key] = _item(value)
-        images[image_id] = table
+        images[image_id] = _table(entry)
 
     def set_image_field(self, image_id: str, key: str, value: Any) -> None:
         images = self._images()
         if image_id not in images:
             raise NotFound(f"No image '{image_id}' in the inventory.")
-        if value is None:
-            if key in images[image_id]:
-                del images[image_id][key]
-        else:
-            images[image_id][key] = _item(value)
+        _assign(images[image_id], key, value)
 
     def remove_image(self, image_id: str) -> None:
         images = self._images()
@@ -222,12 +198,23 @@ class InventoryEditor:
         """Set defaults.<key>; None removes it."""
         if "defaults" not in self.doc:
             self.doc["defaults"] = tomlkit.table()
-        defaults = self.doc["defaults"]
-        if value is None:
-            if key in defaults:
-                del defaults[key]
-        else:
-            defaults[key] = _item(value)
+        _assign(self.doc["defaults"], key, value)
+
+
+def _table(entry: Mapping[str, Any]) -> Table:
+    table = tomlkit.table()
+    for key, value in entry.items():
+        table[key] = _item(value)
+    return table
+
+
+def _assign(table: Table, key: str, value: Any) -> None:
+    """table[key] = value; None removes the key."""
+    if value is None:
+        if key in table:
+            del table[key]
+    else:
+        table[key] = _item(value)
 
 
 def _item(value: Any) -> Any:

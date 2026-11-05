@@ -158,6 +158,11 @@ def _quiet(_ship: str, _text: str) -> None:
     pass
 
 
+def _last_line(stderr: str) -> str:
+    """The last line a failed command printed, for its error message."""
+    return (stderr.strip().splitlines() or ["no output"])[-1]
+
+
 def select(
     inventory: Inventory,
     names: Iterable[str] = (),
@@ -294,8 +299,7 @@ def _issue_reboot(fleet: Fleet, inventory: Inventory, ship: Ship, host: str | No
         if forget is not None:
             forget(ship)
     if result.returncode not in (0, 255):
-        detail = result.stderr.strip().splitlines()[-1:] or ["no output"]
-        raise FleetError(f"{ship.name}: the reboot command failed: {detail[0]}")
+        raise FleetError(f"{ship.name}: the reboot command failed: {_last_line(result.stderr)}")
 
 
 def reboot_one(
@@ -419,8 +423,7 @@ def upload_bundle(fleet: Fleet, inventory: Inventory, ship: Ship,
         input=bundle.data, timeout=300,
     )
     if result.returncode != 0:
-        detail = (result.stderr.strip().splitlines() or ["no output"])[-1]
-        raise FleetError(f"{ship.name}: uploading the bundle failed: {detail}")
+        raise FleetError(f"{ship.name}: uploading the bundle failed: {_last_line(result.stderr)}")
     return f"{INCOMING}/{name}"
 
 
@@ -444,6 +447,11 @@ def up_to_date(doc: dict[str, Any], bundle: bundle_mod.Bundle) -> bool:
     )
 
 
+def _check_reboot_policy(policy: str) -> None:
+    if policy not in REBOOT_POLICIES:
+        raise FleetError(f"Unknown reboot policy '{policy}' (choose {', '.join(REBOOT_POLICIES)}).")
+
+
 def update_one(
     fleet: Fleet,
     ship: Ship,
@@ -460,8 +468,7 @@ def update_one(
     reboot_policy: auto reboots only when the converge replaced herdr (the running
     server keeps the old binary until a reboot); always and never do what they say.
     """
-    if reboot_policy not in REBOOT_POLICIES:
-        raise FleetError(f"Unknown reboot policy '{reboot_policy}'.")
+    _check_reboot_policy(reboot_policy)
     inventory = fleet.inventory
     view = _fetch(fleet, inventory, ship)
     before = _require_status(view)
@@ -539,9 +546,7 @@ def update(
     bundle: bundle_mod.Bundle | None = None,
 ) -> list[Outcome]:
     """Update every Ship to the tooling bundle packed from this checkout."""
-    if reboot_policy not in REBOOT_POLICIES:
-        raise FleetError(f"Unknown reboot policy '{reboot_policy}' "
-                         f"(choose {', '.join(REBOOT_POLICIES)}).")
+    _check_reboot_policy(reboot_policy)
     bundle = bundle or bundle_mod.pack(fleet.repo_factory())
     if bundle.manifest["dirty"] and on_event:
         on_event("*", f"note: packing {bundle.release} from a checkout with uncommitted "

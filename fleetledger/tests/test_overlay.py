@@ -56,6 +56,11 @@ def recording(answers):
     return opener, seen
 
 
+def test_ships_are_tagged_tag_ship_unless_the_inventory_says_otherwise():
+    assert overlay.tags({}) == ["tag:ship"]
+    assert overlay.tags({"tags": ["tag:a", "tag:b"]}) == ["tag:a", "tag:b"]
+
+
 def test_api_mints_a_single_use_preapproved_tagged_key(api_config):
     opener, seen = recording([{"access_token": TOKEN}, {"id": "k1", "key": MINTED}])
     keys = overlay.key_source(api_config, opener=opener)

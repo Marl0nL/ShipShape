@@ -7,7 +7,9 @@ attention items on top of the Ship's (contracts/ship-ctl.md):
 - signin-wrong-account: a service is signed in as an account the Ship's tags
   do not expect;
 - behind-tooling: the Ship's tooling is older than this checkout's versions.toml;
-- tags-differ: the Ship's own tags differ from the inventory's.
+- tags-differ: the Ship's own tags differ from the inventory's;
+- the certificate and SSH trust items from ca.attention (host-cert-missing,
+  ssh-trust-behind, ...).
 
 Before ship-ctl exists (first boot), `cloud-init status --format json` stands in.
 """
@@ -39,7 +41,7 @@ class ShipView:
     ship: Ship
     status: dict[str, Any] | None = None
     cloud_init: dict[str, Any] | None = None  # stand-in before ship-ctl exists
-    problem: str | None = None  # unreachable | host-key | identity | invalid | error
+    problem: str | None = None  # unreachable | host-key | identity | invalid | error | unknown
     message: str | None = None
     host: str | None = None
     attention: list[dict[str, str]] = field(default_factory=list)
@@ -122,8 +124,9 @@ def fleet_attention(
 
 
 def cached_view(inventory: Inventory, ship: Ship, missing: str) -> ShipView:
-    """A Ship as its last fetched status shows it (offline), with the same attention as
-    a live fetch would give (sign-ins it does not use left out)."""
+    """A Ship as its last fetched status shows it (offline), with the Ship's own
+    attention and FleetLedger's sign-in and tag checks (sign-ins it does not use left
+    out). Unlike a live fetch it has no behind-tooling or certificate items."""
     doc = read_cache(ship.name)
     view = ShipView(ship, status=doc)
     if doc is None:
@@ -217,17 +220,18 @@ def poll(
 # --- cache ---------------------------------------------------------------
 
 
-def _cache_path(name: str) -> Path:
+def cache_path(name: str) -> Path:
+    """Where a Ship's last fetched status is kept (for `ls --offline`)."""
     return paths.status_cache_dir() / f"{name}.json"
 
 
 def write_cache(name: str, doc: dict[str, Any]) -> None:
-    folder = paths.private_dir(paths.status_cache_dir())
-    paths.write_private(folder / f"{name}.json", json.dumps(doc).encode("utf-8"))
+    paths.private_dir(paths.status_cache_dir())
+    paths.write_private(cache_path(name), json.dumps(doc).encode("utf-8"))
 
 
 def read_cache(name: str) -> dict[str, Any] | None:
     try:
-        return json.loads(_cache_path(name).read_text(encoding="utf-8"))
+        return json.loads(cache_path(name).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
