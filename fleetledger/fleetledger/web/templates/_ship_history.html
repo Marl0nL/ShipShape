@@ -3,7 +3,7 @@
 {% if history %}
 <section class="charts ship-history">
   <div class="toolbar">
-    <h2>The last {{ {"6h": "6 hours", "24h": "24 hours", "7d": "7 days"}[history.range] }}</h2>
+    <h2>The last {{ RANGE_LABELS[history.range] }}</h2>
     {{ ranges_nav(ranges, history.range, "/ships/" ~ ship.name ~ "?") }}
   </div>
   {% if not history.has_history %}

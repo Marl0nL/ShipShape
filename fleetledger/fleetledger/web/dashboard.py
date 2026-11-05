@@ -38,6 +38,7 @@ DISK_WARN, DISK_CRIT = 80.0, 90.0
 
 # Chart ranges: key -> (span, bucket) in seconds.
 RANGES = {"6h": (6 * 3600, 300), "24h": (86400, 900), "7d": (7 * 86400, 3600)}
+RANGE_LABELS = {"6h": "6 hours", "24h": "24 hours", "7d": "7 days"}  # "The last ..."
 DEFAULT_RANGE = "24h"
 TRAFFIC_STEP = {"6h": 3600, "24h": 3600, "7d": 6 * 3600}  # net summaries are hourly
 CARD_RANGE = "24h"

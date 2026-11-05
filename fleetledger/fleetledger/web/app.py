@@ -89,15 +89,6 @@ class UI:
 # --- helpers ---------------------------------------------------------------------
 
 
-def _ago(wall: float | None) -> str:
-    if wall is None:
-        return "not yet"
-    seconds = max(0, int(time.time() - wall))
-    if seconds < 60:
-        return f"{seconds}s ago"
-    return f"{seconds // 60} min ago"
-
-
 def _clock(wall: float | None) -> str:
     if wall is None:
         return "never"
@@ -116,7 +107,6 @@ def make_env() -> Environment:
         agents_cell=commands.agents_cell,
         usage_cell=commands.usage_cell,
         notes_cell=commands.notes_cell,
-        ago=_ago,
         clock=_clock,
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
@@ -129,6 +119,7 @@ def make_env() -> Environment:
         SETTINGS_TEXT=SETTINGS_TEXT,
         human_bytes=net.human_bytes,
         since=network.since,
+        RANGE_LABELS=dashboard.RANGE_LABELS,
     )
     env.filters["pill"] = _pill
     return env
