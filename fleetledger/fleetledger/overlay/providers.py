@@ -30,7 +30,6 @@ from fleetledger.inventory import Ship
 from fleetledger.overlay import keys as keymod
 from fleetledger.overlay.tsapi import TailscaleAPI, default_opener
 
-DEFAULT_TAGS = ("tag:ship",)
 # Whether destroy removes a Ship's tailnet device by default (overlay.api.remove_devices).
 # Off: the stored secret then only mints keys (devices:core is tailnet-wide).
 REMOVE_DEVICES_DEFAULT = False
@@ -64,7 +63,7 @@ class OverlayProvider(ABC):
 
     @property
     def tags(self) -> list[str]:
-        return list(self.config.get("tags", DEFAULT_TAGS))
+        return list(self.config.get("tags", keymod.DEFAULT_TAGS))
 
     @abstractmethod
     def keys(self) -> KeySource: ...

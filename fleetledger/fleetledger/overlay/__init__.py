@@ -21,11 +21,10 @@ from typing import Any
 
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship
-from fleetledger.overlay.keys import PromptKeys  # noqa: F401  (re-exported for callers)
+from fleetledger.overlay.keys import DEFAULT_TAGS, PromptKeys  # noqa: F401  (PromptKeys re-exported)
 from fleetledger.shipctl import ShipCtl, ShipCtlError
 
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")  # ships.toml names
-DEFAULT_TAGS = ("tag:ship",)
 
 
 def settings(inventory: Inventory) -> Mapping[str, Any]:
