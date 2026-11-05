@@ -168,7 +168,8 @@ class Jobs:
         try:
             outcome = run(job)
             if job.ok is None:  # run() may decide; else an exit code or a plain return
-                job.ok = outcome == 0 if isinstance(outcome, int) else True
+                exit_code = isinstance(outcome, int) and not isinstance(outcome, bool)
+                job.ok = outcome == 0 if exit_code else outcome is not False
         except KeyboardInterrupt:
             job.ok, job.error = False, "Interrupted."
             raise

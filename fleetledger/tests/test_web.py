@@ -604,6 +604,125 @@ def test_the_fleet_page_offers_every_ship_actions_above_the_tiles(web):
     assert all('name="tag" value="work"' in f and 'name="csrf"' in f for f in forms)
 
 
+def _alert_form(page, key):
+    """The hidden fields, tick boxes and attributes of an alert's button form."""
+    row = page[page.index(f'data-key="{key}'):]
+    row = row[:row.index("</li>")]
+    attrs, body = re.search(r"<form\b([^>]*)>(.*?)</form>", row, re.S).groups()
+    fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', body))
+    fields.pop("csrf")
+    boxes = re.findall(r'<input type="checkbox" name="([^"]+)"[^>]*data-confirm-field', body)
+    return attrs, fields, boxes
+
+
+@pytest.mark.parametrize("code, operation", [
+    ("reboot-required", "reboot"), ("herdr-restart-pending", "reboot"),
+    ("behind-tooling", "update"),
+])
+def test_alert_buttons_go_through_the_dialog_and_the_server_check(web, monkeypatch, code,
+                                                                  operation):
+    calls = []
+    for name in ("update", "reboot"):
+        monkeypatch.setattr(ops, name, lambda fleet, ships, _n=name, **kw: calls.append(
+            (_n, [s.name for s in ships])) or [ops.Outcome(s.name, True, "done") for s in ships])
+    doc = copy.deepcopy(RUNNING)
+    doc["attention"] = [{"code": code, "message": "Needs it."}]
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    attrs, fields, boxes = _alert_form(web.client.get("/").text, f"ship-01/{code}/")
+    # A tick box, hidden by script and ticked by the dialog; never a prefilled field.
+    assert "data-confirm=" in attrs and boxes == ["confirm"]
+    assert fields == {"operation": operation, "ship": "ship-01", "from": "fleet"}
+    # Without the tick, the server refuses: nothing runs.
+    refused = web.post("/operations", fields)
+    assert refused.headers["location"] == "/" and not calls
+    done = web.post("/operations", {**fields, "confirm": "yes"})
+    assert done.headers["location"] == "/"  # back on the Fleet page it was started from
+    wait_for(lambda: calls)
+    assert calls == [(operation, ["ship-01"])]
+
+
+def test_join_is_never_one_click(web, store):
+    with store.edit() as ed:
+        ed.doc["overlay"] = {"provider": "tailscale", "tags": ["tag:ship"]}
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/").text
+    attrs, fields, boxes = _alert_form(page, "ship-01/not-on-overlay/")
+    assert fields["operation"] == "join" and boxes == ["confirm"]
+    bar = _action_bar(web.client.get("/ships/ship-01").text)
+    assert 'name="confirm" value="yes" data-confirm-field' in bar
+    assert '<input type="hidden" name="confirm"' not in bar
+    web.post("/operations", {"operation": "join", "ship": "ship-01"})
+    assert web.app_ui.jobs.recent() == []  # refused without the confirm box
+
+
+def test_check_now_from_an_alert_needs_no_dialog_and_returns_to_the_fleet(web):
+    web.ship.down.add("ship-02")
+    web.fleet.poll()
+    web.sign_in()
+    attrs, fields, boxes = _alert_form(web.client.get("/").text, "ship-02/unreachable/")
+    assert "data-confirm" not in attrs and boxes == []
+    assert web.post("/ships/ship-02/refresh", fields).headers["location"] == "/"
+    assert web.post("/ships/ship-02/refresh").headers["location"] == "/ships/ship-02"
+
+
+def test_actions_started_on_a_ship_page_return_to_it(web, monkeypatch):
+    for name in ("update", "reboot"):
+        monkeypatch.setattr(ops, name, lambda fleet, ships, **kw: [
+            ops.Outcome(s.name, True, "done") for s in ships])
+    doc = copy.deepcopy(RUNNING)
+    doc["attention"] = [{"code": "reboot-required", "message": "Reboot."}]
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    # An alert's button on the Ship's own page does not say from=fleet: it returns there.
+    _attrs, fields, _boxes = _alert_form(web.client.get("/ships/ship-01").text,
+                                         "ship-01/reboot-required/")
+    assert "from" not in fields
+    response = web.post("/operations", {**fields, "confirm": "yes"})
+    assert response.headers["location"] == "/ships/ship-01"
+    response = web.post("/operations", {"operation": "update", "ship": "ship-01",
+                                        "confirm": "yes"})
+    assert response.headers["location"] == "/ships/ship-01"
+    refused = web.post("/operations", {"operation": "update", "ship": "ship-01"})
+    assert refused.headers["location"] == "/ships/ship-01"
+    tagged = web.post("/operations", {"operation": "update", "tag": "work"})
+    assert tagged.headers["location"] == "/"
+
+
+def test_sign_out_is_on_each_signed_in_row(web):
+    from fleetledger.web.fleet import SERVICE_PROVIDER
+
+    doc = copy.deepcopy(RUNNING)
+    doc["auth"]["gcloud_adc"].update(state="ok", account="work@example.com")
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    start = page.index("<h2>Sign-ins</h2>")
+    table = page[start:page.index("</table>", start)]
+    signed_in = [k for k, e in doc["auth"].items() if e["state"] in ("ok", "expiring")]
+    assert table.count('action="/ships/ship-01/logout"') == len(signed_in)
+    # Each posts the provider id the server takes (gcloud_adc -> gcloud-adc), not the key.
+    posted = {f.split('name="service" value="')[1].split('"')[0]
+              for f in table.split('action="/ships/ship-01/logout"')[1:]}
+    assert posted == {SERVICE_PROVIDER[k] for k in signed_in} and "gcloud-adc" in posted
+    assert "<select name=\"service\">" not in page  # the separate drop-down is gone
+
+
+def test_a_ship_that_does_not_answer_offers_no_sign_ins(web):
+    web.ship.down.add("ship-02")
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-02").text
+    section = page[page.index("<h2>Sign-ins</h2>"):]
+    section = section[:section.index("</section>")]
+    assert 'action="/signin"' not in section and "logout" not in section
+    assert "Sign-ins need the Ship to answer." in section
+
+
 def test_ship_page(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
@@ -886,6 +1005,8 @@ def test_update_and_reboot_run_the_shared_operations_in_the_background(web, monk
     assert calls[1][:2] == ("reboot", ["ship-01"]) and calls[1][2]["wait"] is True
     page = web.client.get("/partials/fleet").text
     assert "did not come back" in page and "agent main did not come back" in page
+    assert web.app_ui.jobs.recent()[0].ok is False  # a Ship that failed: not "done"
+    assert web.app_ui.jobs.recent()[1].ok is True
     web.post("/operations", {"operation": "rm", "ship": "ship-01", "confirm": "yes"})
     assert len(calls) == 2
 

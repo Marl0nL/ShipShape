@@ -47,13 +47,52 @@ WIDE = 600  # the Ship page's charts sit in wider columns
 
 
 @dataclass(frozen=True)
+class Confirm:
+    """What the confirm dialog says before an action is sent (static/app.js)."""
+
+    title: str
+    text: str
+    action: str  # the dialog's button
+    danger: bool = False  # destructive: Cancel has the focus
+
+
+def op_confirm(op: str, ship: str) -> Confirm:
+    """The dialog for updating, rebooting or joining one Ship: the same words on
+    the Ship's action bar and on an alert's button."""
+    texts = {
+        "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
+                   "agents keep running. If its herdr changed it reboots, and its agents "
+                   "resume in their modes. Progress shows on this page.", False),
+        "reboot": (f"{ship} restarts and is out of reach for a minute or two. herdr saves "
+                   "every agent first and resumes it in its mode afterwards. Progress shows "
+                   "on this page.", True),
+        "join": (f"{ship} joins your overlay with a one-off key, so you can reach it from "
+                 "anywhere. Its host certificate is re-signed with its overlay name, and this "
+                 "computer's SSH config is updated. Progress shows on this page.", False),
+    }
+    text, danger = texts[op]
+    label = {"join": f"Join {ship} to the overlay"}.get(op, f"{op.capitalize()} {ship}")
+    return Confirm(f"{label}?", text, label, danger)
+
+
+@dataclass(frozen=True)
 class Action:
-    """How to fix an alert: kind is signin (a button), link or command."""
+    """How to fix an alert: kind is signin (a button), link, command (copy it), or
+    post (a one-button form: value is the route, fields its hidden fields, and
+    confirm, if set, the dialog that must tick its confirm box first)."""
 
     kind: str
     label: str
     value: str = ""  # link: the href; command: the command; signin: the provider id
     hint: str = ""  # a few words before the action
+    fields: tuple[tuple[str, str], ...] = ()
+    confirm: Confirm | None = None
+    title: str = ""  # the CLI equivalent, shown as the button's tooltip
+
+
+def _operation(op: str, ship: str, label: str, command: str) -> Action:
+    return Action("post", label, "/operations", fields=(("operation", op), ("ship", ship)),
+                  confirm=op_confirm(op, ship), title=command)
 
 
 @dataclass(frozen=True)
@@ -83,19 +122,24 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         return Action("signin", "Sign in", signin)
     if code.startswith("signin-"):
         return Action("link", "Sign-ins", "/signin")
+    # Fixes the UI can do itself are buttons; the CLI command is the tooltip.
+    if code in ("reboot-required", "herdr-restart-pending"):
+        return _operation("reboot", ship, "Reboot", f"ship-fleet reboot {ship}")
+    if code == "behind-tooling":
+        return _operation("update", ship, "Update", f"ship-fleet update {ship}")
+    if code == "not-on-overlay":
+        return _operation("join", ship, "Join", f"ship-fleet overlay join {ship}")
+    if code == "unreachable":  # checking again changes nothing: no dialog
+        return Action("post", "Check now", f"/ships/{ship}/refresh",
+                      hint="Switched on and on the network? Then:",
+                      title=f"ship-fleet status {ship}")
     commands = {
-        "unreachable": ("Switched on and on the network? Then check again:",
-                        f"ship-fleet status {ship}"),
         "agent-waiting": ("Attach to answer it:",
                           f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
         "host-cert-expired": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
         "host-cert-expiring": ("Renew its certificate:", f"ship-fleet ca sign {ship}"),
         "host-cert-missing": ("Sign its host key:", f"ship-fleet ca sign {ship}"),
         "ssh-trust-behind": ("Bring its trust up to date:", f"ship-fleet ca sign {ship}"),
-        "reboot-required": ("Reboot it (agents resume):", f"ship-fleet reboot {ship}"),
-        "herdr-restart-pending": ("Reboot it (agents resume):", f"ship-fleet reboot {ship}"),
-        "behind-tooling": ("Update it:", f"ship-fleet update {ship}"),
-        "not-on-overlay": ("Join it:", f"ship-fleet overlay join {ship}"),
         "overlay-down": ("Find out why:", "ship-fleet overlay check"),
         "disk-nearly-full": ("See what fills it:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),
