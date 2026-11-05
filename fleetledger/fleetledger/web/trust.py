@@ -77,9 +77,9 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
     from fleetledger import ca, trustcmd
     from fleetledger.web.setup import _tilde
 
-    jobs = [j for j in ui.jobs.recent() if j.kind in KINDS][:3]
+    jobs = {kind: [j for j in ui.jobs.recent() if j.kind == kind][:3] for kind in KINDS}
     if ca.config(inv) is None:
-        return {"certs": None, "trust_jobs": jobs}
+        return {"certs": None}
     machines = ca.machines(inv)
     bundles = {}
     for m in machines:
@@ -93,7 +93,8 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
         "fingerprints": {m.name: ca.fingerprint(m.public_key) for m in machines},
         "this_until": trustcmd.this_computer_until(inv),
         "scope_choices": scope_choices(inv),
-        "trust_jobs": jobs,
+        "cert_jobs": jobs["certs"],
+        "machine_jobs": jobs["trust"],
     }
 
 
@@ -130,8 +131,26 @@ def _inventory(request: Request):
     return inv
 
 
-def _to_access() -> Response:
-    return RedirectResponse("/settings#access", status_code=303)
+# Where an action returns on Settings: its block, which shows the flash and its jobs
+# (a flash at the top of the page would be out of sight at the anchor).
+TO_MACHINES = "/settings?said=machines#machines"
+TO_CERTIFICATES = "/settings?said=certificates#certificates"
+
+
+def placed_flashes(request: Request) -> dict[str, Any]:
+    """For the Settings page: when an action here sent it back (?said=BLOCK), its
+    flashes, to show in that block instead of the top of the page."""
+    from fleetledger.web.app import session_of
+
+    said = request.query_params.get("said")
+    if said not in ("certificates", "machines"):
+        return {}
+    return {"flash_at": said, "placed": _ui(request).take_flashes(session_of(request)),
+            "flashes": []}
+
+
+def _to_machines() -> Response:
+    return RedirectResponse(TO_MACHINES, status_code=303)
 
 
 # --- certificates -------------------------------------------------------------------
@@ -145,7 +164,7 @@ async def renew_all(request: Request) -> Response:
         _start(request, "certs", [s.name for s in inv.ships()],
                ["ca", "sign", *(["--force"] if force else [])],
                "Re-issue every certificate" if force else "Renew certificates")
-    return RedirectResponse("/settings#certificates", status_code=303)
+    return RedirectResponse(TO_CERTIFICATES, status_code=303)
 
 
 async def renew_ship(request: Request) -> Response:
@@ -163,7 +182,7 @@ async def renew_ship(request: Request) -> Response:
     if where == "fleet":
         return back("/")
     if where == "settings":
-        return RedirectResponse("/settings#certificates", status_code=303)
+        return RedirectResponse(TO_CERTIFICATES, status_code=303)
     return back(f"/ships/{name}")
 
 
@@ -175,7 +194,7 @@ async def trust_machine(request: Request) -> Response:
     fields = await form(request)
     inv = _inventory(request)
     if inv is None:
-        return _to_access()
+        return _to_machines()
     name = one(fields, "machine").strip()
     key = public_key_line(one(fields, "key"))
     scope = _scopes(fields)
@@ -196,12 +215,12 @@ async def trust_machine(request: Request) -> Response:
         problem = None
     if problem:
         _flash(request, "bad", problem)
-        return _to_access()
+        return _to_machines()
     # --key=LINE: one argument, and it starts with ssh-, so the CLI never reads a file.
     argv = ["trust", name, f"--key={key}", *[f"--scope={s}" for s in scope],
             f"--logins={one(fields, 'logins')}", *([f"--hours={hours}"] if hours else [])]
     _start(request, "trust", [], argv, f"Trust {name}")
-    return _to_access()
+    return _to_machines()
 
 
 def _trusted(request: Request, inv: Any, name: str) -> Any:
@@ -225,21 +244,21 @@ async def machine_scope(request: Request) -> Response:
     inv = _inventory(request)
     m = inv and _trusted(request, inv, one(fields, "machine"))
     if not m:
-        return _to_access()
+        return _to_machines()
     here = trustcmd.this_computer()
     scope = _scopes(fields)
     if here and here["machine"] == m.name:
         _flash(request, "bad", "This computer reaches every Ship (it is yours).")
     elif scope is None:
         _flash(request, "bad", SCOPE_HOW)
-    elif scope == list(m.scope):
+    elif set(scope) == set(m.scope):  # the form's order is not the CLI's
         _flash(request, "ok", "No change.")
     elif one(fields, "confirm") != "yes":
         _flash(request, "bad", "Tick the box to confirm.")
     else:
         _start(request, "trust", [], ["trust", m.name, *[f"--scope={s}" for s in scope]],
                f"Change the Ships {m.name} reaches")
-    return _to_access()
+    return _to_machines()
 
 
 async def untrust(request: Request) -> Response:
@@ -249,12 +268,12 @@ async def untrust(request: Request) -> Response:
     inv = _inventory(request)
     m = inv and _trusted(request, inv, one(fields, "machine"))
     if not m:
-        return _to_access()
+        return _to_machines()
     if one(fields, "confirm") != "yes":
         _flash(request, "bad", "Tick the box to confirm.")
     else:
         _start(request, "trust", [], ["untrust", m.name], f"Untrust {m.name}")
-    return _to_access()
+    return _to_machines()
 
 
 async def renew_here(request: Request) -> Response:
@@ -265,7 +284,7 @@ async def renew_here(request: Request) -> Response:
     if _inventory(request) is not None:
         _start(request, "trust", [], ["trust", "--this-computer"],
                "Renew this computer's certificate")
-    return _to_access()
+    return _to_machines()
 
 
 def routes() -> list[Route]:

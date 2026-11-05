@@ -83,6 +83,9 @@ async def page(request: Request) -> Response:
         entries = []
     context = await setup.access_context(inv)
     context.update(await run_in_threadpool(trust.section_context, ui, inv))
+    context.update(trust.placed_flashes(request))
+    if context.get("certs") is None and "placed" in context:  # no such block: the top
+        context["flashes"] = context.pop("placed")
     return render(request, "settings.html", inv=inv, health=ui.health, STATES=STATES,
                   FIX=FIX, entries=list(reversed(entries)), back="settings",
                   inventory_path=setup._tilde(store.path),

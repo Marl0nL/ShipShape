@@ -3,6 +3,8 @@
    csrf. A Ship's state comes from its last status poll. #}
 {% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
 <h3 id="certificates">Certificates</h3>
+{% if flash_at == "certificates" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
+{% for job in cert_jobs %}{% include "_job.html" %}{% endfor %}
 <p class="hint">Each Ship has a host certificate, so your machines reach it without
   host-key prompts, and the fleet's user CA keys and revocation list, so it lets in only
   the machines you trust. Renewing signs the key FleetLedger already pinned for the Ship,

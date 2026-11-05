@@ -688,6 +688,8 @@ async def job_card(request: Request) -> Response:
     response = partial(request, "_job.html", job=job)
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind in trust.KINDS:  # certificates or machines changed: redraw
+        response.headers["HX-Refresh"] = "true"
     return response
 
 

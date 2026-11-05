@@ -4,6 +4,8 @@
    this_machine (setup.access_context), and trust.section_context(). #}
 {% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
 <h3 id="machines">Trusted machines</h3>
+{% if flash_at == "machines" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
+{% for job in machine_jobs %}{% include "_job.html" %}{% endfor %}
 <p class="hint">Each machine you attach from gets short-lived certificates, for the Ships
   and the logins you choose here: the agent's (to attach to it, <code>herdr --remote</code>)
   and your own (sudo). A machine that should only attach to agents, a shared one say,
@@ -95,7 +97,7 @@
   <code>sh install.sh</code> there.</p>
 <form method="post" action="/settings/machines/trust" class="trust-machine" autocomplete="off">
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <label>Name <input name="machine" pattern="[a-z0-9][a-z0-9\-]{0,30}" maxlength="31" required placeholder="laptop"></label>
+  <label>Name <input name="machine" pattern="[a-z0-9][a-z0-9\-]{0,30}" maxlength="31" required placeholder="desk"></label>
   <label class="wide">Its public key <textarea name="key" rows="2" required spellcheck="false" placeholder="ssh-ed25519 AAAA... you@laptop"></textarea></label>
   <fieldset class="scopes">
     <legend>Ships it may reach</legend>

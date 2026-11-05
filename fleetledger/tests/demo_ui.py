@@ -42,13 +42,13 @@ ON_DEMO_DRIVER = {"ship-01", "ship-02", "ship-03", "ship-04"}
 DEMO_FINGERPRINT = ":".join(["AB", "CD", "EF", "01", "23", "45", "67", "89"] * 4)  # made up
 
 SHIPS = {
-    # name: (tags, host key tail, on the overlay)
-    "ship-01": (["work"], "aaaa", True),
-    "ship-02": (["work"], "bbbb", True),
-    "ship-03": (["personal"], "cccc", True),
-    "ship-04": (["lab"], "dddd", True),
-    "ship-05": (["lab"], "eeee", True),
-    "ship-06": (["work"], "ffff", False),
+    # name: (tags, on the overlay)
+    "ship-01": (["work"], True),
+    "ship-02": (["work"], True),
+    "ship-03": (["personal"], True),
+    "ship-04": (["lab"], True),
+    "ship-05": (["lab"], True),
+    "ship-06": (["work"], False),
 }
 DOWN = {"ship-05"}
 DEMO_CA: dict[str, str] = {}  # the demo CA's fingerprints, once home() has made it
@@ -97,7 +97,7 @@ id = "{id}"
 tags = {tags}
 driver = "{driver}"
 names = ["{name}.example.invalid"]
-host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZX{tail}"
+host_key = "{host_key}"
 enrolled = "2026-01-01T00:00:00Z"
 {overlay}"""
 
@@ -203,15 +203,21 @@ def home(base: Path) -> None:
     os.environ["FLEETLEDGER_CONFIG_DIR"] = str(base / "config")
     os.environ["FLEETLEDGER_DATA_DIR"] = str(base / "data")
     os.environ["FLEETLEDGER_RUNTIME_DIR"] = str(base / "run")
-    for key in ("fleet_admin", "you"):
+    # Your home and ssh-agent too: "Let this computer use ssh" writes an SSH config and
+    # herdr's saved machines under HOME, so in the demo that is the throwaway home.
+    (base / "home").mkdir(mode=0o700)
+    os.environ["HOME"] = str(base / "home")
+    os.environ.pop("SSH_AUTH_SOCK", None)
+    for key in ("fleet_admin", "you", *(f"host-{name}" for name in SHIPS)):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", key,
                         "-f", str(base / "keys" / key)], check=True)
     text = INVENTORY.format(keys=base / "keys", fingerprint=DEMO_FINGERPRINT)
-    for i, (name, (tags, tail, joined)) in enumerate(SHIPS.items(), start=1):
+    for i, (name, (tags, joined)) in enumerate(SHIPS.items(), start=1):
         overlay = f'overlay_node = "nDemo{i}"\n' if joined else ""
         driver = "proxmox" if name in ON_DEMO_DRIVER else "manual"
+        host_key = " ".join((base / "keys" / f"host-{name}.pub").read_text().split()[:2])
         text += SHIP_ENTRY.format(name=name, id=ship_id(i), tags=json.dumps(tags),
-                                  tail=tail, overlay=overlay, driver=driver)
+                                  host_key=host_key, overlay=overlay, driver=driver)
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
     path.chmod(0o600)
@@ -329,12 +335,27 @@ def make_ssh(inventory):
                 raise Unreachable(f"Cannot reach {ship.name} (demo: switched off).")
             verb = command[3] if command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"] else ""
             if verb == "status":
-                tags, _tail, _joined = SHIPS[ship.name]
+                tags, _joined = SHIPS[ship.name]
                 doc = status_doc(ship.name, tags, names.index(ship.name) + 1, time.time())
                 return Result(0, json.dumps(doc).encode(), "", ship.names[0])
+            if verb in ("version", "ssh-trust"):  # so certificate jobs succeed
+                return Result(0, json.dumps(ctl_result(verb)).encode(), "", ship.names[0])
             return Result(0, b"{}", "", ship.names[0])
 
+        def probe_certificate(self, ship, known_hosts, timeout=30):
+            return None  # as if the Ship presented its new certificate
+
     return DemoSSH(inventory)
+
+
+def ctl_result(verb: str) -> dict:
+    """ship-ctl's answer (the ship-ctl-result contract) to version and ssh-trust."""
+    data = {"tooling": "0.1.0", "commit": "0123456789ab",
+            "contracts": {"ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1,
+                          "bundle": 1, "seed": 1, "runtime": 1, "ssh-trust": 1}}
+    return {"schema": "shipshape.ship-ctl-result/1", "command": verb, "ok": True,
+            "changed": ["/etc/ssh/sshd_config.d/shipshape.conf"] if verb == "ssh-trust" else [],
+            "messages": [], "data": data if verb == "version" else {}, "error": None}
 
 
 def seed_net() -> None:
