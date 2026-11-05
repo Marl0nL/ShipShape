@@ -2,7 +2,8 @@
 
 From nothing to a Ship that waits for you to sign it in. You need a ShipShape
 checkout, Python 3.12 or newer, pipx and OpenSSH on your computer. For Proxmox,
-first do [proxmox-setup.md](proxmox-setup.md) once.
+`ship-fleet setup` (step 2) checks the host and prints the root commands for
+anything missing; [proxmox-setup.md](proxmox-setup.md) explains them.
 
 ## 1. Install FleetLedger (once)
 
@@ -22,8 +23,8 @@ ship-fleet setup
 `--text` asks in the terminal). It walks through everything below, plus the
 certificate authority, Proxmox and the overlay, and offers to make a first Ship;
 each step shows done or next, so come back whenever you like. For a new fleet it
-makes and looks after every key itself. The rest of this section is how to do it
-by hand, with passphrases you choose:
+makes and looks after every key itself. The two commands below do the same by
+hand, with passphrases you choose:
 
 ```sh
 ship-fleet init                   # asks for a passphrase for the new admin key
@@ -33,9 +34,12 @@ ssh-add ~/.ssh/shipshape_fleet_ed25519
 `init` makes the fleet admin key (FleetLedger's own key; it logs in to Ships as
 `fleet`) and an empty inventory, `~/.config/fleetledger/ships.toml`. Your own key
 (`~/.ssh/id_ed25519.pub` by default, or `--agent-key`) goes onto each Ship's
-`agent` user, so you can attach with herdr or plain SSH.
+`agent` user, so you can attach with herdr or plain SSH. By hand, also run
+`ship-fleet ca init`, and after the first Ship `ship-fleet trust --this-computer`,
+so `ssh ship-01` and `herdr --remote ship-01` work here.
 
-Then edit the inventory. A typical one:
+Either way, put your tags and the accounts each tag must use into the inventory
+(setup fills in `[defaults] driver` and `[drivers.proxmox]` itself). A typical one:
 
 ```toml
 [defaults]
@@ -118,7 +122,8 @@ ship-fleet ls                     # every Ship: state, agents, sign-ins, load
 ship-fleet status ship-01         # one Ship in detail
 ship-fleet ssh ship-01            # a shell as agent (your key)
 ship-fleet logs ship-01 provision # what provisioning did
-herdr --remote agent@ship-01.local   # attach herdr
+herdr --remote ship-01            # attach herdr, once this computer is trusted
+                                  # (setup does it); else agent@ship-01.local
 ```
 
 ## A Ship FleetLedger did not create
