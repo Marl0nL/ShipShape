@@ -423,6 +423,45 @@ def test_trust_untrust_cycle(caenv, tmp_path):
     assert code == 1 and "stays untrusted" in err
 
 
+def test_ca_show_prints_and_gives_json_from_the_same_rows(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"), "--scope", "tag:work",
+              "--out", str(tmp_path / "bundle"))
+    code, out, err = caenv.run("ca", "show")
+    assert code == 0, err
+    assert f"Host CA {ca.fingerprint(caenv.cakeys.host_public)}" in out
+    assert "ship-01" in out and "laptop" in out and "tag:work" in out
+    code, out, _ = caenv.run("ca", "show", "--json")
+    doc = json.loads(out)
+    assert set(doc) == {"host_ca", "user_ca", "ships", "machines"}
+    assert [r["ship"] for r in doc["ships"]] == ["ship-01", "ship-02"]
+    assert doc["machines"][0]["machine"] == "laptop"
+
+
+def test_ca_show_says_a_ship_not_seen_yet(caenv):
+    from fleetledger import status
+
+    status.write_cache("ship-01", copy.deepcopy(RUNNING))
+    status.cache_path("ship-02").unlink(missing_ok=True)
+    code, out, err = caenv.run("ca", "show")
+    assert code == 0, err
+    line = next(x for x in out.splitlines() if x.strip().startswith("ship-02"))
+    assert "not seen yet" in line
+    code, out, _ = caenv.run("ca", "show", "--json")
+    assert [r["seen"] for r in json.loads(out)["ships"]] == [True, False]
+
+
+def test_a_narrowing_whose_revocation_does_not_reach_every_ship_fails(caenv, tmp_path):
+    keygen(tmp_path / "lap", "lap")
+    caenv.run("trust", "lap", "--key", str(tmp_path / "lap.pub"), "--out", str(tmp_path / "b"))
+    caenv.ship.down.add("ship-02")
+    code, out, err = caenv.run("trust", "lap", "--scope", "ship:ship-01", "--out",
+                               str(tmp_path / "b"))
+    assert code == 1  # the certificate is issued, but older ones still work on ship-02
+    assert "NOT YET REVOKED on ship-02" in out + err and "Bundle:" in out
+    assert ca.machine(caenv.store.load(), "lap").scope == ("ship:ship-01",)
+
+
 def _pushed_krl(caenv, ship="ship-02"):
     return __import__("base64").b64decode(dict(caenv.trusted)[ship]["revoked_keys"])
 

@@ -33,7 +33,7 @@ from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, dashboard, network, settings, setup, snapshots
+from fleetledger.web import actions, dashboard, network, settings, setup, snapshots, trust
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -688,6 +688,8 @@ async def job_card(request: Request) -> Response:
     response = partial(request, "_job.html", job=job)
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind in trust.KINDS:  # certificates or machines changed: redraw
+        response.headers["HX-Refresh"] = "true"
     return response
 
 
@@ -967,6 +969,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         *setup.routes(),
         *snapshots.routes(),
         *settings.routes(),
+        *trust.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)
