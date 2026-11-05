@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% from "_macros.html" import sev_icon %}
+{% block title %}Settings · FleetLedger{% endblock %}
+{% block body %}
+<h1>Settings</h1>
+<p class="hint">The whole fleet's settings. Each Ship's own are on its page, under Settings.</p>
+<div class="settings-layout">
+<nav class="settings-nav" aria-label="Settings">
+  <a href="#health">Health</a>
+  <a href="#where">Where Ships run</a>
+  <a href="#access">Access</a>
+  <a href="#images">Images</a>
+  <a href="#activity">Activity log</a>
+</nav>
+<div class="settings-body">
+
+<section id="health" class="setup-step settings-group">
+  <h2>Health</h2>
+  <p class="hint">What <code>ship-fleet doctor</code> checks: this computer, the fleet's keys and
+    certificates, the hypervisor, the overlay and the Ships. Checking runs commands and asks the
+    hypervisor, so it happens only when you ask.</p>
+  <form method="post" action="/settings/health" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" title="ship-fleet doctor">Check now</button>
+    <span class="hint">{% if health %}Last checked {{ clock(health.at) }}.{% else %}Not checked yet.{% endif %}</span>
+  </form>
+  {% if health and health.error %}<p class="flash bad">{{ health.error }}</p>{% endif %}
+  {% if health and health.items %}
+  <table class="health">
+    <thead><tr><th>Area</th><th>Check</th><th>State</th><th>Detail</th><th>Fix</th></tr></thead>
+    <tbody>
+    {% for item in health.items %}
+    {% set level, word = STATES.get(item.state, ("notice", item.state)) %}
+    <tr class="state-{{ item.state }}">
+      <td>{{ item.area }}</td>
+      <td>{{ item.name }}</td>
+      <td class="health-state">{% if level %}<span class="sev-tag lvl-{{ level }}">{{ sev_icon(level) }}<span>{{ word }}</span></span>{% else %}<span class="pill {{ 'good' if item.state == 'ok' else 'muted' }}">{{ word }}</span>{% endif %}</td>
+      <td>{{ item.detail }}</td>
+      <td>
+        {% if item.state not in ("ok", "skip") %}
+        {% if item.next %}<code class="cmd">{{ item.next }}</code> <button type="button" class="ghost small" data-copy="{{ item.next }}">Copy</button>{% endif %}
+        {% if item.area in FIX %}<a href="{{ FIX[item.area][0] }}">{{ FIX[item.area][1] }}</a>{% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section id="where" class="setup-step settings-group">
+  <h2>Where Ships run</h2>
+  {% if inv.defaults.driver == "proxmox" and proxmox %}
+  <dl>
+    <dt>Hypervisor</dt><dd>Proxmox VE, <code>{{ proxmox.api_url }}</code></dd>
+    {% if proxmox.node %}<dt>Node</dt><dd>{{ proxmox.node }}</dd>{% endif %}
+    {% if proxmox.pool %}<dt>Pool</dt><dd>{{ proxmox.pool }}</dd>{% endif %}
+    {% if proxmox.disk_storage %}<dt>Disks on</dt><dd>{{ proxmox.disk_storage }}</dd>{% endif %}
+    {% if proxmox.bridge %}<dt>Network</dt><dd>{{ proxmox.bridge }}</dd>{% endif %}
+    {% if proxmox.vmid_range %}<dt>VM ids</dt><dd>{{ proxmox.vmid_range }}</dd>{% endif %}
+    {% if proxmox.token_id %}<dt>API token</dt><dd><code>{{ proxmox.token_id }}</code>{% if proxmox.token_store %}, its secret kept in {{ "your OS keyring" if proxmox.token_store == "keyring" else "a file only you can read" }}{% endif %}</dd>{% endif %}
+  </dl>
+  {% else %}
+  <p>Manual: FleetLedger writes each Ship's first-boot ISO and prints the steps for your hypervisor.</p>
+  {% endif %}
+  {% set size = inv.effective_size() %}
+  <p>New Ships get {{ size.cores }} cores, {{ size.memory_mb }} MB of memory and a {{ size.disk_gb }} GB disk unless you choose otherwise.</p>
+  <p><a href="/setup#hypervisor">Change where Ships run in Setup</a></p>
+</section>
+
+<section id="access" class="setup-step settings-group">
+  <h2>Access</h2>
+  <h3>Overlay</h3>
+  {% if inv.overlay %}
+  <p>{{ "Headscale at " ~ inv.overlay.login_server if inv.overlay.provider == "headscale" else "Tailscale" }}{% if inv.overlay.tags %}, Ships tagged {{ inv.overlay.tags|join(", ") }}{% endif %}{% if inv.overlay.key_source == "tailscale-api" %}; FleetLedger makes each Ship's key{% else %}; you paste each Ship's key{% endif %}. <a href="/setup#overlay">Change in Setup</a></p>
+  {% else %}
+  <p>Not set up: Ships are reachable on your LAN only. <a href="/setup#overlay">Set it up</a></p>
+  {% endif %}
+  <h3>Keys and certificates</h3>
+  <p>Inventory <code>{{ inventory_path }}</code>; fleet admin key <code>{{ inv.doc.fleet.admin_key }}</code>;
+    your key{{ 's' if inv.doc.fleet.agent_keys|length > 1 }} <code>{{ inv.doc.fleet.agent_keys|join(', ') }}</code>.
+    {% if admin_managed %}FleetLedger looks after its keys.{% endif %}
+    {% if inv.doc.ca %}The fleet has a certificate authority.{% endif %}</p>
+  <h3>Your login on Ships</h3>
+  {% include "_fleet_access.html" %}
+</section>
+
+<section id="images" class="setup-step settings-group">
+  <h2>Images</h2>
+  <p>New Ships start from {% if inv.pinned_image == "stock" %}the stock Ubuntu image{% else %}image <code>{{ inv.pinned_image }}</code>{% endif %}.
+    Managing images here comes later; for now: <code>ship-fleet image ls</code>.</p>
+</section>
+
+<section id="activity" class="setup-step settings-group">
+  <h2>Activity log</h2>
+  <p class="hint">Who, what and when for sign-ins, sign-outs and changes to Ships (the last {{ entries|length }}). It never holds a code, link, token or path. <a href="/audit">The whole log</a>.</p>
+  {% include "_audit_table.html" %}
+</section>
+
+<p><a href="/setup">Run setup again</a> <span class="hint">(safe: each step shows what is already done)</span></p>
+</div>
+</div>
+{% endblock %}

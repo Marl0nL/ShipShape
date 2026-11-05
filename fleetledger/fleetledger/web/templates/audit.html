@@ -3,15 +3,5 @@
 {% block body %}
 <h1>Audit log</h1>
 <p class="hint">Who, what and when for sign-ins, sign-outs and changes to Ships (made, destroyed, forgotten, rolled back, snapshot deleted, host key re-pinned, a machine untrusted). It never holds a code, link, token or path.</p>
-{% if entries %}
-<table>
-  <thead><tr><th>When (UTC)</th><th>Ship</th><th>Action</th><th>Service</th><th>Outcome</th><th>Account</th></tr></thead>
-  <tbody>
-  {% for e in entries %}
-  <tr><td>{{ e.at }}</td><td>{{ e.ship }}</td><td>{{ e.action }}</td><td>{{ e.service }}</td>
-      <td><span class="pill {{ e.outcome|pill }}">{{ e.outcome }}</span></td><td>{{ e.account or "-" }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}<p class="quiet">Nothing yet.</p>{% endif %}
+{% include "_audit_table.html" %}
 {% endblock %}

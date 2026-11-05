@@ -12,8 +12,11 @@ ship-fleet setup --no-browser # prints the link instead
 ship-fleet setup --text       # the same steps in the terminal (no browser here)
 ```
 
-`ship-fleet ui` on a computer that is not set up opens the same page, and it is
-always under **Setup** in the menu. It starts with one choice:
+`ship-fleet ui` on a computer that is not set up opens the same page, which is
+**Setup** in the menu until the fleet exists; after that the menu says **Settings**,
+and Settings links back here ("Run setup again"). Once the fleet exists, your login on
+Ships, trusted machines and key care live in Settings, under Access. It starts with
+one choice:
 
 - **New fleet (recommended).** FleetLedger makes every key it needs (its admin
   key, which logs in to Ships, and the host and user CA keys) and looks after
@@ -78,14 +81,15 @@ Then, each step showing **done** or **next**:
 
 Each step has a collapsed **Advanced** section for the rest (where secrets are
 kept, key file locations, other Proxmox storages, the VM ids FleetLedger may
-use, the overlay level). Once there is a certificate authority, step 1 lists the **Trusted machines** and
-what each may log in as: the agent only, you only (sudo), or both (a confirmation
-says what changes; narrowing revokes its wider certificates at once).
+use, the overlay level). Once there is a certificate authority, Settings (Access) lists
+the **Trusted machines** and what each may log in as: the agent only, you only (sudo),
+or both (a confirmation says what changes; narrowing revokes its wider certificates at
+once).
 
 A computer part-way through, from the terminal wizard
 or an older setup, shows its finished steps as done and can change any of them
 (manual to Proxmox, say); keys you chose passphrases for are offered, opt-in,
-to FleetLedger's care. Nothing is deleted or rewritten without a click.
+to FleetLedger's care (in Settings, Access). Nothing is deleted or rewritten without a click.
 
 ### Keys FleetLedger looks after
 
@@ -141,7 +145,8 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 | Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |
 | **Network** (`/network`) | Across the fleet, filterable by tag: destinations first seen in the last day, a "who talked to this domain" search (the domain or any subdomain), and each Ship's collector and traffic (`ship-fleet net --new`, `--who`). |
 | **Sign-ins** (`/signin`) | The concierge: start a sign-in for one Ship, or for every Ship with a tag; each sign-in's link, code box and countdown; results. |
-| **Audit log** (`/audit`) | Who, what and when for sign-ins, sign-outs and changes to Ships: made (create), destroyed, forgotten, rolled back to a snapshot, snapshot deleted, host key re-pinned, and a machine untrusted, each with its outcome (ok, failed, or steps for the manual driver). The command functions record them, so `ship-fleet` and the UI write the same entries. Never a code, link, token or path. |
+| **Settings** (`/settings`, in the menu once the fleet exists; before that the menu says **Setup**) | The whole fleet's settings, with a side list of its sections (a row across the top on a narrow screen). **Health**: what `ship-fleet doctor` checks (this computer, the fleet's keys and certificates, the hypervisor, the overlay, the Ships), only when you press **Check now** (it runs commands and asks the hypervisor, in the background); each item with its state as an icon and a word, and its fix: the command with **Copy**, and a link to where the UI changes it. The page shows the last check (kept while the UI runs). **Where Ships run**: the hypervisor and the size new Ships get, with a link to change it in Setup. **Access**: the overlay, the keys and certificate authority, your own login on Ships, the trusted machines and what each may log in as, and the keys you look after yourself (the forms that used to sit in setup's first step). **Images**: the image new Ships start from. **Activity log**: the last 50 audit entries. **Run setup again** at the bottom. Opening the page runs no command and contacts nothing. |
+| **Audit log** (`/audit`) | Who, what and when for sign-ins, sign-outs and changes to Ships: made (create), destroyed, forgotten, rolled back to a snapshot, snapshot deleted, host key re-pinned, and a machine untrusted, each with its outcome (ok, failed, or steps for the manual driver). The command functions record them, so `ship-fleet` and the UI write the same entries. Never a code, link, token or path. Also under Settings, Activity log. |
 
 **Needs attention** is `ship-fleet attention`'s list, ranked the same way, plus
 two alerts the dashboard adds itself: a disk 80% full (warning) or 90% full
@@ -283,6 +288,7 @@ and htmx for polling; no front-end build.
 | `setup.py` | the setup page: the same steps as `ship-fleet setup --text`, through the same functions (keys.py, proxmox_setup.py, overlay_setup.py) |
 | `server.py` | `ship-fleet ui`: binding, the link, uvicorn (access log off) |
 | `app.py` | routes and pages |
+| `settings.py` | the Settings page and its Health check (`firstrun.everything`, the same as `ship-fleet doctor`) |
 | `forms.py` | reading posted forms (`form()`, `one()`), shared by `app.py` and `setup.py` |
 | `fleet.py` | the background poller; Needs attention from `ops.attention` |
 | `flows.py` | the concierge's browser prompter, the live-terminal bridge, batches |
