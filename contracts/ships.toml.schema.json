@@ -26,7 +26,7 @@
         "owner": {
           "type": "string",
           "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
-          "not": { "enum": ["root", "fleet", "agent"] },
+          "not": { "enum": ["root", "fleet", "agent", "nobody"] },
           "default": "human",
           "description": "Your own login name on every Ship (ship.toml [owner]): sudo, your keys and certificates, apart from agent, which keeps no sudo."
         },
