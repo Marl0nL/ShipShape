@@ -18,7 +18,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import urlencode
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.applications import Starlette
@@ -36,6 +36,7 @@ from fleetledger.errors import FleetError
 from fleetledger.web import actions, dashboard, network, setup
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
+from fleetledger.web.forms import form, one
 from fleetledger.web.security import Gate, GateMiddleware, Session
 
 HERE = Path(__file__).resolve().parent
@@ -137,20 +138,6 @@ def _pill(value: str | None) -> str:
                  "provisioning", "timeout"):
         return "warn"
     return "muted"
-
-
-async def form(request: Request) -> dict[str, list[str]]:
-    """The posted form (the gate has already capped its size and checked CSRF)."""
-    body = await request.body()
-    try:
-        return parse_qs(body.decode("utf-8"), max_num_fields=100)
-    except (UnicodeDecodeError, ValueError):
-        return {}
-
-
-def one(fields: dict[str, list[str]], key: str) -> str:
-    values = fields.get(key, [])
-    return values[0].strip() if len(values) == 1 else ""
 
 
 def _flash_outcome(ui: UI, session: Session, outcome: actions.Outcome) -> None:
