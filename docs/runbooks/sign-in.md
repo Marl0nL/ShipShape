@@ -97,7 +97,8 @@ ship-fleet logout ship-01 all
   updated.
 - **"The sign-in code expired" / "window closed":** run the login again and paste
   sooner.
-- **"refused FleetLedger's admin key":** `ssh-add ~/.ssh/shipshape_fleet_ed25519`.
+- **"refused FleetLedger's admin key":** see
+  [create-ship.md](create-ship.md#if-something-goes-wrong).
 - **Signed in, but the check says not signed in:** look at
   `ship-fleet status ship-01`; for gcloud both `gcloud` and `gcloud_adc` must be
   OK.

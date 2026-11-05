@@ -169,5 +169,5 @@ should not outlive it in any snapshot or backup.
 |---|---|
 | `new` waits a long time | the VM console in Proxmox, then `ship-fleet logs ship-01 provision` |
 | "did not present its pinned host key" | something else answers at that name, or the Ship was rebuilt: re-pin with `adopt --replace` after checking the console |
-| "refused FleetLedger's admin key" | `ssh-add -l` lists the fleet key? Was the Ship seeded from this inventory? |
+| "refused FleetLedger's admin key" | was the Ship seeded from this inventory? A key you manage yourself must be loaded (`ssh-add -l`); FleetLedger loads the keys it looks after itself |
 | `unreachable` | the name resolves? (see Names) The VM is running? |
