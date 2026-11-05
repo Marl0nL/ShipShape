@@ -97,9 +97,9 @@ function page({ dialogs = true } = {}) {
     sent.push({ form: event.target.id, data: Object.fromEntries(data.entries()) });
   });
   const run = new Function(
-    "window", "document", "HTMLFormElement", "sessionStorage", "setInterval", "navigator",
-    "location", "WebSocket", APP_JS);
-  run(window, document, window.HTMLFormElement, window.sessionStorage,
+    "window", "document", "Element", "HTMLFormElement", "sessionStorage", "setInterval",
+    "navigator", "location", "WebSocket", APP_JS);
+  run(window, document, window.Element, window.HTMLFormElement, window.sessionStorage,
     window.setInterval.bind(window), window.navigator, window.location, window.WebSocket);
   document.dispatchEvent(new window.Event("DOMContentLoaded"));
   const $ = (selector) => document.querySelector(selector);
@@ -181,6 +181,40 @@ test("every required box is ticked on confirm (certificate: matches and changed_
     form: "pin",
     data: { matches: "yes", changed_ok: "yes", token_id: "shipshape@pve!build" },
   }]);
+}));
+
+test("a field named like a form method cannot break it (as browsers shadow form.matches)",
+  on({}, (p) => {
+    // In a real browser the certificate form's "matches" box hides form.matches
+    // (and a field may hide any form property). happy-dom does not do that, so
+    // shadow them by hand: app.js must reach the form only through prototypes.
+    // (Not the ones happy-dom itself calls when a button is clicked, such as
+    // getAttribute and requestSubmit; a browser does not go through those.)
+    const form = p.$("#pin");
+    const box = p.$("#pin input[name=matches]");
+    for (const name of ["matches", "hasAttribute", "querySelector", "querySelectorAll",
+      "dataset"]) {
+      Object.defineProperty(form, name, { value: box, configurable: true });
+    }
+    p.click("#pin button");
+    assert.equal(p.dialog().open, true, "the dialog opens");
+    assert.deepEqual(p.sent, []);
+    p.choose("ok");
+    assert.deepEqual(p.sent, [{
+      form: "pin",
+      data: { matches: "yes", changed_ok: "yes", token_id: "shipshape@pve!build" },
+    }]);
+  }));
+
+test("Escape after an earlier confirmation sends nothing", on({}, (p) => {
+  p.click("#reboot button");
+  p.choose("ok");
+  assert.equal(p.sent.length, 1);
+  p.click("#reboot button");
+  assert.equal(p.dialog().open, true);
+  p.dialog().close();  // Escape: no button chosen, so no "ok" left over from last time
+  assert.equal(p.sent.length, 1);
+  assert.equal(p.$("#reboot input[name=confirm]").checked, false);
 }));
 
 test("a field's value names the action (sign out of a service)", on({}, (p) => {

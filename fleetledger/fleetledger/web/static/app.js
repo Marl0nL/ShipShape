@@ -82,14 +82,28 @@
   const canDialog = typeof document.createElement("dialog").showModal === "function";
   let dialog = null;
 
+  // A form's fields shadow its own properties in browsers: a field named
+  // "matches" hides form.matches, one named "elements" hides form.elements. So
+  // forms are only ever read through the prototypes, never their properties.
+  const E = Element.prototype;
+  const F = HTMLFormElement.prototype;
+  const formElements = Object.getOwnPropertyDescriptor(F, "elements").get;
+  function attr(form, name) { return E.getAttribute.call(form, name); }
+  function has(form, name) { return E.hasAttribute.call(form, name); }
+  function all(form, selector) { return Array.from(E.querySelectorAll.call(form, selector)); }
+  function submit(form, submitter) {
+    if (submitter) F.requestSubmit.call(form, submitter);
+    else F.requestSubmit.call(form);
+  }
+
   function confirmFields(form) {
-    return Array.from(form.querySelectorAll("input[data-confirm-field]"));
+    return all(form, "input[data-confirm-field]");
   }
 
   function counted(form) {
-    const selector = form.dataset.confirmCount;
+    const selector = attr(form, "data-confirm-count");
     if (!selector) return null;
-    return Array.from(form.querySelectorAll(selector)).filter(function (el) {
+    return all(form, selector).filter(function (el) {
       return el.type === "checkbox" || el.type === "radio" ? el.checked : el.value.trim() !== "";
     }).length;
   }
@@ -99,7 +113,7 @@
       .replace(/\{n\}/g, String(n))
       .replace(/\{s\}/g, n === 1 ? "" : "s")
       .replace(/\{value:([A-Za-z0-9_-]+)\}/g, function (_m, name) {
-        const field = form.elements.namedItem(name);
+        const field = formElements.call(form).namedItem(name);
         return field && "value" in field ? field.value : "";
       });
   }
@@ -134,13 +148,13 @@
   function ask(form, submitter) {
     dialog = dialog || buildDialog();
     const n = counted(form);
-    const none = n === 0 && form.dataset.confirmNone;
-    const danger = form.hasAttribute("data-confirm-danger");
+    const none = n === 0 && attr(form, "data-confirm-none");
+    const danger = has(form, "data-confirm-danger");
     const label = submitter ? submitter.textContent.trim() : "Continue";
-    dialog.title.textContent = none ? label : fill(form.dataset.confirmTitle || label + "?", form, n);
-    dialog.text.textContent = none ? form.dataset.confirmNone : fill(form.dataset.confirm, form, n);
+    dialog.title.textContent = none ? label : fill(attr(form, "data-confirm-title") || label + "?", form, n);
+    dialog.text.textContent = none ? none : fill(attr(form, "data-confirm"), form, n);
     dialog.ok.hidden = Boolean(none);
-    dialog.ok.textContent = fill(form.dataset.confirmAction || label, form, n);
+    dialog.ok.textContent = fill(attr(form, "data-confirm-action") || label, form, n);
     dialog.ok.className = danger ? "danger" : "";
     dialog.cancel.textContent = none ? "OK" : "Cancel";
     dialog.el.classList.toggle("danger", danger);
@@ -148,9 +162,8 @@
     dialog.el.onclose = function () {
       if (dialog.el.returnValue !== "ok" || none) return;
       confirmFields(form).forEach(function (box) { box.checked = true; });
-      form.dataset.confirmed = "yes";
-      if (submitter && submitter.form === form) form.requestSubmit(submitter);
-      else form.requestSubmit();
+      E.setAttribute.call(form, "data-confirmed", "yes");
+      submit(form, submitter && submitter.form === form ? submitter : null);
     };
     dialog.el.showModal();
     (danger || none ? dialog.cancel : dialog.ok).focus();
@@ -158,7 +171,7 @@
 
   function enhance(root) {
     if (!canDialog) return;  // the tick boxes stay: the server still needs them
-    root.querySelectorAll("form[data-confirm]").forEach(function (form) {
+    E.querySelectorAll.call(root.documentElement || root, "form[data-confirm]").forEach(function (form) {
       confirmFields(form).forEach(function (box) {
         box.checked = false;
         const label = box.closest("label");
@@ -169,16 +182,16 @@
 
   document.addEventListener("submit", function (event) {
     const form = event.target;
-    if (!canDialog || !(form instanceof HTMLFormElement) || !form.matches("form[data-confirm]")) {
+    if (!canDialog || !(form instanceof HTMLFormElement) || !has(form, "data-confirm")) {
       return;
     }
     if (event.submitter && event.submitter.hasAttribute("data-confirm-skip")) return;
-    if (form.dataset.confirmed === "yes") {
-      delete form.dataset.confirmed;  // this once: the next submit asks again
+    if (attr(form, "data-confirmed") === "yes") {
+      E.removeAttribute.call(form, "data-confirmed");  // this once: the next submit asks again
       return;
     }
-    const when = form.dataset.confirmWhen;
-    if (when && !form.querySelector(when)) return;
+    const when = attr(form, "data-confirm-when");
+    if (when && !E.querySelector.call(form, when)) return;
     event.preventDefault();
     confirmFields(form).forEach(function (box) { box.checked = false; });
     ask(form, event.submitter);
