@@ -17,8 +17,6 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 
 ## Modules
 
-All of phase 1's Fleet track is built: W3, W8, W9 and W10.
-
 | Module | Work item | Purpose |
 |---|---|---|
 | `fleetledger/seed/` | W3 | host keys, `ship.toml` rendering, the cloud-init files, bundle packing, seed ISOs (`contracts/seed.md`) |
@@ -29,7 +27,10 @@ All of phase 1's Fleet track is built: W3, W8, W9 and W10.
 | `fleetledger/status.py`, `shipctl.py` | W8 | polling `ship-ctl status --json` (`contracts/ship-status.schema.json`) and calling the other ship-ctl commands |
 | `fleetledger/drivers/` | W8, phase 4 | the hypervisor driver interface; `manual` (prints the steps) and `proxmox` (API: create, power, snapshots, image templates, destroy; every destructive call checks the VM's name). All hypervisor-specific code lives here. |
 | `fleetledger/images.py` | phase 4 | baked images: fetching and checking Ubuntu's image, ids and manifests, running `ship/image/bake` (`contracts/image.md`) |
-| `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `snapshot` and `image` |
+| `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `resize`, `snapshot` and `image` |
+| `fleetledger/github.py` | | an autostart agent's GitHub repo: the name check, and whether it is public |
+| `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins`) |
+| `fleetledger/history.py` | | the dashboard's bounded status history (`history.sqlite3`) |
 | `fleetledger/overlay/`, `access.py`, `overlay_setup.py` | phase 5 | the overlay network: providers, one-off keys (pasted, or minted with a Tailscale OAuth client whose secret is in the OS keyring or a 0600 file), `ship-fleet overlay setup|check|join|leave|status|policy` |
 | `fleetledger/firstrun.py`, `setupcmd.py` | first run | `ship-fleet setup` (the guided first run: each step checks first and skips what is done) and `ship-fleet doctor` (read-only: what is set up, what is missing, the next command); both use the checks in `firstrun.py` |
 | `fleetledger/keys.py` | first run | keys FleetLedger makes and looks after: random passphrases in the OS keyring (or 0600 files), typed into `ssh-keygen`/`ssh-add` through a terminal, loaded into ssh-agent when needed; taking an existing key over |
@@ -57,9 +58,12 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 |---|---|
 | `~/.config/fleetledger/ships.toml` | the inventory: Ships, pinned host keys, tags, expected accounts (mode 0600) |
 | `~/.config/fleetledger/known_hosts` | FleetLedger's own known-hosts file, written from the inventory |
+| `~/.config/fleetledger/key-passphrases/` | passphrases of the keys FleetLedger looks after, when there is no usable keyring (0600) |
+| `~/.config/fleetledger/proxmox-token`, `tailscale-oauth` | the Proxmox API token and Tailscale OAuth secret, when kept in a file rather than the keyring (0600) |
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
+| `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts (0600) |
 | `~/.local/share/fleetledger/net/` | the last network summary per Ship and the first-seen ledger (0600) |
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
@@ -188,8 +192,7 @@ alike.
 - **manual** prints the steps. With a `[drivers.proxmox]` section in
   `ships.toml` they are exact `qm` and `pvesm` commands for that server;
   otherwise they are generic and work for any hypervisor.
-- **proxmox** is the phase 1 test helper; phase 4 finishes it. It uses only the
-  scoped API token: it uploads the seed ISO (Proxmox checks a SHA-256 the
+- **proxmox** uses only the scoped API token: it uploads the seed ISO (Proxmox checks a SHA-256 the
   client sends with it), full-clones the template into the pool, attaches the
   seed on `ide2`, sets cores, memory and bridge, grows `scsi0`, starts the VM,
   and waits for every Proxmox task. It reads addresses from the guest agent and
@@ -284,7 +287,15 @@ README).
 
 ## The CLI (W10)
 
-`ship-fleet --help` lists every command; each has its own `--help`.
+`ship-fleet --help` lists every command; each has its own `--help`. The table
+covers the core ones; the rest are documented with their feature: `setup`,
+`doctor`, `ui` ([web-ui.md](../docs/web-ui.md)); `update`, `reboot`,
+`attention`, `pins` (Day-2 below); `net` ([network.md](../docs/network.md));
+`ca`, `trust`, `untrust` ([trust-machines.md](../docs/runbooks/trust-machines.md));
+`overlay` ([remote-access.md](../docs/runbooks/remote-access.md)); `destroy`,
+`resize`, `snapshot` ([create-ship.md](../docs/runbooks/create-ship.md));
+`image` ([images.md](../docs/runbooks/images.md)); `owner`, `signins` (their
+`--help`).
 
 | Command | What it does |
 |---|---|
@@ -298,7 +309,7 @@ README).
 | `set NAME KEY=VALUE...` | `ship-ctl set` with short keys (`remote_control=off`, `default_mode=...`). The inventory is kept in step. `default_mode=bypassPermissions` also sets `allow_bypass=true`. |
 | `tag NAME +work -personal` | changes tags in the inventory and on the Ship (`--local` for the inventory only); `none` clears them |
 | `tools ls`, `tools add/remove NAME ID...` | the catalogue, and `ship-ctl tools add/remove` |
-| `ssh NAME [--as fleet] [-- CMD]` | a shell as agent with your own keys, or as fleet with the admin key; pinned host key either way |
+| `ssh NAME [--as agent\|owner\|fleet] [-- CMD]` | a shell as agent with your own keys (default), as your own login with sudo (`owner`), or as fleet with the admin key; pinned host key either way |
 | `logs NAME SOURCE` | `ship-ctl logs` (provision, herdr, resume, tools, status, system) |
 
 Every command is tested in `tests/test_cli.py` against a fake Ship behind a real
@@ -326,7 +337,7 @@ for every Ship (an unknown setting or tool) is refused before any Ship is touche
 |---|---|---|
 | `ship-fleet update SHIP...\|--tag T\|all` | `ops.update` | packs `ship/` and `versions.toml` from this checkout, copies the bundle and its `.sha256` into `/home/fleet/incoming/` (mode 0600), runs `ship-ctl converge`, then checks the Ship reports the new bundle. `--reboot auto` (default) reboots only Ships whose herdr binary changed (`herdr-restart-pending`); `always` and `never` do what they say. A Ship already on a clean bundle is skipped unless `--force`. |
 | `ship-fleet reboot SHIP...\|--tag T\|all` | `ops.reboot` | records each agent's name and mode, runs `sudo -n systemctl reboot` over the one name that answered, waits until the Ship answers from a new boot (its uptime is shorter than the wait), then until herdr has resumed. Fails the Ship if any agent is missing or came back in another mode. |
-| `ship-fleet set SHIP...\|--tag T\|all KEY=VALUE...` | `ops.set_settings` | `ship-ctl set`; new keys `lan_guard_allow`, `auto_reboot`, `reboot_time` (the Ship's local time), `timezone`. `ship-fleet new` gives each Ship this computer's zone (`--timezone` to choose). |
+| `ship-fleet set SHIP...\|--tag T\|all KEY=VALUE...` | `ops.set_settings` | `ship-ctl set`; new keys `lan_guard_allow`, `ssh_listen` (`any`\|`overlay`), `auto_reboot`, `reboot_time` (the Ship's local time), `timezone`, and `autostart.add=NAME:FOLDER[:MODE]` / `autostart.remove=NAME`. `ship-fleet new` gives each Ship this computer's zone (`--timezone` to choose). |
 | `ship-fleet tag SHIP +T -T` | `ops.set_tags` | inventory first, then the Ship (`--local`: inventory only). |
 | `ship-fleet tools add\|remove SHIP\|all ID...` or `--tag T ID...` | `ops.change_tools` | `ship-ctl tools add\|remove`. |
 | `ship-fleet logs [SHIP...\|--tag T\|all] SOURCE` | `ops.logs`, `ops.fleet_logs` | `ship-ctl logs`; with several Ships each line is prefixed by its Ship. |
