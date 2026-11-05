@@ -512,7 +512,7 @@ def test_an_owner_login_with_sudo_its_keys_and_certificates(ship):
     assert len(ship.calls("useradd")) == 1
 
 
-@pytest.mark.parametrize("name", ["agent", "fleet", "root"])
+@pytest.mark.parametrize("name", ["agent", "fleet", "root", "nobody"])
 def test_the_owner_cannot_be_a_shipshape_login(ship, name):
     rc, doc, _ = ship.ctl("set", f"owner.name={name}", "--json")
     assert rc == 4 and not ship.calls("useradd")
@@ -536,3 +536,30 @@ def test_grow_root_fills_the_disk_once(ship):
     assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]
     rc, doc, _ = ship.ctl("grow-root", "--json")  # already full: not an error
     assert rc == 0 and doc["data"]["grown"] is False and doc["changed"] == []
+
+
+def test_the_owner_cannot_be_an_account_above_the_user_range(ship):
+    ship.p("/etc/passwd").write_text("svc:x:65000:65000::/nonexistent:/usr/sbin/nologin\n")
+    rc, doc, _ = ship.ctl("set", "owner.name=svc", "--json")
+    assert rc == 4 and not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()
+
+
+AT_OPENSSH = "@" + "openssh.com"  # a key type's suffix (written apart: not an address)
+
+
+@pytest.mark.parametrize("key", [
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTY= you",
+    f"sk-ssh-ed25519{AT_OPENSSH} AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t you",
+    f"sk-ecdsa-sha2-nistp256{AT_OPENSSH} AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20= you",
+])
+def test_the_owner_takes_any_key_type_fleetledger_takes(ship, key):
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={key}", "--json")
+    assert rc == 0, doc
+    assert ship.p("/etc/ssh/shipshape/keys/human").read_text() == key + "\n"
+
+
+def test_grow_root_grows_a_filesystem_its_partition_outgrew(ship):
+    ship.set(disk={"full": True, "fs_behind": True})  # growpart ran, resize2fs did not
+    rc, doc, _ = ship.ctl("grow-root", "--json")
+    assert rc == 0 and doc["data"]["grown"] is True
+    assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]

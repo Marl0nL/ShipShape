@@ -243,3 +243,53 @@ def test_a_public_repo_is_cloned_before_any_sign_in(ship):
     clones = [c for c in ship.calls("git") if c[1:2] == ["clone"]]
     ship.ctl("refresh", "--json")
     assert [c for c in ship.calls("git") if c[1:2] == ["clone"]] == clones  # not again
+
+
+def test_a_github_sign_in_starts_only_the_agents_that_waited_for_it(ship):
+    ship.set(git={"private": ["someone/agent-setup"]}, gh={"login": None})
+    _with_repo_agent(ship)
+    ship.ctl("refresh", "--json")  # the first after boot: main and grinder; setup waits
+    s = ship.scenario()
+    s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a["name"] != "main"]
+    ship.set(herdr=s["herdr"])  # then you stopped main
+    ship.set(gh={"login": "example-user"})
+    ship.ctl("refresh", "--json")
+    started = started_args(ship)
+    assert "setup" in started and "main" not in started  # main stays stopped
+
+
+def test_a_waiting_private_repo_is_not_tried_at_every_refresh(ship):
+    ship.set(git={"private": ["someone/agent-setup"]}, gh={"login": None})
+    _with_repo_agent(ship)
+    ship.ctl("refresh", "--json")
+    clones = len([c for c in ship.calls("git") if c[1:2] == ["clone"]])
+    ship.ctl("refresh", "--json")
+    ship.ctl("refresh", "--json")
+    assert len([c for c in ship.calls("git") if c[1:2] == ["clone"]]) == clones
+
+
+def test_github_out_of_reach_is_said_and_tried_again(ship):
+    ship.set(git={"public": ["someone/agent-setup"], "offline": True},
+             claude={"logged_in": False})
+    _with_repo_agent(ship)
+    ship.ctl("refresh", "--json")
+    rc, doc, _ = ship.ctl("status", "--json")
+    item = next(a for a in doc["attention"] if a.get("subject") == "setup")
+    assert "could not reach github.com" in item["message"]
+    assert "sign-in" not in item["message"]
+    s = ship.scenario()
+    s["git"]["offline"] = False
+    ship.set(git=s["git"])
+    ship.ctl("refresh", "--json")  # no sign-in changed: retried anyway
+    assert ship.p("/home/agent/work/agent-setup/CLAUDE.md").exists()
+
+
+def test_removing_an_agent_drops_its_repo_attention(ship):
+    ship.set(git={"private": ["someone/agent-setup"]}, gh={"login": None})
+    _with_repo_agent(ship)
+    ship.ctl("refresh", "--json")
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert "agent-repo-waiting" in {a["code"] for a in doc["attention"]}
+    assert ship.ctl("set", "autostart.remove=setup", "--json")[0] == 0
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert "agent-repo-waiting" not in {a["code"] for a in doc["attention"]}

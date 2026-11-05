@@ -122,6 +122,7 @@ def make_env() -> Environment:
         SERVICES=SERVICES,
         MODES=commands.MODES,
         SIGNIN_CHOICES=signins.CHOICES,
+        SIZE=_size_limits_for_forms(),
         SIGNIN_LABELS=signins.LABELS,
         SETTINGS=SETTINGS,
         SETTINGS_TEXT=SETTINGS_TEXT,
@@ -171,6 +172,20 @@ def session_of(request: Request | WebSocket) -> Session:
 
 def ui_of(request: Request | WebSocket) -> UI:
     return request.app.state.ui
+
+
+def _size_limits_for_forms() -> dict[str, int]:
+    """The size contract's limits, as the forms ask (memory in whole GB)."""
+    from fleetledger import lifecycle
+
+    try:
+        limits = lifecycle.size_limits()
+    except FleetError:
+        return {}
+    return {"cores_min": limits["cores"][0], "cores_max": limits["cores"][1],
+            "mem_min": -(-limits["memory_mb"][0] // 1024),
+            "mem_max": limits["memory_mb"][1] // 1024,
+            "disk_min": limits["disk_gb"][0], "disk_max": limits["disk_gb"][1]}
 
 
 def render(request: Request, template: str, status_code: int = 200, **context: Any) -> Response:

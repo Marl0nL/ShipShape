@@ -433,6 +433,43 @@ def test_an_agent_in_a_repo_can_be_added_later(env):
     assert len(env.ship.calls) == calls
 
 
+@pytest.mark.parametrize("args", [["--memory-mb", "2048"], ["--cores", "100"],
+                                  ["--disk-gb", "8000"]])
+def test_a_size_the_contract_refuses_never_reaches_the_hypervisor(env, args):
+    sized = []
+    env.driver.resize = lambda ship, size: sized.append(size) or Outcome(done=True)
+    env.run("new", "ship-23", "--driver", "proxmox")
+    code, _, err = env.run("resize", "ship-23", *args)
+    assert code == 1 and " to " in err  # says the limits
+    assert sized == [] and env.store.load().ship("ship-23").size == {}
+
+
+def test_a_ship_for_an_ecdsa_or_security_key(env, home):
+    at = "@" + "openssh.com"  # a key type's suffix (written apart: not an address)
+    key = f"sk-ssh-ed25519{at} AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t you\n"
+    you = Path(env.store.load().doc["fleet"]["agent_keys"][0])
+    you.write_text(key)
+    code, _, err = env.run("new", "ship-24")
+    assert code == 0, err
+    assert _seed_ship_toml(home, "ship-24")["owner"]["keys"] == [key.strip()]
+    you.write_text("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTY= you\n")
+    assert env.run("new", "ship-25")[0] == 0
+
+
+def test_offline_views_leave_out_sign_ins_a_ship_does_not_use(env):
+    doc = copy.deepcopy(RUNNING)
+    doc["attention"].append({"code": "signin-missing", "subject": "gcloud",
+                             "message": "Google Cloud is not signed in."})
+    env.ship.status_override["ship-01"] = doc
+    env.run("ls")  # fetched and cached
+    env.run("signins", "ship-01", "--off", "gcloud")
+    inv = env.store.load()
+    from fleetledger import status
+
+    view = status.cached_view(inv, inv.ship("ship-01"), "none")
+    assert not [a for a in view.attention if a.get("subject") == "gcloud"]
+
+
 def test_new_proxmox_keeps_names_that_resolve(env):
     env.app.resolves = lambda host: host == "ship-06.local"
     assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0
@@ -777,7 +814,7 @@ def test_your_own_login_on_ships(env, monkeypatch, home):
     sent = [c[3:] for name, c in env.ship.calls if name == "ship-01" and c[3:4] == ["set"]]
     assert sent[-1][1:3] == ["owner.name=sam", f"owner.keys={owner['keys'][0]}"]
     assert env.store.load().owner == "sam" and "ssh sam@ship-01" in out
-    for bad in ("agent", "fleet", "root", "Sam", "a b"):
+    for bad in ("agent", "fleet", "root", "nobody", "Sam", "a b"):
         assert env.run("owner", bad)[0] == 1
     assert env.store.load().owner == "sam"
     seen = []

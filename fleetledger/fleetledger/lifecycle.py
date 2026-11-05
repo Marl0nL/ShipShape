@@ -121,16 +121,25 @@ def cmd_destroy(args, app) -> int:
 
 
 # --- resize ---------------------------------------------------------------------
-SIZE_LIMITS = {"cores": (1, 128), "memory_mb": (1024, 1048576), "disk_gb": (10, 16384)}
+def size_limits() -> dict[str, tuple[int, int]]:
+    """(minimum, maximum) of cores, memory_mb and disk_gb: ships.toml's size contract,
+    the one source of them (checks here, and the web forms' min and max)."""
+    from fleetledger import schemas
+
+    props = schemas.definition("ships.toml", "size")["properties"]
+    return {key: (int(props[key]["minimum"]), int(props[key]["maximum"]))
+            for key in ("cores", "memory_mb", "disk_gb")}
 
 
 def check_size(size: dict) -> dict[str, int]:
-    """The given cores / memory_mb / disk_gb, each within sane limits."""
+    """The given cores / memory_mb / disk_gb, each within the contract's limits, so a
+    size the inventory would refuse never reaches the hypervisor."""
+    limits = size_limits()
     out = {}
     for key, value in size.items():
         if value is None:
             continue
-        low, high = SIZE_LIMITS[key]
+        low, high = limits[key]
         if not isinstance(value, int) or not low <= value <= high:
             raise FleetError(f"{key.replace('_', ' ')}: {low} to {high}.")
         out[key] = value

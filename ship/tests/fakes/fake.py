@@ -207,6 +207,10 @@ def git(s: dict, a: list[str]) -> int:
     url, dest = a[-2], a[-1]
     repo = url.removeprefix("https://github.com/").removesuffix(".git")
     repos = s.setdefault("git", {})
+    if repos.get("offline"):
+        print("fatal: unable to access 'https://github.com/x/': Could not resolve host: "
+              "github.com", file=sys.stderr)
+        return 128
     signed_in = bool(s.get("gh", {}).get("login"))
     if repo in repos.get("public", []) or (signed_in and repo in repos.get("private", [])):
         Path(dest, ".git").mkdir(parents=True)
@@ -433,12 +437,19 @@ def growpart(s: dict, a: list[str]) -> int:
         print("NOCHANGE: partition 1 is size 50329567. it cannot be grown")
         return 1
     disk["full"] = True
+    disk["fs_behind"] = True  # the filesystem is now smaller than its partition
     save(s)
     return 0
 
 
 def resize2fs(s: dict, a: list[str]) -> int:
-    s.setdefault("disk", {}).setdefault("resized", []).append(a[-1])
+    disk = s.setdefault("disk", {})
+    if not disk.get("fs_behind"):
+        print("The filesystem is already 6291195 (4k) blocks long.  Nothing to do!",
+              file=sys.stderr)
+        return 0
+    disk["fs_behind"] = False
+    disk.setdefault("resized", []).append(a[-1])
     save(s)
     return 0
 

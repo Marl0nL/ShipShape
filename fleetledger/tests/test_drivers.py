@@ -583,6 +583,10 @@ def test_boot_disk_and_its_size():
               "scsi0": "local-lvm:vm-9101-disk-0,size=40G", "virtio1": "x,size=2T"}
     assert boot_disk(config) == ("scsi0", 40)
     assert boot_disk({"virtio0": "x,size=20480M"}) == ("virtio0", 20)
+    assert boot_disk({"scsi0": "x,size=21474836480"}) == ("scsi0", 20)  # no unit: bytes
+    # The boot order decides, not the disk's name.
+    assert boot_disk({"boot": "order=virtio1;scsi0", "scsi0": "x,size=10G",
+                      "virtio1": "y,size=30G"}) == ("virtio1", 30)
     assert boot_disk({"ide2": "x,media=cdrom"}) == (None, None)
 
 

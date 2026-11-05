@@ -62,6 +62,13 @@ def _p(ctx: Context, path: str) -> Path:
     return ctx.paths.p(path)
 
 
+def owner_principals(ship: ShipToml) -> list[str]:
+    """Certificate principals that may log in as the owner. For now the same as
+    agent's: a machine you trust for a Ship can log in as you there too (with sudo).
+    The one place to change if the owner gets principals of its own."""
+    return agent_principals(ship)
+
+
 def agent_principals(ship: ShipToml) -> list[str]:
     """Certificate principals that may log in as agent on this Ship."""
     return ["agent:all", *(f"agent:tag:{t}" for t in ship.tags), f"agent:ship:{ship.name}"]
@@ -297,7 +304,8 @@ def render_files(ctx: Context, ship: ShipToml, dry_run: bool = False) -> list[Pa
     owner = (ship.owner or {}).get("name")
     if owner:
         own = _p(ctx, PRINCIPALS_DIR + "/" + owner)
-        if write_atomic(own, text, 0o644, dry_run=dry_run):
+        owner_text = "\n".join(owner_principals(ship)) + "\n"
+        if write_atomic(own, owner_text, 0o644, dry_run=dry_run):
             changed.append(own)
         keys = _p(ctx, KEYS_DIR + "/" + owner)
         lines = "".join(k.strip() + "\n" for k in ship.owner.get("keys", []))

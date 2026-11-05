@@ -72,8 +72,9 @@ def boot_disk(config: Mapping[str, Any]) -> tuple[str | None, int | None]:
     match = SIZE_RE.search(disks[chosen])
     if not match:
         return chosen, None
-    value, unit = float(match.group(1)), match.group(2) or "G"
-    gb = value * {"K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1, "T": 1024}[unit]
+    value, unit = float(match.group(1)), match.group(2)  # no unit: bytes
+    gb = value * {"": 1 / 1024 ** 3, "K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1,
+                  "T": 1024}[unit]
     return chosen, int(round(gb))
 
 

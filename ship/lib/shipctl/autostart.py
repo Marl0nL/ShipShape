@@ -34,7 +34,8 @@ START_TIMEOUT_MS = 120000
 # into a folder that is empty or not there yet. A private repo needs the Ship's
 # GitHub sign-in (git then uses gh's credentials). Exit 0 cloned or already a
 # checkout, 2 not reachable and GitHub not signed in yet, 3 the folder holds
-# something else, anything else could not clone.
+# something else, 4 github.com could not be reached at all, anything else could
+# not clone.
 CLONE_SCRIPT = r"""set -eu
 repo=$1 dest=$2
 [ -d "$dest/.git" ] && exit 0
@@ -55,6 +56,12 @@ if GIT_TERMINAL_PROMPT=0 git clone --quiet -- "$url" "$tmp/repo" 2>"$tmp/err"; t
   exit 0
 fi
 tail -n 1 "$tmp/err" >&2 || true
+offline="could not resolve host|failed to connect|connection timed out"
+offline="$offline|network is unreachable|temporary failure in name resolution"
+if grep -qiE "$offline" "$tmp/err"; then
+  rm -rf "$tmp"
+  exit 4
+fi
 rm -rf "$tmp"
 [ "$signed_in" = 1 ] && exit 1
 exit 2
@@ -75,35 +82,50 @@ def ensure_repo(ctx: Context, repo: str, cwd: str) -> tuple[str, str]:
                                   "repo does not exist)")
     if r.rc == 3:
         return "failed", f"{cwd} already holds something that is not a checkout of {repo}"
+    if r.rc == 4:
+        return "unreachable", f"could not reach github.com to clone {repo}; trying again"
     why = (r.err or "").strip().splitlines()[-1:] or ["git clone failed"]
     return "failed", f"could not clone {repo}: {why[0][:200]}"
 
 
-def _repo_states(ctx: Context) -> dict:
+def _repo_states(ctx: Context, ship: ShipToml) -> dict:
+    """What is known about each [[autostart]] repo, for the entries still there: an
+    agent removed (or given another repo) drops out, with its attention item."""
     repos = read_json(ctx.paths.state / REPOS_STATE, {})
-    return repos if isinstance(repos, dict) else {}
+    wanted = {e["name"]: e.get("repo") for e in ship.autostart if e.get("repo")}
+    return {name: rec for name, rec in (repos if isinstance(repos, dict) else {}).items()
+            if isinstance(rec, dict) and wanted.get(name) == rec.get("repo")}
 
 
 def prepare_repos(ctx: Context, ship: ShipToml, retry: bool = False) -> list[str]:
     """Clone what can be cloned before the agents may start (a public repo needs no
     sign-in at all): each entry's repo once, and again only when retry (GitHub has just
     become signed in). Run by the status refresh; autostart clones too, if needed."""
-    states = _repo_states(ctx)
+    raw = read_json(ctx.paths.state / REPOS_STATE, {})
+    states = _repo_states(ctx, ship)
     messages = []
     agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
     for entry in ship.autostart:
         if not entry.get("repo"):
             continue
         rec = states.get(entry["name"]) or {}
-        if rec.get("state") == "cloned" or (rec and rec.get("repo") == entry["repo"]
-                                             and not retry):
+        # Once each; again when GitHub has just been signed in, and at every refresh
+        # while github.com could not be reached.
+        if rec.get("state") == "cloned" or (rec and not retry
+                                             and rec.get("state") != "unreachable"):
             continue
         state, why = ensure_repo(ctx, entry["repo"], expand_cwd(entry["cwd"], agent_home))
         states[entry["name"]] = {"repo": entry["repo"], "state": state, "message": why}
         messages.append(f"{entry['name']}: {why}")
-    if messages:
+    if messages or states != raw:
         write_atomic(ctx.paths.state / REPOS_STATE, json.dumps(states, indent=2) + "\n", 0o644)
     return messages
+
+
+def waiting_for_github(ctx: Context, ship: ShipToml) -> set[str]:
+    """Autostart agents whose repo waits for the GitHub sign-in."""
+    return {n for n, rec in _repo_states(ctx, ship).items()
+            if rec.get("state") == "waiting-github"}
 
 
 def mode_args(mode: str) -> list[str]:
@@ -178,12 +200,15 @@ def _herdr_json(ctx: Context, argv: list[str], timeout: float) -> tuple[dict | N
         return {}, ""
 
 
-def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list[str]]:
-    """Returns (data, changed, messages). `state` is the Ship's current status state."""
+def run(ctx: Context, ship: ShipToml, state: str,
+        only: set[str] | None = None) -> tuple[dict, list[str], list[str]]:
+    """Returns (data, changed, messages). `state` is the Ship's current status state.
+    With `only`, just those entries (a GitHub sign-in starts the agents whose repo
+    waited for it, never one you stopped)."""
     started: list[str] = []
     skipped: list[dict] = []
     messages: list[str] = []
-    entries = ship.autostart
+    entries = [e for e in ship.autostart if only is None or e["name"] in only]
     if not entries:
         return {"started": [], "skipped": []}, [], []
 
@@ -206,7 +231,7 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
     agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
     failures = 0
     named = None  # whether claude takes --name; asked once, only if something starts
-    repos = _repo_states(ctx)
+    repos = _repo_states(ctx, ship)
 
     for entry in entries:
         name = entry["name"]
@@ -270,13 +295,13 @@ def run(ctx: Context, ship: ShipToml, state: str) -> tuple[dict, list[str], list
     return {"started": started, "skipped": skipped}, started, messages
 
 
-def repo_attention(ctx: Context) -> list[tuple[str, str, str]]:
+def repo_attention(ctx: Context, ship: ShipToml) -> list[tuple[str, str, str]]:
     """(code, message, agent) for autostart agents whose repo is not cloned yet."""
-    repos = read_json(ctx.paths.state / REPOS_STATE, {})
     out = []
-    for name, rec in (repos if isinstance(repos, dict) else {}).items():
-        if not isinstance(rec, dict) or rec.get("state") == "cloned":
+    for name, rec in _repo_states(ctx, ship).items():
+        if rec.get("state") == "cloned":
             continue
-        code = "agent-repo-waiting" if rec.get("state") == "waiting-github" else "agent-repo-failed"
+        code = ("agent-repo-waiting" if rec.get("state") in ("waiting-github", "unreachable")
+                else "agent-repo-failed")
         out.append((code, f"Agent '{name}': {rec.get('message', '')}", str(name)))
     return out

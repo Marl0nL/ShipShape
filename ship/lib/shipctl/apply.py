@@ -186,7 +186,7 @@ def _check_sudoers(ctx: Context, text: str) -> None:
         raise CtlError("internal", "visudo rejected the agent sudoers rule")
 
 
-RESERVED_USERS = ("root", "fleet", "agent")
+RESERVED_USERS = ("root", "fleet", "agent", "nobody")
 OWNER_SUDOERS = "/etc/sudoers.d/90-shipshape-owner"
 
 
@@ -217,7 +217,7 @@ def sync_owner(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[lis
         raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a ShipShape login", 4)
     messages = []
     uid = _passwd_uid(ctx, name)
-    if uid is not None and uid < 1000:
+    if uid is not None and (uid < 1000 or uid >= 60000):  # system accounts, nobody
         raise CtlError("invalid-ship-toml", f"owner.name: {name!r} is a system account", 4)
     if uid is None and not dry_run:
         r = ctx.runner.run(["useradd", "--create-home", "--shell", "/bin/bash", "--comment",

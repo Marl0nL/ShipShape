@@ -476,17 +476,7 @@ def cmd_scan(args, app) -> int:
 
 def _views(app, inv: Inventory, ships: list[Ship], offline: bool) -> list[status.ShipView]:
     if offline:
-        views = []
-        for ship in ships:
-            doc = status.read_cache(ship.name)
-            view = status.ShipView(ship, status=doc)
-            if doc is None:
-                view.problem, view.message = "unknown", "no cached status"
-            else:
-                view.attention = list(doc["attention"]) + status.fleet_attention(
-                    inv, ship, doc, None)
-            views.append(view)
-        return views
+        return [status.cached_view(inv, ship, "no cached status") for ship in ships]
     tooling = app.repo_factory().tooling_version
     return status.poll(_ssh(app, inv), inv, ships, tooling=tooling)
 
@@ -708,9 +698,9 @@ def set_owner(app, store, name: str, say) -> bool:
     from fleetledger.seed import cloudinit
     from fleetledger.shipctl import ShipCtl, ShipCtlError
 
-    if not OWNER_RE.match(name) or name in ("root", "fleet", "agent"):
+    if not OWNER_RE.match(name) or name in ("root", "fleet", "agent", "nobody"):
         raise FleetError(f"'{name}' cannot be your login name: a-z, 0-9, _ and -, not root, "
-                         "fleet or agent.")
+                         "fleet, agent or nobody.")
     with store.edit() as ed:
         ed.doc["fleet"]["owner"] = name
     inv = store.load()

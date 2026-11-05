@@ -282,9 +282,9 @@
       data-confirm="A bigger disk is grown now, with the Ship's filesystem, and can never shrink again. Cores and memory change when the VM next restarts through the hypervisor; with &quot;restart it now&quot; ticked that is now, and its agents stop for a minute and start again."
       data-confirm-action="Resize {{ ship.name }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label>CPU cores <input name="cores" type="number" min="1" max="128" value="{{ size.cores }}"></label>
-      <label>Memory (GB) <input name="memory_gb" type="number" min="1" max="1024" value="{{ size.memory_mb // 1024 }}"></label>
-      <label>Disk (GB) <input name="disk_gb" type="number" min="{{ size.disk_gb }}" max="16384" value="{{ size.disk_gb }}"></label>
+      <label>CPU cores <input name="cores" type="number" min="{{ SIZE.cores_min }}" max="{{ SIZE.cores_max }}" value="{{ size.cores }}"></label>
+      <label>Memory (GB) <input name="memory_gb" type="number" min="{{ SIZE.mem_min }}" max="{{ SIZE.mem_max }}" value="{{ size.memory_mb // 1024 }}"></label>
+      <label>Disk (GB) <input name="disk_gb" type="number" min="{{ size.disk_gb }}" max="{{ SIZE.disk_max }}" value="{{ size.disk_gb }}"></label>
       <label class="confirm"><input type="checkbox" name="restart" value="yes"> restart it now</label>
       <button type="submit">Resize</button>
     </form>

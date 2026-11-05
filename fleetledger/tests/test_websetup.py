@@ -873,8 +873,10 @@ def test_the_first_ship_lets_this_computer_attach(chosen, monkeypatch):
 def test_the_first_ship_can_be_sized(chosen, monkeypatch):
     chosen.post("/setup/hypervisor/manual")
     text = page(chosen)
-    assert 'name="cores" type="number" min="1" max="128" value="4"' in text  # the defaults
-    assert 'name="memory_gb" type="number" min="1" max="1024" value="8"' in text
+    # The defaults, within the size contract's limits (ships.toml.schema.json).
+    assert 'name="cores" type="number" min="1" max="64" value="4"' in text
+    assert 'name="memory_gb" type="number" min="4" max="256" value="8"' in text
+    assert 'name="disk_gb" type="number" min="20" max="4096" value="40"' in text
     args = _made_with(chosen, monkeypatch, {"name": "ship-01", "cores": "8", "memory_gb": "16",
                                             "disk_gb": "80"})
     assert (args.cores, args.memory_mb, args.disk_gb) == (8, 16384, 80)
@@ -886,7 +888,7 @@ def test_a_silly_size_makes_nothing(chosen, monkeypatch):
     monkeypatch.setattr(commands, "cmd_new", lambda args, app: pytest.fail("made"))
     chosen.post("/setup/hypervisor/manual")
     chosen.post("/setup/ship", {"name": "ship-01", "cores": "0"})
-    assert "cores: 1 to 128" in page(chosen)
+    assert "cores: 1 to 64" in page(chosen)
 
 
 def test_the_first_ship_can_use_fewer_sign_ins(chosen, monkeypatch):
