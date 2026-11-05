@@ -61,6 +61,7 @@ How fields are worked out:
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
 | `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
 | `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
+| `settings` | `ship.toml` with its defaults filled in: the values `set` manages (tags, time zone, the Claude settings, agent sudo, LAN guard and its allowed addresses, SSH listen, OS-update reboots), the owner login's name, and the `[[autostart]]` agents (name, folder, mode, repo). Optional in the schema: Ships with older tooling leave it out, and FleetLedger then shows their settings as unknown. |
 | `overlay` | `null` when the overlay tooling is absent; otherwise the overlay record (see `overlay` below) plus `tailscale status --json` (`BackendState`, `Self.DNSName`, `Self.TailscaleIPs`, `Self.Tags`). |
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
