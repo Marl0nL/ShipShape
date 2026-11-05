@@ -449,7 +449,8 @@ def useradd(s: dict, a: list[str]) -> int:
     passwd = Path(os.environ["SHIPSHAPE_ROOT"]) / "etc/passwd"
     passwd.parent.mkdir(parents=True, exist_ok=True)
     with passwd.open("a") as fh:
-        fh.write(f"{name}:x:1001:1001:ShipShape owner:/home/{name}:/bin/bash\n")
+        home = Path("/home") / name
+        fh.write(f"{name}:x:1001:1001:ShipShape owner:{home}:/bin/bash\n")
     return 0
 
 
