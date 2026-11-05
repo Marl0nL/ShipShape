@@ -140,3 +140,49 @@ def start_operation(jobs: Any, app: Any, kind: str, ships: list[str]) -> Any:
         job.ok = all(o.ok for o in job.outcomes)
 
     return jobs.start(kind, list(ships), run, TITLES[kind])
+
+
+def tool_choices(app: Any, view: Any) -> dict[str, Any]:
+    """The Settings tab's Tools: the catalogue's tools, each with its state on the
+    Ship (status `tools`; None while the Ship has not reported). No checkout: none."""
+    from fleetledger.catalogue import Catalogue
+
+    try:
+        recipes = Catalogue.from_repo(app.repo_factory()).recipes
+    except FleetError as exc:
+        return {"list": [], "error": exc.message, "known": False}
+    doc = view.status if view is not None else None
+    on_ship = (doc or {}).get("tools") or {}
+    return {"list": [(r.id, r.description, (on_ship.get(r.id) or {}).get("state"))
+                     for r in sorted(recipes.values(), key=lambda r: r.id)],
+            "error": None, "known": doc is not None}
+
+
+def change_tools(jobs: Any, app: Any, name: str, ticked: list[str], view: Any):
+    """Tools ticked and unticked on the Settings tab, as one job running
+    `ship-fleet tools add|remove NAME ID...` (ops.change_tools, as the CLI does)."""
+    from fleetledger.web.jobs import run_cli
+
+    choices = tool_choices(app, view)
+    if not choices["known"]:
+        raise FleetError("Its tools are not known until it answers: Check now first.")
+    known = {t for t, _, _ in choices["list"]}
+    if set(ticked) - known:
+        raise FleetError("Tools: not one of the catalogue's.")
+    installed = {t for t, _, state in choices["list"] if state}
+    add = sorted(set(ticked) - installed)
+    remove = sorted(installed - set(ticked))
+    if not add and not remove:
+        raise FleetError("Nothing to change.")
+
+    def run(job: Any) -> int:
+        code = 0
+        if add:
+            code = run_cli(app, ["tools", "add", name, *add], job)
+        if remove and code == 0:
+            code = run_cli(app, ["tools", "remove", name, *remove], job)
+        return code
+
+    said = [*(["add " + ", ".join(add)] if add else []),
+            *(["remove " + ", ".join(remove)] if remove else [])]
+    return jobs.start("tools", [name], run, f"Tools on {name}: {'; '.join(said)}")
