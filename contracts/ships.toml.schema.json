@@ -159,7 +159,7 @@
     },
     "machine": {
       "type": "object",
-      "description": "Machines you attach from (herdr --remote, plain SSH), keyed by a name you choose. Each gets short-lived user certificates for the agent user (`ship-fleet trust`).",
+      "description": "Machines you attach from (herdr --remote, plain SSH), keyed by a name you choose. Each gets short-lived user certificates (`ship-fleet trust`) for the logins it may use.",
       "propertyNames": { "$ref": "#/$defs/shipName" },
       "additionalProperties": {
         "type": "object",
@@ -176,7 +176,14 @@
             "minItems": 1,
             "uniqueItems": true,
             "items": { "type": "string", "pattern": "^(all|tag:[a-z0-9][a-z0-9-]{0,30}|ship:[a-z0-9][a-z0-9-]{0,30})$" },
-            "description": "Which Ships the certificates open: all, tag:<tag>, or ship:<name>. Becomes the certificate principals agent:all, agent:tag:<tag>, agent:ship:<name>."
+            "description": "Which Ships the certificates open: all, tag:<tag>, or ship:<name>. With logins, becomes the certificate principals <login>:all, <login>:tag:<tag>, <login>:ship:<name>."
+          },
+          "logins": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "enum": ["agent", "owner"] },
+            "description": "Which logins the certificates open on those Ships: agent (attach to the agent, herdr --remote) and/or owner (your own login, with sudo; fleet.owner). Absent: both, as machines had before owner logins got principals of their own; FleetLedger then records both, once, and says so."
           },
           "cert_hours": {
             "type": "integer",
