@@ -118,3 +118,15 @@
     </form>
     <p class="hint">Tags choose the accounts this Ship must sign in with.</p>
   </section>
+  <section class="danger-zone">
+    <h2>Danger zone</h2>
+    {% from "_macros.html" import destroy_form with context %}
+    <p>Destroying {{ ship.name }} takes it off the overlay, then deletes its VM and disks
+      {%- if ship.driver == "manual" %} (on the manual driver you get the steps, then Forget it here){% endif %},
+      its seed, its inventory entry and its charts. The sign-ins on it go with it.
+      Snapshots on the hypervisor go with the VM.</p>
+    {{ destroy_form(ship.name, by_hand=ship.driver == "manual") }}
+    <p class="hint">Its VM already gone, or deleted by hand? Forget it: FleetLedger only
+      removes it here and touches no VM (<code>ship-fleet destroy {{ ship.name }} --forget</code>).</p>
+    {{ destroy_form(ship.name, forget=True) }}
+  </section>
