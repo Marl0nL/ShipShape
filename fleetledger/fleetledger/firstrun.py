@@ -15,6 +15,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from fleetledger import paths
@@ -155,12 +156,17 @@ def fleet(app) -> tuple[list[Item], Any]:
                         "no [ca]: other machines cannot be trusted with certificates",
                         "ship-fleet setup   (or: ship-fleet ca init)"))
     else:
-        keys = [paths.expand(ca[k]) for k in ("host_key", "user_key") if k in ca]
-        gone = [str(k) for k in keys if not k.exists()]
+        gone = [str(k) for k in missing_ca_keys(ca)]
         out.append(Item("fleet", "certificate authority", "fail" if gone else "ok",
                         ("missing key files: " + ", ".join(gone)) if gone else "host and user CA",
                         "ship-fleet ca init --force" if gone else ""))
     return out, inv
+
+
+def missing_ca_keys(ca) -> list[Path]:
+    """The [ca] host and user key files that are not on disk."""
+    named = [paths.expand(ca[k]) for k in ("host_key", "user_key") if k in ca]
+    return [k for k in named if not k.exists()]
 
 
 def _managed(inv):

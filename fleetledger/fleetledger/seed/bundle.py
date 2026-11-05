@@ -27,7 +27,8 @@ from fleetledger.repo import Repo
 
 MAX_BYTES = 5 * 1024 * 1024
 REQUIRED_EXECUTABLES = ("provision/ship-provision", "bin/ship-ctl")
-EXCLUDED_DIRS = {"tests", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", ".git"}
+# Left out wherever they appear; tests/ only at the top (ship/tests/), see _excluded.
+EXCLUDED_DIRS = {"node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", ".git"}
 EXCLUDED_SUFFIXES = (".pyc", ".pyo", ".swp", ".swo", "~", ".orig", ".rej")
 EXCLUDED_NAMES = {".DS_Store", "Thumbs.db"}
 
@@ -55,7 +56,7 @@ class Bundle:
 def _excluded(rel: PurePosixPath) -> bool:
     if rel.parts and rel.parts[0] == "tests":  # ship/tests/
         return True
-    if any(part in EXCLUDED_DIRS - {"tests"} for part in rel.parts):
+    if any(part in EXCLUDED_DIRS for part in rel.parts):
         return True
     return rel.name in EXCLUDED_NAMES or rel.name.endswith(EXCLUDED_SUFFIXES)
 

@@ -278,8 +278,7 @@ def _ca(s: _Setup) -> None:
     inv = s.store.load()
     cfg = inv.doc.get("ca")
     if cfg:
-        keys = [paths.expand(cfg[k]) for k in ("host_key", "user_key") if k in cfg]
-        gone = [k for k in keys if not k.exists()]
+        gone = firstrun.missing_ca_keys(cfg)
         if not gone:
             s.app.say("Already set up (host and user CA keys).")
             return

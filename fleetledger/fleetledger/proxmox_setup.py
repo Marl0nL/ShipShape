@@ -149,13 +149,18 @@ def seed_storage_commands(n: Names, *, grants: bool = True) -> list[str]:
     return out
 
 
+def _needed_grants(n: Names) -> tuple[tuple[str, str], ...]:
+    """(path, role) for each path the token needs a role on."""
+    return ((f"/pool/{n.pool}", "ShipShapeVM"),
+            (f"/storage/{n.seeds}", "ShipShapeSeeds"),
+            (f"/storage/{n.disk}", "ShipShapeDisks"),
+            (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser"))
+
+
 def grant_commands(n: Names) -> list[str]:
     seen: set[str] = set()
     out = []
-    for path, role in ((f"/pool/{n.pool}", "ShipShapeVM"),
-                       (f"/storage/{n.seeds}", "ShipShapeSeeds"),
-                       (f"/storage/{n.disk}", "ShipShapeDisks"),
-                       (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser")):
+    for path, role in _needed_grants(n):
         for line in _grant(path, role, n):
             if line not in seen:
                 seen.add(line)
@@ -207,10 +212,7 @@ def effective(perms: Mapping[str, Mapping[str, Any]], path: str) -> set[str]:
 def missing_grants(perms, n: Names) -> list[tuple[str, str, list[str]]]:
     """(path, role, privileges lacking) for each path the token needs."""
     out = []
-    for path, role in ((f"/pool/{n.pool}", "ShipShapeVM"),
-                       (f"/storage/{n.seeds}", "ShipShapeSeeds"),
-                       (f"/storage/{n.disk}", "ShipShapeDisks"),
-                       (f"/sdn/zones/localnetwork/{n.bridge}", "PVESDNUser")):
+    for path, role in _needed_grants(n):
         lacking = [p for p in role_privs(role, n.pve_major) if p not in effective(perms, path)]
         if lacking:
             out.append((path, role, lacking))
