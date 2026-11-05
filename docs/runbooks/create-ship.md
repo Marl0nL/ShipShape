@@ -138,6 +138,19 @@ ship-fleet adopt ship-07 --host ship-07.local
 
 The same command with `--replace` re-pins a Ship you rebuilt from a new seed.
 
+## Stop and start it
+
+```sh
+ship-fleet stop ship-01    # a clean shutdown: herdr saves every agent first
+ship-fleet start ship-01   # its agents resume in their modes as it boots
+```
+
+Both go through the driver (the proxmox driver checks the VM's name first). With
+the manual driver they print the step to run by hand. A reboot from inside the
+Ship is `ship-fleet reboot`; stopping and starting through the hypervisor is what
+makes a new core count or memory size apply (`ship-fleet resize --restart` does
+it for you).
+
 ## Snapshots
 
 With the proxmox driver (and the phase 4 rights in

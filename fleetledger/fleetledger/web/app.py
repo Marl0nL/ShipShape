@@ -539,6 +539,32 @@ async def ship_logout(request: Request) -> Response:
     return back(f"/ships/{name}")
 
 
+async def ship_power(request: Request) -> Response:
+    """Start or stop the Ship's VM (ship-fleet start|stop), as a job. Stop only
+    after its confirm dialog."""
+    ui = ui_of(request)
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
+    fields = await form(request)
+    session = session_of(request)
+    verb = one(fields, "power")
+    if verb not in actions.POWER:
+        ui.flash(session, "bad", "Unknown power action.")
+        return back(f"/ships/{name}")
+    if verb == "stop" and one(fields, "confirm") != "yes":
+        ui.flash(session, "bad", "Tick the box to confirm.")
+        return back(f"/ships/{name}")
+    try:
+        actions.start_power(ui.jobs, ui.app, verb, name)
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(f"/ships/{name}")
+    what = "Starting" if verb == "start" else "Stopping"
+    ui.flash(session, "ok", f"{what} {name}'s VM; its progress is below.")
+    return back(f"/ships/{name}")
+
+
 async def fleet_operation(request: Request) -> Response:
     """Update, reboot or join one Ship, every Ship with a tag, or the whole fleet
     (fleetledger.ops)."""
@@ -842,6 +868,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/signins", ship_signins, methods=["POST"]),
         Route("/attach-here", attach_here, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
+        Route("/ships/{name}/power", ship_power, methods=["POST"]),
         Route("/operations", fleet_operation, methods=["POST"]),
         Route("/ships/{name}/network/refresh", ship_network_refresh, methods=["POST"]),
         Route("/network", network_page),

@@ -140,3 +140,17 @@ def start_operation(jobs: Any, app: Any, kind: str, ships: list[str]) -> Any:
         job.ok = all(o.ok for o in job.outcomes)
 
     return jobs.start(kind, list(ships), run, TITLES[kind])
+
+
+POWER = {"start": "Start", "stop": "Stop"}
+
+
+def start_power(jobs: Any, app: Any, verb: str, name: str):
+    """Start or stop a Ship's VM: `ship-fleet start|stop NAME` itself, as a job.
+    Refused while something else runs on that Ship."""
+    from fleetledger.web.jobs import run_cli
+
+    if verb not in POWER:
+        raise FleetError("Unknown power action.")
+    return jobs.start(verb, [name], lambda job: run_cli(app, [verb, name], job),
+                      f"{POWER[verb]} {name}'s VM")

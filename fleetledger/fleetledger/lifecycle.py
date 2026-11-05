@@ -1,4 +1,4 @@
-"""ship-fleet destroy, resize, snapshot and image (phase 4).
+"""ship-fleet destroy, start, stop, resize, snapshot and image (phase 4).
 
 Hypervisor work goes through the driver interface (drivers/base.py); nothing
 here knows which hypervisor a Ship runs on.
@@ -32,6 +32,17 @@ def add_parsers(sub, add) -> None:
     p.add_argument("--forget", action="store_true",
                    help="only remove it from the inventory (the VM is already gone, or you "
                    "deleted it by hand)")
+
+    p = add(sub, "start", "start a Ship's VM",
+            "Start the Ship's VM through its driver (the manual driver prints the step).\n"
+            "Its agents resume in their modes as it boots. Then: ship-fleet status NAME --wait")
+    p.add_argument("name")
+
+    p = add(sub, "stop", "shut a Ship's VM down cleanly",
+            "Shut the Ship's VM down through its driver: an ACPI shutdown, never a\n"
+            "power-off, so herdr saves every agent first. Its agents stop until\n"
+            "ship-fleet start, then resume in their modes.")
+    p.add_argument("name")
 
     p = add(sub, "resize", "change a Ship's CPU cores, memory or disk",
             "  ship-fleet resize ship-01 --cores 8 --memory-mb 16384\n"
@@ -183,6 +194,35 @@ def _grow_root(app, inv, ship) -> str:
                 f"{ship.name} if its tooling is older, then ship-fleet resize {ship.name} "
                 "--disk-gb again.")
     return " ".join(result.messages) or "Its filesystem fills the disk."
+
+
+# --- start and stop --------------------------------------------------------------
+
+
+def cmd_start(args, app) -> int:
+    return _power(app, args.name, "start")
+
+
+def cmd_stop(args, app) -> int:
+    return _power(app, args.name, "stop")
+
+
+def _power(app, name: str, verb: str) -> int:
+    inv = app.store_factory().load()
+    ship = inv.ship(name)
+    driver = app.driver_factory(inv, ship.driver)
+    outcome = driver.start(ship) if verb == "start" else driver.stop(ship)
+    for message in outcome.messages:
+        app.say(message)
+    if not outcome.done:
+        app.say(f"{verb.capitalize()} {ship.name}'s VM by hand:")
+        for line in outcome.instructions:
+            app.say(f"  {line}")
+    if verb == "start":
+        app.note(f"Its agents resume as it boots: ship-fleet status {ship.name} --wait")
+    else:
+        app.note(f"Its agents resume in their modes at: ship-fleet start {ship.name}")
+    return 0
 
 
 def cmd_resize(args, app) -> int:

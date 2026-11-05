@@ -164,6 +164,14 @@ class FakeDriver:
         self.finished.append(ship.name)
         return Outcome(done=True, messages=["Detached and deleted the seed."])
 
+    def start(self, ship):
+        self.power = [*getattr(self, "power", []), ("start", ship.name)]
+        return Outcome(done=True, messages=[f"Started {ship.name}."])
+
+    def stop(self, ship):
+        self.power = [*getattr(self, "power", []), ("stop", ship.name)]
+        return Outcome(done=True, messages=[f"Shut down {ship.name}."])
+
     def destroy(self, ship):
         self.destroyed.append(ship.name)
         return Outcome(done=True, messages=[f"Destroyed VM {ship.driver_ref.get('vmid')}."])
