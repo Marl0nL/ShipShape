@@ -32,17 +32,16 @@ ship-fleet overlay check    # verifies it, now and whenever you like
 
 `setup` asks for the provider (Tailscale, or your own Headscale), the key
 source (keys you paste, or an OAuth client) and, for OAuth, how much the stored
-secret may do: `keys` (the default: mint keys only), `devices` (also remove
-destroyed Ships' devices; `devices:core` is tailnet-wide) or `policy` (also add
-the Ships' access rules for you, after a diff and your yes). It checks the
+secret may do: `keys` (the default), `devices` or `policy`
+([the choice](../guide/your-own-fleet.md#choosing-how-ships-get-overlay-keys);
+scopes in [overlay-providers.md](../overlay-providers.md)). It checks the
 client's scopes with Tailscale before saving anything, writes `[overlay]` to
-`ships.toml` and the secret to your OS keyring (or a 0600 file), and prints the access rules to add
-to your policy unless it adds them itself. `check` verifies the setup, the policy (tag owners; your devices
-reach the Ships on port 22; no rule lets a Ship start a connection; the Ship
-tests pass in Tailscale's own engine, at the `policy` level; otherwise from an
-exported file, `--policy FILE`), the tailnet's Ship devices against the
-inventory (from the `devices` level), and each Ship's overlay; `--probe` also tries, from each Ship, to open
-a connection to this computer and to another Ship, which must fail.
+`ships.toml` and the secret to your OS keyring (or a 0600 file), and prints the
+access rules to add to your policy unless it adds them itself. `check` verifies
+the setup, the policy, the tailnet's Ship devices against the inventory (from
+the `devices` level) and each Ship's overlay; `--probe` also tries, from each
+Ship, to open a connection to this computer and to another Ship, which must
+fail ([5. Check it](#5-check-it-acceptance)).
 
 The steps below are what `setup` does, by hand, and the laptop side.
 [../guide/your-own-fleet.md](../guide/your-own-fleet.md) explains the choices.

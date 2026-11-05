@@ -22,15 +22,13 @@ can reach from anywhere. Each step links to the runbook with the details.
    ([web-ui.md](../web-ui.md#first-run-the-setup-page); `--text` for the terminal).
    Choose **New fleet** and FleetLedger makes and looks after every key it
    needs: no passphrases to invent, nothing to `ssh-add`. It then asks where
-   Ships run. For Proxmox it needs the address and an API token: it shows the
-   server's certificate fingerprint for you to compare before pinning it,
-   checks the token, keeps it in your OS keyring (or a 0600 file), and finds
-   the node, pool, storages, bridge and template itself. Whatever is missing on
-   the host (the user, token, rights, seed storage or template) comes back as
-   the exact commands to run there as root
-   ([runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md) explains each);
-   **Check again** carries on. It then offers the overlay (step 6) and a first
-   Ship (step 4). `ship-fleet doctor` shows where things stand at any time. Put
+   Ships run. For Proxmox it needs the address and an API token; it shows the
+   server's certificate fingerprint for you to compare before pinning it, checks
+   the token and finds the rest itself. Anything missing on the host comes back
+   as the exact root commands to run there
+   ([runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md) explains each).
+   It then offers the overlay (step 6) and a first Ship (step 4). `ship-fleet
+   doctor` shows where things stand at any time. Put
    your tags and the accounts each tag should use in
    `~/.config/fleetledger/ships.toml`
    ([an example](../runbooks/create-ship.md#2-set-up-your-fleet-once)).
