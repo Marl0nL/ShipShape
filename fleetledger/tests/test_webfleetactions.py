@@ -16,20 +16,22 @@ from fleetledger import ops
 @pytest.fixture
 def fa(web, monkeypatch):  # noqa: F811
     """The page, with the ops recorded (each tested with the CLI) and answering ok."""
-    calls = []
+    calls, failing = [], set()
 
     def record(name):
         def call(fleet, ships, *args, **kwargs):
             calls.append((name, [s.name for s in ships], args, kwargs))
-            return [ops.Outcome(s.name, True, f"{name} ok",
-                                data={"lines": [f"{s.name} line"]} if name == "fleet_logs"
-                                else {}) for s in ships]
+            return [ops.Outcome(s.name, s.name not in failing,
+                                f"{name} ok" if s.name not in failing else "cannot reach it",
+                                data={"lines": [f"{s.name} \x1b[31mline\x1b[0m"]}
+                                if name == "fleet_logs" and s.name not in failing else {})
+                    for s in ships]
         return call
 
     for name in ("update", "set_settings", "change_tools", "fleet_logs"):
         monkeypatch.setattr(ops, name, record(name))
     web.sign_in()
-    web.calls = calls
+    web.calls, web.failing = calls, failing
     return web
 
 
@@ -87,6 +89,9 @@ def test_selection_is_ops_select(fa):
 
 
 def test_a_setting_sends_only_what_was_chosen(fa):
+    response = fa.post("/fleet/actions/set", {"ships": "tag:work", "remote_control": "off"})
+    assert response.headers["location"] == "/fleet/actions?tag=work"
+    assert fa.app_ui.jobs.recent() == [] and "Tick the box" in fa.client.get("/").text
     fa.post("/fleet/actions/set", {"ships": "all", "confirm": "yes"})
     assert "Choose at least one setting" in fa.client.get("/fleet/actions").text
     fa.post("/fleet/actions/set", {"ships": "all", "remote_control": "off", "sudo": "",
@@ -101,6 +106,8 @@ def test_a_setting_sends_only_what_was_chosen(fa):
 
 
 def test_tools_add_and_remove_for_a_tag(fa):
+    fa.post("/fleet/actions/tools", {"ships": "tag:work", "do": "add", "tool": ["gh-axi"]})
+    assert fa.app_ui.jobs.recent() == []  # no tick: nothing
     fa.post("/fleet/actions/tools", {"ships": "tag:work", "do": "add", "tool": ["gh-axi"],
                                      "confirm": "yes"})
     _finished(fa)
@@ -116,12 +123,16 @@ def test_tools_add_and_remove_for_a_tag(fa):
 
 
 def test_logs_from_every_ship_show_per_ship(fa):
-    fa.post("/fleet/actions/logs", {"ships": "all", "source": "provision", "lines": "50"})
+    fa.failing.add("ship-02")
+    fa.post("/fleet/actions/logs", {"ships": "all", "source": "herdr", "lines": "50"})
     job = _finished(fa)
     name, ships, args, _ = fa.calls[0]
-    assert (name, ships, args[:2]) == ("fleet_logs", ["ship-01", "ship-02"], ("provision", 50))
+    assert (name, ships, args[:2]) == ("fleet_logs", ["ship-01", "ship-02"], ("herdr", 50))
     card = fa.client.get(f"/jobs/{job.id}?v=0").text
-    assert "ship-01: 1 line" in card and "ship-02 line" in card
+    assert "ship-01: 1 line" in card and "ship-01 line" in card  # colour codes cleaned
+    assert "\x1b" not in card and "[31m" not in card
+    assert "ship-02: 0 lines" not in card and "ship-02: cannot reach it" in card
+    assert not job.ok
     assert "fleet_logs ok" not in card  # each Ship's lines say it
     fa.post("/fleet/actions/logs", {"ships": "all", "source": "provision", "lines": "99999"})
     assert len(fa.app_ui.jobs.recent()) == 1
@@ -145,3 +156,35 @@ def test_renew_certificates_for_a_tag_from_the_menu(caweb, monkeypatch):  # noqa
     assert response.headers["location"] == "/?tag=work"
     job = _finished(caweb)
     assert argvs == [["ca", "sign", "--tag", "work"]] and job.ships == ["ship-01"]
+
+
+def test_one_ship_that_fails_fails_the_job(fa):
+    fa.failing.add("ship-02")
+    fa.post("/fleet/actions/update", {"ships": "all", "reboot": "auto", "confirm": "yes"})
+    job = _finished(fa)
+    assert not job.ok and [o.ok for o in job.outcomes] == [True, False]
+    card = fa.client.get(f"/jobs/{job.id}?v=0").text
+    assert ">failed<" in card and 'class="flash bad">ship-02: cannot reach it' in card
+
+
+def test_chips_follow_the_effective_tags_and_an_unknown_tag_never_widens(fa):
+    with fa.store.edit() as ed:
+        ed.set_default("tags", ["lab"])
+        ed.doc["ship"]["ship-02"].pop("tags")
+    page = fa.client.get("/fleet/actions").text
+    assert "every lab Ship (1)" in page  # ship-02, by defaults.tags, as ops.select has it
+    form = _form(fa.client.get("/fleet/actions?tag=lab").text, "/fleet/actions/update")
+    assert 'value="tag:lab"' in form and 'data-confirm-action="Update 1 Ship"' in form
+    for bad in ("nobody", "Bad!"):
+        page = fa.client.get(f"/fleet/actions?tag={bad}").text
+        assert "No Ships with tag" in page
+        assert 'action="/fleet/actions/update"' not in page  # no form aimed at anything
+
+
+def test_renew_from_the_menu_refuses_an_unknown_or_malformed_tag(caweb):  # noqa: F811
+    response = caweb.post("/settings/certs/renew", {"tag": "nobody", "from": "fleet"})
+    assert response.status_code == 303 and caweb.app_ui.jobs.recent() == []
+    assert "No Ships with tag" in caweb.client.get("/").text
+    response = caweb.post("/settings/certs/renew", {"tag": "Bad!", "from": "fleet"})
+    assert response.headers["location"] == "/" and caweb.app_ui.jobs.recent() == []
+    assert "Choose every Ship or a tag" in caweb.client.get("/").text

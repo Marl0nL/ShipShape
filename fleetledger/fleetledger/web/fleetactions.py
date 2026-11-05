@@ -15,7 +15,6 @@ change a setting, add or remove tools, and read a log from each.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from typing import Any
 
@@ -27,7 +26,7 @@ from starlette.routing import Route
 from fleetledger import ops
 from fleetledger.errors import FleetError
 
-TAG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
+TAG_RE = ops.TAG_RE
 LOG_LINES = ("50", "100", "300")
 KINDS = ("fleet-update", "fleet-set", "fleet-tools", "fleet-logs")
 
@@ -53,8 +52,9 @@ def target(inv: Any, value: str) -> tuple[str | None, list[Any]]:
 
 
 def targets(inv: Any) -> list[tuple[str, str, int]]:
-    """(value, what it says, how many Ships) for the forms' Ships choice."""
-    tags = sorted({t for s in inv.ships() for t in (s.tags or ())})
+    """(value, what it says, how many Ships) for the forms' Ships choice: every Ship,
+    then each tag a Ship has (its own, or defaults.tags), as ops.select reads them."""
+    tags = sorted({t for s in inv.ships() for t in inv.effective_tags(s)})
     found = [("all", "every Ship", len(inv.ships()))]
     for t in tags:
         found.append((f"tag:{t}", f"every {t} Ship", len(ops.select(inv, [], t))))
@@ -107,12 +107,17 @@ async def page(request: Request) -> Response:
 
     ui = _ui(request)
     tag = request.query_params.get("tag")
-    tag = tag if tag and TAG_RE.match(tag) else None
     try:
         inv = await run_in_threadpool(ui.app.store_factory().load)
     except FleetError as exc:
         return render(request, "message.html", title="Every Ship", text=exc.message)
-    context = await run_in_threadpool(page_context, ui, inv, tag)
+    context = await run_in_threadpool(page_context, ui, inv, None)
+    if tag:
+        chosen = f"tag:{tag}"
+        if not TAG_RE.match(tag) or chosen not in {v for v, _, _ in context["targets"]}:
+            # Never act on more than was asked: no forms until a target is chosen here.
+            return render(request, "fleet_actions.html", **context, unknown_tag=tag)
+        context["chosen"] = chosen
     return render(request, "fleet_actions.html", **context)
 
 
@@ -245,7 +250,11 @@ async def logs(request: Request) -> Response:
         return _back(tag)
 
     def keep(job: Any, results: list[Any]) -> None:
-        job.result["logs"] = [(r.ship, r.data.get("lines", [])) for r in results]
+        from fleetledger.concierge.redact import clean
+
+        # A Ship that failed has no lines: its red line on the card says why.
+        job.result["logs"] = [(r.ship, [clean(line) for line in r.data.get("lines", [])])
+                              for r in results if r.ok]
 
     title = f"The {source} log ({lines} lines) of {_who(tag, ships)}"
     _started(request, lambda: _start(

@@ -56,7 +56,7 @@ def public_key_line(text: str) -> str | None:
 
 def scope_choices(inv: Any) -> list[tuple[str, str]]:
     """(scope, what it says) for the Ships a machine may reach: all, a tag, one Ship."""
-    tags = sorted({t for s in inv.ships() for t in (s.tags or ())})
+    tags = sorted({t for s in inv.ships() for t in inv.effective_tags(s)})
     return ([("all", "every Ship")] + [(f"tag:{t}", f"Ships tagged {t}") for t in tags]
             + [(f"ship:{s.name}", s.name) for s in inv.ships()])
 
@@ -162,15 +162,24 @@ async def renew_all(request: Request) -> Response:
     T`, from the Fleet page's Every Ship menu, which says from=fleet)."""
     from fleetledger import ops
     from fleetledger.web.app import back, form, one
-    from fleetledger.web.fleetactions import TAG_RE
 
     fields = await form(request)
-    inv = _inventory(request)
     tag = one(fields, "tag")
-    tag = tag if TAG_RE.match(tag) else ""
+    if one(fields, "from") == "fleet":  # the Fleet page's Every Ship menu
+        where = back("/", tag=tag if ops.TAG_RE.match(tag) else "")
+    else:
+        where = RedirectResponse(TO_CERTIFICATES, status_code=303)
+    if tag and not ops.TAG_RE.match(tag):  # never widened to every Ship
+        _flash(request, "bad", "Choose every Ship or a tag.")
+        return where
+    inv = _inventory(request)
     if inv is not None:
         force = one(fields, "force") == "yes"
-        ships = ops.select(inv, [], tag) if tag else inv.ships()
+        try:
+            ships = ops.select(inv, [], tag) if tag else inv.ships()
+        except FleetError as exc:  # no Ship has that tag (now)
+            _flash(request, "bad", exc.message)
+            return where
         title = ("Re-issue every certificate" if force else "Renew certificates") + (
             f" of every {tag} Ship" if tag else "")
         if ships:
@@ -179,9 +188,7 @@ async def renew_all(request: Request) -> Response:
                     *(["--force"] if force else [])], title)
         else:
             _flash(request, "bad", "No Ships to renew.")
-    if one(fields, "from") == "fleet":
-        return back("/", tag=tag)
-    return RedirectResponse(TO_CERTIFICATES, status_code=303)
+    return where
 
 
 async def renew_ship(request: Request) -> Response:

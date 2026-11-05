@@ -4,6 +4,7 @@
 {% block title %}Every Ship · FleetLedger{% endblock %}
 {% block body %}
 {% set value, every, n = (targets|selectattr(0, "equalto", chosen)|first) or targets[0] %}
+{% if unknown_tag %}{% set value, every, n = "none", "no Ships", 0 %}{% endif %}
 {% set ships = n ~ " Ship" ~ ("s" if n != 1 else "") %}
 <h1>Act on {{ every }}</h1>
 <section class="toolbar">
@@ -14,7 +15,11 @@
     {% endfor %}
   </div>
 </section>
-<p class="hint">The same Ships <code>ship-fleet</code> picks with {% if value == "all" %}no names{% else %}<code>--tag {{ value[4:] }}</code>{% endif %}. Each action runs in the background with one result per Ship. Each Ship's own page has the same actions for one Ship.</p>
+{% if unknown_tag %}
+<p class="flash bad">No Ships with tag '{{ unknown_tag }}'. Choose every Ship or a tag above.</p>
+{% else %}
+<p class="hint">The same Ships <code>ship-fleet</code> picks with {% if value == "all" %}<code>all</code>{% else %}<code>--tag {{ value[4:] }}</code>{% endif %}. Each action runs in the background with one result per Ship. Each Ship's own page has the same actions for one Ship.</p>
+{% endif %}
 
 {% if fleet_jobs %}
 <section class="activity">
@@ -22,6 +27,7 @@
 </section>
 {% endif %}
 
+{% if not unknown_tag %}
 <div class="fleet-actions">
 <section class="setup-step">
   <h2>Update</h2>
@@ -77,10 +83,10 @@
   {% for action, label in (("add", "Add"), ("remove", "Remove")) %}
   <form method="post" action="/fleet/actions/tools" class="tools-form"
     data-confirm-title="{{ label }} {n} tool{s} {{ 'on' if action == 'add' else 'from' }} {{ ships }}?"
-    data-confirm="{{ 'Each Ship installs the ticked tools; it may take a while.' if action == 'add' else 'Each Ship removes the ticked tools, and what they installed.' }} {{ every|capitalize }}: {{ ships }}."
+    data-confirm="{{ 'Each Ship installs the ticked tools; it may take a while.' if action == 'add' else 'Each Ship removes the ticked tools, and what they installed.' }} For {{ every }}: {{ ships }}."
     data-confirm-count="input[name='tool']"
     data-confirm-none="Tick the tools to {{ action }} first."
-    data-confirm-action="{{ label }} on {{ ships }}"{% if action == "remove" %} data-confirm-danger{% endif %}>
+    data-confirm-action="{{ label }} {{ 'on' if action == 'add' else 'from' }} {{ ships }}"{% if action == "remove" %} data-confirm-danger{% endif %}>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="ships" value="{{ value }}">
     <input type="hidden" name="do" value="{{ action }}">
@@ -91,7 +97,7 @@
       {% endfor %}
     </fieldset>
     <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
-    <button type="submit" class="{{ 'ghost danger' if action == 'remove' else '' }}" title="ship-fleet tools {{ action }} --tag TAG ID ...">{{ label }} on {{ ships }}</button>
+    <button type="submit" class="{{ 'ghost danger' if action == 'remove' else '' }}" title="ship-fleet tools {{ action }} --tag TAG ID ...">{{ label }} {{ "on" if action == "add" else "from" }} {{ ships }}</button>
   </form>
   {% endfor %}
   {% else %}
@@ -111,4 +117,5 @@
   <p class="hint">Reading changes nothing. Each Ship's lines show on the job's card below its result.</p>
 </section>
 </div>
+{% endif %}
 {% endblock %}
