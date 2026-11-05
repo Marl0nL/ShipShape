@@ -426,7 +426,9 @@ async def ship_agents(request: Request) -> Response:
             pair = ops.parse_autostart_change("autostart.remove", one(fields, "agent"))
         else:
             mode = one(fields, "mode")
-            value = f"{one(fields, 'agent')}:{one(fields, 'cwd')}" + (f":{mode}" if mode else "")
+            where = (f"github:{one(fields, 'repo')}" if one(fields, "repo")
+                     else one(fields, "cwd"))
+            value = f"{one(fields, 'agent')}:{where}" + (f":{mode}" if mode else "")
             pair = ops.parse_autostart_change("autostart.add", value)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)

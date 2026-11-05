@@ -583,6 +583,10 @@ def build(ctx: Context, ship: ShipToml) -> dict:
     }
     doc["state"] = derive_state(doc)
     doc["attention"] = attention_for(doc, failed_units, f_pending.result())
+    from .autostart import repo_attention  # autostart imports this module
+
+    doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
+                         for code, message, who in repo_attention(ctx)]
     elapsed = time.monotonic() - started
     if elapsed > 12:
         errors.append(f"status took {elapsed:.0f}s")

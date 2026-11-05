@@ -403,6 +403,33 @@ def test_resize_through_the_driver_and_recorded(env):
     assert code == 0 and env.store.load().ship("ship-01").size["disk_gb"] == 80
 
 
+def test_a_new_ship_can_start_its_first_agent_in_a_github_repo(env, home):
+    asked = []
+    env.app.github_visibility = lambda repo: asked.append(repo) or "not-public"
+    code, out, err = env.run("new", "ship-19", "--repo", "someone/agent-setup")
+    assert code == 0, err
+    assert asked == ["someone/agent-setup"] and "once you sign it in to GitHub" in out
+    assert _seed_ship_toml(home, "ship-19")["autostart"] == [
+        {"name": "main", "cwd": "~/work/agent-setup", "repo": "someone/agent-setup"}]
+    code, _, _ = env.run("new", "ship-20", "--autostart", "lead:~/x:plan", "--repo",
+                         "someone/agent-setup")
+    assert code == 0
+    assert _seed_ship_toml(home, "ship-20")["autostart"] == [
+        {"name": "lead", "cwd": "~/work/agent-setup", "mode": "plan",
+         "repo": "someone/agent-setup"}]
+    assert env.run("new", "ship-21", "--repo", "not a repo")[0] == 1
+
+
+def test_an_agent_in_a_repo_can_be_added_later(env):
+    code, _, err = env.run("set", "ship-01", "autostart.add=docs:github:someone/agent-setup")
+    assert code == 0, err
+    assert ["set", "autostart.add=docs:github:someone/agent-setup", "--json"] in [
+        c[3:] for _, c in env.ship.calls]
+    calls = len(env.ship.calls)
+    assert env.run("set", "ship-01", "autostart.add=docs:github:not/a/repo")[0] == 1
+    assert len(env.ship.calls) == calls
+
+
 def test_new_proxmox_keeps_names_that_resolve(env):
     env.app.resolves = lambda host: host == "ship-06.local"
     assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0

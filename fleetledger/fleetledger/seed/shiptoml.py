@@ -60,6 +60,7 @@ class Autostart:
     cwd: str
     mode: str | None = None
     prompt: str | None = None
+    repo: str | None = None  # a GitHub repo (owner/name) cloned into cwd first
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,8 @@ def build(
                 entry["mode"] = agent.mode
             if agent.prompt:
                 entry["prompt"] = agent.prompt
+            if agent.repo:
+                entry["repo"] = agent.repo
             entries.append(entry)
         doc["autostart"] = entries
 

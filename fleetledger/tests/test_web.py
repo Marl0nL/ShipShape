@@ -588,6 +588,21 @@ def test_sign_ins_a_ship_does_not_use_are_off_everywhere(web):
     assert web.store.load().ship("ship-01").signins is None
 
 
+def test_an_agent_in_a_repo_from_the_ship_page_and_its_waiting_item(web):
+    from fleetledger.web.fleet import attention_items
+
+    web.sign_in()
+    web.post("/ships/ship-01/agents", {"agent": "docs", "repo": "someone/agent-setup"})
+    assert ["set", "autostart.add=docs:github:someone/agent-setup", "--json"] in [
+        c[3:] for _, c in web.ship.calls]
+    _status(web, "ship-01", lambda d: d["attention"].append({
+        "code": "agent-repo-waiting", "subject": "docs",
+        "message": "Agent 'docs': waits for the GitHub sign-in to clone someone/agent-setup"}))
+    items = attention_items(list(web.fleet.snapshot.by_name.values()))
+    waiting = next(i for i in items if i.code == "agent-repo-waiting")
+    assert waiting.signin == "github"  # one click to the sign-in it waits for
+
+
 def test_the_attach_command_shown_is_one_that_works_here(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text

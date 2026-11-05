@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import time
@@ -247,8 +248,19 @@ def cmd_new(args, app) -> int:
             TIMEZONE_RE.match(args.timezone) and known_timezone(args.timezone)):
         raise FleetError(f"--timezone is an IANA zone name such as Europe/Berlin, "
                          f"not '{args.timezone}'.")
+    agents = parse_autostart(args.autostart, args.autostart_prompt)
+    if args.repo:
+        from fleetledger import github
+
+        gh_repo = github.check_name(args.repo)
+        first = agents[0] if agents else Autostart("main", github.folder(gh_repo), None,
+                                                   args.autostart_prompt or None)
+        agents = [dataclasses.replace(first, cwd=github.folder(gh_repo), repo=gh_repo),
+                  *agents[1:]]
+        check = getattr(app, "github_visibility", None) or github.visibility
+        app.say(github.what_happens(gh_repo, check(gh_repo)))
     options = SeedOptions(
-        autostart=parse_autostart(args.autostart, args.autostart_prompt),
+        autostart=agents,
         agent_sudo=True if args.agent_sudo else None,
         timezone=args.timezone or local_timezone(),
     )

@@ -125,7 +125,8 @@
     <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label>Add an agent <input name="agent" value="{{ 'main' if not running else '' }}" placeholder="e.g. main" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
-      <label>in <input name="cwd" value="~/work" required></label>
+      <label>in <input name="cwd" value="~/work"></label>
+      <label>or a GitHub repo <input name="repo" placeholder="e.g. someone/agent-setup"></label>
       <label>mode <select name="mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
       <button type="submit" class="ghost">Add</button>
     </form>
@@ -136,7 +137,9 @@
       <button type="submit" class="ghost">Stop starting it</button>
     </form>
     <p class="hint">An added agent starts now (once Claude is signed in) and on every boot.
-      One you stop starting keeps running until it is stopped or the Ship reboots.</p>
+      With a repo, the Ship clones it into <code>~/work/&lt;name&gt;</code> first (a private
+      one once GitHub is signed in) and the agent works there. One you stop starting keeps
+      running until it is stopped or the Ship reboots.</p>
     {% if attach_here %}
     <p>Attach from here: <code>herdr --remote {{ ship.name }}</code> or
       <code>ssh {{ ship.name }}</code> (your key, with the fleet's certificates), or

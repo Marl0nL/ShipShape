@@ -63,6 +63,8 @@ def attention_items(views: list[status.ShipView]) -> list[Item]:
         signin = None
         if entry.code in SIGNIN_CODES and entry.subject in SERVICE_PROVIDER:
             signin = SERVICE_PROVIDER[entry.subject]
+        elif entry.code == "agent-repo-waiting":  # its clone needs the GitHub sign-in
+            signin = SERVICE_PROVIDER["github"]
         items.append(Item(entry.ship, entry.code, entry.message, entry.severity,
                           entry.subject, signin))
     return items

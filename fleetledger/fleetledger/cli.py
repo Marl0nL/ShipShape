@@ -202,6 +202,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the Ship's time zone, e.g. Europe/Berlin (default: this computer's)")
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for the Ship to provision and enrol")
+    p.add_argument("--repo", metavar="OWNER/NAME",
+                   help="a GitHub repo for the first agent to work in: cloned into "
+                   "~/work/NAME first (a private one after the GitHub sign-in)")
     p.add_argument("--signins", metavar="claude,gcloud,github",
                    help="the sign-ins it uses (default: all); see ship-fleet signins")
     p.add_argument("--no-overlay", action="store_true",

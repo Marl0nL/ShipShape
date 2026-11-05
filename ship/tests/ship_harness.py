@@ -26,6 +26,7 @@ FAKE_COMMANDS = [
     "claude",
     "gcloud",
     "gh",
+    "git",
     "npm",
     "dpkg-query",
     "apt-get",

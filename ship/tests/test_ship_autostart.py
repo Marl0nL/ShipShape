@@ -178,3 +178,57 @@ def test_non_claude_agent_in_recorded_pane_is_not_the_autostart_agent(ship):
     rc, doc, _ = ship.ctl("autostart", "--json")
     assert rc == 0
     assert doc["data"]["started"] == ["main"]
+
+
+# --- an agent that works in a GitHub repo -------------------------------------------
+
+
+def _with_repo_agent(ship, repo="someone/agent-setup"):
+    rc, doc, _ = ship.ctl("set", f"autostart.add=setup:github:{repo}", "--json")
+    assert rc == 0, doc
+    toml = ship.p("/etc/shipshape/ship.toml").read_text()
+    assert f'repo = "{repo}"' in toml and 'cwd = "~/work/agent-setup"' in toml
+
+
+def test_a_public_repo_is_cloned_and_the_agent_starts_in_it(ship):
+    ship.set(git={"public": ["someone/agent-setup"]})
+    _with_repo_agent(ship)
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert rc == 0, doc
+    assert "setup" in doc["data"]["started"]
+    assert ship.p("/home/agent/work/agent-setup/CLAUDE.md").exists()
+    cwds = [w["args"][1] for w in ship.scenario()["herdr"]["workspaces"]]
+    assert "/home/agent/work/agent-setup" in cwds
+
+
+def test_a_private_repo_waits_for_the_github_sign_in_then_starts(ship):
+    ship.set(git={"private": ["someone/agent-setup"]}, gh={"login": None})
+    _with_repo_agent(ship)
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert rc == 0, doc
+    assert "setup" not in doc["data"]["started"] and "main" in doc["data"]["started"]
+    waiting = next(s for s in doc["data"]["skipped"] if s["name"] == "setup")
+    assert "waits for the GitHub sign-in" in waiting["reason"]
+    rc, status_doc, _ = ship.ctl("status", "--json")
+    assert_valid("ship-status", status_doc)
+    codes = {a["code"] for a in status_doc["attention"]}
+    assert "agent-repo-waiting" in codes
+    # GitHub signed in: the next refresh notices and starts it.
+    ship.ctl("refresh", "--json")
+    ship.set(gh={"login": "example-user"})
+    ship.ctl("refresh", "--json")
+    assert "setup" in started_args(ship)
+    rc, status_doc, _ = ship.ctl("status", "--json")
+    assert "agent-repo-waiting" not in {a["code"] for a in status_doc["attention"]}
+
+
+def test_a_folder_that_holds_something_else_is_never_overwritten(ship):
+    ship.set(git={"public": ["someone/agent-setup"]})
+    folder = ship.p("/home/agent/work/agent-setup")
+    folder.mkdir(parents=True)
+    (folder / "notes.txt").write_text("mine")
+    _with_repo_agent(ship)
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    skipped = next(s for s in doc["data"]["skipped"] if s["name"] == "setup")
+    assert "not a checkout" in skipped["reason"]
+    assert (folder / "notes.txt").read_text() == "mine" and not (folder / ".git").exists()

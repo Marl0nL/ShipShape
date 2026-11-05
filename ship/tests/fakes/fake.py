@@ -194,7 +194,27 @@ def gh(s: dict, a: list[str]) -> int:
             return 0
         print("You are not logged into any GitHub hosts.", file=sys.stderr)
         return 1
+    if a[:2] == ["auth", "setup-git"]:
+        return 0 if login else 1
     return 2
+
+
+def git(s: dict, a: list[str]) -> int:
+    """git clone --quiet -- https://github.com/OWNER/REPO.git DEST: public repos clone,
+    private ones only with gh signed in (git then uses gh's credentials)."""
+    if a[:1] != ["clone"]:
+        return 2
+    url, dest = a[-2], a[-1]
+    repo = url.removeprefix("https://github.com/").removesuffix(".git")
+    repos = s.setdefault("git", {})
+    signed_in = bool(s.get("gh", {}).get("login"))
+    if repo in repos.get("public", []) or (signed_in and repo in repos.get("private", [])):
+        Path(dest, ".git").mkdir(parents=True)
+        Path(dest, "CLAUDE.md").write_text(f"# {repo}\n")
+        return 0
+    print("fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+          file=sys.stderr)
+    return 128
 
 
 def npm(s: dict, a: list[str]) -> int:
@@ -402,6 +422,7 @@ HANDLERS = {
     "claude": claude,
     "gcloud": gcloud,
     "gh": gh,
+    "git": git,
     "npm": npm,
     "dpkg-query": dpkg_query,
     "apt-get": apt_get,

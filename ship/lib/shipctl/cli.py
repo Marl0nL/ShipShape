@@ -182,11 +182,16 @@ def _autostart_change(doc: dict, key: str, raw: str) -> None:
     parts = raw.split(":")
     mode = parts.pop() if len(parts) > 2 and parts[-1] in PERMISSION_MODES else None
     name, cwd = parts[0], ":".join(parts[1:])
+    repo = None
+    if len(parts) == 3 and parts[1] == "github":  # NAME:github:OWNER/REPO
+        repo = parts[2]
+        cwd = "~/work/" + repo.rsplit("/", 1)[-1]
     if not name or not cwd:
-        raise CtlError("usage", "autostart.add=NAME:CWD[:MODE]")
+        raise CtlError("usage", "autostart.add=NAME:CWD[:MODE] or NAME:github:OWNER/REPO[:MODE]")
     if any(e.get("name") == name for e in entries):
         raise CtlError("usage", f"an autostart agent named {name!r} already exists")
-    entries.append({"name": name, "cwd": cwd, **({"mode": mode} if mode else {})})
+    entries.append({"name": name, "cwd": cwd, **({"repo": repo} if repo else {}),
+                    **({"mode": mode} if mode else {})})
 
 
 def cmd_set(ctx: Context, args) -> dict:
@@ -395,7 +400,8 @@ def cmd_refresh(ctx: Context, args) -> dict:
         states, why = tools.run_profiles(ctx, ship, retry)
         messages.append("profiles retried: " + ", ".join(f"{p} {s}" for p, s in states.items()))
         messages += why
-    if "claude" in newly_ok and ship.autostart:
+    repo_waiting = "github" in newly_ok and any(e.get("repo") for e in ship.autostart)
+    if ("claude" in newly_ok or repo_waiting) and ship.autostart:
         state = "ready" if doc["state"] in ("needs-sign-in", "unknown") else doc["state"]
         try:
             data, _, _ = autostart.run(ctx, ship, state)

@@ -1032,15 +1032,16 @@ async def ship_start(request: Request) -> Response:
     if chosen != list(signins.CHOICES):
         extra += ["--signins", ",".join(chosen)]
     if _one(fields, "agent_on") == "yes":
-        from fleetledger import ops
+        from fleetledger import github, ops
 
         agent, cwd = _one(fields, "agent") or "main", _one(fields, "cwd") or "~/work"
         try:
             ops.parse_autostart_change("autostart.add", f"{agent}:{cwd}")
+            repo = github.check_name(_one(fields, "repo")) if _one(fields, "repo") else None
         except FleetError as exc:
             _flash(request, "bad", exc.message)
             return _back("ship")
-        extra += ["--autostart", f"{agent}:{cwd}"]
+        extra += ["--autostart", f"{agent}:{cwd}", *(["--repo", repo] if repo else [])]
     if _one(fields, "overlay") != "yes":
         extra.append("--no-overlay")
     if state.ship is not None and not state.ship.done:

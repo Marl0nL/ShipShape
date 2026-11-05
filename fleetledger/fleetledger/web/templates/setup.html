@@ -436,10 +436,16 @@
         on it, with Remote Control</label>
       <label>named <input name="agent" value="main" pattern="[a-z][a-z0-9_-]{0,31}"></label>
       <label>working in <input name="cwd" value="~/work"></label>
+      <label>or in a GitHub repo <input name="repo" placeholder="e.g. someone/agent-setup (optional)"></label>
       <p class="hint">It starts once you sign the Ship in to Claude (the next step), and on
         every boot. With Remote Control on, it shows in the Claude app (phone, desktop or
         claude.ai) under your account, so you can talk to it from anywhere. Add more later
         on the Ship's page.</p>
+      <p class="hint">A repo chooses what kind of agent it is: the Ship clones it into
+        <code>~/work/&lt;name&gt;</code> and starts the agent there, so the repo's own
+        CLAUDE.md or AGENTS.md, skills and settings apply. A public repo is cloned as the
+        Ship starts; a private one once you sign the Ship in to GitHub (its page says it is
+        waiting until then).</p>
     </fieldset>
     {% if inv.overlay %}
     <label><input type="checkbox" name="overlay" value="yes" checked> Join the overlay

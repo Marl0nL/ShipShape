@@ -83,6 +83,8 @@ SEVERITY = {
     "host-cert-expiring": "medium",
     "host-cert-missing": "medium",
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
+    "agent-repo-waiting": "medium",  # its agent starts once GitHub is signed in
+    "agent-repo-failed": "medium",
     "behind-tooling": "low",
     "tool-waiting": "low",
     "tags-differ": "low",
@@ -568,9 +570,15 @@ def parse_autostart_change(key: str, val: str) -> str:
     parts = val.split(":")
     mode = parts.pop() if len(parts) > 2 and parts[-1] in MODES else None
     name, cwd = parts[0], ":".join(parts[1:])
-    if not AGENT_NAME_RE.match(name) or not cwd.startswith(("~/", "/")):
-        raise FleetError("autostart.add=NAME:FOLDER[:MODE]: a name of a-z, 0-9, - and _, and "
-                         "a folder starting ~/ or /.")
+    if len(parts) == 3 and parts[1] == "github":  # NAME:github:OWNER/REPO
+        from fleetledger import github
+
+        if not AGENT_NAME_RE.match(name):
+            raise FleetError("autostart.add: a name of a-z, 0-9, - and _.")
+        cwd = "github:" + github.check_name(parts[2])
+    elif not AGENT_NAME_RE.match(name) or not cwd.startswith(("~/", "/")):
+        raise FleetError("autostart.add=NAME:FOLDER[:MODE] (or NAME:github:OWNER/REPO): a name "
+                         "of a-z, 0-9, - and _, and a folder starting ~/ or /.")
     return f"{key}={name}:{cwd}" + (f":{mode}" if mode else "")
 
 

@@ -898,3 +898,12 @@ def test_the_first_ship_can_use_fewer_sign_ins(chosen, monkeypatch):
     args = _made_with(chosen, monkeypatch, {"name": "ship-02", "signins_shown": "yes",
                                             "signin": ["claude", "gcloud", "github"]})
     assert args.signins is None  # all of them: nothing recorded
+
+
+def test_the_first_agent_can_work_in_a_github_repo(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    assert 'name="repo" placeholder="e.g. someone/agent-setup (optional)"' in page(chosen)
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "agent_on": "yes",
+                                            "agent": "main", "cwd": "~/work",
+                                            "repo": "someone/agent-setup"})
+    assert args.repo == "someone/agent-setup"
