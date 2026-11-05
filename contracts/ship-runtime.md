@@ -35,7 +35,10 @@ AllowAgentForwarding no
 With an `[owner]` in ship.toml, ship-ctl's own drop-in (the one it writes for
 certificates) adds `AllowUsers <owner>` (sshd adds AllowUsers lines up) and
 `AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/shipshape/keys/%u`, so your own
-login is let in beside `fleet` and `agent`, and no one else is.
+login is let in beside `fleet` and `agent`, and no one else is. Certificates log in
+to the owner login with principals of its own (`owner:all`, `owner:tag:<tag>`,
+`owner:ship:<name>`, in `/etc/ssh/shipshape/principals/<owner>`), so a machine
+trusted only to attach to the agent (`agent:*`) cannot log in as you.
 
 The only host key is the ed25519 key from the seed (see `seed.md`). No other host
 key types exist, so the key FleetLedger pinned is the only one a client can see.

@@ -85,7 +85,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name"],
-      "description": "Your own login on the Ship, apart from agent (never an existing system account: uid below 1000 or 60000 and up): made by ship-ctl apply with useradd, with passwordless sudo, your keys (kept root-owned under /etc/ssh/shipshape/keys/) and the same user certificates agent takes. agent keeps no sudo.",
+      "description": "Your own login on the Ship, apart from agent (never an existing system account: uid below 1000 or 60000 and up): made by ship-ctl apply with useradd, with passwordless sudo, your keys (kept root-owned under /etc/ssh/shipshape/keys/) and user certificates for the owner login: principals owner:all, owner:tag:<tag> and owner:ship:<name>, never agent's. agent keeps no sudo.",
       "properties": {
         "name": {
           "type": "string",

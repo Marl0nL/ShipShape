@@ -117,10 +117,16 @@ your other machines without forwarding router ports
   that Ship.
 - **Your own login (`[fleet] owner`, default `human`) has sudo**, so admin work
   never needs sudo for `agent`. It takes your keys (kept root-owned in
-  `/etc/ssh/shipshape/keys/`, so nothing is written into a home) and the same user
-  certificates as `agent`: a machine you trust for a Ship can log in to it as you,
-  with sudo, as well as attach to its agent. Scope machines accordingly
-  (`ship-fleet trust --scope`). The agent's herdr session stays the agent's:
+  `/etc/ssh/shipshape/keys/`, so nothing is written into a home) and user
+  certificates of its own: the Ship's owner login takes `owner:*` principals and the
+  agent's login `agent:*`, so neither certificate opens the other. Each trusted
+  machine says which it may use (`ship-fleet trust NAME --logins agent|owner|both`,
+  or the setup page's Trusted machines): a machine that should only attach to
+  agents (a shared one, say) gets `agent`, and then cannot log in as you, with sudo,
+  even on the Ships its scope reaches. This computer and new machines get both, as
+  they are yours. Narrowing a machine revokes its wider certificates on every Ship
+  at once. Machines trusted before owner logins had principals of their own keep
+  both (recorded once, and said). The agent's herdr session stays the agent's:
   `herdr --remote <ship>` reaches it by logging in as `agent`, never through sudo.
 - **A sign-in a Ship does not use** (`ship-fleet signins`) is never offered or run
   there, and turning one off signs it out, so its credentials do not stay on that

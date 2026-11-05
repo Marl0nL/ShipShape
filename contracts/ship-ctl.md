@@ -258,12 +258,14 @@ RevokedKeys /etc/ssh/shipshape/revoked-keys
 ```
 
 `AuthorizedPrincipalsFile` is always present once a user CA is. Only
-`/etc/ssh/shipshape/principals/agent` exists, so a certificate can log in as
-`agent` and never as `fleet` (the admin key stays a plain key in `fleet`'s
+`/etc/ssh/shipshape/principals/agent` exists, and, with an `[owner]`,
+`/etc/ssh/shipshape/principals/<owner>`, so a certificate can log in as `agent` or
+as you and never as `fleet` (the admin key stays a plain key in `fleet`'s
 `authorized_keys`). The agent file lists `agent:all`, `agent:tag:<tag>` for each
-tag in `ship.toml`, and `agent:ship:<name>`; `ship-ctl apply` keeps it in step
-with `ship.toml` (so `ship-ctl set ship.tags=...` changes which certificates
-work). Certificates are accepted for at most what their validity says; a lapsed
+tag in `ship.toml`, and `agent:ship:<name>`; the owner's file lists the same with
+`owner:` instead, so each login takes only certificates issued for it.
+`ship-ctl apply` keeps both in step with `ship.toml` (so `ship-ctl set
+ship.tags=...` changes which certificates work). Certificates are accepted for at most what their validity says; a lapsed
 or revoked one is refused by sshd itself.
 
 Errors: a document that fails the schema, or a certificate that fails the checks

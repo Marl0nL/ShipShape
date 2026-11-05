@@ -6,8 +6,9 @@ module installs what it issues, after checking it:
 - a host certificate is taken only for the Ship's own pinned host key, with the
   Ship's name among its principals, and not expired. The Ship never takes a
   host key from FleetLedger, so moving to certificates opens no trust gap;
-- user CA keys let certificates log in, as `agent` only: sshd reads principals
-  from /etc/ssh/shipshape/principals/%u and only the agent file exists;
+- user CA keys let certificates log in, as `agent` (agent:*) or as the owner
+  (owner:*): sshd reads principals from /etc/ssh/shipshape/principals/%u and only
+  those two files exist;
 - a revocation list (KRL) is taken only if ssh-keygen can read it and it does
   not revoke fleet's own key (that would lock FleetLedger out for good).
 
@@ -63,10 +64,9 @@ def _p(ctx: Context, path: str) -> Path:
 
 
 def owner_principals(ship: ShipToml) -> list[str]:
-    """Certificate principals that may log in as the owner. For now the same as
-    agent's: a machine you trust for a Ship can log in as you there too (with sudo).
-    The one place to change if the owner gets principals of its own."""
-    return agent_principals(ship)
+    """Certificate principals that may log in as the owner: its own, never agent's, so
+    a machine trusted only to attach to the agent cannot log in as you (with sudo)."""
+    return ["owner:all", *(f"owner:tag:{t}" for t in ship.tags), f"owner:ship:{ship.name}"]
 
 
 def agent_principals(ship: ShipToml) -> list[str]:
@@ -299,8 +299,8 @@ def render_files(ctx: Context, ship: ShipToml, dry_run: bool = False) -> list[Pa
     fleet = _p(ctx, PRINCIPALS_DIR + "/fleet")
     if remove(fleet, dry_run=dry_run):
         changed.append(fleet)
-    # The owner's login takes the same certificates as agent (your machines), and the
-    # owner's own keys; any other principals or keys file is stale and goes.
+    # The owner's login takes certificates for owner:* (never agent's) and the owner's
+    # own keys; any other principals or keys file is stale and goes.
     owner = (ship.owner or {}).get("name")
     if owner:
         own = _p(ctx, PRINCIPALS_DIR + "/" + owner)

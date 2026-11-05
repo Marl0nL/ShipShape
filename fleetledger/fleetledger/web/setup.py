@@ -283,6 +283,7 @@ async def page(request: Request) -> Response:
         context["desktop_agent"] = keys.desktop_agent_preloads()
         context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
         context["policy"] = _policy_text()
+        context.update(await run_in_threadpool(_machines_context, inv))
         context["size"] = inv.effective_size()
     from fleetledger import proxmox_setup
 
@@ -489,6 +490,36 @@ async def fleet_ca(request: Request) -> Response:
         return _back("fleet")
     _flash(request, "ok", "Made the certificate authority.")
     return _back("hypervisor")
+
+
+def _machines_context(inv) -> dict[str, Any]:
+    from fleetledger import ca, trustcmd
+
+    if ca.config(inv) is None:
+        return {"machines": []}
+    here = trustcmd.this_computer()
+    return {"machines": [m for m in ca.machines(inv) if not m.revoked],
+            "this_machine": here["machine"] if here else None}
+
+
+async def machine_logins(request: Request) -> Response:
+    """What one trusted machine may log in as (the agent's login, yours, or both)."""
+    from fleetledger import ca, trustcmd
+
+    app = _ui(request).app
+    fields = await _form(request)
+    said: list[str] = []
+    try:
+        logins = ca.parse_logins(_one(fields, "logins"))
+        await run_in_threadpool(trustcmd.set_logins, app, app.store_factory(),
+                                _one(fields, "machine"), logins, said.append)
+        ok = True
+    except trustcmd.PushFailed:
+        ok = False  # recorded; what was said names the Ships still to update
+    except FleetError as exc:
+        ok, said = False, [*said, exc.message]
+    _flash(request, "ok" if ok else "bad", " ".join(said) or "No change.")
+    return _back("fleet")
 
 
 async def owner_name(request: Request) -> Response:
@@ -1088,6 +1119,7 @@ def routes() -> list[Route]:
         Route("/setup/fleet/ca", fleet_ca, methods=["POST"]),
         Route("/setup/keys/load", load_keys, methods=["POST"]),
         Route("/setup/owner", owner_name, methods=["POST"]),
+        Route("/setup/machine", machine_logins, methods=["POST"]),
         Route("/setup/hypervisor/manual", hypervisor_manual, methods=["POST"]),
         Route("/setup/proxmox/start", proxmox_start, methods=["POST"]),
         Route("/setup/proxmox/cancel", proxmox_cancel, methods=["POST"]),

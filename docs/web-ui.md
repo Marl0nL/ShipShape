@@ -78,7 +78,11 @@ Then, each step showing **done** or **next**:
 
 Each step has a collapsed **Advanced** section for the rest (where secrets are
 kept, key file locations, other Proxmox storages, the VM ids FleetLedger may
-use, the overlay level). A computer part-way through, from the terminal wizard
+use, the overlay level). Once there is a certificate authority, step 1 lists the **Trusted machines** and
+what each may log in as: the agent only, you only (sudo), or both (a confirmation
+says what changes; narrowing revokes its wider certificates at once).
+
+A computer part-way through, from the terminal wizard
 or an older setup, shows its finished steps as done and can change any of them
 (manual to Proxmox, say); keys you chose passphrases for are offered, opt-in,
 to FleetLedger's care. Nothing is deleted or rewritten without a click.

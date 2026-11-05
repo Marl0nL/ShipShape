@@ -405,6 +405,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--key", help="the machine's ed25519 public key (file or line); first time only")
     p.add_argument("--scope", action="append", metavar="all|tag:TAG|ship:NAME",
                    help="which Ships it may attach to (repeatable; default all)")
+    p.add_argument("--logins", metavar="agent|owner|both",
+                   help="what its certificates log in as: agent (attach to the agent, "
+                   "herdr --remote), owner (your own login, with sudo) or both (the "
+                   "default for a new machine: one of yours)")
     p.add_argument("--hours", type=int, help="certificate validity (default from [ca])")
     p.add_argument("--identity", default="~/.ssh/shipshape/id_ed25519",
                    help="path of the private key on that machine (default %(default)s)")

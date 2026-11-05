@@ -131,6 +131,43 @@
   key and your certificates, for admin work (<code>ssh {{ inv.owner }}@&lt;ship&gt;</code>).
   The agent's login keeps no sudo. Changing the name sets it on every Ship now, and on new
   ones.</p>
+{% if machines %}
+<h3>Trusted machines</h3>
+<p class="hint">Each machine you attach from gets short-lived certificates, for the logins
+  you choose here: the agent's (to attach to it, <code>herdr --remote</code>) and your own
+  (sudo). A machine that should only attach to agents, a shared one say, needs only the
+  agent's. Trust another: <code>ship-fleet trust NAME --key its.pub --logins agent</code>
+  (or <code>owner</code>, or <code>both</code>). Machines trusted before your login had
+  certificates of its own keep both. A Ship not updated yet still lets any of the
+  agent's certificates log in as you: update every Ship before relying on "the agent
+  only".</p>
+<table>
+  <thead><tr><th>Machine</th><th>Ships</th><th>May log in as</th></tr></thead>
+  <tbody>
+  {% for m in machines %}
+  <tr>
+    <td>{{ m.name }}{% if m.name == this_machine %} <span class="quiet">(this computer)</span>{% endif %}</td>
+    <td>{{ m.scope|join(", ") }}</td>
+    <td>
+      <form method="post" action="/setup/machine" class="inline"
+        data-confirm-title="Change what {{ m.name }} may log in as?"
+        data-confirm="{{ m.name }}'s certificates will log in as the login you chose and nothing else. A certificate it holds now for more is revoked on every Ship at once; it gets a new one at its next renewal. Your own login has sudo."
+        data-confirm-action="Save for {{ m.name }}" data-confirm-danger>
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="machine" value="{{ m.name }}">
+        <select name="logins">
+          {% for value, label in (("agent", "the agent only"), ("owner", "you only (sudo)"), ("both", "the agent and you")) %}
+          <option value="{{ value }}"{% if (m.logins|list == ["agent", "owner"] and value == "both") or (m.logins|list == [value]) %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="ghost">Save</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 {% if not inv.doc.ca %}
 <form method="post" action="/setup/fleet/ca" class="inline">
   <input type="hidden" name="csrf" value="{{ csrf }}">

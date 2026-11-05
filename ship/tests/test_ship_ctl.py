@@ -502,7 +502,11 @@ def test_an_owner_login_with_sudo_its_keys_and_certificates(ship):
     assert oct(sudoers.stat().st_mode & 0o777) == "0o440"
     assert ship.p("/etc/ssh/shipshape/keys/human").read_text() == OWNER_KEY + "\n"
     principals = ship.p("/etc/ssh/shipshape/principals")
-    assert (principals / "human").read_text() == (principals / "agent").read_text()
+    # The owner's own principals: a certificate for the agent's login never opens it.
+    assert (principals / "human").read_text() == (
+        "owner:all\nowner:tag:work\nowner:ship:ship-01\n")
+    assert (principals / "agent").read_text() == (
+        "agent:all\nagent:tag:work\nagent:ship:ship-01\n")
     dropin = next(ship.p("/etc/ssh/sshd_config.d").glob("*shipshape*")).read_text()
     assert "AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/shipshape/keys/%u" in dropin
     assert "\nAllowUsers human\n" in dropin  # beside 10-shipshape.conf's fleet and agent
@@ -563,3 +567,11 @@ def test_grow_root_grows_a_filesystem_its_partition_outgrew(ship):
     rc, doc, _ = ship.ctl("grow-root", "--json")
     assert rc == 0 and doc["data"]["grown"] is True
     assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]
+
+
+def test_a_ship_without_tags_still_gets_the_owners_principals(ship):
+    assert ship.ctl("set", "ship.tags=", "--json")[0] == 0
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={OWNER_KEY}", "--json")
+    assert rc == 0, doc
+    principals = ship.p("/etc/ssh/shipshape/principals")
+    assert (principals / "human").read_text() == "owner:all\nowner:ship:ship-01\n"
