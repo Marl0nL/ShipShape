@@ -57,8 +57,8 @@ class Confirm:
 
 
 def op_confirm(op: str, ship: str) -> Confirm:
-    """The dialog for updating, rebooting or joining one Ship: the same words on
-    the Ship's action bar and on an alert's button."""
+    """The dialog for updating, rebooting, joining or stopping one Ship: the same
+    words on the Ship's action bar and on an alert's button."""
     texts = {
         "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
                    "agents keep running. If its herdr changed it reboots, and its agents "
@@ -70,8 +70,12 @@ def op_confirm(op: str, ship: str) -> Confirm:
                  "anywhere. Its host certificate is re-signed with its overlay name, and this "
                  "computer's SSH config is updated. Progress shows on this page.", False),
     }
+    texts["stop"] = (f"{ship}'s VM shuts down cleanly (never a power-off), so herdr saves "
+                     "every agent first. Its agents stop until you start it again, then "
+                     "resume in their modes. Progress shows on this page.", True)
     text, danger = texts[op]
-    label = {"join": f"Join {ship} to the overlay"}.get(op, f"{op.capitalize()} {ship}")
+    label = {"join": f"Join {ship} to the overlay",
+             "stop": f"Stop {ship}'s VM"}.get(op, f"{op.capitalize()} {ship}")
     return Confirm(f"{label}?", text, label, danger)
 
 

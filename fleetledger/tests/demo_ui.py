@@ -129,10 +129,12 @@ class DemoDriver(Driver):
 
     def start(self, ship) -> Outcome:
         self._vm(ship)["state"] = "running"
+        DOWN.discard(ship.name)  # it answers again
         return self._done(f"Started {ship.name}")
 
     def stop(self, ship) -> Outcome:
         self._vm(ship)["state"] = "stopped"
+        DOWN.add(ship.name)  # and stops answering, as a stopped VM does
         return self._done(f"Stopped {ship.name}")
 
     def reboot(self, ship) -> Outcome:
