@@ -183,8 +183,6 @@ class ProxmoxAPI:
             try:
                 conn.request(method, url, body=body, headers=headers)
             except (OSError, http.client.HTTPException) as exc:
-                if isinstance(exc, ProxmoxError):
-                    raise
                 raise ProxmoxError(f"Cannot reach the Proxmox API at {self.host}: {exc}") from exc
             return self._answer(conn, method, path)
         finally:
@@ -196,8 +194,6 @@ class ProxmoxAPI:
             response = conn.getresponse()
             raw = response.read()
         except (OSError, http.client.HTTPException) as exc:
-            if isinstance(exc, ProxmoxError):
-                raise
             raise ProxmoxError(f"Cannot reach the Proxmox API at {self.host}: {exc}") from exc
         try:
             doc = json.loads(raw) if raw else {}
@@ -306,8 +302,6 @@ class ProxmoxAPI:
                         conn.send(block)
                 conn.send(tail)
             except (OSError, http.client.HTTPException) as exc:
-                if isinstance(exc, ProxmoxError):
-                    raise
                 raise ProxmoxError(f"Uploading to the Proxmox API at {self.host} failed: {exc}") \
                     from exc
             return self._answer(conn, "POST", api_path)

@@ -17,16 +17,6 @@ from typing import Any
 from fleetledger import paths
 from fleetledger.errors import NotFound
 
-SERVICES = ("claude", "gcloud", "github")
-"""Services whose expected account a tag can name (ships.toml [tag.*])."""
-
-CLAUDE_DEFAULTS = {
-    "remote_control": "on",
-    "default_mode": "auto",
-    "allow_bypass": False,
-    "update_channel": "latest",
-}
-
 SIZE_DEFAULTS = {"cores": 4, "memory_mb": 8192, "disk_gb": 40}
 
 STOCK_IMAGE = "stock"
