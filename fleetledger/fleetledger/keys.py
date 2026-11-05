@@ -314,6 +314,17 @@ def _agent_answers(env: Mapping[str, str]) -> bool:
     return proc.returncode in (0, 1)  # 1: no keys yet; 2: cannot reach it
 
 
+# The agent of the shell FleetLedger was started from, before ensure_agent may point
+# SSH_AUTH_SOCK at FleetLedger's own: plain ssh in your shells uses this one.
+USERS_AGENT = os.environ.get("SSH_AUTH_SOCK")
+
+
+def users_agent_answers() -> bool:
+    """Is your own ssh-agent (the one your shells use) running and in use here?"""
+    return bool(USERS_AGENT) and os.environ.get("SSH_AUTH_SOCK") == USERS_AGENT and \
+        _agent_answers(os.environ)
+
+
 def ensure_agent() -> str:
     """An ssh-agent that answers: yours (SSH_AUTH_SOCK), or else FleetLedger's own,
     started on a socket in its private runtime folder. Sets SSH_AUTH_SOCK for this

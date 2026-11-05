@@ -822,3 +822,49 @@ def test_a_bad_agent_name_makes_nothing(chosen, monkeypatch):
     chosen.post("/setup/ship", {"name": "ship-01", "agent_on": "yes", "agent": "Main",
                                 "cwd": "~/work"})
     assert "a name of a-z" in page(chosen)
+
+
+def test_a_garbage_token_file_is_not_offered(chosen):
+    secret_file = chosen.home / "config" / "proxmox-token"
+    secret_file.write_text("not a token at all\n")
+    secret_file.chmod(0o600)
+    chosen.post("/setup/proxmox/address", {"address": "pve.example.com"})
+    assert "already on this computer" not in page(chosen)
+
+
+def test_a_reversed_vm_id_range_is_refused(chosen):
+    to_choices(chosen)
+    chosen.post("/setup/proxmox/save", {"vmid_range": "9199-9100"})
+    assert "both 100 or more" in page(chosen)
+    assert chosen.store.load().driver_config("proxmox") is None
+
+
+def test_the_first_ship_lets_this_computer_attach(chosen, monkeypatch):
+    import time
+
+    from fleetledger.inventory import Ship
+    from fleetledger.store import ship_entry
+
+    from fleetledger import commands, trustcmd
+
+    def made(args, app):
+        ship = Ship(name="ship-01", id="7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                    driver="manual", names=("ship-01.local",), host_key="ssh-ed25519 AAAA",
+                    enrolled="2026-01-01T00:00:00Z")
+        with app.store_factory().edit() as ed:
+            ed.add_ship("ship-01", ship_entry(ship))
+        return 0
+
+    trusted = []
+    monkeypatch.setattr(commands, "cmd_new", made)
+    monkeypatch.setattr(trustcmd, "trust_this_computer",
+                        lambda app, store, say, create=True: trusted.append(create) or True)
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/ship", {"name": "ship-01"})
+    for _ in range(100):
+        response = chosen.get("/setup/ship/progress")
+        if "hx-get" not in response.text:
+            break
+        time.sleep(0.05)
+    assert trusted == [True]
+    assert "<code>herdr --remote ship-01</code>" in response.text

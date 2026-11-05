@@ -178,6 +178,18 @@ class Fleet:
             else:  # one Ship re-checked: the fleet as a whole is as old as before
                 polled_at = self.snapshot.polled_at or self.wall()
             self._publish(Snapshot(inv, views, polled_at))
+        if names is None:
+            self._renew_this_computer()
+
+    def _renew_this_computer(self) -> None:
+        """This computer's certificate, in its last day: renewed, so plain ssh and herdr
+        --remote keep working (trustcmd.renew_this_computer_if_due)."""
+        from fleetledger import trustcmd
+
+        try:
+            trustcmd.renew_this_computer_if_due(self.app, self.app.store_factory())
+        except Exception:  # noqa: BLE001 - a renewal must never stop the poller
+            pass
 
     def _publish(self, snapshot: Snapshot) -> None:
         with self._lock:

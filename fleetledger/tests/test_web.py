@@ -565,7 +565,7 @@ def test_the_attach_command_shown_is_one_that_works_here(web):
     assert "Let this computer use ssh ship-01" not in page  # no CA: nothing to offer
 
 
-def test_a_ship_not_on_the_overlay_can_join_it_in_one_click(web):
+def test_a_ship_not_on_the_overlay_can_join_it_in_one_click(web, monkeypatch):
     from test_cli import Keys
 
     with web.store.edit() as ed:
@@ -574,9 +574,15 @@ def test_a_ship_not_on_the_overlay_can_join_it_in_one_click(web):
     web.fleet.poll()
     web.sign_in()
     assert "Join the overlay" in web.client.get("/ships/ship-01").text
+    from fleetledger import trustcmd
+
+    refreshed = []
+    monkeypatch.setattr(trustcmd, "trust_this_computer",
+                        lambda app, store, say, create=True: refreshed.append(create))
     web.post("/operations", {"operation": "join", "ship": "ship-01", "confirm": "yes"})
     assert wait_for(lambda: web.store.load().ship("ship-01").names[0]
                     == "ship-01.example-tailnet.ts.net")
+    assert wait_for(lambda: refreshed == [False])  # this computer's config: the new name
     web.fleet.poll()
     assert "Join the overlay" not in web.client.get("/ships/ship-01").text
 
@@ -934,3 +940,10 @@ def test_audit_page(web):
     web.sign_in()
     page = web.client.get("/audit").text
     assert "work@example.com" in page and "login" in page
+
+
+def test_an_agent_can_stop_being_started_from_the_ship_page(web):
+    web.sign_in()
+    assert "Stop starting it" in web.client.get("/ships/ship-01").text
+    web.post("/ships/ship-01/agents", {"action": "remove", "agent": "docs"})
+    assert ["set", "autostart.remove=docs", "--json"] in [c[3:] for _, c in web.ship.calls]

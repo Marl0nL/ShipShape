@@ -657,11 +657,17 @@ if [ ! -f "$key" ]; then
 fi
 
 include="Include $dest/config"
-if [ ! -f "$HOME/.ssh/config" ] || ! grep -qxF "$include" "$HOME/.ssh/config"; then
+# A ~/.ssh/config that is a link (to a dotfiles folder, say) is written through, so
+# the link and the file it points at stay one.
+cfg="$HOME/.ssh/config"
+if [ -L "$cfg" ]; then
+  cfg=$(readlink -f "$cfg") || { echo "Cannot follow the link ~/.ssh/config." >&2; exit 1; }
+fi
+if [ ! -f "$cfg" ] || ! grep -qxF "$include" "$cfg"; then
   # Include must come before any Host block to apply everywhere: put it first.
-  tmp="$HOME/.ssh/config.shipshape-tmp"
-  { echo "$include"; [ -f "$HOME/.ssh/config" ] && cat "$HOME/.ssh/config"; } > "$tmp"
-  chmod 600 "$tmp" && mv "$tmp" "$HOME/.ssh/config"
+  tmp="$cfg.shipshape-tmp"
+  { echo "$include"; if [ -f "$cfg" ]; then cat "$cfg"; fi; } > "$tmp"
+  chmod 600 "$tmp" && mv "$tmp" "$cfg"
   echo "Added '$include' to the top of ~/.ssh/config."
 fi
 

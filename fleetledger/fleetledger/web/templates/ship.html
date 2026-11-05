@@ -124,12 +124,22 @@
       <label>mode <select name="mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
       <button type="submit" class="ghost">Add</button>
     </form>
+    <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="remove">
+      <label>Stop starting an agent <input name="agent" placeholder="its name" pattern="[a-z][a-z0-9_-]{0,31}" required></label>
+      <button type="submit" class="ghost">Stop starting it</button>
+    </form>
     <p class="hint">An added agent starts now (once Claude is signed in) and on every boot.
-      To stop starting one: <code>ship-fleet set {{ ship.name }} autostart.remove=NAME</code>.</p>
+      One you stop starting keeps running until it is stopped or the Ship reboots.</p>
     {% if attach_here %}
     <p>Attach from here: <code>herdr --remote {{ ship.name }}</code> or
       <code>ssh {{ ship.name }}</code> (your key, with the fleet's certificates), or
       <code>ship-fleet ssh {{ ship.name }}</code>.</p>
+    {% if attach_until %}<p class="hint">This computer's certificate is valid until
+      {{ attach_until }}; FleetLedger renews it in its last day whenever it runs (this page,
+      or <code>ship-fleet status</code>). To renew it now:
+      <code>ship-fleet trust --this-computer</code>.</p>{% endif %}
     {% else %}
     <p>Attach from here: <code>ship-fleet ssh {{ ship.name }}</code>.</p>
     {% if can_trust_here %}

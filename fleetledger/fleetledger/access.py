@@ -78,6 +78,13 @@ def cmd_overlay(args, app) -> int:
             except FleetError as exc:
                 app.say(f"{ship.name}: not joined: {exc.message}")
                 failed += 1
+        if failed < len(ships):  # this computer's SSH config now prefers the overlay names
+            from fleetledger import trustcmd
+
+            try:
+                trustcmd.trust_this_computer(app, store, app.say, create=False)
+            except FleetError as exc:
+                app.say(f"This computer's SSH config was not refreshed ({exc.message}).")
         if not failed:
             app.say("Only SSH with the pinned host key is allowed in, over the overlay as on "
                     "the LAN. To refuse LAN logins: ship-fleet set SHIP ssh_listen=overlay")

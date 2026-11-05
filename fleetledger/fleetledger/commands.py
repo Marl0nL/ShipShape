@@ -507,6 +507,13 @@ def cmd_status(args, app) -> int:
         inv = store.load()
         ship = inv.ship(args.name)
     view = _views(app, inv, [ship], offline=False)[0]
+    from fleetledger import trustcmd
+
+    try:  # this computer's certificate, in its last day: renewed (plain ssh keeps working)
+        if trustcmd.renew_this_computer_if_due(app, store):
+            app.note("Renewed this computer's certificate.")
+    except FleetError as exc:
+        app.note(f"This computer's certificate was not renewed ({exc.message}).")
     if args.json:
         app.say(json.dumps(view_json(view, inv.effective_tags(ship)), indent=2))
         return 0 if view.problem is None else 1

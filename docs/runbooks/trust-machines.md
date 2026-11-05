@@ -110,7 +110,16 @@ If the machine is the FleetLedger computer itself, `ship-fleet trust
 does it after the first Ship, and the Ship page offers it. Once this computer is
 trusted, every Ship that enrols refreshes its bundle (a new certificate, the new
 Ship in its SSH config and in herdr). Which machine entry is this computer is
-kept in `~/.config/fleetledger/this-computer.json`. (`ship-fleet trust desktop
+kept in `~/.config/fleetledger/this-computer.json`.
+
+Its certificate is valid for 7 days, like any machine's; FleetLedger renews it (and
+rewrites its bundle) in its last day whenever it runs: the web UI's poll, or
+`ship-fleet status`. The Ship page shows until when. Plain ssh needs a key you can
+open: FleetLedger prefers one of yours that it does not look after. If your only key
+is one FleetLedger made (its passphrase is only in your keyring), plain ssh works
+while your own ssh-agent holds it, and FleetLedger loads it there; with no ssh-agent
+of yours running it says so, and `ship-fleet ssh` still works. A `~/.ssh/config`
+that is a symbolic link (to a dotfiles folder, say) is written through the link. (`ship-fleet trust desktop
 --key ~/.ssh/shipshape/id_ed25519.pub --install` still works for another key.)
 
 Then, on that machine:

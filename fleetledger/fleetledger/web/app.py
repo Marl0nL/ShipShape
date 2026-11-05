@@ -290,6 +290,7 @@ def _attach_context(inv, ship) -> dict[str, Any]:
 
     return {
         "attach_here": trustcmd.attaches_here(inv, ship),
+        "attach_until": trustcmd.this_computer_until(inv),
         "can_trust_here": ca.config(inv) is not None,
         "overlay_set": bool(inv.overlay),
         "on_overlay": ship.overlay_node is not None,

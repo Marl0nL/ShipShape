@@ -366,11 +366,59 @@ def _local_name(inv: Inventory) -> str:
 
 
 def _your_private_key(inv: Inventory) -> Path | None:
-    """The private half, on this computer, of the first of your keys that has one."""
-    for pub in inv.agent_key_paths:
-        if pub.name.endswith(".pub") and pub.with_name(pub.name[:-4]).is_file():
-            return pub.with_name(pub.name[:-4])
-    return None
+    """The private half, on this computer, of one of your keys: one you can open
+    yourself first (plain ssh needs that), else one FleetLedger made and looks after."""
+    from fleetledger import keys
+
+    managed = set(keys.managed(inv)[1])
+    found = [pub.with_name(pub.name[:-4]) for pub in inv.agent_key_paths
+             if pub.name.endswith(".pub") and pub.with_name(pub.name[:-4]).is_file()]
+    return next((k for k in found if k not in managed), found[0] if found else None)
+
+
+def _plain_ssh(inv: Inventory, key_path: Path) -> tuple[bool, str | None]:
+    """Can plain ssh open your key here? A key you look after: yes. One FleetLedger made
+    (its passphrase only in your keyring): only while your own ssh-agent holds it, so
+    FleetLedger loads it there, if you have one running. (works, what to say)"""
+    from fleetledger import keys
+
+    if key_path not in keys.managed(inv)[1]:
+        return True, None
+    if keys.users_agent_answers():
+        keys.ensure_loaded(inv, [key_path])
+        return True, ("Your key is one FleetLedger made: plain ssh and herdr use it from your "
+                      "ssh-agent, which holds it until you log out; FleetLedger loads it "
+                      "there again whenever it runs.")
+    return False, ("Plain ssh cannot open your key here: FleetLedger made it, its passphrase "
+                   "is only in your keyring, and no ssh-agent of yours is running. Attach "
+                   "with ship-fleet ssh, or start ssh-agent and run ship-fleet trust "
+                   "--this-computer again.")
+
+
+RENEW_WITHIN_S = 24 * 3600
+
+
+def renew_this_computer_if_due(app, store) -> bool:
+    """Renew this computer's certificate (and its bundle) in its last day, so plain ssh
+    keeps working: called from the web UI's poll and ship-fleet status."""
+    here = this_computer()
+    if here is None:
+        return False
+    inv = store.load()
+    m = ca.machine(inv, here["machine"]) if ca.config(inv) else None
+    if m is None or m.revoked:
+        return False
+    until = ca.parse_stamp(m.last_valid_before)
+    if until is not None and (until - ca.utc_now()).total_seconds() > RENEW_WITHIN_S:
+        return False
+    return trust_this_computer(app, store, lambda line: None, create=False)
+
+
+def this_computer_until(inv: Inventory) -> str | None:
+    """When this computer's certificate lapses (for the Ship page), if it is trusted."""
+    here = this_computer()
+    m = ca.machine(inv, here["machine"]) if here and ca.config(inv) else None
+    return m.last_valid_before if m and not m.revoked else None
 
 
 def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
@@ -433,10 +481,14 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
         why = (proc.stderr or proc.stdout or "").strip().splitlines()
         say("Could not set this computer up for plain ssh" + (f": {why[-1]}" if why else "."))
         return False
-    ready = [s.name for s in ships if _has_cert(s)]
+    works, note = _plain_ssh(inv, paths.expand(here["identity"]))
+    if note:
+        say(note)
+    ready = [s.name for s in ships if _has_cert(s)] if works else []
     if ready:
         say(f"This computer ({m.name}) can attach: ssh {ready[0]}, herdr --remote "
-            f"{ready[0]} (certificate until {ca.stamp(until)}; renewed as you use FleetLedger).")
+            f"{ready[0]} (certificate until {ca.stamp(until)}; FleetLedger renews it in its "
+            "last day whenever it runs: the web UI, or ship-fleet status).")
     unsigned = [s.name for s in ships if not _has_cert(s)]
     if unsigned:
         say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign`.")

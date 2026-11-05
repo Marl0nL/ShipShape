@@ -633,3 +633,103 @@ def test_joining_the_overlay_re_signs_the_host_certificate_with_its_overlay_name
                           text=True).stdout
     assert "ship-01.example-tailnet.ts.net" in text and "ship-01.local" in text
     assert "re-signed with its overlay name" in out
+
+
+def test_this_computers_config_dials_the_name_that_resolves_here(here):
+    here.app.resolves = lambda host: host == "ship-02.example.net"
+    assert here.run("trust", "--this-computer")[0] == 0
+    config = (here.home_dir / ".ssh" / "shipshape" / "config").read_text()
+    assert "Host ship-02\n  HostName ship-02.example.net\n" in config
+
+
+def _managed_you(here, tmp_path):
+    from fleetledger import keys
+
+    you = tmp_path / "managed" / "you_managed"
+    keys.make(you, "you", "file")
+    with here.store.edit() as ed:
+        ed.doc["fleet"]["agent_keys"] = [f"{you}.pub"]
+        keys.record(ed, "file", [str(you)])
+    return you
+
+
+def test_a_key_fleetledger_made_is_not_promised_to_plain_ssh_without_an_agent(here, tmp_path,
+                                                                             monkeypatch):
+    from fleetledger import keys
+
+    _managed_you(here, tmp_path)
+    monkeypatch.setattr(keys, "USERS_AGENT", None)  # no ssh-agent of yours here
+    code, out, _ = here.run("trust", "--this-computer")
+    assert code == 1 and "Plain ssh cannot open your key here" in out
+    assert "can attach" not in out
+
+
+def test_a_key_fleetledger_made_is_loaded_into_your_agent_for_plain_ssh(here, tmp_path,
+                                                                       monkeypatch):
+    import signal
+
+    from fleetledger import keys
+
+    you = _managed_you(here, tmp_path)
+    sock = tmp_path / "agent.sock"
+    out = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
+                         check=True).stdout
+    pid = int(out.split("SSH_AGENT_PID=")[1].split(";")[0])
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+    monkeypatch.setattr(keys, "USERS_AGENT", str(sock))
+    try:
+        code, out, _ = here.run("trust", "--this-computer")
+        held = subprocess.run(["ssh-add", "-l"], capture_output=True, text=True).stdout
+    finally:
+        os.kill(pid, signal.SIGTERM)
+    assert code == 0 and "can attach" in out and "from your ssh-agent" in out
+    assert keys.fingerprint(you) in held
+
+
+def test_a_key_you_can_open_is_preferred_over_one_fleetledger_made(here, tmp_path):
+    from fleetledger import trustcmd
+
+    managed = _managed_you(here, tmp_path)
+    inv = here.store.load()
+    mine = Path(inv.doc["fleet"]["admin_key"]).parent / "you.pub"  # the fixture's own key
+    with here.store.edit() as ed:
+        ed.doc["fleet"]["agent_keys"] = [f"{managed}.pub", str(mine)]
+    assert trustcmd._your_private_key(here.store.load()) == mine.with_suffix("")
+
+
+def test_this_computers_certificate_is_renewed_in_its_last_day(here):
+    from fleetledger import trustcmd
+
+    here.run("trust", "--this-computer")
+    name = trustcmd.this_computer()["machine"]
+    serial = ca.machine(here.store.load(), name).last_serial
+    assert not trustcmd.renew_this_computer_if_due(here.app, here.store)  # 7 days left
+    assert ca.machine(here.store.load(), name).last_serial == serial
+    with here.store.edit() as ed:
+        ed.set_machine_field(name, "last_valid_before",
+                             ca.stamp(ca.utc_now() + timedelta(hours=5)))
+    assert trustcmd.renew_this_computer_if_due(here.app, here.store)
+    assert ca.machine(here.store.load(), name).last_serial != serial
+
+
+def test_a_linked_ssh_config_is_written_through_its_link(here, tmp_path):
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    (dotfiles / "ssh_config").write_text("Host other\n  User me\n")
+    config = here.home_dir / ".ssh" / "config"
+    config.symlink_to(dotfiles / "ssh_config")
+    assert here.run("trust", "--this-computer")[0] == 0
+    assert config.is_symlink()
+    lines = (dotfiles / "ssh_config").read_text().splitlines()
+    assert lines[0].startswith("Include ") and "Host other" in lines
+
+
+def test_an_overlay_join_refreshes_this_computers_ssh_config(here):
+    from test_cli import with_overlay
+
+    here.run("trust", "--this-computer")
+    config = here.home_dir / ".ssh" / "shipshape" / "config"
+    assert "Host ship-01\n  HostName ship-01.local\n" in config.read_text()
+    with_overlay(here)
+    assert here.run("overlay", "join", "ship-01")[0] == 0
+    assert "Host ship-01\n  HostName ship-01.example-tailnet.ts.net\n" in config.read_text()
