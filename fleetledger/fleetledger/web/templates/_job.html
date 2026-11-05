@@ -1,7 +1,7 @@
 {# One background job (web.jobs): its progress while it runs, its outcome once done. #}
 <article class="flow job {{ ("ok" if job.ok else "failed") if job.done else "working" }}" id="job-{{ job.id }}"
   {% if not job.done %}hx-get="/jobs/{{ job.id }}?v={{ job.version }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
-  <header><strong>{{ job.title }}</strong> · {{ job.ships|join(", ") }}
+  <header><strong>{{ job.title }}</strong>{% if job.ships %} · {{ job.ships|join(", ") }}{% endif %}
     {% if job.done and job.ok and job.result.by_hand %}<span class="pill muted">by hand</span>
     {% else %}<span class="pill {{ (("ok" if job.ok else "failed") if job.done else "working")|pill }}">{{ ("done" if job.ok else "failed") if job.done else "running" }}</span>{% endif %}
     <span class="when">started {{ clock(job.started) }}</span></header>

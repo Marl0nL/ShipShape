@@ -6,8 +6,9 @@ first-run wizard and links here.
   may ask the hypervisor's API, so it happens only on a POST ("Check now"), in a
   worker thread; the page shows the last result, kept in memory.
 - Access holds the forms that used to sit in setup's first step (your login,
-  trusted machines, the certificate authority, key care). Their routes are still
-  /setup/...; a form posted from here says back=settings and returns here.
+  what a machine may log in as, the certificate authority, key care). Their routes
+  are still /setup/...; a form posted from here says back=settings and returns here.
+  Certificates and trusted machines are web.trust's.
 - A GET reads the inventory, a few files and the audit log, and asks the keyring
   whether it is usable: it runs no command and contacts no API.
 """
@@ -65,7 +66,7 @@ def _ui(request: Request):
 
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
-    from fleetledger.web import setup
+    from fleetledger.web import setup, trust
     from fleetledger.web.app import render
 
     ui = _ui(request)
@@ -81,6 +82,7 @@ async def page(request: Request) -> Response:
     except (OSError, ValueError):
         entries = []
     context = await setup.access_context(inv)
+    context.update(await run_in_threadpool(trust.section_context, ui, inv))
     return render(request, "settings.html", inv=inv, health=ui.health, STATES=STATES,
                   FIX=FIX, entries=list(reversed(entries)), back="settings",
                   inventory_path=setup._tilde(store.path),

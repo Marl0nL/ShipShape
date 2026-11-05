@@ -1,0 +1,51 @@
+{# Settings ▸ Access ▸ Certificates: what `ship-fleet ca show` reports (web.trust).
+   Context: certs (trustcmd.ca_rows, judged against the cached revocation list),
+   csrf. A Ship's state comes from its last status poll. #}
+{% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
+<h3 id="certificates">Certificates</h3>
+<p class="hint">Each Ship has a host certificate, so your machines reach it without
+  host-key prompts, and the fleet's user CA keys and revocation list, so it lets in only
+  the machines you trust. Renewing signs the key FleetLedger already pinned for the Ship,
+  never one read off the network.</p>
+<dl class="facts">
+  <dt>Host CA</dt><dd><code>{{ certs.host_ca }}</code>, {{ certs.host_cert_days }} days per certificate</dd>
+  <dt>User CA</dt><dd>{% for fp in certs.user_ca %}<code>{{ fp }}</code>{% if loop.first %}, {{ certs.user_cert_hours }} hours per machine certificate by default{% else %} (being rotated out){% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>
+</dl>
+{% if certs.ships %}
+<table class="certs">
+  <thead><tr><th>Ship</th><th>Host certificate until</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {% for r in certs.ships %}
+  <tr>
+    <td><a href="/ships/{{ r.ship }}">{{ r.ship }}</a></td>
+    <td>{{ until(r.certificate_valid_before) }}</td>
+    <td>
+      {% if not r.seen %}<span class="pill muted">not seen yet</span>
+      {% elif r.needs == "tooling update" %}<span class="pill muted">update its tooling first</span>
+      {% elif r.needs == "expired" %}<span class="pill bad">expired</span>
+      {% elif r.needs %}<span class="pill warn">{{ r.needs }}</span>
+      {% else %}<span class="pill good">ok</span>{% endif %}
+      {% if r.trust_behind %}<span class="pill warn">trust behind</span>{% endif %}
+    </td>
+    <td class="row-actions">
+      {% if r.seen and r.needs != "tooling update" %}
+      <form method="post" action="/ships/{{ r.ship }}/certs/renew" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="from" value="settings">
+        <button type="submit" class="ghost small" title="ship-fleet ca sign {{ r.ship }}">Renew</button>
+      </form>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="/settings/certs/renew" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label><input type="checkbox" name="force" value="yes"> re-issue even if current</label>
+  <button type="submit" title="ship-fleet ca sign">Renew all</button>
+</form>
+<p class="hint">Renewing contacts each Ship; one that is up to date is left alone.</p>
+{% else %}
+<p class="quiet">No Ships yet: each gets its certificate when it enrols.</p>
+{% endif %}

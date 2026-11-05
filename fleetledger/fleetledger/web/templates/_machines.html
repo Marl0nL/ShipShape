@@ -1,0 +1,114 @@
+{# Settings ▸ Access ▸ Trusted machines (web.trust): each machine you attach from, the
+   Ships it reaches, what it may log in as, its certificate and bundle; Untrust;
+   this computer's Renew; Trust a machine. Context: inv, csrf, back, machines and
+   this_machine (setup.access_context), and trust.section_context(). #}
+{% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
+<h3 id="machines">Trusted machines</h3>
+<p class="hint">Each machine you attach from gets short-lived certificates, for the Ships
+  and the logins you choose here: the agent's (to attach to it, <code>herdr --remote</code>)
+  and your own (sudo). A machine that should only attach to agents, a shared one say,
+  needs only the agent's. Machines trusted before your login had certificates of its own
+  keep both. A Ship not updated yet still lets any of the agent's certificates log in as
+  you: update every Ship before relying on "the agent only".</p>
+<div class="this-computer">
+  {% if this_until %}
+  <p>This computer{% if this_machine %} ({{ this_machine }}){% endif %} has a certificate until
+    {{ until(this_until) }}; FleetLedger renews it in its last day whenever it runs.</p>
+  {% else %}
+  <p>This computer is not trusted yet: <code>ssh &lt;ship&gt;</code> and
+    <code>herdr --remote &lt;ship&gt;</code> need it (<code>ship-fleet ssh</code> works without).</p>
+  {% endif %}
+  <form method="post" action="/settings/machines/renew-here" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="ghost" title="ship-fleet trust --this-computer">{{ "Renew now" if this_until else "Let this computer use ssh" }}</button>
+  </form>
+</div>
+{% if machines %}
+<table class="machines">
+  <thead><tr><th>Machine</th><th>Ships</th><th>May log in as</th><th>Certificate until</th><th></th></tr></thead>
+  <tbody>
+  {% for m in machines %}
+  {% set here = m.name == this_machine %}
+  <tr>
+    <td>{{ m.name }}{% if here %} <span class="quiet">(this computer)</span>{% endif %}
+      <br><code class="fp" title="its key's fingerprint">{{ fingerprints[m.name] }}</code>
+      {% if bundles[m.name] and not here %}<br><span class="hint">bundle <code>{{ bundles[m.name] }}</code></span>{% endif %}</td>
+    <td>
+      {% if here %}{{ m.scope|join(", ") }}{% else %}
+      <details class="scope">
+        <summary>{{ m.scope|join(", ") }}</summary>
+        <form method="post" action="/settings/machines/scope"
+          data-confirm-title="Change the Ships {{ m.name }} reaches?"
+          data-confirm="{{ m.name }} gets a new certificate for the Ships you ticked, and its bundle is written again (copy it over again). A certificate it holds now for Ships it no longer reaches is revoked on every Ship at once."
+          data-confirm-action="Save for {{ m.name }}" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="machine" value="{{ m.name }}">
+          {% for value, label in scope_choices %}
+          <label><input type="checkbox" name="scope" value="{{ value }}"{% if value in m.scope %} checked{% endif %}> {{ label }}</label>
+          {% endfor %}
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost small" title="ship-fleet trust {{ m.name }} --scope ...">Save</button>
+        </form>
+      </details>
+      {% endif %}
+    </td>
+    <td>
+      <form method="post" action="/setup/machine" class="inline"
+        data-confirm-title="Change what {{ m.name }} may log in as?"
+        data-confirm="{{ m.name }}'s certificates will log in as the login you chose and nothing else. A certificate it holds now for more is revoked on every Ship at once; it gets a new one at its next renewal. Your own login has sudo."
+        data-confirm-action="Save for {{ m.name }}" data-confirm-danger>
+        <input type="hidden" name="csrf" value="{{ csrf }}">{% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}
+        <input type="hidden" name="machine" value="{{ m.name }}">
+        <select name="logins">
+          {% for value, label in (("agent", "the agent only"), ("owner", "you only (sudo)"), ("both", "the agent and you")) %}
+          <option value="{{ value }}"{% if (m.logins|list == ["agent", "owner"] and value == "both") or (m.logins|list == [value]) %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="ghost">Save</button>
+      </form>
+    </td>
+    <td>{{ until(m.last_valid_before) }}</td>
+    <td class="row-actions">
+      <form method="post" action="/settings/machines/untrust" class="inline"
+        data-confirm-title="Untrust {{ m.name }}?"
+        data-confirm="{{ m.name }}'s key goes into the revocation list on every Ship, so none lets it in. This cannot be undone: trust it again only under a new name, with a new key.{% if here %} This is this computer: ssh and herdr --remote stop working here (ship-fleet ssh still works).{% endif %}"
+        data-confirm-action="Untrust {{ m.name }}" data-confirm-danger>
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="machine" value="{{ m.name }}">
+        <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+        <button type="submit" class="ghost danger small" title="ship-fleet untrust {{ m.name }}">Untrust</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if revoked %}
+<p class="quiet">Untrusted: {% for m in revoked %}{{ m.name }} ({{ m.revoked[:10] }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
+{% endif %}
+
+<h4>Trust a machine</h4>
+<p class="hint">On that machine, make a key (<code>ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519</code>)
+  and paste the one line of its <code>.pub</code> file here. FleetLedger writes the machine's
+  bundle (its certificate, SSH config and the CA line) to a folder here: copy it over and run
+  <code>sh install.sh</code> there.</p>
+<form method="post" action="/settings/machines/trust" class="trust-machine" autocomplete="off">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Name <input name="machine" pattern="[a-z0-9][a-z0-9\-]{0,30}" maxlength="31" required placeholder="laptop"></label>
+  <label class="wide">Its public key <textarea name="key" rows="2" required spellcheck="false" placeholder="ssh-ed25519 AAAA... you@laptop"></textarea></label>
+  <fieldset class="scopes">
+    <legend>Ships it may reach</legend>
+    {% for value, label in scope_choices %}
+    <label><input type="checkbox" name="scope" value="{{ value }}"{% if value == "all" %} checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+  </fieldset>
+  <label>May log in as
+    <select name="logins">
+      <option value="both" selected>the agent and you</option>
+      <option value="agent">the agent only</option>
+      <option value="owner">you only (sudo)</option>
+    </select></label>
+  <label>Certificate hours <input name="hours" inputmode="numeric" pattern="[0-9]*" size="5" placeholder="{{ certs.user_cert_hours }}"></label>
+  <button type="submit" title="ship-fleet trust NAME --key LINE --scope ... --logins ...">Trust it</button>
+</form>

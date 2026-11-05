@@ -423,6 +423,21 @@ def test_trust_untrust_cycle(caenv, tmp_path):
     assert code == 1 and "stays untrusted" in err
 
 
+def test_ca_show_prints_and_gives_json_from_the_same_rows(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"), "--scope", "tag:work",
+              "--out", str(tmp_path / "bundle"))
+    code, out, err = caenv.run("ca", "show")
+    assert code == 0, err
+    assert f"Host CA {ca.fingerprint(caenv.cakeys.host_public)}" in out
+    assert "ship-01" in out and "laptop" in out and "tag:work" in out
+    code, out, _ = caenv.run("ca", "show", "--json")
+    doc = json.loads(out)
+    assert set(doc) == {"host_ca", "user_ca", "ships", "machines"}
+    assert [r["ship"] for r in doc["ships"]] == ["ship-01", "ship-02"]
+    assert doc["machines"][0]["machine"] == "laptop"
+
+
 def _pushed_krl(caenv, ship="ship-02"):
     return __import__("base64").b64decode(dict(caenv.trusted)[ship]["revoked_keys"])
 

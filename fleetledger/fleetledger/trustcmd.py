@@ -166,10 +166,12 @@ def ca_sign(args, app) -> int:
 
 
 # --- ca show -----------------------------------------------------------------------
-def ca_show(args, app) -> int:
-    inv = app.store_factory().load()
+def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
+    """What `ca show` reports, as data (the web UI's Certificates shows it too): the CA
+    fingerprints and lifetimes, each Ship's host certificate from its last status poll,
+    and the trusted machines. krl: the revocation list to judge Ships against (None: do
+    not judge whether their trust is behind). Reads files only; runs no command."""
     cfg = ca.require(inv)
-    krl = ca.build_krl(inv)
     rows = []
     for ship in inv.ships():
         doc = status.read_cache(ship.name)
@@ -185,25 +187,33 @@ def ca_show(args, app) -> int:
             "needs": (judged.reason if judged and judged.needs_cert else None)
             if judged and judged.supported else "tooling update",
             "trust_behind": bool(judged and judged.trust_behind),
+            "seen": doc is not None,
         })
     machines = [
         {"machine": m.name, "scope": list(m.scope), "valid_before": m.last_valid_before,
          "revoked": m.revoked, "fingerprint": ca.fingerprint(m.public_key)}
         for m in ca.machines(inv)
     ]
-    if args.json:
-        app.say(json.dumps({
-            "host_ca": ca.fingerprint(cfg.host_public),
+    return {"host_ca": ca.fingerprint(cfg.host_public),
             "user_ca": [ca.fingerprint(k) for k in cfg.user_ca_keys()],
-            "ships": rows, "machines": machines,
-        }, indent=2))
+            "host_cert_days": cfg.host_cert_days, "user_cert_hours": cfg.user_cert_hours,
+            "ships": rows, "machines": machines}
+
+
+def ca_show(args, app) -> int:
+    inv = app.store_factory().load()
+    ca.require(inv)
+    found = ca_rows(inv, ca.build_krl(inv))
+    rows, machines = found["ships"], found["machines"]
+    if args.json:
+        app.say(json.dumps({key: found[key] for key in ("host_ca", "user_ca", "ships",
+                                                         "machines")}, indent=2))
         return 0
-    app.say(f"Host CA {ca.fingerprint(cfg.host_public)}  "
-            f"({cfg.host_cert_days} days per certificate)")
-    app.say(f"User CA {ca.fingerprint(cfg.user_public)}  ({cfg.user_cert_hours} h by default)")
+    app.say(f"Host CA {found['host_ca']}  ({found['host_cert_days']} days per certificate)")
+    app.say(f"User CA {found['user_ca'][0]}  ({found['user_cert_hours']} h by default)")
     app.say("Ships (from the last status poll):")
     for r in rows:
-        state = r["needs"] or "ok"
+        state = (r["needs"] or "ok") if r["seen"] else "not seen yet"
         until = r["certificate_valid_before"] or "-"
         behind = ", trust behind" if r["trust_behind"] else ""
         app.say(f"  {r['ship']:<14} until {until:<21} {state}{behind}")

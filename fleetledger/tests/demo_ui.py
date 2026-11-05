@@ -51,6 +51,7 @@ SHIPS = {
     "ship-06": (["work"], "ffff", False),
 }
 DOWN = {"ship-05"}
+DEMO_CA: dict[str, str] = {}  # the demo CA's fingerprints, once home() has made it
 
 INVENTORY = """\
 schema = 1
@@ -214,6 +215,30 @@ def home(base: Path) -> None:
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
     path.chmod(0o600)
+    demo_ca(base, path)
+
+
+def demo_ca(base: Path, path: Path) -> None:
+    """A made-up certificate authority (keys without a passphrase, in the demo home)
+    and one trusted machine, so Settings ▸ Access shows certificates and machines."""
+    from fleetledger.store import TomlFileStore
+
+    from fleetledger import ca
+
+    for key in ("host_ca", "user_ca", "laptop"):
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", f"demo-{key}",
+                        "-f", str(base / "keys" / key)], check=True)
+    public = {k: (base / "keys" / f"{k}.pub").read_text().strip()
+              for k in ("host_ca", "user_ca", "laptop")}
+    DEMO_CA.update(host=ca.fingerprint(public["host_ca"]),
+                   user=ca.fingerprint(public["user_ca"]))
+    soon = _stamp(datetime.now(UTC) + timedelta(hours=10))
+    with TomlFileStore(path).edit() as ed:
+        ed.set_ca({"host_key": str(base / "keys" / "host_ca"),
+                   "user_key": str(base / "keys" / "user_ca")})
+        ed.set_machine("laptop", {"public_key": public["laptop"],
+                                  "added": "2026-01-01T00:00:00Z", "scope": ["tag:work"],
+                                  "logins": ["agent"], "last_valid_before": soon})
 
 
 def _stamp(when: datetime) -> str:
@@ -239,6 +264,16 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
                 reboot_required=index == 4)
     agents = doc["herdr"]["agents"]
     doc["attention"] = []
+    if DEMO_CA:  # certified by the demo CA; ship-04's runs out soon
+        days = 5 if name == "ship-04" else 60
+        until = datetime.fromtimestamp(now, UTC) + timedelta(days=days)
+        doc["ssh"] = {"host_certificate": {
+            "serial": 100 + index, "key_id": f"{name} host",
+            "principals": [name, f"{name}.example.invalid"],
+            "valid_after": _stamp(until - timedelta(days=90)), "valid_before": _stamp(until),
+            "ca_fingerprint": DEMO_CA["host"]},
+            "user_ca": [DEMO_CA["user"]], "agent_principals": ["agent:all"],
+            "revoked_keys_sha256": None}
     if name == "ship-01":
         doc["attention"].append({"code": "agent-waiting", "subject": "main",
                                  "message": "Agent 'main' is waiting for you."})
@@ -375,6 +410,9 @@ def main() -> int:
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
                   ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
                   stdin_isatty=lambda: False)
+    from fleetledger import ca
+
+    app.signer = ca.Signer(agent_keys=lambda: set())  # the demo CA's keys; never ssh-agent
     print(f"Demo FleetLedger home: {base}", flush=True)
     return server.serve(app, port=args.port, open_browser=False, interval=10)
 
