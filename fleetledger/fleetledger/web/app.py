@@ -33,7 +33,7 @@ from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
-from fleetledger.web import actions, dashboard, network, settings, setup
+from fleetledger.web import actions, dashboard, network, settings, setup, snapshots
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -62,7 +62,7 @@ SETTINGS_TEXT = {
     "lan_guard_allow": "LAN guard also allows (addresses or CIDRs, comma-separated)",
 }
 NO_SUCH_SHIP = "No such Ship in the inventory."
-TABS = ("overview", "settings", "logs", "network")
+TABS = ("overview", "settings", "snapshots", "logs", "network")
 
 
 @dataclasses.dataclass
@@ -359,6 +359,8 @@ async def ship_page(request: Request) -> Response:
             ok, lines = await run_in_threadpool(actions.logs, ui.app, name, source, 300)
             context["log"] = clean("\n".join(lines))
             context["log_ok"] = ok
+    if tab == "snapshots":
+        context.update(await snapshots.tab_context(ui.app, name))
     if tab == "network":  # the same snapshot the rest of the page shows
         context["netview"] = network.ship_view(context["snap"].inventory, context["ship"])
         context["net"] = network.status_digest(context["view"])
@@ -857,6 +859,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/audit", audit_page),
         Route("/jobs/{job}", job_card),
         *setup.routes(),
+        *snapshots.routes(),
         *settings.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]

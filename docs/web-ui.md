@@ -141,6 +141,7 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 | **Fleet** (`/`) | The dashboard. Across the top, the fleet at a glance: Ships up, agents (working, waiting for you, on Remote Control), how many alerts at each level, sign-ins to fix, pending reboots and tooling updates (and OS packages), and overlay membership. Then **Needs attention**, then a card per Ship: state, tags, uptime, agents, each sign-in, CPU and memory over the last day as small charts with their current value, a disk gauge (marks at 80% and 90%), and its first note; a card links to its Ship. Then charts for the last 6 hours, 24 hours or 7 days (see "History and charts"). Filter by tag. Next to the filter, **Every Ship** (or **Every <tag> Ship**) opens the batch actions: sign in to a service, update, reboot. Updates, reboots, overlay joins and making a Ship run in the background as jobs; **Activity** lists the running ones and the last 20 finished, with their progress and outcome (including whether each Ship's agents came back in their modes), from any browser session. |
 | **Ship** (`/ships/<name>`) | On every tab, under the name (with its tags, names, driver, overlay name and state, and when it was checked), a sticky action bar: the attach command for this computer with **Copy** (`herdr --remote <ship>` once this computer is trusted, else `ship-fleet ssh <ship>`), **Check now**, **Update** and **Reboot** (only while the Ship answers; otherwise a note to check its VM is on), and **More** (Join the overlay, for a Ship not on it, behind the confirm dialog). Under it, its jobs (an update, reboot or join started for it, from any page or session). Then the Overview: status, Needs attention (the Fleet page's alerts for this Ship, with their fixes), sign-ins with the account each tag expects (sign in or re-sign, and **Sign out** on each signed-in row; for a Ship that does not answer, its last known states and no buttons), agents grouped by herdr workspace with their state and mode, and whether they show in the Claude app (Remote Control on and Claude signed in) or why not; **Add an agent** (name, folder, mode: started now and on every boot, `ship-fleet set SHIP autostart.add=NAME:FOLDER`); herdr's last resume; the attach command that works from this computer (`herdr --remote <ship>` and `ssh <ship>` once this computer is trusted, else `ship-fleet ssh <ship>` and a button to trust it); **Join the overlay** for a Ship not on it yet; Claude Code, host and tooling, and its CPU, memory, disk and agents over the last 6 hours, 24 hours or 7 days. |
 | Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`); the sign-ins it uses (claude, gcloud, github: an unticked one gets no prompt, no sign-in and no attention item, shows as off, and is signed out there; `ship-fleet signins`); its size (cores and memory with a restart through the hypervisor, a disk that only grows; `ship-fleet resize`); and tags. Update or reboot this Ship from its action bar. |
+| Ship **Snapshots** | The Ship's disk snapshots (`ship-fleet snapshot`), read from its driver when the tab is opened (one call, nothing polls): name, when taken, note, with **Roll back** (the dialog asks you to type the Ship's name: everything since the snapshot is lost, sign-ins included) and **Delete** (the dialog). **Take a snapshot** below (a name, or `snap-<date>-<time>`, and a note); the action bar's **Snapshot** jumps there. Each runs as a job (`ship-fleet snapshot take|rollback|rm`), shown under the header. A snapshot holds the Ship's sign-ins: treat it like the Ship. On the manual driver the list is not available, Snapshot sits under **More** as "Snapshot (by hand)", roll back and delete take a name, and each job's card shows the steps to do on your hypervisor, each with **Copy**. |
 | Ship **Logs** | `ship-ctl logs` for one source. |
 | Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |
 | **Network** (`/network`) | Across the fleet, filterable by tag: destinations first seen in the last day, a "who talked to this domain" search (the domain or any subdomain), and each Ship's collector and traffic (`ship-fleet net --new`, `--who`). |
@@ -249,7 +250,10 @@ Following Jupyter's model, adapted to "one person, one computer":
   confirmation field it always did: the dialog ticks the form's hidden confirm
   box only when you confirm. Without script (or a browser without `<dialog>`)
   the tick box shows instead, so nothing ever becomes one click
-  (`static/app.js`; tests in `fleetledger/tests/frontend/`).
+  (`static/app.js`; tests in `fleetledger/tests/frontend/`). The most destructive
+  (a snapshot rollback; destroy) also ask you to type a value, the Ship's name: the
+  dialog's button works only once it is typed exactly, and the server checks it
+  (`confirm_name`); without script the field shows in the form.
 - **Content-Security-Policy** on every response: scripts, styles and connections
   from this server only, no inline code, no framing; `no-store` caching.
   `Referrer-Policy: same-origin` (not `no-referrer`, which makes browsers send
@@ -294,6 +298,8 @@ and htmx for polling; no front-end build.
 | `flows.py` | the concierge's browser prompter, the live-terminal bridge, batches |
 | `actions.py` | settings, tags, logs, update, reboot and joining the overlay through the shared day-2 operations (`fleetledger/ops.py`), sign-out through `ship-fleet logout`; update, reboot and join run in the background |
 | `jobs.py` | the background-job runner: one registry for every long action (update, reboot, join, making a Ship), where checking that a Ship is free and starting a job on it is one step; commands run through `cli.main` itself with their output in the job (cleaned of terminal codes), never on the terminal running `ship-fleet ui`; jobs live in memory, and stopping the UI says which were cut short |
+| `snapshots.py` | the Snapshots tab: the list from the driver, and take, roll back and delete as jobs running `ship-fleet snapshot` |
+| `templates/_outcome.html` | a driver's answer, for any action that calls one: its messages, the steps a by-hand driver leaves to you (each with Copy), or why it cannot (NotSupported) |
 | `network.py` | the Network tab and page over `fleetledger/net.py` (shared with `ship-fleet net`), plus the status `net` digest |
 | `dashboard.py` | the Fleet page's summary, alerts (each with its fix) and chart data; the history store is `fleetledger/history.py` |
 | `charts.py` | SVG chart geometry (lines, stacked columns, bars, sparklines); `templates/_macros.html` draws it |
@@ -308,7 +314,10 @@ alerts, summary and charts).
 To work on the UI or take screenshots without a fleet, run
 `.venv/bin/python fleetledger/tests/demo_ui.py`: six made-up Ships, simulated in
 the process, in a throwaway FleetLedger home with a week of made-up history. It
-never reads your real `~/.config/fleetledger`, `~/.ssh` or keyring.
+never reads your real `~/.config/fleetledger`, `~/.ssh` or keyring. Four of the
+Ships run on `DemoDriver`, a hypervisor kept in memory (VMs and snapshots; every
+call succeeds at once), standing in for Proxmox; the other two use the manual
+driver, so both kinds of answer can be seen.
 
 The Content-Security-Policy allows no inline styles or scripts, so a template
 never uses `style=` or `<script>`: colours and sizes are CSS classes, and chart

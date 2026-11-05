@@ -1,0 +1,16 @@
+{# A driver's answer, for any action that calls one (drivers.base): outcome is an
+   Outcome (done, messages, instructions); unsupported is why the driver cannot (a
+   NotSupported message). A by-hand driver (manual) answers with steps to do on your
+   hypervisor; each comes with Copy. Either may be missing. #}
+{% if unsupported %}<p class="notice outcome-unsupported">{{ unsupported }}</p>{% endif %}
+{% if outcome %}
+<div class="outcome">
+  {% for message in outcome.messages %}<p>{{ message }}</p>{% endfor %}
+  {% if outcome.instructions %}
+  <p class="outcome-lead"><strong>{{ "Next, on your hypervisor:" if outcome.done else "Do this on your hypervisor (FleetLedger leaves it to you):" }}</strong></p>
+  <ol class="howto">
+    {% for line in outcome.instructions %}<li><code>{{ line }}</code> <button type="button" class="ghost small" data-copy="{{ line }}">Copy</button></li>{% endfor %}
+  </ol>
+  {% endif %}
+</div>
+{% endif %}
