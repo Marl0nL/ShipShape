@@ -42,3 +42,8 @@ def check(name: str, doc: object, what: str, contracts: Path | None = None) -> N
     if problems:
         listed = "\n".join(f"  - {p}" for p in problems[:20])
         raise ConfigError(f"{what} does not match contracts/{name}.schema.json:\n{listed}")
+
+
+def definition(name: str, ref: str, contracts: Path | None = None) -> dict:
+    """One $defs entry of contracts/<name>.schema.json (for limits shown in forms)."""
+    return dict(_validator(contracts or find_root() / "contracts", name).schema["$defs"][ref])

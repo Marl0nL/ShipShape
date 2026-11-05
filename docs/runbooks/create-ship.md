@@ -74,10 +74,12 @@ Useful options (`ship-fleet new --help` lists them all):
 |---|---|
 | `--mode bypassPermissions` | new agents start in bypass, with no warning dialog (implies `--allow-bypass`); the default is `auto` |
 | `--autostart main:~/work/main:auto` | an agent started at boot and resumed after reboots, each in its mode (repeatable); each starts with a first prompt, "Get oriented and ready to work." unless you choose one with `--autostart-prompt`. Add one later with `ship-fleet set ship-01 autostart.add=main:~/work` (started at once, once Claude is signed in), or on the Ship's page; `autostart.remove=main` stops starting it |
+| `--repo someone/agent-setup` | the first agent works in this GitHub repo: the Ship clones it into `~/work/agent-setup` first (as the agent; a private repo once the Ship is signed in to GitHub, which its page then asks for), so the repo's own CLAUDE.md or AGENTS.md, skills and settings apply. Later: `ship-fleet set SHIP autostart.add=NAME:github:OWNER/REPO` |
+| `--signins claude,github` | the sign-ins it uses (default: all); `ship-fleet signins SHIP --on/--off NAME` later, which signs one out when turned off |
 | `--no-overlay` | with `[overlay]` set up, do not join it after enrolling (it joins by default) |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
-| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults) |
+| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults); later `ship-fleet resize SHIP --cores 8 --restart` (cores and memory apply at a restart through the hypervisor; a disk only grows, at once, with the Ship's filesystem: ship-ctl grow-root) |
 | `--agent-sudo` | give the agent user sudo (off by default) |
 | `--on proxmox` | where to create it (the same as `--driver`; default `defaults.driver`) |
 | `--image <id>` | the base image (default: the pinned one, see [images.md](images.md)); `stock` for the plain cloud image |

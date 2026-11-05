@@ -132,6 +132,15 @@ class Driver(ABC):
         """Fingerprints the hypervisor can vouch for, or None if it cannot."""
         return None
 
+    # --- size (optional) --------------------------------------------------
+    def resize(self, ship: Ship, size: Mapping[str, int]) -> Outcome:
+        """Change cores, memory_mb and/or disk_gb (a disk only grows). Cores and memory
+        apply at the next restart through the hypervisor; the disk grows at once (then
+        ship-ctl grow-root grows the Ship's filesystem into it)."""
+        raise NotSupported(f"The {self.id} driver cannot resize a Ship; change its VM on "
+                           "your hypervisor, then record the size with ship-fleet resize "
+                           "--record-only.")
+
     # --- snapshots (optional) ---------------------------------------------
     # A snapshot holds the Ship's sign-ins: treat it like the Ship itself.
     def snapshot(self, ship: Ship, name: str, description: str = "") -> Outcome:

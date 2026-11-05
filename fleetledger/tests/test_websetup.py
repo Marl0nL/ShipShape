@@ -868,3 +868,52 @@ def test_the_first_ship_lets_this_computer_attach(chosen, monkeypatch):
         time.sleep(0.05)
     assert trusted == [True]
     assert "<code>herdr --remote ship-01</code>" in response.text
+
+
+def test_the_first_ship_can_be_sized(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    text = page(chosen)
+    # The defaults, within the size contract's limits (ships.toml.schema.json).
+    assert 'name="cores" type="number" min="1" max="64" value="4"' in text
+    assert 'name="memory_gb" type="number" min="4" max="256" value="8"' in text
+    assert 'name="disk_gb" type="number" min="20" max="4096" value="40"' in text
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "cores": "8", "memory_gb": "16",
+                                            "disk_gb": "80"})
+    assert (args.cores, args.memory_mb, args.disk_gb) == (8, 16384, 80)
+
+
+def test_a_silly_size_makes_nothing(chosen, monkeypatch):
+    from fleetledger import commands
+
+    monkeypatch.setattr(commands, "cmd_new", lambda args, app: pytest.fail("made"))
+    chosen.post("/setup/hypervisor/manual")
+    chosen.post("/setup/ship", {"name": "ship-01", "cores": "0"})
+    assert "cores: 1 to 64" in page(chosen)
+
+
+def test_the_first_ship_can_use_fewer_sign_ins(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    assert 'name="signin" value="gcloud" checked' in page(chosen)
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "signins_shown": "yes",
+                                            "signin": ["claude", "github"]})
+    assert args.signins == "claude,github"
+    args = _made_with(chosen, monkeypatch, {"name": "ship-02", "signins_shown": "yes",
+                                            "signin": ["claude", "gcloud", "github"]})
+    assert args.signins is None  # all of them: nothing recorded
+
+
+def test_the_first_agent_can_work_in_a_github_repo(chosen, monkeypatch):
+    chosen.post("/setup/hypervisor/manual")
+    assert 'name="repo" placeholder="e.g. someone/agent-setup (optional)"' in page(chosen)
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "agent_on": "yes",
+                                            "agent": "main", "cwd": "~/work",
+                                            "repo": "someone/agent-setup"})
+    assert args.repo == "someone/agent-setup"
+
+
+def test_your_login_name_on_ships_from_the_setup_page(chosen):
+    assert 'name="owner" value="human"' in page(chosen)
+    chosen.post("/setup/owner", {"owner": "sam"})
+    assert chosen.store.load().owner == "sam" and "New Ships get the login sam" in page(chosen)
+    chosen.post("/setup/owner", {"owner": "agent"})
+    assert chosen.store.load().owner == "sam" and "cannot be your login name" in page(chosen)

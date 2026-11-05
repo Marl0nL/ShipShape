@@ -384,6 +384,98 @@ def test_new_proxmox_says_what_the_first_boot_is_doing(env, monkeypatch):
     assert "ship-12: unreachable" not in err and "ship-12: error" not in err
 
 
+def test_resize_through_the_driver_and_recorded(env):
+    sized = []
+    env.driver.resize = lambda ship, size: sized.append(size) or Outcome(
+        done=True, messages=["Set 8 cores."])
+    rebooted = []
+    env.driver.reboot = lambda ship: rebooted.append(ship.name) or Outcome(
+        done=True, messages=["Rebooted."])
+    env.run("new", "ship-16", "--driver", "proxmox")
+    code, out, err = env.run("resize", "ship-16", "--cores", "8", "--restart")
+    assert code == 0, err
+    assert sized == [{"cores": 8}] and rebooted == ["ship-16"]
+    assert env.store.load().ship("ship-16").size["cores"] == 8
+    assert env.run("resize", "ship-16", "--cores", "0")[0] == 1  # refused before the driver
+    assert env.run("resize", "ship-16")[0] == 1
+    assert sized == [{"cores": 8}]
+    code, _, _ = env.run("resize", "ship-01", "--disk-gb", "80", "--record-only")
+    assert code == 0 and env.store.load().ship("ship-01").size["disk_gb"] == 80
+    code, out, _ = env.run("resize", "ship-16", "--disk-gb", "60")
+    assert code == 0  # the disk, then the Ship's filesystem with it
+    assert any(c[3:4] == ["grow-root"] for name, c in env.ship.calls if name == "ship-16")
+
+
+def test_a_new_ship_can_start_its_first_agent_in_a_github_repo(env, home):
+    asked = []
+    env.app.github_visibility = lambda repo: asked.append(repo) or "not-public"
+    code, out, err = env.run("new", "ship-19", "--repo", "someone/agent-setup")
+    assert code == 0, err
+    assert asked == ["someone/agent-setup"] and "once you sign it in to GitHub" in out
+    assert _seed_ship_toml(home, "ship-19")["autostart"] == [
+        {"name": "main", "cwd": "~/work/agent-setup", "repo": "someone/agent-setup"}]
+    code, _, _ = env.run("new", "ship-20", "--autostart", "lead:~/x:plan", "--repo",
+                         "someone/agent-setup")
+    assert code == 0
+    assert _seed_ship_toml(home, "ship-20")["autostart"] == [
+        {"name": "lead", "cwd": "~/work/agent-setup", "mode": "plan",
+         "repo": "someone/agent-setup"}]
+    assert env.run("new", "ship-21", "--repo", "not a repo")[0] == 1
+
+
+def test_an_agent_in_a_repo_can_be_added_later(env):
+    code, _, err = env.run("set", "ship-01", "autostart.add=docs:github:someone/agent-setup")
+    assert code == 0, err
+    assert ["set", "autostart.add=docs:github:someone/agent-setup", "--json"] in [
+        c[3:] for _, c in env.ship.calls]
+    calls = len(env.ship.calls)
+    assert env.run("set", "ship-01", "autostart.add=docs:github:not/a/repo")[0] == 1
+    assert len(env.ship.calls) == calls
+
+
+@pytest.mark.parametrize("args", [["--memory-mb", "2048"], ["--cores", "100"],
+                                  ["--disk-gb", "8000"]])
+def test_a_size_the_contract_refuses_never_reaches_the_hypervisor(env, args):
+    sized = []
+    env.driver.resize = lambda ship, size: sized.append(size) or Outcome(done=True)
+    env.run("new", "ship-23", "--driver", "proxmox")
+    code, _, err = env.run("resize", "ship-23", *args)
+    assert code == 1 and " to " in err  # says the limits
+    assert sized == [] and env.store.load().ship("ship-23").size == {}
+
+
+def test_a_new_ship_outside_the_size_contract_is_refused_plainly(env):
+    code, _, err = env.run("new", "ship-26", "--memory-mb", "2048")
+    assert code == 1 and "memory mb: 4096 to 262144" in err
+    assert "does not match" not in err and not env.store.load().has_ship("ship-26")
+
+
+def test_a_ship_for_an_ecdsa_or_security_key(env, home):
+    at = "@" + "openssh.com"  # a key type's suffix (written apart: not an address)
+    key = f"sk-ssh-ed25519{at} AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t you\n"
+    you = Path(env.store.load().doc["fleet"]["agent_keys"][0])
+    you.write_text(key)
+    code, _, err = env.run("new", "ship-24")
+    assert code == 0, err
+    assert _seed_ship_toml(home, "ship-24")["owner"]["keys"] == [key.strip()]
+    you.write_text("ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTY= you\n")
+    assert env.run("new", "ship-25")[0] == 0
+
+
+def test_offline_views_leave_out_sign_ins_a_ship_does_not_use(env):
+    doc = copy.deepcopy(RUNNING)
+    doc["attention"].append({"code": "signin-missing", "subject": "gcloud",
+                             "message": "Google Cloud is not signed in."})
+    env.ship.status_override["ship-01"] = doc
+    env.run("ls")  # fetched and cached
+    env.run("signins", "ship-01", "--off", "gcloud")
+    inv = env.store.load()
+    from fleetledger import status
+
+    view = status.cached_view(inv, inv.ship("ship-01"), "none")
+    assert not [a for a in view.attention if a.get("subject") == "gcloud"]
+
+
 def test_new_proxmox_keeps_names_that_resolve(env):
     env.app.resolves = lambda host: host == "ship-06.local"
     assert env.run("new", "ship-06", "--driver", "proxmox")[0] == 0
@@ -599,6 +691,42 @@ def test_login_arguments(env):
     assert code == 2 and "Unknown sign-in service" in err
 
 
+def test_a_sign_in_turned_off_is_signed_out_and_never_offered(env):
+    code, out, err = env.run("signins", "ship-01", "--off", "gcloud")
+    assert code == 0, err
+    assert "gcloud auth revoke" in env.ship.calls[-1][1][-1]  # signed out on the Ship
+    assert env.store.load().ship("ship-01").signins == ("claude", "github")
+    assert env.run("signins", "ship-01")[1].split() == ["claude", "on", "gcloud", "off",
+                                                        "github", "on"]
+    calls = len(env.ship.calls)
+    code, _, err = env.run("login", "ship-01", "gcloud")
+    assert code == 1 and "does not use Google Cloud" in err and "--on gcloud" in err
+    assert len(env.ship.calls) == calls and env.argvs == []  # nothing started
+    code, out, err = env.run("login", "--tag", "work", "gcloud")
+    assert code == 0, err
+    assert env.argvs == []  # by tag: skipped where it is off, nothing started
+    _, out, _ = env.run("ls")
+    assert "off" in out
+    assert env.run("signins", "ship-01", "--on", "gcloud")[0] == 0
+    assert env.store.load().ship("ship-01").signins is None  # all again: absent
+
+
+def test_turning_off_a_sign_in_that_was_never_made_signs_nothing_out(env):
+    doc = copy.deepcopy(RUNNING)
+    for key in ("gcloud", "gcloud_adc"):
+        doc["auth"][key].update(state="missing", account=None)
+    env.ship.status_override["ship-01"] = doc
+    code, out, _ = env.run("signins", "ship-01", "--off", "gcloud")
+    assert code == 0 and "Google Cloud was not signed in there" in out
+    assert not any("gcloud auth revoke" in c[-1] for _, c in env.ship.calls)
+
+
+def test_a_new_ship_can_use_fewer_sign_ins(env):
+    assert env.run("new", "ship-17", "--signins", "claude")[0] == 0
+    assert env.store.load().ship("ship-17").signins == ("claude",)
+    assert env.run("new", "ship-18", "--signins", "claude,agy")[0] == 1
+
+
 def test_logout(env):
     code, out, _ = env.run("logout", "ship-01", "github")
     assert code == 0 and "signed out of GitHub" in out
@@ -680,6 +808,25 @@ def test_ssh(env, monkeypatch):
     assert argv[argv.index("-l") + 1] == "fleet" and "-i" in argv and argv[-1] == "ls -la"
     env.run("ssh", "ship-01", "uptime")
     assert seen[-1][-1] == "uptime"
+
+
+def test_your_own_login_on_ships(env, monkeypatch, home):
+    assert env.run("owner")[1].strip() == "human"  # the default
+    assert env.run("new", "ship-22")[0] == 0
+    owner = _seed_ship_toml(home, "ship-22")["owner"]
+    assert owner["name"] == "human" and owner["keys"][0].startswith("ssh-ed25519 ")
+    code, out, err = env.run("owner", "sam")
+    assert code == 0, err
+    sent = [c[3:] for name, c in env.ship.calls if name == "ship-01" and c[3:4] == ["set"]]
+    assert sent[-1][1:3] == ["owner.name=sam", f"owner.keys={owner['keys'][0]}"]
+    assert env.store.load().owner == "sam" and "ssh sam@ship-01" in out
+    for bad in ("agent", "fleet", "root", "nobody", "Sam", "a b"):
+        assert env.run("owner", bad)[0] == 1
+    assert env.store.load().owner == "sam"
+    seen = []
+    monkeypatch.setattr("os.execvp", lambda file, argv: seen.append(argv))
+    env.run("ssh", "ship-01", "--as", "owner")
+    assert seen[-1][seen[-1].index("-l") + 1] == "sam" and "-i" not in seen[-1]
 
 
 def test_ssh_dials_the_first_name_that_resolves(env, monkeypatch):

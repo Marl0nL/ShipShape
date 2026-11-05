@@ -81,6 +81,20 @@
         }
       }
     },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "description": "Your own login on the Ship, apart from agent (never an existing system account: uid below 1000 or 60000 and up): made by ship-ctl apply with useradd, with passwordless sudo, your keys (kept root-owned under /etc/ssh/shipshape/keys/) and the same user certificates agent takes. agent keeps no sudo.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "not": { "enum": ["root", "fleet", "agent", "nobody"] }
+        },
+        "keys": { "type": "array", "items": { "type": "string", "pattern": "^(ssh|ecdsa|sk-ssh|sk-ecdsa)-[a-z0-9-]+(@[a-z0-9.-]+)? [A-Za-z0-9+/=]+( .*)?$" } }
+      }
+    },
     "autostart": {
       "type": "array",
       "description": "Agents ship-ctl autostart starts when they are not already running. Names must be unique (checked by ship-ctl).",
@@ -100,7 +114,12 @@
             "$ref": "#/$defs/permissionMode",
             "description": "Omitted: the Ship's claude.default_mode."
           },
-          "prompt": { "type": "string", "maxLength": 4000 }
+          "prompt": { "type": "string", "maxLength": 4000 },
+          "repo": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$",
+            "description": "A GitHub repo (owner/name) to clone into cwd before the agent starts there, once, as the agent; only into a folder that is empty or not there yet. A private repo waits for the Ship's GitHub sign-in (attention agent-repo-waiting), and is retried when GitHub becomes signed in."
+          }
         }
       }
     },

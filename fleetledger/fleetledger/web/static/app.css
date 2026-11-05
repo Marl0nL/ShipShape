@@ -272,6 +272,7 @@ label.field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; f
 label.field input, label.field select { width: 100%; }
 fieldset { border: 1px solid var(--line-strong); border-radius: 6px; margin: 10px 0; padding: 6px 12px; }
 fieldset label { display: block; margin: 6px 0; font-size: 13px; }
+fieldset legend { font-weight: 600; font-family: var(--serif); }
 details.advanced, details { margin: 10px 0; }
 details > summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .warning { color: var(--ink); border: 1px solid var(--warn-mark); border-left-width: 5px; border-radius: 6px;

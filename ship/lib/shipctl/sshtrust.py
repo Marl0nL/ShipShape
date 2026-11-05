@@ -40,6 +40,7 @@ HOST_CERT = "/etc/ssh/ssh_host_ed25519_key-cert.pub"
 CA_DIR = "/etc/ssh/shipshape"
 USER_CA = CA_DIR + "/user-ca.pub"
 PRINCIPALS_DIR = CA_DIR + "/principals"
+KEYS_DIR = CA_DIR + "/keys"  # root-owned authorized keys for the owner's login
 REVOKED = CA_DIR + "/revoked-keys"
 DROPIN = "/etc/ssh/sshd_config.d/20-shipshape-ca.conf"
 FLEET_KEYS = "/home/fleet/.ssh/authorized_keys"
@@ -59,6 +60,13 @@ DROPIN_HEADER = (
 
 def _p(ctx: Context, path: str) -> Path:
     return ctx.paths.p(path)
+
+
+def owner_principals(ship: ShipToml) -> list[str]:
+    """Certificate principals that may log in as the owner. For now the same as
+    agent's: a machine you trust for a Ship can log in as you there too (with sudo).
+    The one place to change if the owner gets principals of its own."""
+    return agent_principals(ship)
 
 
 def agent_principals(ship: ShipToml) -> list[str]:
@@ -265,6 +273,14 @@ def render_dropin(ctx: Context) -> str:
         lines.append(f"AuthorizedPrincipalsFile {PRINCIPALS_DIR}/%u")
     if _p(ctx, REVOKED).exists():
         lines.append(f"RevokedKeys {REVOKED}")
+    keys = _p(ctx, KEYS_DIR)
+    owners = sorted(f.name for f in keys.iterdir()) if keys.is_dir() else []
+    if owners:
+        # The owner's keys live here, root-owned, so nothing is written into a home;
+        # everyone else keeps ~/.ssh/authorized_keys. sshd adds up AllowUsers lines, so
+        # this lets the owner in beside fleet and agent (10-shipshape.conf).
+        lines.append(f"AuthorizedKeysFile .ssh/authorized_keys {KEYS_DIR}/%u")
+        lines.append("AllowUsers " + " ".join(owners))
     return "\n".join(lines) + "\n"
 
 
@@ -279,10 +295,27 @@ def render_files(ctx: Context, ship: ShipToml, dry_run: bool = False) -> list[Pa
     text = "\n".join(agent_principals(ship)) + "\n"
     if write_atomic(principals, text, 0o644, dry_run=dry_run):
         changed.append(principals)
-    # A principals file for fleet must never exist: certificates log in as agent only.
+    # A principals file for fleet must never exist: certificates never log in as fleet.
     fleet = _p(ctx, PRINCIPALS_DIR + "/fleet")
     if remove(fleet, dry_run=dry_run):
         changed.append(fleet)
+    # The owner's login takes the same certificates as agent (your machines), and the
+    # owner's own keys; any other principals or keys file is stale and goes.
+    owner = (ship.owner or {}).get("name")
+    if owner:
+        own = _p(ctx, PRINCIPALS_DIR + "/" + owner)
+        owner_text = "\n".join(owner_principals(ship)) + "\n"
+        if write_atomic(own, owner_text, 0o644, dry_run=dry_run):
+            changed.append(own)
+        keys = _p(ctx, KEYS_DIR + "/" + owner)
+        lines = "".join(k.strip() + "\n" for k in ship.owner.get("keys", []))
+        if write_atomic(keys, lines, 0o644, dry_run=dry_run):
+            changed.append(keys)
+    for folder, keep in ((PRINCIPALS_DIR, {"agent", owner}), (KEYS_DIR, {owner})):
+        d = _p(ctx, folder)
+        for f in sorted(d.iterdir()) if d.is_dir() else []:
+            if f.name not in keep and remove(f, dry_run=dry_run):
+                changed.append(f)
     dropin = _p(ctx, DROPIN)
     if write_atomic(dropin, render_dropin(ctx), 0o644, dry_run=dry_run):
         changed.append(dropin)

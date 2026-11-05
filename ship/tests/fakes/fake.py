@@ -194,7 +194,31 @@ def gh(s: dict, a: list[str]) -> int:
             return 0
         print("You are not logged into any GitHub hosts.", file=sys.stderr)
         return 1
+    if a[:2] == ["auth", "setup-git"]:
+        return 0 if login else 1
     return 2
+
+
+def git(s: dict, a: list[str]) -> int:
+    """git clone --quiet -- https://github.com/OWNER/REPO.git DEST: public repos clone,
+    private ones only with gh signed in (git then uses gh's credentials)."""
+    if a[:1] != ["clone"]:
+        return 2
+    url, dest = a[-2], a[-1]
+    repo = url.removeprefix("https://github.com/").removesuffix(".git")
+    repos = s.setdefault("git", {})
+    if repos.get("offline"):
+        print("fatal: unable to access 'https://github.com/x/': Could not resolve host: "
+              "github.com", file=sys.stderr)
+        return 128
+    signed_in = bool(s.get("gh", {}).get("login"))
+    if repo in repos.get("public", []) or (signed_in and repo in repos.get("private", [])):
+        Path(dest, ".git").mkdir(parents=True)
+        Path(dest, "CLAUDE.md").write_text(f"# {repo}\n")
+        return 0
+    print("fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+          file=sys.stderr)
+    return 128
 
 
 def npm(s: dict, a: list[str]) -> int:
@@ -397,11 +421,61 @@ def tailscale(s: dict, a: list[str]) -> int:
     return 0
 
 
+def findmnt(s: dict, a: list[str]) -> int:
+    print(s.get("disk", {}).get("root", "/dev/sda1"))
+    return 0
+
+
+def lsblk(s: dict, a: list[str]) -> int:
+    print(s.get("disk", {}).get("parent", "sda"))
+    return 0
+
+
+def growpart(s: dict, a: list[str]) -> int:
+    disk = s.setdefault("disk", {})
+    if disk.get("full"):
+        print("NOCHANGE: partition 1 is size 50329567. it cannot be grown")
+        return 1
+    disk["full"] = True
+    disk["fs_behind"] = True  # the filesystem is now smaller than its partition
+    save(s)
+    return 0
+
+
+def resize2fs(s: dict, a: list[str]) -> int:
+    disk = s.setdefault("disk", {})
+    if not disk.get("fs_behind"):
+        print("The filesystem is already 6291195 (4k) blocks long.  Nothing to do!",
+              file=sys.stderr)
+        return 0
+    disk["fs_behind"] = False
+    disk.setdefault("resized", []).append(a[-1])
+    save(s)
+    return 0
+
+
+def useradd(s: dict, a: list[str]) -> int:
+    """Adds the user to the sandbox's /etc/passwd, as the real one would."""
+    name = a[-1]
+    passwd = Path(os.environ["SHIPSHAPE_ROOT"]) / "etc/passwd"
+    passwd.parent.mkdir(parents=True, exist_ok=True)
+    with passwd.open("a") as fh:
+        home = Path("/home") / name
+        fh.write(f"{name}:x:1001:1001:ShipShape owner:{home}:/bin/bash\n")
+    return 0
+
+
 HANDLERS = {
     "herdr": herdr,
     "claude": claude,
     "gcloud": gcloud,
     "gh": gh,
+    "git": git,
+    "useradd": useradd,
+    "findmnt": findmnt,
+    "lsblk": lsblk,
+    "growpart": growpart,
+    "resize2fs": resize2fs,
     "npm": npm,
     "dpkg-query": dpkg_query,
     "apt-get": apt_get,

@@ -115,6 +115,16 @@ your other machines without forwarding router ports
   (`--agent-sudo`). They can read their own sign-ins and, with Claude Code's
   native installer, replace their own Claude binary; neither reaches beyond
   that Ship.
+- **Your own login (`[fleet] owner`, default `human`) has sudo**, so admin work
+  never needs sudo for `agent`. It takes your keys (kept root-owned in
+  `/etc/ssh/shipshape/keys/`, so nothing is written into a home) and the same user
+  certificates as `agent`: a machine you trust for a Ship can log in to it as you,
+  with sudo, as well as attach to its agent. Scope machines accordingly
+  (`ship-fleet trust --scope`). The agent's herdr session stays the agent's:
+  `herdr --remote <ship>` reaches it by logging in as `agent`, never through sudo.
+- **A sign-in a Ship does not use** (`ship-fleet signins`) is never offered or run
+  there, and turning one off signs it out, so its credentials do not stay on that
+  Ship.
 - **Root-owned, out of agents' reach:** Claude Code's managed settings (Remote
   Control, the bypass policy), herdr's binary, `ship.toml`, the resume shim,
   and the network visibility collector and its records ([network.md](network.md)).

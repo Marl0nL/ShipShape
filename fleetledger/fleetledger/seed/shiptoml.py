@@ -60,6 +60,7 @@ class Autostart:
     cwd: str
     mode: str | None = None
     prompt: str | None = None
+    repo: str | None = None  # a GitHub repo (owner/name) cloned into cwd first
 
 
 @dataclass(frozen=True)
@@ -134,6 +135,12 @@ def build(
     if profile_options:
         doc["profile_options"] = profile_options
 
+    from fleetledger.seed import cloudinit
+
+    keys = [k for path in inventory.agent_key_paths
+            for k in cloudinit.read_public_keys(path, "an agent key")]
+    doc["owner"] = {"name": inventory.owner, "keys": keys}  # your own login, with sudo
+
     if options.autostart:
         entries = []
         for agent in options.autostart:
@@ -142,6 +149,8 @@ def build(
                 entry["mode"] = agent.mode
             if agent.prompt:
                 entry["prompt"] = agent.prompt
+            if agent.repo:
+                entry["repo"] = agent.repo
             entries.append(entry)
         doc["autostart"] = entries
 
@@ -169,6 +178,8 @@ def render(doc: Mapping[str, Any]) -> str:
                 inner[key] = value
             outer[profile] = inner
         out["profile_options"] = outer
+    if "owner" in doc:
+        out["owner"] = dict(doc["owner"])
     if "autostart" in doc:
         aot = tomlkit.aot()
         for entry in doc["autostart"]:

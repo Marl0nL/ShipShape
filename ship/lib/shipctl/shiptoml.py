@@ -73,6 +73,12 @@ class ShipToml:
         return out
 
     @property
+    def owner(self) -> dict | None:
+        """The owner's login ([owner] name and keys), or None: no owner login."""
+        owner = self.doc.get("owner")
+        return dict(owner) if owner and owner.get("name") else None
+
+    @property
     def autostart(self) -> list[dict]:
         return list(self.doc.get("autostart", []))
 

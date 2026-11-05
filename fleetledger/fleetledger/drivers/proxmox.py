@@ -56,6 +56,28 @@ TEMPLATE_HW = {
 }
 
 
+SIZE_RE = re.compile(r"(?:^|,)size=(\d+(?:\.\d+)?)([KMGT]?)(?:,|$)")
+
+
+def boot_disk(config: Mapping[str, Any]) -> tuple[str | None, int | None]:
+    """(disk key, size in GB) of the VM's boot disk: the first disk in its boot order,
+    else the first disk; never a CD-ROM."""
+    disks = {k: str(v) for k, v in config.items()
+             if DISK_RE.match(k) and "media=cdrom" not in str(v)}
+    order = re.search(r"order=([^,]+)", str(config.get("boot", "")))
+    chosen = next((d for d in (order.group(1).split(";") if order else []) if d in disks),
+                  next(iter(sorted(disks)), None))
+    if chosen is None:
+        return None, None
+    match = SIZE_RE.search(disks[chosen])
+    if not match:
+        return chosen, None
+    value, unit = float(match.group(1)), match.group(2)  # no unit: bytes
+    gb = value * {"": 1 / 1024 ** 3, "K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1,
+                  "T": 1024}[unit]
+    return chosen, int(round(gb))
+
+
 class NotOurs(FleetError):
     """The VMID holds a VM FleetLedger did not make for this Ship or image."""
 
@@ -211,6 +233,32 @@ class ProxmoxDriver(Driver):
     def start(self, ship: Ship) -> Outcome:
         self._task(self.api.post(self._checked_vm(ship) + "/status/start"))
         return Outcome(done=True, messages=[f"Started {ship.name}."])
+
+    def resize(self, ship: Ship, size: Mapping[str, int]) -> Outcome:
+        path = self._checked_vm(ship)
+        config = self.api.get(path + "/config") or {}
+        disk, current_gb = boot_disk(config)
+        messages = []
+        wanted = size.get("disk_gb")
+        if wanted is not None:
+            if disk is None:
+                raise FleetError(f"Cannot find {ship.name}'s boot disk in its VM config.")
+            if current_gb is not None and wanted < current_gb:
+                raise FleetError(f"Disks only grow: {ship.name}'s is {current_gb} GB, so it "
+                                 f"cannot become {wanted} GB.")
+            if current_gb is None or wanted > current_gb:
+                self._task(self.api.put(path + "/resize", disk=disk, size=f"{wanted}G"))
+                messages.append(f"Grew {ship.name}'s disk to {wanted} GB.")
+        changes = {k: size[s] for k, s in (("cores", "cores"), ("memory", "memory_mb"))
+                   if size.get(s) is not None}
+        if changes:
+            self._task(self.api.post(path + "/config", **changes))
+            said = ", ".join(f"{v} {'cores' if k == 'cores' else 'MB memory'}"
+                             for k, v in changes.items())
+            messages.append(f"Set {said}; this applies when the VM next restarts through "
+                            "Proxmox (ship-fleet resize --restart, or a stop and start), not "
+                            "at a reboot from inside the Ship.")
+        return Outcome(done=True, messages=messages or ["No change."])
 
     def stop(self, ship: Ship) -> Outcome:
         # ACPI shutdown, so herdr can save its state (logind inhibitor).

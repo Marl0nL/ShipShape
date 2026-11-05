@@ -23,6 +23,13 @@
           "items": { "$ref": "#/$defs/path" },
           "description": "Public key files placed in the agent user's authorized_keys (your keys for attaching)."
         },
+        "owner": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$",
+          "not": { "enum": ["root", "fleet", "agent", "nobody"] },
+          "default": "human",
+          "description": "Your own login name on every Ship (ship.toml [owner]): sudo, your keys and certificates, apart from agent, which keeps no sudo."
+        },
         "known_hosts": {
           "$ref": "#/$defs/path",
           "default": "~/.config/fleetledger/known_hosts",
@@ -547,6 +554,12 @@
         "image": {
           "$ref": "#/$defs/imageRef",
           "description": "The base image the Ship was created from. Absent on Ships made before images existed (stock)."
+        },
+        "signins": {
+          "type": "array",
+          "items": { "enum": ["claude", "gcloud", "github"] },
+          "uniqueItems": true,
+          "description": "The sign-ins this Ship uses (gcloud covers its application default credentials). Absent: all of them. A service left out gets no sign-in prompt, flow or attention item from FleetLedger, is shown as off, and is signed out on the Ship when it is turned off. Its tool may stay installed."
         },
         "overlay_node": {
           "type": "string",

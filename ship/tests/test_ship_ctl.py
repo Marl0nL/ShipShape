@@ -486,3 +486,80 @@ def test_adc_probe_never_captures_the_token():
     seen.clear()
     probe_gcloud_auth(Ctx())
     assert seen["env"] == {"CLOUDSDK_CORE_DISABLE_FILE_LOGGING": "1"}
+
+
+# --- the owner's login --------------------------------------------------------------
+OWNER_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVvd25lcmtleWV4YW1wbGVvd25lcmtl you"
+
+
+def test_an_owner_login_with_sudo_its_keys_and_certificates(ship):
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={OWNER_KEY}", "--json")
+    assert rc == 0, doc
+    assert ["useradd", "--create-home", "--shell", "/bin/bash", "--comment",
+            "ShipShape owner", "human"] in ship.calls("useradd")
+    sudoers = ship.p("/etc/sudoers.d/90-shipshape-owner")
+    assert sudoers.read_text() == "human ALL=(ALL:ALL) NOPASSWD: ALL\n"
+    assert oct(sudoers.stat().st_mode & 0o777) == "0o440"
+    assert ship.p("/etc/ssh/shipshape/keys/human").read_text() == OWNER_KEY + "\n"
+    principals = ship.p("/etc/ssh/shipshape/principals")
+    assert (principals / "human").read_text() == (principals / "agent").read_text()
+    dropin = next(ship.p("/etc/ssh/sshd_config.d").glob("*shipshape*")).read_text()
+    assert "AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/shipshape/keys/%u" in dropin
+    assert "\nAllowUsers human\n" in dropin  # beside 10-shipshape.conf's fleet and agent
+    assert not ship.p("/etc/sudoers.d/91-shipshape-agent").exists()  # agent: still no sudo
+    # Applied again: the user is not made twice.
+    ship.ctl("apply", "--json")
+    assert len(ship.calls("useradd")) == 1
+
+
+@pytest.mark.parametrize("name", ["agent", "fleet", "root", "nobody"])
+def test_the_owner_cannot_be_a_shipshape_login(ship, name):
+    rc, doc, _ = ship.ctl("set", f"owner.name={name}", "--json")
+    assert rc == 4 and not ship.calls("useradd")
+    assert not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()
+
+
+def test_the_owner_cannot_be_a_system_account(ship):
+    passwd = ship.p("/etc/passwd")
+    passwd.write_text("daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n")
+    rc, doc, _ = ship.ctl("set", "owner.name=daemon", "--json")
+    assert rc == 4 and "system account" in doc["error"]["message"]
+    assert not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()
+
+
+def test_grow_root_fills_the_disk_once(ship):
+    rc, doc, _ = ship.ctl("grow-root", "--json")
+    assert rc == 0, doc
+    assert_valid("ship-ctl-result", doc)
+    assert doc["data"] == {"device": "/dev/sda1", "grown": True}
+    assert ship.calls("growpart") == [["growpart", "/dev/sda", "1"]]
+    assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]
+    rc, doc, _ = ship.ctl("grow-root", "--json")  # already full: not an error
+    assert rc == 0 and doc["data"]["grown"] is False and doc["changed"] == []
+
+
+def test_the_owner_cannot_be_an_account_above_the_user_range(ship):
+    ship.p("/etc/passwd").write_text("svc:x:65000:65000::/nonexistent:/usr/sbin/nologin\n")
+    rc, doc, _ = ship.ctl("set", "owner.name=svc", "--json")
+    assert rc == 4 and not ship.p("/etc/sudoers.d/90-shipshape-owner").exists()
+
+
+AT_OPENSSH = "@" + "openssh.com"  # a key type's suffix (written apart: not an address)
+
+
+@pytest.mark.parametrize("key", [
+    "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTY= you",
+    f"sk-ssh-ed25519{AT_OPENSSH} AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t you",
+    f"sk-ecdsa-sha2-nistp256{AT_OPENSSH} AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20= you",
+])
+def test_the_owner_takes_any_key_type_fleetledger_takes(ship, key):
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={key}", "--json")
+    assert rc == 0, doc
+    assert ship.p("/etc/ssh/shipshape/keys/human").read_text() == key + "\n"
+
+
+def test_grow_root_grows_a_filesystem_its_partition_outgrew(ship):
+    ship.set(disk={"full": True, "fs_behind": True})  # growpart ran, resize2fs did not
+    rc, doc, _ = ship.ctl("grow-root", "--json")
+    assert rc == 0 and doc["data"]["grown"] is True
+    assert ship.scenario()["disk"]["resized"] == ["/dev/sda1"]

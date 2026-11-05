@@ -23,8 +23,9 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "set", "tag", "tools", "update", "reboot", "attention", "pins", "ssh", "logs", "ca",
-    "trust", "untrust", "net", "ui", "destroy", "snapshot", "image", "overlay",
+    "signins", "owner", "set", "tag", "tools", "update", "reboot", "attention", "pins",
+    "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
+    "image", "overlay",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -201,6 +202,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the Ship's time zone, e.g. Europe/Berlin (default: this computer's)")
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for the Ship to provision and enrol")
+    p.add_argument("--repo", metavar="OWNER/NAME",
+                   help="a GitHub repo for the first agent to work in: cloned into "
+                   "~/work/NAME first (a private one after the GitHub sign-in)")
+    p.add_argument("--signins", metavar="claude,gcloud,github",
+                   help="the sign-ins it uses (default: all); see ship-fleet signins")
     p.add_argument("--no-overlay", action="store_true",
                    help="do not join the overlay after it enrols (with [overlay] set up)")
 
@@ -241,6 +247,19 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "logout", "sign a Ship out of a service")
     p.add_argument("name")
     p.add_argument("service", help=services)
+
+    p = _add(sub, "signins", "choose which sign-ins a Ship uses (claude, gcloud, github)",
+             "  ship-fleet signins ship-01                       show them\n"
+             "  ship-fleet signins ship-01 --off gcloud          stop using one (signs it out)\n"
+             "  ship-fleet signins ship-01 --on gcloud           use it again\n"
+             "  ship-fleet signins ship-01 --only claude,github  exactly these\n\n"
+             "A sign-in a Ship does not use gets no prompt, no sign-in flow and no attention\n"
+             "item, and is shown as off; turning one off signs it out on the Ship, so no\n"
+             "credentials for it stay there. Its tool may stay installed.")
+    p.add_argument("name")
+    p.add_argument("--on", action="append", default=[], metavar="NAME")
+    p.add_argument("--off", action="append", default=[], metavar="NAME")
+    p.add_argument("--only", metavar="NAME,NAME", help="exactly these (empty: none)")
 
     p = _add(sub, "set", "change settings on Ships (ship-ctl set)",
              "Change settings on one Ship, several, every Ship with a tag, or all.\n"
@@ -331,10 +350,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "ssh", "open a shell on a Ship (as agent by default)")
     p.add_argument("name")
-    p.add_argument("--as", dest="user", choices=("agent", "fleet"), default="agent",
-                   help="agent (your key) or fleet (the admin key)")
+    p.add_argument("--as", dest="user", choices=("agent", "owner", "fleet"), default="agent",
+                   help="agent (your key), owner (your own login, with sudo) or fleet (the "
+                   "admin key)")
     p.add_argument("remote", nargs="*",
                    help="command to run instead of a shell (put it after --)")
+
+    p = _add(sub, "owner", "your own login name on Ships (sudo, apart from agent)",
+             "  ship-fleet owner              show it (default: human)\n"
+             "  ship-fleet owner sam          use sam: on every Ship now, and on new Ships\n\n"
+             "Your login has passwordless sudo, your keys and the same certificates as agent;\n"
+             "agent keeps no sudo. Connect as yourself: ssh <owner>@<ship>, or\n"
+             "ship-fleet ssh <ship> --as owner. The agent's herdr session is agent's:\n"
+             "herdr --remote <ship> (or ssh <ship>) logs in as agent with the same key.")
+    p.add_argument("name", nargs="?")
 
     p = _add(sub, "logs", "show Ships' logs (ship-ctl logs)",
              f"Sources: {', '.join(LOG_SOURCES)}.\n\n"

@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import commands, net, ops
+from fleetledger import commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -121,6 +121,9 @@ def make_env() -> Environment:
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
         MODES=commands.MODES,
+        SIGNIN_CHOICES=signins.CHOICES,
+        SIZE=_size_limits_for_forms(),
+        SIGNIN_LABELS=signins.LABELS,
         SETTINGS=SETTINGS,
         SETTINGS_TEXT=SETTINGS_TEXT,
         human_bytes=net.human_bytes,
@@ -169,6 +172,20 @@ def session_of(request: Request | WebSocket) -> Session:
 
 def ui_of(request: Request | WebSocket) -> UI:
     return request.app.state.ui
+
+
+def _size_limits_for_forms() -> dict[str, int]:
+    """The size contract's limits, as the forms ask (memory in whole GB)."""
+    from fleetledger import lifecycle
+
+    try:
+        limits = lifecycle.size_limits()
+    except FleetError:
+        return {}
+    return {"cores_min": limits["cores"][0], "cores_max": limits["cores"][1],
+            "mem_min": -(-limits["memory_mb"][0] // 1024),
+            "mem_max": limits["memory_mb"][1] // 1024,
+            "disk_min": limits["disk_gb"][0], "disk_max": limits["disk_gb"][1]}
 
 
 def render(request: Request, template: str, status_code: int = 200, **context: Any) -> Response:
@@ -320,6 +337,7 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "workspaces": workspaces,
         "snap": snap,
         **_attach_context(inv, view.ship),
+        "signins_used": signins.used(view.ship),
     }
 
 
@@ -419,11 +437,13 @@ async def ship_agents(request: Request) -> Response:
     fields = await form(request)
     session = session_of(request)
     try:
-        if one(fields, "action") == "remove":
+        if one(fields, "do") == "remove":
             pair = ops.parse_autostart_change("autostart.remove", one(fields, "agent"))
         else:
             mode = one(fields, "mode")
-            value = f"{one(fields, 'agent')}:{one(fields, 'cwd')}" + (f":{mode}" if mode else "")
+            where = (f"github:{one(fields, 'repo')}" if one(fields, "repo")
+                     else one(fields, "cwd"))
+            value = f"{one(fields, 'agent')}:{where}" + (f":{mode}" if mode else "")
             pair = ops.parse_autostart_change("autostart.add", value)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
@@ -432,6 +452,53 @@ async def ship_agents(request: Request) -> Response:
     _flash_outcome(ui, session, outcome)
     await run_in_threadpool(ui.fleet.poll, [name])
     return back(f"/ships/{name}")
+
+
+async def ship_signins(request: Request) -> Response:
+    """Choose the sign-ins a Ship uses; the ones turned off are signed out there."""
+    ui = ui_of(request)
+    name = _ship_name(request)
+    if not name or name not in ui.fleet.snapshot.by_name:
+        return not_found(request, "No such Ship in the inventory.")
+    fields = await form(request)
+    session = session_of(request)
+    said: list[str] = []
+    try:
+        wanted = signins.check(fields.get("signin", []))
+        ok = await run_in_threadpool(commands.set_signins, ui.app, ui.app.store_factory(),
+                                     name, wanted, said.append)
+    except FleetError as exc:
+        ok, said = False, [exc.message]
+    ui.flash(session, "ok" if ok else "bad", " ".join(said))
+    await run_in_threadpool(ui.fleet.poll, [name])
+    return back(f"/ships/{name}/settings")
+
+
+async def ship_size(request: Request) -> Response:
+    """Resize a Ship (cores, memory, a disk that only grows), optionally restarting it."""
+    from fleetledger import lifecycle
+
+    ui = ui_of(request)
+    name = _ship_name(request)
+    if not name or name not in ui.fleet.snapshot.by_name:
+        return not_found(request, "No such Ship in the inventory.")
+    fields = await form(request)
+    session = session_of(request)
+    try:
+        size = setup.size_from_form(fields)
+        current = ui.app.store_factory().load()
+        before = current.effective_size(current.ship(name))
+        size = {k: v for k, v in size.items() if v != before.get(k)}
+        if not size:
+            ui.flash(session, "muted", "Nothing to change.")
+            return back(f"/ships/{name}/settings")
+        said = await run_in_threadpool(lifecycle.resize, ui.app, ui.app.store_factory(), name,
+                                       size, restart=one(fields, "restart") == "yes")
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(f"/ships/{name}/settings")
+    ui.flash(session, "ok", " ".join(said))
+    return back(f"/ships/{name}/settings")
 
 
 async def attach_here(request: Request) -> Response:
@@ -768,6 +835,8 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/settings", ship_settings, methods=["POST"]),
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
+        Route("/ships/{name}/size", ship_size, methods=["POST"]),
+        Route("/ships/{name}/signins", ship_signins, methods=["POST"]),
         Route("/attach-here", attach_here, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
         Route("/operations", fleet_operation, methods=["POST"]),

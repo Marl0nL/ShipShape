@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fleetledger import ca, paths, schemas
+from fleetledger import ca, paths, schemas, signins
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
 from fleetledger.shipctl import RESULT_SCHEMA, STATUS_SCHEMA, not_installed
@@ -121,6 +121,19 @@ def fleet_attention(
     return found
 
 
+def cached_view(inventory: Inventory, ship: Ship, missing: str) -> ShipView:
+    """A Ship as its last fetched status shows it (offline), with the same attention as
+    a live fetch would give (sign-ins it does not use left out)."""
+    doc = read_cache(ship.name)
+    view = ShipView(ship, status=doc)
+    if doc is None:
+        view.problem, view.message = "unknown", missing
+        return view
+    attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, None)
+    view.attention = signins.filter_attention(ship, attention, doc.get("tools"))
+    return view
+
+
 def fetch(
     ssh: SSH, inventory: Inventory, ship: Ship, tooling: str | None = None
 ) -> ShipView:
@@ -168,6 +181,7 @@ def fetch(
     view.status = doc
     view.attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, tooling)
     view.attention += ca.attention(ca.config(inventory), ship, doc, ca.cached_krl(inventory))
+    view.attention = signins.filter_attention(ship, view.attention, doc.get("tools"))
     try:
         write_cache(ship.name, doc)
     except OSError:

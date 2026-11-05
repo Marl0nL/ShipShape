@@ -59,8 +59,11 @@ Then, each step showing **done** or **next**:
    secret. Before saving, FleetLedger checks the client signs in, can make a
    `tag:ship` key (made and deleted at once, which shows the rules are in
    place), and has the scopes of the level. **Skip for now** is fine.
-3. **Your first Ship.** Name and tag, and a Claude agent to start on it (on by
-   default: `main`, working in `~/work`) with Remote Control, so once you sign the
+3. **Your first Ship.** Name and tag; its size (cores, memory, disk, with the
+   defaults shown); the sign-ins it uses; and a Claude agent to start on it (on by
+   default: `main`, working in `~/work`, or in a GitHub repo you name, which the
+   Ship clones first so the repo's CLAUDE.md, skills and settings apply; a private
+   repo waits for the Ship's GitHub sign-in) with Remote Control, so once you sign the
    Ship in to Claude it shows in the Claude app under your account. With an
    overlay set up, the Ship joins it once it enrols (a tick to opt out) and its
    host certificate is signed with its overlay name. Progress shows live (seed,
@@ -129,7 +132,7 @@ browser). Stopping the UI ends every session and cancels any sign-in still open.
 |---|---|
 | **Fleet** (`/`) | The dashboard. Across the top, the fleet at a glance: Ships up, agents (working, waiting for you, on Remote Control), how many alerts at each level, sign-ins to fix, pending reboots and tooling updates (and OS packages), and overlay membership. Then **Needs attention**, then a card per Ship: state, tags, uptime, agents, each sign-in, CPU and memory over the last day as small charts with their current value, a disk gauge (marks at 80% and 90%), and its first note; a card links to its Ship. Then charts for the last 6 hours, 24 hours or 7 days (see "History and charts"). Filter by tag. Batch actions for every Ship (or every Ship with the selected tag): sign in to a service, update, reboot. Updates and reboots run in the background, with their progress and outcome (including whether each Ship's agents came back in their modes) on this page. |
 | **Ship** (`/ships/<name>`) | Status, Needs attention (the Fleet page's alerts for this Ship, with their fixes), sign-ins with the account each tag expects (sign in, re-sign, sign out), agents grouped by herdr workspace with their state and mode, and whether they show in the Claude app (Remote Control on and Claude signed in) or why not; **Add an agent** (name, folder, mode: started now and on every boot, `ship-fleet set SHIP autostart.add=NAME:FOLDER`); herdr's last resume; the attach command that works from this computer (`herdr --remote <ship>` and `ssh <ship>` once this computer is trusted, else `ship-fleet ssh <ship>` and a button to trust it); **Join the overlay** for a Ship not on it yet; Claude Code, host and tooling, and its CPU, memory, disk and agents over the last 6 hours, 24 hours or 7 days. |
-| Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`), and tags. Update or reboot this Ship from its Overview. |
+| Ship **Settings** | Remote Control, default mode, bypass, update channel, agent sudo, LAN guard and its extra allowed addresses, OS-update reboots and their time (`ship-fleet set`); the sign-ins it uses (claude, gcloud, github: an unticked one gets no prompt, no sign-in and no attention item, shows as off, and is signed out there; `ship-fleet signins`); its size (cores and memory with a restart through the hypervisor, a disk that only grows; `ship-fleet resize`); and tags. Update or reboot this Ship from its Overview. |
 | Ship **Logs** | `ship-ctl logs` for one source. |
 | Ship **Network** | Phase 3's visibility for one Ship (`ship-fleet net SHIP`): the collector's state, traffic for 24 hours and 7 days, top destinations for either window with their programs, bytes and scope, destinations first seen in the last day (and whether they are new to the whole fleet), and programs. Shows the last fetched summary; **Fetch the latest summary** asks the Ship. Before any summary is fetched, the Ship's own 24-hour digest from its status is shown; without a collector, "not available". |
 | **Network** (`/network`) | Across the fleet, filterable by tag: destinations first seen in the last day, a "who talked to this domain" search (the domain or any subdomain), and each Ship's collector and traffic (`ship-fleet net --new`, `--who`). |

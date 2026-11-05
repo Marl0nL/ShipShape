@@ -379,14 +379,25 @@ class Concierge:
         Returns the batch id. A Ship and provider with a flow still open is not
         queued twice.
         """
+        from fleetledger import signins
+
         chosen = self.provider_loader(service)
         batch_id = secrets.token_hex(6)
         queued: list[tuple[WebFlow, Provider]] = []
+        try:
+            inventory = self.app.store_factory().load()
+        except FleetError:
+            inventory = None
+        skipped = 0
         with self._lock:
             busy = {(f.ship, f.provider) for f in self._flows.values() if not f.done}
             for ship in ships:
                 for provider in chosen:
                     if (ship, provider.id) in busy:
+                        continue
+                    if (inventory is not None and inventory.has_ship(ship)
+                            and not signins.provider_on(inventory.ship(ship), provider.id)):
+                        skipped += 1  # off on this Ship: no sign-in flow
                         continue
                     flow = WebFlow(
                         id=f"{next(self._counter)}-{secrets.token_hex(4)}",
@@ -401,7 +412,8 @@ class Concierge:
                     queued.append((flow, provider))
             self._trim()
         if not queued:
-            raise FleetError("Those sign-ins are already under way.")
+            raise FleetError("Those Ships do not use that sign-in." if skipped else
+                             "Those sign-ins are already under way.")
         threading.Thread(
             target=self._run_batch, args=(queued,), name=f"signin-{batch_id}", daemon=True
         ).start()

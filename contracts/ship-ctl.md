@@ -94,9 +94,11 @@ atomically, then runs `apply`.
   `claude.default_mode`, `claude.allow_bypass`, `claude.update_channel`,
   `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
   `network.lan_guard_allow` (comma-separated; empty clears it),
-  `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`. Booleans are `true` or `false`.
+  `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`, `owner.name`,
+  `owner.keys` (comma-separated public keys). Booleans are `true` or `false`.
 - `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
-  that name); `autostart.remove=NAME` drops one (refused if none has it; a running
+  that name), and `autostart.add=NAME:github:OWNER/REPO[:MODE]` adds one that works
+  in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it; a running
   agent keeps running until it is stopped or the Ship reboots). Run `autostart`
   afterwards to start a new one at once.
 - `network.ssh_listen=overlay` is refused with `overlay-not-joined` (exit 1, no
@@ -118,6 +120,18 @@ The Ship runs it on its own: at boot (the first status refresh after
 `ship-resume.service` has finished) and once whenever Claude becomes signed in
 (see "Reacting to sign-ins" below). FleetLedger never needs to call it; calling
 it anyway is harmless.
+
+An entry with a `repo` is cloned into its `cwd` first, as the agent, once (into a
+folder that is empty or not there yet). A repo that cannot be cloned before the
+GitHub sign-in (private, or not there) leaves that agent unstarted, with the
+attention item `agent-repo-waiting`; it is retried when GitHub becomes signed in
+(see "Reacting to sign-ins"). The status refresh clones each entry's repo as soon
+as it can, without waiting for Claude (a public repo needs no sign-in), so the
+folder is ready when the agent starts. A clone that fails while signed in is
+`agent-repo-failed`. When github.com cannot be reached at all (no network or DNS
+yet), the item says so, not that a sign-in is missing, and the clone is tried again
+at every status refresh. An agent removed from `[[autostart]]` takes its repo state
+and attention item with it. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
 
@@ -161,7 +175,9 @@ least every 60 seconds), ship-ctl compares every `auth` service's state with the
 previous refresh:
 
 - a service that changed to `ok`: run `tools run` for the recipes waiting on it;
-- `claude` changed to `ok`: then run `autostart` once.
+- `claude` changed to `ok`: then run `autostart` once;
+- `github` changed to `ok`: clone the repos that waited for it, then start just
+  those agents (never one you stopped).
 
 This is triggered by the change, not by the state, so an agent you stop later is
 not restarted until the next boot or the next time Claude goes from signed out
@@ -194,6 +210,14 @@ next reboot.
   that is not a failure.
 - `add ID...` / `remove ID...`: edit `[tools].install`, then `run`. `remove`
   stops managing the tool; it does not uninstall it in phase 1.
+
+### `ship-ctl grow-root [--json]`
+
+Grows the partition that holds `/` to fill its disk (`growpart`), then its ext4
+filesystem (`resize2fs`, always, so a partition grown earlier without its
+filesystem is caught up), online. FleetLedger runs it after it grows a Ship's disk
+through the hypervisor (`ship-fleet resize --disk-gb`). Nothing to grow is not an
+error: `changed` is empty. `data`: `{ "device": "/dev/sda1", "grown": true|false }`.
 
 ### `ship-ctl logs SOURCE [--lines N] [--json]`
 

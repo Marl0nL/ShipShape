@@ -283,6 +283,7 @@ async def page(request: Request) -> Response:
         context["desktop_agent"] = keys.desktop_agent_preloads()
         context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
         context["policy"] = _policy_text()
+        context["size"] = inv.effective_size()
     from fleetledger import proxmox_setup
 
     context["px"] = state.proxmox
@@ -488,6 +489,22 @@ async def fleet_ca(request: Request) -> Response:
         return _back("fleet")
     _flash(request, "ok", "Made the certificate authority.")
     return _back("hypervisor")
+
+
+async def owner_name(request: Request) -> Response:
+    """Your own login name on Ships (fleet.owner), set on every Ship."""
+    from fleetledger import commands
+
+    app = _ui(request).app
+    fields = await _form(request)
+    said: list[str] = []
+    try:
+        ok = await run_in_threadpool(commands.set_owner, app, app.store_factory(),
+                                     _one(fields, "owner").strip(), said.append)
+    except FleetError as exc:
+        ok, said = False, [exc.message]
+    _flash(request, "ok" if ok else "bad", " ".join(said))
+    return _back("fleet")
 
 
 async def load_keys(request: Request) -> Response:
@@ -981,6 +998,30 @@ def _run_ship(app, job: ShipJob, name: str, tag: str, on_done=None,
                 pass
 
 
+def size_from_form(fields) -> dict[str, int]:
+    """cores / memory_mb / disk_gb from a form (memory typed in GB), checked."""
+    from fleetledger.lifecycle import check_size
+
+    def number(key: str) -> int | None:
+        value = _one(fields, key).strip()
+        if not value:
+            return None
+        if not value.isdigit():
+            raise FleetError(f"{key.replace('_', ' ')}: a whole number.")
+        return int(value)
+
+    memory_gb = number("memory_gb")
+    return check_size({"cores": number("cores"), "disk_gb": number("disk_gb"),
+                       "memory_mb": memory_gb * 1024 if memory_gb is not None else None})
+
+
+def _size_args(fields) -> list[str]:
+    """--cores / --memory-mb / --disk-gb for ship-fleet new, from the form."""
+    flags = {"cores": "--cores", "memory_mb": "--memory-mb", "disk_gb": "--disk-gb"}
+    return [arg for key, value in size_from_form(fields).items()
+            for arg in (flags[key], str(value))]
+
+
 async def ship_start(request: Request) -> Response:
     ui = _ui(request)
     state = _state(request)
@@ -991,16 +1032,32 @@ async def ship_start(request: Request) -> Response:
                "characters.")
         return _back("ship")
     extra: list[str] = []
+    try:
+        extra += _size_args(fields)
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("ship")
+    from fleetledger import signins
+
+    try:
+        chosen = signins.check(fields.get("signin", []) if _one(fields, "signins_shown")
+                               else list(signins.CHOICES))
+    except FleetError as exc:
+        _flash(request, "bad", exc.message)
+        return _back("ship")
+    if chosen != list(signins.CHOICES):
+        extra += ["--signins", ",".join(chosen)]
     if _one(fields, "agent_on") == "yes":
-        from fleetledger import ops
+        from fleetledger import github, ops
 
         agent, cwd = _one(fields, "agent") or "main", _one(fields, "cwd") or "~/work"
         try:
             ops.parse_autostart_change("autostart.add", f"{agent}:{cwd}")
+            repo = github.check_name(_one(fields, "repo")) if _one(fields, "repo") else None
         except FleetError as exc:
             _flash(request, "bad", exc.message)
             return _back("ship")
-        extra += ["--autostart", f"{agent}:{cwd}"]
+        extra += ["--autostart", f"{agent}:{cwd}", *(["--repo", repo] if repo else [])]
     if _one(fields, "overlay") != "yes":
         extra.append("--no-overlay")
     if state.ship is not None and not state.ship.done:
@@ -1030,6 +1087,7 @@ def routes() -> list[Route]:
         Route("/setup/fleet/adopt", fleet_adopt, methods=["POST"]),
         Route("/setup/fleet/ca", fleet_ca, methods=["POST"]),
         Route("/setup/keys/load", load_keys, methods=["POST"]),
+        Route("/setup/owner", owner_name, methods=["POST"]),
         Route("/setup/hypervisor/manual", hypervisor_manual, methods=["POST"]),
         Route("/setup/proxmox/start", proxmox_start, methods=["POST"]),
         Route("/setup/proxmox/cancel", proxmox_cancel, methods=["POST"]),

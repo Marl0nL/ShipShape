@@ -49,6 +49,8 @@ SET_KEYS = {
     "updates.auto_reboot": "bool",
     "updates.reboot_time": "str",
     "network.ssh_listen": "str",
+    "owner.name": "str",
+    "owner.keys": "list",
 }
 RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart "
@@ -114,6 +116,7 @@ def build_parser() -> Parser:
     sv.add_argument("--file", required=True, metavar="-", help="read the document from stdin")
     cmd("net", "Show where this Ship connects: the 7-day network visibility summary.")
     cmd("version", "Print the tooling version and contract versions.")
+    cmd("grow-root", "Grow / to fill its disk (after the disk was grown).")
     o = cmd("overlay", "Join or leave the overlay network (the auth key comes on stdin).")
     o.add_argument("action", choices=["join", "leave", "status"])
     o.add_argument("--hostname", help="join: the Ship's name on the overlay")
@@ -182,11 +185,16 @@ def _autostart_change(doc: dict, key: str, raw: str) -> None:
     parts = raw.split(":")
     mode = parts.pop() if len(parts) > 2 and parts[-1] in PERMISSION_MODES else None
     name, cwd = parts[0], ":".join(parts[1:])
+    repo = None
+    if len(parts) == 3 and parts[1] == "github":  # NAME:github:OWNER/REPO
+        repo = parts[2]
+        cwd = "~/work/" + repo.rsplit("/", 1)[-1]
     if not name or not cwd:
-        raise CtlError("usage", "autostart.add=NAME:CWD[:MODE]")
+        raise CtlError("usage", "autostart.add=NAME:CWD[:MODE] or NAME:github:OWNER/REPO[:MODE]")
     if any(e.get("name") == name for e in entries):
         raise CtlError("usage", f"an autostart agent named {name!r} already exists")
-    entries.append({"name": name, "cwd": cwd, **({"mode": mode} if mode else {})})
+    entries.append({"name": name, "cwd": cwd, **({"repo": repo} if repo else {}),
+                    **({"mode": mode} if mode else {})})
 
 
 def cmd_set(ctx: Context, args) -> dict:
@@ -395,10 +403,17 @@ def cmd_refresh(ctx: Context, args) -> dict:
         states, why = tools.run_profiles(ctx, ship, retry)
         messages.append("profiles retried: " + ", ".join(f"{p} {s}" for p, s in states.items()))
         messages += why
-    if "claude" in newly_ok and ship.autostart:
-        state = "ready" if doc["state"] in ("needs-sign-in", "unknown") else doc["state"]
+    waited = autostart.waiting_for_github(ctx, ship) if "github" in newly_ok else set()
+    if any(e.get("repo") for e in ship.autostart):  # a public repo clones at once
+        messages += autostart.prepare_repos(ctx, ship, retry="github" in newly_ok)
+    repo_waiting = bool(waited)
+    if ("claude" in newly_ok or repo_waiting) and ship.autostart:
+        state = doc["state"]
+        if "claude" in newly_ok and state in ("needs-sign-in", "unknown"):
+            state = "ready"  # Claude is signed in now; a GitHub sign-in alone never starts
         try:
-            data, _, _ = autostart.run(ctx, ship, state)
+            data, _, _ = autostart.run(ctx, ship, state,
+                                       None if "claude" in newly_ok else waited)
             if any(s["reason"] == "resume-pending" for s in data["skipped"]):
                 record["claude"] = prev.get("claude", "missing")  # try again next refresh
             elif data["started"]:
@@ -427,7 +442,34 @@ def cmd_lan_guard(ctx: Context, args) -> dict:
     return result("apply", changed=changed, messages=[f"LAN guard {state}.", *messages])
 
 
+def cmd_grow_root(ctx: Context, args) -> dict:
+    """growpart the partition holding /, then resize2fs it, online."""
+    import re as _re
+
+    src = ctx.runner.run(["findmnt", "-n", "-o", "SOURCE", "/"], timeout=10).out.strip()
+    match = _re.match(r"^/dev/([a-z0-9]+?)p?([0-9]+)$", src)
+    disk = ctx.runner.run(["lsblk", "-n", "-o", "PKNAME", src], timeout=10).out.strip()
+    if not match or not _re.match(r"^[a-z0-9]+$", disk):
+        raise CtlError("internal", f"cannot tell the partition holding / ({src!r})")
+    grown = ctx.runner.run(["growpart", f"/dev/{disk}", match.group(2)], timeout=60)
+    if grown.rc not in (0, 1):  # 1: NOCHANGE, already as big as the disk
+        why = (grown.err or grown.out).strip().splitlines()[-1:] or ["growpart failed"]
+        raise CtlError("internal", f"growpart: {why[0][:200]}")
+    # Always: the partition may have been grown before (cloud-init, an interrupted
+    # run) without its filesystem. resize2fs says when there is nothing to do.
+    fs = ctx.runner.run(["resize2fs", src], timeout=300)
+    if not fs.ok:
+        raise CtlError("internal", f"resize2fs {src} failed")
+    changed = grown.rc == 0 or "nothing to do" not in (fs.out + fs.err).lower()
+    if not changed:
+        return result("grow-root", messages=[f"{src} already fills its disk."],
+                      data={"device": src, "grown": False})
+    return result("grow-root", changed=[src], messages=[f"Grew {src} to fill its disk."],
+                  data={"device": src, "grown": True})
+
+
 COMMANDS = {
+    "grow-root": cmd_grow_root,
     "overlay": cmd_overlay,
     "status": cmd_status,
     "apply": cmd_apply,

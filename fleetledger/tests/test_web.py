@@ -557,6 +557,52 @@ def test_an_agent_can_be_added_from_the_ship_page(web):
     assert len(web.ship.calls) == before  # refused before reaching the Ship
 
 
+def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
+    from fleetledger import lifecycle
+
+    calls = []
+    monkeypatch.setattr(lifecycle, "resize", lambda app, store, name, size, restart=False:
+                        calls.append((name, size, restart)) or ["Set 8 cores."])
+    web.sign_in()
+    text = web.client.get("/ships/ship-01/settings").text
+    assert "never shrink" in text and 'name="disk_gb" type="number" min="40"' in text
+    web.post("/ships/ship-01/size", {"cores": "8", "memory_gb": "8", "disk_gb": "40",
+                                     "restart": "yes"})
+    assert calls == [("ship-01", {"cores": 8}, True)]  # only what changed
+    web.post("/ships/ship-01/size", {"cores": "4", "memory_gb": "8", "disk_gb": "40"})
+    assert len(calls) == 1  # nothing changed: nothing done
+
+
+def test_sign_ins_a_ship_does_not_use_are_off_everywhere(web):
+    web.sign_in()
+    assert 'name="signin" value="gcloud" checked' in web.client.get("/ships/ship-01/settings").text
+    web.post("/ships/ship-01/signins", {"signin": ["claude", "github"]})
+    assert web.store.load().ship("ship-01").signins == ("claude", "github")
+    assert any("gcloud auth revoke" in c[-1] for _, c in web.ship.calls)  # signed out there
+    web.fleet.poll()
+    page = web.client.get("/ships/ship-01").text
+    assert "off (Settings)" in page
+    with pytest.raises(Exception, match="do not use that sign-in"):
+        web.concierge.start(["ship-01"], "gcloud")  # no flow is ever started for it
+    web.post("/ships/ship-01/signins", {"signin": ["claude", "github", "gcloud"]})
+    assert web.store.load().ship("ship-01").signins is None
+
+
+def test_an_agent_in_a_repo_from_the_ship_page_and_its_waiting_item(web):
+    from fleetledger.web.fleet import attention_items
+
+    web.sign_in()
+    web.post("/ships/ship-01/agents", {"agent": "docs", "repo": "someone/agent-setup"})
+    assert ["set", "autostart.add=docs:github:someone/agent-setup", "--json"] in [
+        c[3:] for _, c in web.ship.calls]
+    _status(web, "ship-01", lambda d: d["attention"].append({
+        "code": "agent-repo-waiting", "subject": "docs",
+        "message": "Agent 'docs': waits for the GitHub sign-in to clone someone/agent-setup"}))
+    items = attention_items(list(web.fleet.snapshot.by_name.values()))
+    waiting = next(i for i in items if i.code == "agent-repo-waiting")
+    assert waiting.signin == "github"  # one click to the sign-in it waits for
+
+
 def test_the_attach_command_shown_is_one_that_works_here(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
@@ -945,5 +991,11 @@ def test_audit_page(web):
 def test_an_agent_can_stop_being_started_from_the_ship_page(web):
     web.sign_in()
     assert "Stop starting it" in web.client.get("/ships/ship-01").text
-    web.post("/ships/ship-01/agents", {"action": "remove", "agent": "docs"})
+    web.post("/ships/ship-01/agents", {"do": "remove", "agent": "docs"})
     assert ["set", "autostart.remove=docs", "--json"] in [c[3:] for _, c in web.ship.calls]
+
+
+def test_the_ship_page_says_how_to_connect_as_yourself(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    assert "ship-fleet ssh ship-01 --as owner" in page

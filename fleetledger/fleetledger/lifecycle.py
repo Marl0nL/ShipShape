@@ -14,7 +14,7 @@ from fleetledger.drivers import NotSupported, PublishedImage
 from fleetledger.errors import FleetError
 from fleetledger.inventory import STOCK_IMAGE
 
-COMMANDS = ("destroy", "snapshot", "image")
+COMMANDS = ("destroy", "resize", "snapshot", "image")
 
 SNAPSHOT_WARNING = (
     "A snapshot holds the Ship's sign-ins (Claude, gcloud, GitHub) as they were: "
@@ -32,6 +32,21 @@ def add_parsers(sub, add) -> None:
     p.add_argument("--forget", action="store_true",
                    help="only remove it from the inventory (the VM is already gone, or you "
                    "deleted it by hand)")
+
+    p = add(sub, "resize", "change a Ship's CPU cores, memory or disk",
+            "  ship-fleet resize ship-01 --cores 8 --memory-mb 16384\n"
+            "  ship-fleet resize ship-01 --disk-gb 80 --restart\n\n"
+            "Cores and memory apply when the VM next restarts through the hypervisor\n"
+            "(--restart does it now; a reboot from inside the Ship does not). A disk only\n"
+            "grows: it grows at once, and the Ship's filesystem with it (ship-ctl grow-root).")
+    p.add_argument("name")
+    p.add_argument("--cores", type=int)
+    p.add_argument("--memory-mb", type=int)
+    p.add_argument("--disk-gb", type=int)
+    p.add_argument("--restart", action="store_true",
+                   help="restart the VM through the hypervisor now, so the change applies")
+    p.add_argument("--record-only", action="store_true",
+                   help="only record the size in ships.toml (you changed the VM by hand)")
 
     p = add(sub, "snapshot", "take, list, roll back or delete a Ship's disk snapshots",
             "  ship-fleet snapshot ls ship-01\n"
@@ -102,6 +117,76 @@ def cmd_destroy(args, app) -> int:
         seed.unlink(missing_ok=True)
     (paths.status_cache_dir() / f"{ship.name}.json").unlink(missing_ok=True)
     app.say(f"{ship.name} is removed from the inventory.")
+    return 0
+
+
+# --- resize ---------------------------------------------------------------------
+def size_limits() -> dict[str, tuple[int, int]]:
+    """(minimum, maximum) of cores, memory_mb and disk_gb: ships.toml's size contract,
+    the one source of them (checks here, and the web forms' min and max)."""
+    from fleetledger import schemas
+
+    props = schemas.definition("ships.toml", "size")["properties"]
+    return {key: (int(props[key]["minimum"]), int(props[key]["maximum"]))
+            for key in ("cores", "memory_mb", "disk_gb")}
+
+
+def check_size(size: dict) -> dict[str, int]:
+    """The given cores / memory_mb / disk_gb, each within the contract's limits, so a
+    size the inventory would refuse never reaches the hypervisor."""
+    limits = size_limits()
+    out = {}
+    for key, value in size.items():
+        if value is None:
+            continue
+        low, high = limits[key]
+        if not isinstance(value, int) or not low <= value <= high:
+            raise FleetError(f"{key.replace('_', ' ')}: {low} to {high}.")
+        out[key] = value
+    return out
+
+
+def resize(app, store, name: str, size: dict, *, restart: bool = False,
+           record_only: bool = False) -> list[str]:
+    """Resize a Ship through its driver and record the size. Returns what was said."""
+    wanted = check_size(size)
+    if not wanted:
+        raise FleetError("Give --cores, --memory-mb and/or --disk-gb.")
+    inv = store.load()
+    ship = inv.ship(name)
+    said = []
+    if not record_only:
+        driver = app.driver_factory(inv, ship.driver)
+        said += driver.resize(ship, wanted).messages
+        if "disk_gb" in wanted:
+            said.append(_grow_root(app, inv, ship))
+        if restart:
+            said += driver.reboot(ship).messages
+    with store.edit() as ed:
+        ed.set_field(name, "size", {**ship.size, **wanted})
+    return said
+
+
+def _grow_root(app, inv, ship) -> str:
+    """The Ship's root filesystem, grown online into the bigger disk."""
+    from fleetledger.shipctl import ShipCtl, ShipCtlError
+
+    try:
+        result = ShipCtl(app.ssh_factory(inv), ship).call("grow-root", timeout=600)
+    except (FleetError, ShipCtlError) as exc:
+        return (f"The filesystem was not grown yet ({exc.message}); run ship-fleet update "
+                f"{ship.name} if its tooling is older, then ship-fleet resize {ship.name} "
+                "--disk-gb again.")
+    return " ".join(result.messages) or "Its filesystem fills the disk."
+
+
+def cmd_resize(args, app) -> int:
+    for line in resize(app, app.store_factory(), args.name,
+                       {"cores": args.cores, "memory_mb": args.memory_mb,
+                        "disk_gb": args.disk_gb},
+                       restart=args.restart, record_only=args.record_only):
+        app.say(line)
+    app.say(f"Recorded in ships.toml: {args.name}'s size.")
     return 0
 
 

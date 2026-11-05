@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 
-from fleetledger import concierge, enrol, images, ops, paths, schemas, status
+from fleetledger import concierge, enrol, images, ops, paths, schemas, signins, status
 from fleetledger.catalogue import Catalogue
 from fleetledger.concierge import providers
 from fleetledger.drivers import SeedFile
@@ -64,6 +66,8 @@ AUTH_LABELS = {
 
 
 def auth_cell(view: status.ShipView, service: str) -> str:
+    if service in signins.off_status_keys(view.ship):
+        return "off"  # this Ship does not use it (ship-fleet signins)
     entry = view.auth(service)
     if entry is None:
         return "-"
@@ -216,8 +220,10 @@ def cmd_new(args, app) -> int:
         claude["default_mode"] = args.mode
     if args.allow_bypass or args.mode == "bypassPermissions":
         claude["allow_bypass"] = True
-    size = {k: v for k, v in (("cores", args.cores), ("memory_mb", args.memory_mb),
-                               ("disk_gb", args.disk_gb)) if v is not None}
+    from fleetledger.lifecycle import check_size
+
+    size = check_size({"cores": args.cores, "memory_mb": args.memory_mb,
+                       "disk_gb": args.disk_gb})  # the size contract's limits, said plainly
     driver_id = args.driver or inv.defaults.get("driver", "manual")
     image_id = args.image or inv.pinned_image
     image = images.published(inv, image_id, driver_id)  # checks it exists for this driver
@@ -233,6 +239,8 @@ def cmd_new(args, app) -> int:
         claude=claude,
         profiles=tuple(args.profile) or None,
         image=image_id,
+        signins=(None if args.signins is None else
+                 tuple(signins.check(args.signins.split(",")))),
     )
     if args.tools is not None or args.no_default_tools:
         base = [] if args.no_default_tools else tools_for(inv, draft, catalogue)
@@ -243,8 +251,19 @@ def cmd_new(args, app) -> int:
             TIMEZONE_RE.match(args.timezone) and known_timezone(args.timezone)):
         raise FleetError(f"--timezone is an IANA zone name such as Europe/Berlin, "
                          f"not '{args.timezone}'.")
+    agents = parse_autostart(args.autostart, args.autostart_prompt)
+    if args.repo:
+        from fleetledger import github
+
+        gh_repo = github.check_name(args.repo)
+        first = agents[0] if agents else Autostart("main", github.folder(gh_repo), None,
+                                                   args.autostart_prompt or None)
+        agents = [dataclasses.replace(first, cwd=github.folder(gh_repo), repo=gh_repo),
+                  *agents[1:]]
+        check = getattr(app, "github_visibility", None) or github.visibility
+        app.say(github.what_happens(gh_repo, check(gh_repo)))
     options = SeedOptions(
-        autostart=parse_autostart(args.autostart, args.autostart_prompt),
+        autostart=agents,
         agent_sudo=True if args.agent_sudo else None,
         timezone=args.timezone or local_timezone(),
     )
@@ -459,17 +478,7 @@ def cmd_scan(args, app) -> int:
 
 def _views(app, inv: Inventory, ships: list[Ship], offline: bool) -> list[status.ShipView]:
     if offline:
-        views = []
-        for ship in ships:
-            doc = status.read_cache(ship.name)
-            view = status.ShipView(ship, status=doc)
-            if doc is None:
-                view.problem, view.message = "unknown", "no cached status"
-            else:
-                view.attention = list(doc["attention"]) + status.fleet_attention(
-                    inv, ship, doc, None)
-            views.append(view)
-        return views
+        return [status.cached_view(inv, ship, "no cached status") for ship in ships]
     tooling = app.repo_factory().tooling_version
     return status.poll(_ssh(app, inv), inv, ships, tooling=tooling)
 
@@ -590,6 +599,15 @@ def cmd_login(args, app) -> int:
     failures = 0
     for ship in ships:
         for provider in chosen:
+            if not signins.provider_on(ship, provider.id):
+                if service != "all" and not args.tag:
+                    choice = signins.choice_of_provider(provider.id)
+                    raise FleetError(f"{ship.name} does not use {signins.LABELS[choice]} (its "
+                                     "sign-ins "
+                                     f"are {', '.join(signins.used(ship)) or 'none'}).",
+                                     hint=f"Turn it on: ship-fleet signins {ship.name} "
+                                     f"--on {choice}")
+                continue  # off on this Ship: no sign-in
             prompter = app.prompter_factory(ship.name, provider.label, args.open)
             options = {"spawner": app.spawner} if app.spawner else {}
             result = concierge.login(ssh, inv, ship, provider, prompter, **options)
@@ -617,6 +635,91 @@ def _report_login(app, result: concierge.LoginResult) -> int:
     for note in result.notes:
         app.say(f"  note: {note}")
     return 0 if result.outcome == "ok" else 1
+
+
+def cmd_signins(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    ship = inv.ship(args.name)
+    if args.only is not None:
+        if args.on or args.off:
+            raise FleetError("Give --only, or --on/--off, not both.")
+        wanted = signins.check(args.only.split(","))
+    elif args.on or args.off:
+        wanted = signins.change(ship, [*(f"+{n}" for n in args.on),
+                                       *(f"-{n}" for n in args.off)])
+    else:
+        for choice in signins.CHOICES:
+            state = "on" if choice in signins.used(ship) else "off"
+            app.say(f"{choice:8} {state}")
+        return 0
+    return 0 if set_signins(app, store, ship.name, wanted, app.say) else 1
+
+
+def set_signins(app, store, name: str, wanted: list[str], say) -> bool:
+    """Record the sign-ins a Ship uses, signing it out of each one turned off."""
+    inv = store.load()
+    ship = inv.ship(name)
+    turned_off = [c for c in signins.used(ship) if c not in wanted]
+    ok = True
+    if turned_off:
+        ssh = _ssh(app, inv)
+        view = status.fetch(ssh, inv, ship)
+        for choice in turned_off:
+            states = [(view.auth(k) or {}).get("state") for k in signins.STATUS_KEYS[choice]]
+            if view.status is not None and all(st in (None, "missing") for st in states):
+                say(f"{name}: {signins.LABELS[choice]} was not signed in there; it is off now.")
+                continue
+            for provider in providers.resolve(list(signins.PROVIDERS[choice][:1])):
+                if concierge.logout(ssh, ship, provider):
+                    say(f"{name}: signed out of {provider.label}; it is off now.")
+                else:
+                    say(f"{name}: signing out of {provider.label} failed; it is off anyway "
+                        f"(retry: ship-fleet logout {name} {provider.id}).")
+                    ok = False
+    with store.edit() as ed:
+        ed.set_field(name, "signins", None if wanted == list(signins.CHOICES) else wanted)
+    say(f"{name} uses: {', '.join(wanted) or 'no sign-ins'}.")
+    return ok
+
+
+OWNER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def cmd_owner(args, app) -> int:
+    store = app.store_factory()
+    inv = store.load()
+    if not args.name:
+        app.say(inv.owner)
+        return 0
+    return 0 if set_owner(app, store, args.name, app.say) else 1
+
+
+def set_owner(app, store, name: str, say) -> bool:
+    """fleet.owner, and the owner login on every Ship (ship-ctl set owner.*)."""
+    from fleetledger.seed import cloudinit
+    from fleetledger.shipctl import ShipCtl, ShipCtlError
+
+    if not OWNER_RE.match(name) or name in ("root", "fleet", "agent", "nobody"):
+        raise FleetError(f"'{name}' cannot be your login name: a-z, 0-9, _ and -, not root, "
+                         "fleet, agent or nobody.")
+    with store.edit() as ed:
+        ed.doc["fleet"]["owner"] = name
+    inv = store.load()
+    keys = [k for path in inv.agent_key_paths
+            for k in cloudinit.read_public_keys(path, "an agent key")]
+    ok = True
+    ssh = _ssh(app, inv)
+    for ship in inv.ships():
+        try:
+            ShipCtl(ssh, ship).set([f"owner.name={name}", f"owner.keys={','.join(keys)}"])
+            say(f"{ship.name}: your login is {name} (ssh {name}@{ship.name}).")
+        except (FleetError, ShipCtlError) as exc:
+            say(f"{ship.name}: not changed ({exc.message}); its tooling may need ship-fleet "
+                "update first.")
+            ok = False
+    say(f"New Ships get the login {name}.")
+    return ok
 
 
 def cmd_logout(args, app) -> int:
@@ -824,7 +927,7 @@ def cmd_ssh(args, app) -> int:
     inv = app.store_factory().load()
     ship = inv.ship(args.name)
     remote = args.remote
-    user = "fleet" if args.user == "fleet" else "agent"
+    user = {"fleet": "fleet", "owner": inv.owner}.get(args.user, "agent")
     # An interactive session cannot fall back name by name as ssh.run does, so dial
     # the first name that resolves here (the pinned host key is checked either way).
     host = next((h for h in ship.names if app.resolves(h)), ship.names[0])

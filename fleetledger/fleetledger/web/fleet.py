@@ -63,6 +63,8 @@ def attention_items(views: list[status.ShipView]) -> list[Item]:
         signin = None
         if entry.code in SIGNIN_CODES and entry.subject in SERVICE_PROVIDER:
             signin = SERVICE_PROVIDER[entry.subject]
+        elif entry.code == "agent-repo-waiting":  # its clone needs the GitHub sign-in
+            signin = SERVICE_PROVIDER["github"]
         items.append(Item(entry.ship, entry.code, entry.message, entry.severity,
                           entry.subject, signin))
     return items
@@ -140,17 +142,7 @@ class Fleet:
         except FleetError as exc:
             self._publish(Snapshot(None, [], None, error=exc.message))
             return
-        views = []
-        for ship in inv.ships():
-            doc = status.read_cache(ship.name)
-            view = status.ShipView(ship, status=doc)
-            if doc is None:
-                view.problem, view.message = "unknown", "Not checked yet."
-            else:
-                view.attention = list(doc["attention"]) + status.fleet_attention(
-                    inv, ship, doc, None
-                )
-            views.append(view)
+        views = [status.cached_view(inv, ship, "Not checked yet.") for ship in inv.ships()]
         self._publish(Snapshot(inv, views, None))
 
     # --- polling ----------------------------------------------------------------
