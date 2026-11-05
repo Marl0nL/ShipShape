@@ -613,3 +613,12 @@ def test_status_reports_the_settings_set_last_applied(ship):
     assert s["updates"] == {"auto_reboot": True, "reboot_time": "03:30"}
     assert s["owner"] == "human"
     assert [a["name"] for a in s["autostart"]] == ["main", "grinder"]
+    # bypass may only go off once no agent starts in bypassPermissions
+    toml = ship.p("/etc/shipshape/ship.toml")
+    toml.write_text(toml.read_text().replace('mode = "bypassPermissions"\n', ""))
+    rc, _, out = ship.ctl("set", "claude.allow_bypass=false", "claude.session_prefix=lab",
+                          "--json")
+    assert rc == 0, out
+    s = ship.ctl("status", "--json")[1]["settings"]
+    assert s["claude"]["allow_bypass"] is False and s["claude"]["session_prefix"] == "lab"
+    assert s["autostart"][1] == {"name": "grinder", "cwd": "~/work/grinder"}

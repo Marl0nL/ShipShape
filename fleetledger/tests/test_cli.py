@@ -559,6 +559,17 @@ def test_adopt_with_fingerprint(env, stranger):
     assert ship.enrolled and "Adopted ship-07" in out
 
 
+def test_adopt_accepts_a_newer_ships_unknown_status_block(env, stranger):
+    """Forward compatibility, as status.fetch: a block this FleetLedger does not know
+    is dropped; the rest is still checked."""
+    key, fp = stranger
+    env.app.keyscan = lambda host: key
+    env.ship.status_override["ship-07"] = {**RUNNING, "from_the_future": {"x": 1}}
+    code, _, err = env.run("adopt", "ship-07", "--host", "192.0.2.17", "--fingerprint", fp)
+    assert code == 0, err
+    assert env.store.load().has_ship("ship-07")
+
+
 def test_adopt_refuses_wrong_or_unchecked_fingerprint(env, stranger):
     key, _ = stranger
     env.app.keyscan = lambda host: key
