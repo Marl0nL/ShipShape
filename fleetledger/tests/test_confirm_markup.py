@@ -71,8 +71,11 @@ def test_no_confirm_field_is_prefilled():
     """A hidden confirm field with a value would make an action one click, with or
     without script. Confirm fields are tick boxes the dialog ticks (or you do)."""
     names = "|".join(CONFIRM_NAMES)
-    prefilled = re.compile(rf'<input\b[^>]*type="hidden"[^>]*name="(?:{names})"[^>]*value="[^"]+"'
-                           rf'|<input\b[^>]*name="(?:{names})"[^>]*type="hidden"[^>]*value="[^"]+"')
+    # Any attribute order, either quote: a hidden input named like a confirm field,
+    # with a non-empty value.
+    prefilled = re.compile(rf"""<input\b(?=[^>]*\btype=["']hidden["'])"""
+                           rf"""(?=[^>]*\bname=["'](?:{names})["'])"""
+                           rf"""(?=[^>]*\bvalue=["'][^"']+["'])""")
     for path in sorted(TEMPLATES.glob("*.html")):
         found = prefilled.findall(path.read_text(encoding="utf-8"))
         assert not found, f"{path.name}: {found}"

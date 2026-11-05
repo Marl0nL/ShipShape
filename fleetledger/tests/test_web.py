@@ -669,9 +669,20 @@ def test_check_now_from_an_alert_needs_no_dialog_and_returns_to_the_fleet(web):
 
 
 def test_actions_started_on_a_ship_page_return_to_it(web, monkeypatch):
-    monkeypatch.setattr(ops, "update", lambda fleet, ships, **kw: [
-        ops.Outcome(s.name, True, "done") for s in ships])
+    for name in ("update", "reboot"):
+        monkeypatch.setattr(ops, name, lambda fleet, ships, **kw: [
+            ops.Outcome(s.name, True, "done") for s in ships])
+    doc = copy.deepcopy(RUNNING)
+    doc["attention"] = [{"code": "reboot-required", "message": "Reboot."}]
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
     web.sign_in()
+    # An alert's button on the Ship's own page does not say from=fleet: it returns there.
+    _attrs, fields, _boxes = _alert_form(web.client.get("/ships/ship-01").text,
+                                         "ship-01/reboot-required/")
+    assert "from" not in fields
+    response = web.post("/operations", {**fields, "confirm": "yes"})
+    assert response.headers["location"] == "/ships/ship-01"
     response = web.post("/operations", {"operation": "update", "ship": "ship-01",
                                         "confirm": "yes"})
     assert response.headers["location"] == "/ships/ship-01"
@@ -682,13 +693,22 @@ def test_actions_started_on_a_ship_page_return_to_it(web, monkeypatch):
 
 
 def test_sign_out_is_on_each_signed_in_row(web):
+    from fleetledger.web.fleet import SERVICE_PROVIDER
+
+    doc = copy.deepcopy(RUNNING)
+    doc["auth"]["gcloud_adc"].update(state="ok", account="work@example.com")
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
     start = page.index("<h2>Sign-ins</h2>")
     table = page[start:page.index("</table>", start)]
-    signed_in = sum(1 for e in RUNNING["auth"].values() if e["state"] in ("ok", "expiring"))
-    assert table.count('action="/ships/ship-01/logout"') == signed_in
-    assert 'name="service" value="claude"' in table
+    signed_in = [k for k, e in doc["auth"].items() if e["state"] in ("ok", "expiring")]
+    assert table.count('action="/ships/ship-01/logout"') == len(signed_in)
+    # Each posts the provider id the server takes (gcloud_adc -> gcloud-adc), not the key.
+    posted = {f.split('name="service" value="')[1].split('"')[0]
+              for f in table.split('action="/ships/ship-01/logout"')[1:]}
+    assert posted == {SERVICE_PROVIDER[k] for k in signed_in} and "gcloud-adc" in posted
     assert "<select name=\"service\">" not in page  # the separate drop-down is gone
 
 
