@@ -58,7 +58,7 @@
     {% if proxmox.pool %}<dt>Pool</dt><dd>{{ proxmox.pool }}</dd>{% endif %}
     {% if proxmox.disk_storage %}<dt>Disks on</dt><dd>{{ proxmox.disk_storage }}</dd>{% endif %}
     {% if proxmox.bridge %}<dt>Network</dt><dd>{{ proxmox.bridge }}</dd>{% endif %}
-    {% if proxmox.vmid_range %}<dt>VM ids</dt><dd>{{ proxmox.vmid_range }}</dd>{% endif %}
+    {% if proxmox.vmid_range %}<dt>VM ids</dt><dd>{{ proxmox.vmid_range[0] }} to {{ proxmox.vmid_range[1] }}</dd>{% endif %}
     {% if proxmox.token_id %}<dt>API token</dt><dd><code>{{ proxmox.token_id }}</code>{% if proxmox.token_store %}, its secret kept in {{ "your OS keyring" if proxmox.token_store == "keyring" else "a file only you can read" }}{% endif %}</dd>{% endif %}
   </dl>
   {% else %}
