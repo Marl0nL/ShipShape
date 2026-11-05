@@ -64,7 +64,8 @@
   <h2>Ships <span class="when">{% if snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status; checking now…{% endif %}</span></h2>
   {% if snap.error %}<p class="flash bad">{{ snap.error }}</p>{% endif %}
   {% if not views %}
-  <p class="quiet">No Ships{% if tag %} with tag {{ tag }}{% endif %} yet. Create one with <code>ship-fleet new</code>.</p>
+  <p class="quiet">No Ships{% if tag %} with tag {{ tag }}{% endif %} yet.
+    <a class="button" href="/new">Make a new Ship</a> <span class="quiet">(or <code>ship-fleet new</code>)</span></p>
   {% else %}
   <div class="cards">
     {% for v in views %}
@@ -107,6 +108,7 @@
       {% if note %}<p class="card-note">{{ note }}</p>{% endif %}
     </article>
     {% endfor %}
+    <a class="ship-card new-ship-card" href="/new" title="ship-fleet new">+ New Ship</a>
   </div>
   {% endif %}
 </section>

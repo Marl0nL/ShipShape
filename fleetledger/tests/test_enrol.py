@@ -121,6 +121,8 @@ def test_enrol_manual_keeps_seed_name(store, scripted, home):
 
 def test_failed_provisioning_is_not_enrolled(store, scripted, home):
     _with_seed(store, home)
+    with store.edit() as ed:
+        ed.set_field("ship-01", "enrolled", None)  # being made
     scripted("failed")
     with pytest.raises(FleetError, match="Provisioning failed"):
         enrol_mod.enrol(store, None, Driver(), store.load().ship("ship-01"), sleep=lambda s: None)

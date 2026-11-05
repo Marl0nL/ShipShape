@@ -92,6 +92,7 @@ driver = "manual"
 names = ["ship-01.local"]
 host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZXlleGFt"
 profiles = ["orchestrator"]
+enrolled = "2026-01-01T00:00:00Z"
 
 [ship.ship-02]
 id = "2f1b8a54-3c6e-4d1f-9a2b-5e8c7d6f4a31"
@@ -100,6 +101,7 @@ driver = "manual"
 names = ["ship-02.local", "ship-02.example.net"]
 host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5c2hpcDAyZXhhbXBsZWhvc3Rr"
 claude = {{ default_mode = "bypassPermissions", allow_bypass = true }}
+enrolled = "2026-01-01T00:00:00Z"
 """
 
 

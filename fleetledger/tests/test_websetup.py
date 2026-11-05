@@ -913,11 +913,20 @@ def test_the_first_ship_can_use_fewer_sign_ins(chosen, monkeypatch):
 
 def test_the_first_agent_can_work_in_a_github_repo(chosen, monkeypatch):
     chosen.post("/setup/hypervisor/manual")
-    assert 'name="repo" placeholder="e.g. someone/agent-setup (optional)"' in page(chosen)
+    assert 'name="repo" value="" placeholder="e.g. someone/agent-setup (optional)"' in page(chosen)
     args = _made_with(chosen, monkeypatch, {"name": "ship-01", "agent_on": "yes",
                                             "agent": "main", "cwd": "~/work",
                                             "repo": "someone/agent-setup"})
     assert args.repo == "someone/agent-setup"
+
+
+def test_setups_first_ship_ignores_advanced_fields(chosen, monkeypatch):
+    """Setup's form has no Advanced part, and the route does not take one either."""
+    chosen.post("/setup/hypervisor/manual")
+    assert 'name="agent_sudo"' not in page(chosen)
+    args = _made_with(chosen, monkeypatch, {"name": "ship-01", "mode": "plan",
+                                            "agent_sudo": "yes", "hosts": "x.example.net"})
+    assert args.mode is None and not args.agent_sudo and not args.host
 
 
 def test_your_login_name_on_ships_from_the_setup_settings_page(chosen):

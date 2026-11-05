@@ -97,6 +97,7 @@ tags = {tags}
 driver = "{driver}"
 names = ["{name}.example.invalid"]
 host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZX{tail}"
+enrolled = "2026-01-01T00:00:00Z"
 {overlay}"""
 
 
@@ -318,7 +319,7 @@ def make_ssh(inventory):
 
     class DemoSSH(SSH):
         def run(self, ship, command, *, input=None, timeout=60):
-            if ship.name in DOWN:
+            if ship.name in DOWN or ship.name not in SHIPS:  # a new one: no VM in the demo
                 raise Unreachable(f"Cannot reach {ship.name} (demo: switched off).")
             verb = command[3] if command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"] else ""
             if verb == "status":

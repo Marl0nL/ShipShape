@@ -562,3 +562,20 @@ form.by-name { display: flex; align-items: end; margin: 0 0 10px; }
 }
 /* a driver's steps and paths in Settings are long unbroken lines: wrap them anywhere */
 .outcome code, .settings-group code { overflow-wrap: anywhere; }
+@media (max-width: 640px) {  /* an image per block, like health items */
+  table.images thead { display: none; }
+  table.images tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.images td { display: inline-block; border: 0; padding: 2px 10px 2px 0; }
+  table.images td:first-child, table.images td.row-actions { display: block; }
+}
+
+/* New Ship (/new): the dashed card at the end of the Ship cards, and the form. */
+.ship-card.new-ship-card { display: flex; align-items: center; justify-content: center;
+  min-height: 120px; border: 2px dashed var(--deck-muted); background: transparent;
+  box-shadow: none; --ink: var(--deck-ink); color: var(--deck-ink);
+  font-family: var(--serif); font-size: 18px; text-decoration: none; }
+.ship-card.new-ship-card:hover { border-color: var(--brass); }
+header.top nav a.new-ship-link { margin-left: 10px; color: var(--brass-ink); }
+form.new-ship fieldset { margin: 10px 0; }
+form.new-ship fieldset.ship-tools label { display: inline-block; margin-right: 14px; }
+form.new-ship textarea { width: 100%; max-width: 32em; }
