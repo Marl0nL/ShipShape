@@ -120,3 +120,29 @@ def test_every_argv_the_form_makes_parses_as_ship_fleet_new(env):  # noqa: F811
     args = cli.build_parser().parse_args(argv)
     assert args.name == "ship-30" and args.tag == ["work", "lab"] and args.cores == 8
     assert args.autostart == ["lead:~/w:plan"] and args.repo == "someone/agent-setup"
+
+
+def test_the_image_is_checked_against_the_driver_chosen_in_the_form(env):  # noqa: F811
+    """As `new --driver D --image X` checks it, not against the default driver."""
+    entry = {"created": "2026-11-02T10:00:00Z", "sha256": "ab" * 32,
+             "ubuntu": {"release": "26.04", "build": "20261016"}, "tooling": "0.1.0",
+             "commit": "unknown", "recipes": []}
+    with env.store.edit() as ed:
+        ed.doc.setdefault("drivers", {})["proxmox"] = {
+            "api_url": "https://pve.example.invalid:8006/api2/json", "node": "pve",
+            "pool": "shipshape", "template_vmid": 9000, "seed_storage": "seeds",
+            "disk_storage": "local-lvm", "bridge": "vmbr0", "token_id": "shipshape@pve!x",
+            "token_file": "~/.config/fleetledger/proxmox-token",
+            "tls_fingerprint": ":".join(["AB"] * 32)}
+        for image, published in (("baked-1", {"proxmox": {"template_vmid": 9181}}),
+                                 ("hand-1", {"manual": {"template_vmid": 9050}})):
+            ed.add_image(image, dict(entry))
+            ed.set_image_field(image, "published", published)
+    nf = newship.choices(env.app, env.store.load())
+    assert nf.drivers == ["manual", "proxmox"] and nf.images == ["stock", "hand-1"]
+    _, argv = mapped(env, driver="proxmox", image="baked-1")
+    assert argv[argv.index("--image") + 1] == "baked-1"
+    with pytest.raises(FleetError, match="Base image"):
+        mapped(env, driver="proxmox", image="hand-1")
+    with pytest.raises(FleetError, match="Base image"):
+        mapped(env, image="baked-1")  # the default driver, manual: not published there

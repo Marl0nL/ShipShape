@@ -32,6 +32,13 @@ def next_name(inv) -> str:
     return f"ship-{n:02d}"
 
 
+def images_for(inv, driver: str) -> list[str]:
+    """The base images a Ship on this driver can start from (as `new` checks)."""
+    return ["stock"] + sorted(
+        i for i, e in (inv.images.items() if inv is not None else [])
+        if driver in (e.get("published") or {}))
+
+
 @dataclass
 class FormChoices:
     """What the form offers (and shows as its defaults)."""
@@ -48,8 +55,26 @@ class FormChoices:
     timezone: str
     tools: list[tuple[str, str, bool]]  # (id, description, ticked by default)
     profiles: list[tuple[str, str]]
-    overlay: bool
+    overlay: bool  # the overlay is set up, so the form offers joining it
     signins: tuple[str, ...] = field(default_factory=tuple)
+    # What the form shows as filled in: the defaults, or what was posted (refill).
+    cores: str = ""
+    memory_gb: str = ""
+    disk_gb: str = ""
+    signins_on: tuple[str, ...] = field(default_factory=tuple)
+    agent_on: bool = True
+    agent: str = "main"
+    cwd: str = "~/work"
+    repo: str = ""
+    overlay_on: bool = True
+    vmid: str = ""
+    hosts: str = ""
+    agent_mode: str = ""
+    prompt: str = ""
+    allow_bypass: bool = False
+    agent_sudo: bool = False
+    profiles_on: tuple[str, ...] = field(default_factory=tuple)
+    open_advanced: bool = False
 
 
 def choices(app, inv) -> FormChoices:
@@ -64,9 +89,7 @@ def choices(app, inv) -> FormChoices:
     drivers = ["manual"] + (["proxmox"] if inv is not None and inv.driver_config("proxmox")
                             else [])
     driver = defaults.get("driver", "manual")
-    images = ["stock"] + sorted(
-        i for i, e in (inv.images.items() if inv is not None else [])
-        if driver in (e.get("published") or {}))
+    images = images_for(inv, driver)
     known_tags = sorted({t for s in (inv.ships() if inv is not None else [])
                          for t in (s.tags or ())} | set(defaults.get("tags", [])))
     return FormChoices(
@@ -86,7 +109,58 @@ def choices(app, inv) -> FormChoices:
                   for p in sorted(catalogue.profiles.values(), key=lambda p: p.id)],
         overlay=bool(inv is not None and inv.overlay),
         signins=signins.CHOICES,
+        signins_on=tuple(signins.CHOICES),
+        **_size_text(inv.effective_size() if inv is not None else {}),
     )
+
+
+def _size_text(size: dict[str, int]) -> dict[str, str]:
+    memory = size.get("memory_mb")
+    return {"cores": str(size.get("cores", "")),
+            "memory_gb": str(memory // 1024) if memory else "",
+            "disk_gb": str(size.get("disk_gb", ""))}
+
+
+ADVANCED_FIELDS = ("vmid", "hosts", "agent_mode", "prompt", "allow_bypass", "agent_sudo",
+                   "profile")
+
+
+def refill(nf: FormChoices, fields: dict[str, list[str]]) -> FormChoices:
+    """The form as it was posted, so a refused one comes back with what was typed."""
+    import dataclasses
+
+    def text(key: str, default: str) -> str:
+        return fields[key][0] if fields.get(key) else default
+
+    tools = nf.tools
+    if _one(fields, "tools_shown"):
+        ticked = set(fields.get("tool", []))
+        tools = [(t, d, t in ticked) for t, d, _ in nf.tools]
+    changed_tools = [on for *_, on in tools] != [on for *_, on in nf.tools]
+    out = dataclasses.replace(
+        nf,
+        name=text("name", nf.name),
+        tags=_one(fields, "tag").replace(",", " ").split() if "tag" in fields else nf.tags,
+        cores=text("cores", nf.cores), memory_gb=text("memory_gb", nf.memory_gb),
+        disk_gb=text("disk_gb", nf.disk_gb),
+        signins_on=(tuple(fields.get("signin", [])) if _one(fields, "signins_shown")
+                    else nf.signins_on),
+        agent_on=_one(fields, "agent_on") == "yes",
+        agent=text("agent", nf.agent), cwd=text("cwd", nf.cwd), repo=text("repo", ""),
+        overlay_on=_one(fields, "overlay") == "yes",
+        driver=text("driver", nf.driver), image=text("image", nf.image),
+        vmid=text("vmid", ""), hosts=text("hosts", ""), mode=text("mode", nf.mode),
+        agent_mode=text("agent_mode", ""), prompt=text("prompt", ""),
+        allow_bypass=_one(fields, "allow_bypass") == "yes",
+        agent_sudo=_one(fields, "agent_sudo") == "yes",
+        timezone=text("timezone", nf.timezone), tools=tools,
+        profiles_on=tuple(fields.get("profile", [])),
+    )
+    out.open_advanced = (changed_tools or any(_one(fields, k) for k in ADVANCED_FIELDS)
+                         or bool(fields.get("profile"))
+                         or (out.driver, out.image, out.mode, out.timezone)
+                         != (nf.driver, nf.image, nf.mode, nf.timezone))
+    return out
 
 
 def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
@@ -151,7 +225,7 @@ def _advanced(fields, app, inv, host_re, timezone_re, known_timezone) -> list[st
         out += ["--driver", driver]
     image = _one(fields, "image")
     if image and image != picked.image:
-        if image not in picked.images:
+        if image not in images_for(inv, driver or picked.driver):  # the driver chosen here
             raise FleetError("Base image: not one of the images published there.")
         out += ["--image", image]
     vmid = _one(fields, "vmid")

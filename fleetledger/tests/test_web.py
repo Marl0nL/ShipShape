@@ -1266,12 +1266,81 @@ def test_the_new_ship_page_offers_every_option_under_the_field_cap(web):
 
 def test_bad_input_on_new_is_flashed_and_starts_nothing(web):
     web.sign_in()
-    web.post("/new", {"name": "ship-01"})  # taken
-    web.post("/new", {"name": "ship-31", "cores": "0"})
-    page = web.client.get("/new").text
-    assert "already in the inventory" in page and "cores: 1 to" in page
+    response = web.post("/new", {"name": "ship-01"})  # taken
+    assert response.status_code == 400 and "already in the inventory" in response.text
+    response = web.post("/new", {"name": "ship-31", "cores": "0"})
+    assert response.status_code == 400 and "cores: 1 to" in response.text
     assert web.app_ui.jobs.recent() == []
     assert not web.store.load().has_ship("ship-31")
+
+
+def test_a_refused_new_ship_form_keeps_what_was_typed(web):
+    web.sign_in()
+    typed = {"name": "ship-01", "tag": "work lab", "cores": "6", "memory_gb": "12",
+             "disk_gb": "60", "signins_shown": "yes", "signin": ["claude"],
+             "agent_on": "yes", "agent": "lead", "cwd": "~/work/x",
+             "repo": "someone/agent-setup", "hosts": "ship-01.example.net",
+             "agent_sudo": "yes", "prompt": "Get going."}
+    page = web.post("/new", typed).text
+    assert "already in the inventory" in page
+    for html in ('name="name" value="ship-01"', 'name="tag" value="work lab"',
+                 'name="cores" type="number"', 'value="6"', 'value="12"', 'value="60"',
+                 'name="agent" value="lead"', 'name="cwd" value="~/work/x"',
+                 'name="repo" value="someone/agent-setup"',
+                 '(one per line)">ship-01.example.net</textarea>',
+                 'name="agent_sudo" value="yes" checked', 'value="Get going."',
+                 '<details class="advanced" open>'):
+        assert html in page, html
+    assert 'name="signin" value="claude" checked' in page
+    assert 'name="signin" value="github" checked' not in page  # unticked stays unticked
+    fresh = web.client.get("/new").text  # a new visit starts from the defaults
+    assert 'name="agent" value="main"' in fresh and '<details class="advanced">' in fresh
+
+
+def test_new_before_setup_goes_to_setup_and_without_a_checkout_says_why(web, monkeypatch):
+    from fleetledger.errors import ConfigError
+
+    web.sign_in()
+    monkeypatch.setattr(web.app, "repo_factory", lambda: (_ for _ in ()).throw(
+        ConfigError("Cannot find the ShipShape checkout.")))
+    response = web.client.get("/new")
+    assert response.status_code == 503 and "Cannot find the ShipShape checkout" in response.text
+    monkeypatch.setattr(web.store, "exists", lambda: False)
+    monkeypatch.setattr(web.store, "load", lambda: (_ for _ in ()).throw(
+        ConfigError("No inventory yet.")))
+    response = web.client.get("/new")
+    assert response.status_code == 303 and response.headers["location"] == "/setup"
+
+
+def test_a_ship_that_answers_but_never_enrolled_offers_finish_enrolling(web):
+    """Made by hand and booted before you came back: it answers, but its seed, overlay
+    and certificate still wait for the enrolment."""
+    web.sign_in()
+    with web.store.edit() as ed:
+        ed.set_field("ship-02", "enrolled", None)
+    web.fleet.poll()
+    view = [v for v in web.fleet.snapshot.views if v.ship.name == "ship-02"][0]
+    assert view.problem is None and view.unenrolled and view.state != "not-enrolled"
+    bar = _action_bar(web.client.get("/ships/ship-02").text)
+    assert 'action="/ships/ship-02/enrol"' in bar and 'value="update"' in bar
+    from fleetledger import ops
+
+    items = [(i.code, i.severity) for i in ops.attention(web.fleet.snapshot.views)
+             if i.ship == "ship-02"]
+    assert ("not-enrolled", "low") in items
+    fleet = web.client.get("/partials/fleet").text
+    assert 'href="/ships/ship-02"' in fleet and "Finish enrolling" in fleet
+    web.post("/ships/ship-02/enrol")
+    job = web.app_ui.jobs.recent()[0]
+    wait_for(lambda: job.done)
+    assert job.ok and web.store.load().ship("ship-02").enrolled is not None
+
+
+def test_finish_enrolling_refuses_an_enrolled_ship(web):
+    web.sign_in()
+    web.post("/ships/ship-01/enrol")
+    assert "enrolled already" in web.client.get("/ships/ship-01").text
+    assert web.app_ui.jobs.recent() == []
 
 
 def test_a_ship_made_from_new_by_hand_shows_not_enrolled_yet_with_finish_enrolling(web):
@@ -1290,8 +1359,10 @@ def test_a_ship_made_from_new_by_hand_shows_not_enrolled_yet_with_finish_enrolli
     web.fleet.poll()
     page = web.client.get("/ships/ship-31").text
     assert "not-enrolled" in page and 'action="/ships/ship-31/enrol"' in page
+    assert 'class="flash bad">Cannot reach' not in page  # not an outage
     fleet = web.client.get("/partials/fleet").text
     assert "not-enrolled" in fleet and "Not enrolled yet" in fleet
+    assert 'href="/ships/ship-31"' in fleet and "Finish enrolling" in fleet
     alert = [a for a in web.app_ui.fleet.snapshot.views if a.ship.name == "ship-31"][0]
     assert alert.state == "not-enrolled"
     from fleetledger import ops

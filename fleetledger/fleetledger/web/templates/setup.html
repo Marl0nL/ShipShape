@@ -383,7 +383,11 @@
   <p>A Ship is a VM where your agents work. FleetLedger makes it, waits until it is
     provisioned and checked, and then you sign it in to Claude (and GitHub and Google Cloud
     if you use them).</p>
+  {% if new_form %}
   {% with nf=new_form, form_action="/setup/ship", advanced=False %}{% include "_new_ship_form.html" %}{% endwith %}
+  {% else %}
+  <p class="flash bad">{{ new_form_error }}</p>
+  {% endif %}
   {% endif %}
 {% endif %}
 </section>

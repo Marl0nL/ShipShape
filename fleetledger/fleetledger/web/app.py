@@ -586,7 +586,11 @@ async def new_ship_page(request: Request) -> Response:
         inv = await run_in_threadpool(lambda: ui.app.store_factory().load())
     except FleetError:
         return RedirectResponse("/setup", status_code=303)  # not set up yet
-    nf = await run_in_threadpool(newship.choices, ui.app, inv)
+    try:
+        nf = await run_in_threadpool(newship.choices, ui.app, inv)
+    except FleetError as exc:  # no ShipShape checkout to read the catalogue from
+        return render(request, "message.html", status_code=503,
+                      title="Cannot make a Ship here", text=exc.message)
     return render(request, "new.html", nf=nf)
 
 
@@ -598,11 +602,20 @@ async def new_ship_start(request: Request) -> Response:
     fields = await form(request)
     try:
         inv = await run_in_threadpool(lambda: ui.app.store_factory().load())
-        name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv)
-        newship.start(ui, name, argv)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back("/new")
+    try:
+        name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv)
+        newship.start(ui, name, argv)
+    except FleetError as exc:  # back to the form as it was posted, with the reason
+        try:
+            nf = await run_in_threadpool(newship.choices, ui.app, inv)
+        except FleetError:
+            ui.flash(session, "bad", exc.message)
+            return back("/new")
+        return render(request, "new.html", status_code=400, flashes=[("bad", exc.message)],
+                      nf=newship.refill(nf, fields))
     ui.flash(session, "ok", f"Making {name}; its progress is under Activity. Once it is "
              "up, it has a page of its own.")
     return back("/")

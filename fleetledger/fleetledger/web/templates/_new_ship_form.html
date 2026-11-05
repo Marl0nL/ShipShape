@@ -12,9 +12,9 @@
   </fieldset>
   <fieldset class="ship-size">
     <legend>Size</legend>
-    <label>CPU cores <input name="cores" type="number" min="{{ SIZE.cores_min }}" max="{{ SIZE.cores_max }}" value="{{ nf.size.cores }}"></label>
-    <label>Memory (GB) <input name="memory_gb" type="number" min="{{ SIZE.mem_min }}" max="{{ SIZE.mem_max }}" value="{{ nf.size.memory_mb // 1024 }}"></label>
-    <label>Disk (GB) <input name="disk_gb" type="number" min="{{ SIZE.disk_min }}" max="{{ SIZE.disk_max }}" value="{{ nf.size.disk_gb }}"></label>
+    <label>CPU cores <input name="cores" type="number" min="{{ SIZE.cores_min }}" max="{{ SIZE.cores_max }}" value="{{ nf.cores }}"></label>
+    <label>Memory (GB) <input name="memory_gb" type="number" min="{{ SIZE.mem_min }}" max="{{ SIZE.mem_max }}" value="{{ nf.memory_gb }}"></label>
+    <label>Disk (GB) <input name="disk_gb" type="number" min="{{ SIZE.disk_min }}" max="{{ SIZE.disk_max }}" value="{{ nf.disk_gb }}"></label>
     <p class="hint">Change it later on the Ship's Settings: cores and memory with a
       restart, and the disk can grow (never shrink).</p>
   </fieldset>
@@ -22,18 +22,18 @@
     <legend>Sign-ins it uses</legend>
     <input type="hidden" name="signins_shown" value="yes">
     {% for choice in SIGNIN_CHOICES %}
-    <label><input type="checkbox" name="signin" value="{{ choice }}" checked> {{ SIGNIN_LABELS[choice] }}</label>
+    <label><input type="checkbox" name="signin" value="{{ choice }}"{% if choice in nf.signins_on %} checked{% endif %}> {{ SIGNIN_LABELS[choice] }}</label>
     {% endfor %}
     <p class="hint">Untick what this Ship never needs: it then gets no sign-in for it
       (and no credentials). Change it later in the Ship's Settings.</p>
   </fieldset>
   <fieldset class="ship-agent">
     <legend>First agent</legend>
-    <label><input type="checkbox" name="agent_on" value="yes" checked> Start a Claude agent
+    <label><input type="checkbox" name="agent_on" value="yes"{% if nf.agent_on %} checked{% endif %}> Start a Claude agent
       on it, with Remote Control</label>
-    <label>named <input name="agent" value="main" pattern="[a-z][a-z0-9_\-]{0,31}"></label>
-    <label>working in <input name="cwd" value="~/work"></label>
-    <label>or in a GitHub repo <input name="repo" placeholder="e.g. someone/agent-setup (optional)"></label>
+    <label>named <input name="agent" value="{{ nf.agent }}" pattern="[a-z][a-z0-9_\-]{0,31}"></label>
+    <label>working in <input name="cwd" value="{{ nf.cwd }}"></label>
+    <label>or in a GitHub repo <input name="repo" value="{{ nf.repo }}" placeholder="e.g. someone/agent-setup (optional)"></label>
     <p class="hint">It starts once you sign the Ship in to Claude, and on every boot. With
       Remote Control on, it shows in the Claude app (phone, desktop or claude.ai) under
       your account, so you can talk to it from anywhere. Add more later on the Ship's page.</p>
@@ -44,11 +44,11 @@
       waiting until then).</p>
   </fieldset>
   {% if nf.overlay %}
-  <label><input type="checkbox" name="overlay" value="yes" checked> Join the overlay
+  <label><input type="checkbox" name="overlay" value="yes"{% if nf.overlay_on %} checked{% endif %}> Join the overlay
     once it is up, so you reach it from anywhere</label>
   {% endif %}
   {% if advanced %}
-  <details class="advanced">
+  <details class="advanced"{% if nf.open_advanced %} open{% endif %}>
     <summary>Advanced</summary>
     <fieldset class="ship-advanced">
       {% if nf.drivers|length > 1 %}
@@ -56,14 +56,14 @@
       {% endif %}
       <label>Base image <select name="image">{% for i in nf.images %}<option value="{{ i }}"{% if i == nf.image %} selected{% endif %}>{{ "the stock template" if i == "stock" else i }}</option>{% endfor %}</select></label>
       {% if "proxmox" in nf.drivers %}
-      <label>VM id <input name="vmid" type="number" min="100" placeholder="any free one in the range"></label>
+      <label>VM id <input name="vmid" type="number" min="100" value="{{ nf.vmid }}" placeholder="any free one in the range"></label>
       {% endif %}
-      <label>Names to reach it by <textarea name="hosts" rows="2" placeholder="{{ nf.name }}.local (one per line)"></textarea></label>
+      <label>Names to reach it by <textarea name="hosts" rows="2" placeholder="{{ nf.name }}.local (one per line)">{{ nf.hosts }}</textarea></label>
       <label>Default permission mode <select name="mode">{% for m in MODES %}<option{% if m == nf.mode %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></label>
-      <label>The first agent's mode <select name="agent_mode"><option value="">the Ship's default</option>{% for m in MODES %}<option>{{ m }}</option>{% endfor %}</select></label>
-      <label>The first agent's first prompt <input name="prompt" maxlength="4000" placeholder="empty: the Ship's own"></label>
-      <label><input type="checkbox" name="allow_bypass" value="yes"> Allow bypassPermissions</label>
-      <label><input type="checkbox" name="agent_sudo" value="yes"> Give the agent sudo</label>
+      <label>The first agent's mode <select name="agent_mode"><option value="">the Ship's default</option>{% for m in MODES %}<option{% if m == nf.agent_mode %} selected{% endif %}>{{ m }}</option>{% endfor %}</select></label>
+      <label>The first agent's first prompt <input name="prompt" maxlength="4000" value="{{ nf.prompt }}" placeholder="empty: the Ship's own"></label>
+      <label><input type="checkbox" name="allow_bypass" value="yes"{% if nf.allow_bypass %} checked{% endif %}> Allow bypassPermissions</label>
+      <label><input type="checkbox" name="agent_sudo" value="yes"{% if nf.agent_sudo %} checked{% endif %}> Give the agent sudo</label>
       <label>Time zone <input name="timezone" value="{{ nf.timezone }}" pattern="[A-Z][A-Za-z0-9_+\-]{0,40}(/[A-Za-z0-9_+\-]{1,40}){0,2}"></label>
     </fieldset>
     <fieldset class="ship-tools">
@@ -75,7 +75,7 @@
       {% if nf.profiles %}
       <p class="hint">Profiles:</p>
       {% for id, description in nf.profiles %}
-      <label title="{{ description }}"><input type="checkbox" name="profile" value="{{ id }}"> {{ id }}</label>
+      <label title="{{ description }}"><input type="checkbox" name="profile" value="{{ id }}"{% if id in nf.profiles_on %} checked{% endif %}> {{ id }}</label>
       {% endfor %}
       {% endif %}
     </fieldset>

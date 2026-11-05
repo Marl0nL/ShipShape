@@ -261,7 +261,10 @@ async def page(request: Request) -> Response:
         context["size"] = inv.effective_size()
         from fleetledger.web import newship
 
-        context["new_form"] = await run_in_threadpool(newship.choices, ui.app, inv)
+        try:
+            context["new_form"] = await run_in_threadpool(newship.choices, ui.app, inv)
+        except FleetError as exc:  # no ShipShape checkout to read the catalogue from
+            context["new_form"], context["new_form_error"] = None, exc.message
     from fleetledger import proxmox_setup
 
     context["px"] = state.proxmox
