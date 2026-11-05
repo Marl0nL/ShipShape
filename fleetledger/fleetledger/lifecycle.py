@@ -10,7 +10,9 @@ from datetime import UTC, datetime
 
 from fleetledger import enrol, images, overlay, status
 from fleetledger.commands import table
+from fleetledger.concierge import audit
 from fleetledger.drivers import NotSupported, PublishedImage
+from fleetledger.drivers.base import check_snapshot_name
 from fleetledger.errors import FleetError
 from fleetledger.inventory import STOCK_IMAGE
 
@@ -99,7 +101,10 @@ def cmd_destroy(args, app) -> int:
         else:
             hook(inv, ship)
         driver = app.driver_factory(inv, ship.driver)
-        outcome = driver.destroy(ship)
+        with audit.recorded(ship.name, "destroy", ship.driver) as audited:
+            outcome = driver.destroy(ship)
+            if not outcome.done:
+                audited["outcome"] = "steps"
         for message in outcome.messages:
             app.say(message)
         if not outcome.done:
@@ -110,6 +115,8 @@ def cmd_destroy(args, app) -> int:
             return 0
     with store.edit() as ed:
         ed.remove_ship(ship.name)
+    if args.forget:
+        audit.record(ship.name, "forget", ship.driver, "ok")
     seed = enrol.local_seed(ship)
     if seed is not None:
         seed.unlink(missing_ok=True)
@@ -213,6 +220,7 @@ def cmd_snapshot(args, app) -> int:
         return 0
     if not args.snapshot:
         raise FleetError(f"snapshot {args.action} needs a snapshot name.")
+    check_snapshot_name(args.snapshot)  # before asking or recording: never log a bad name
     if args.action == "rollback":
         if not args.yes:
             if not app.stdin_isatty():
@@ -222,9 +230,15 @@ def cmd_snapshot(args, app) -> int:
                                  "then is lost, sign-ins included. Type yes: ")
             if answer.strip().lower() != "yes":
                 raise FleetError("Not rolled back.")
-        _report(app, driver.rollback(ship, args.snapshot))
+        with audit.recorded(ship.name, "snapshot-rollback", args.snapshot) as audited:
+            outcome = driver.rollback(ship, args.snapshot)
+            audited["outcome"] = "ok" if outcome.done else "steps"
+        _report(app, outcome)
         return 0
-    _report(app, driver.delete_snapshot(ship, args.snapshot))
+    with audit.recorded(ship.name, "snapshot-delete", args.snapshot) as audited:
+        outcome = driver.delete_snapshot(ship, args.snapshot)
+        audited["outcome"] = "ok" if outcome.done else "steps"
+    _report(app, outcome)
     return 0
 
 

@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 
 from fleetledger import ca, paths, status
+from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, now_timestamp
 from fleetledger.shipctl import ShipCtl, ShipCtlError
@@ -664,6 +665,7 @@ def cmd_untrust(args, app) -> int:
         with store.edit() as ed:
             ed.set_machine_field(m.name, "revoked", now_timestamp())
         inv = store.load()
+        audit.record("-", "untrust", m.name, "ok")
         app.say(f"{m.name} is untrusted; its key is now in the revocation list.")
     failed = _push_to_ships(app, inv)
     if failed:

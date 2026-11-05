@@ -39,7 +39,7 @@ def boxes():
 def test_every_confirm_box_is_wired_to_the_dialog():
     found = list(boxes())
     confirm = [(f, attrs, box) for f, attrs, name, box in found if name in CONFIRM_NAMES]
-    assert len(confirm) >= 7  # fleet: 1 (in a loop), ship: 2, setup: 4
+    assert len(confirm) >= 7  # fleet 1 (in a loop), _macros 1, _ship_overview 1, setup 4
     for template, attrs, box in confirm:
         assert "data-confirm-field" in box, f"{template}: {box}"
         assert "data-confirm=" in attrs, f"{template}: its form has no data-confirm"
@@ -65,3 +65,17 @@ def test_app_js_reads_no_form_property_a_field_could_shadow():
              "setAttribute", "removeAttribute", "documentElement"}
     for template, names in confirm_forms():
         assert not names & risky, f"{template}: a field shadows {sorted(names & risky)}"
+
+
+def test_no_confirm_field_is_prefilled():
+    """A hidden confirm field with a value would make an action one click, with or
+    without script. Confirm fields are tick boxes the dialog ticks (or you do)."""
+    names = "|".join(CONFIRM_NAMES)
+    # Any attribute order, either quote: a hidden input named like a confirm field,
+    # with a non-empty value.
+    prefilled = re.compile(rf"""<input\b(?=[^>]*\btype=["']hidden["'])"""
+                           rf"""(?=[^>]*\bname=["'](?:{names})["'])"""
+                           rf"""(?=[^>]*\bvalue=["'][^"']+["'])""")
+    for path in sorted(TEMPLATES.glob("*.html")):
+        found = prefilled.findall(path.read_text(encoding="utf-8"))
+        assert not found, f"{path.name}: {found}"

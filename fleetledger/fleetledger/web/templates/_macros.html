@@ -36,6 +36,18 @@
     <span class="hint">{{ a.action.hint }}</span>
     <code class="cmd">{{ a.action.value }}</code>
     <button type="button" class="ghost small" data-copy="{{ a.action.value }}">Copy</button>
+  {% elif a.action.kind == "post" %}
+    {% set c = a.action.confirm %}
+    {% if a.action.hint %}<span class="hint">{{ a.action.hint }}</span>{% endif %}
+    <form method="post" action="{{ a.action.value }}" class="inline"
+      {% if c %}data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
+      data-confirm-action="{{ c.action }}"{% if c.danger %} data-confirm-danger{% endif %}{% endif %}>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for name, value in a.action.fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}
+      {% if ship %}<input type="hidden" name="from" value="fleet">{% endif %}
+      {% if c %}<label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>{% endif %}
+      <button type="submit" title="{{ a.action.title }}">{{ a.action.label }}</button>
+    </form>
   {% else %}
     <a class="button ghost" href="{{ a.action.value }}">{{ a.action.label }}</a>
   {% endif %}
@@ -157,4 +169,62 @@
 <nav class="ranges" aria-label="Time range">
   {% for key in ranges %}<a href="{{ base }}range={{ key }}" class="chip{% if key == current %} on{% endif %}"{% if key == current %} aria-current="true"{% endif %}>{{ key }}</a>{% endfor %}
 </nav>
+{% endmacro %}
+
+{# The Ship page's action bar, on every tab above the tabs (sticky, so it stays in
+   reach). Import it "with context": it reads ship, view, doc, csrf, attach_here,
+   overlay_set and on_overlay from the page. Rules: Check now always; Update and
+   Reboot only while the Ship answers; More holds the rest, one item per action,
+   each a one-click form with its confirm dialog (later PRs append theirs here). #}
+{% macro ship_action_bar() %}
+<section class="action-bar">
+  {% set attach = ("herdr --remote " if attach_here else "ship-fleet ssh ") ~ ship.name %}
+  <p class="attach">Attach: <code>{{ attach }}</code>
+    <button type="button" class="ghost small" data-copy="{{ attach }}">Copy</button></p>
+  <div class="actions">
+    <form method="post" action="/ships/{{ ship.name }}/refresh" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="ghost" title="ship-fleet status {{ ship.name }}">Check now</button>
+    </form>
+    {% if doc and not view.problem %}
+    {% for op in ("update", "reboot") %}
+    {% set c = op_confirm(op, ship.name) %}
+    <form method="post" action="/operations" class="inline"
+      data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
+      data-confirm-action="{{ c.action }}"{% if c.danger %} data-confirm-danger{% endif %}>
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="operation" value="{{ op }}">
+      <input type="hidden" name="ship" value="{{ ship.name }}">
+      <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+      <button type="submit"{% if op == "reboot" %} class="ghost danger"{% endif %} title="ship-fleet {{ op }} {{ ship.name }}">{{ op|capitalize }}</button>
+    </form>
+    {% endfor %}
+    {% elif view.problem == "unreachable" %}
+    <span class="hint">It does not answer: check its VM is on, then Check now.</span>
+    {% elif view.cloud_init %}
+    <span class="hint">First boot: not ready yet.</span>
+    {% else %}
+    <span class="hint">{{ view.message or view.problem or "Not checked yet." }}</span>
+    {% endif %}
+    {% if overlay_set and not on_overlay %}
+    <details class="menu">
+      <summary>More</summary>
+      <div class="menu-items">
+        {% set c = op_confirm("join", ship.name) %}
+        <form method="post" action="/operations" class="inline"
+          data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
+          data-confirm-action="{{ c.action }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="operation" value="join">
+          <input type="hidden" name="ship" value="{{ ship.name }}">
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost" title="ship-fleet overlay join {{ ship.name }}">Join the overlay</button>
+        </form>
+        <p class="hint">{{ ship.name }} is not on your overlay yet: join it to reach it from
+          anywhere (its host certificate is re-signed with its overlay name).</p>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+</section>
 {% endmacro %}

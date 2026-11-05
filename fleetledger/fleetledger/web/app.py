@@ -121,6 +121,7 @@ def make_env() -> Environment:
         human_bytes=net.human_bytes,
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
+        op_confirm=dashboard.op_confirm,
     )
     env.filters["pill"] = _pill
     return env
@@ -375,9 +376,10 @@ async def ship_refresh(request: Request) -> Response:
     name = _known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
+    fields = await form(request)
     await run_in_threadpool(ui.fleet.poll, [name])
     ui.flash(session_of(request), "ok", f"Checked {name}.")
-    return back(f"/ships/{name}")
+    return back("/" if one(fields, "from") == "fleet" else f"/ships/{name}")
 
 
 async def ship_settings(request: Request) -> Response:
@@ -543,7 +545,10 @@ async def fleet_operation(request: Request) -> Response:
     fields = await form(request)
     operation = one(fields, "operation")
     name, tag = one(fields, "ship"), one(fields, "tag")
-    where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
+    # Back where it was started: a Ship's page, or the Fleet page (from its batch
+    # menu, or from an alert's button there, which says from=fleet).
+    on_ship = name and NAME_RE.match(name) and one(fields, "from") != "fleet"
+    where = f"/ships/{name}" if on_ship else "/"
     if operation not in actions.KINDS:
         ui.flash(session, "bad", "Unknown operation.")
         return back(where)
@@ -561,7 +566,7 @@ async def fleet_operation(request: Request) -> Response:
         ui.flash(session, "bad", exc.message)
         return back(where)
     label = {"join": "Joining the overlay"}.get(operation, operation.capitalize())
-    if name:  # started from the Ship's page: back there, where its job shows
+    if on_ship:  # started from the Ship's page: back there, where its job shows
         ui.flash(session, "ok", f"{label} started; its progress is below.")
         return back(where)
     ui.flash(session, "ok", f"{label} started; its progress is under Activity.")

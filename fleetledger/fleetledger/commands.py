@@ -12,7 +12,7 @@ from typing import Any
 
 from fleetledger import concierge, enrol, images, ops, paths, schemas, signins, status
 from fleetledger.catalogue import Catalogue
-from fleetledger.concierge import providers
+from fleetledger.concierge import audit, providers
 from fleetledger.drivers import SeedFile
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, new_ship_id, now_timestamp
@@ -267,16 +267,19 @@ def cmd_new(args, app) -> int:
 
     driver = app.driver_factory(store.load(), driver_id,
                                 ubuntu_release=repo.versions["ubuntu"]["release"])
-    try:
-        outcome = driver.create(ship, SeedFile(seed.path, seed.instance_id),
-                                inv.effective_size(ship), image)
-    except BaseException:
-        with store.edit() as ed:
-            ed.remove_ship(name)
-        seed.path.unlink(missing_ok=True)
-        raise
-    with store.edit() as ed:
-        ed.set_field(name, "driver_ref", dict(outcome.driver_ref))
+    with audit.recorded(name, "create", driver_id) as audited:
+        try:
+            outcome = driver.create(ship, SeedFile(seed.path, seed.instance_id),
+                                    inv.effective_size(ship), image)
+        except BaseException:
+            with store.edit() as ed:
+                ed.remove_ship(name)
+            seed.path.unlink(missing_ok=True)
+            raise
+        with store.edit() as ed:  # the VM id is saved before the entry is written
+            ed.set_field(name, "driver_ref", dict(outcome.driver_ref))
+        if not outcome.done:
+            audited["outcome"] = "steps"
     for message in outcome.messages:
         app.say(message)
     if outcome.instructions:
@@ -434,6 +437,8 @@ def cmd_adopt(args, app) -> int:
                                     names=(host,), host_key=f"{key} {name}", tags=tuple(tags)))
             ed.add_ship(name, entry)
         ed.mark_enrolled(name, now_timestamp())
+    if inv.has_ship(name):
+        audit.record(name, "re-pin", "host-key", "ok")
     app.say(f"{'Re-pinned' if inv.has_ship(name) else 'Adopted'} {name} "
             f"({report['ship']['id']}), state {report['state']}.")
     return 0

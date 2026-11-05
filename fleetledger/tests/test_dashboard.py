@@ -153,10 +153,14 @@ def test_alerts_are_ranked_with_a_fix_each(store):
     assert by_code["disk-nearly-full"].level == "critical"  # >= 90%
     assert by_code["signin-expired"].action.kind == "signin"
     assert by_code["signin-expired"].action.value == "claude"
-    assert by_code["reboot-required"].action.value == "ship-fleet reboot ship-01"
+    reboot = by_code["reboot-required"].action
+    assert (reboot.kind, reboot.value, reboot.title) == ("post", "/operations",
+                                                         "ship-fleet reboot ship-01")
+    assert dict(reboot.fields) == {"operation": "reboot", "ship": "ship-01"}
+    assert reboot.confirm.danger and reboot.confirm.title == "Reboot ship-01?"
     assert by_code["host-cert-expiring"].action.value == "ship-fleet ca sign ship-01"
     assert by_code["behind-tooling"].level == "notice"
-    assert by_code["behind-tooling"].action.value == "ship-fleet update ship-01"
+    assert dict(by_code["behind-tooling"].action.fields)["operation"] == "update"
     assert by_code["agent-waiting"].waiting
     assert by_code["agent-waiting"].action.value == "ship-fleet ssh ship-01"  # not trusted here
     assert by_code["disk-nearly-full"].action.kind == "command"
@@ -189,11 +193,29 @@ def test_off_the_overlay_only_when_one_is_configured(store):
     inv.doc["overlay"] = {"provider": "tailscale"}
     found = dashboard.derived([v], inv, [])
     assert [i.code for i in found] == ["not-on-overlay"]
-    assert dashboard.action_for("not-on-overlay", "ship-01", v, None).value == \
-        "ship-fleet overlay join ship-01"
+    join = dashboard.action_for("not-on-overlay", "ship-01", v, None)
+    assert (join.kind, dict(join.fields)["operation"]) == ("post", "join")
+    assert join.title == "ship-fleet overlay join ship-01"
     # The Ship already says its overlay is down: one alert, not two.
     down = [Item("ship-01", "overlay-down", "Down.", "medium")]
     assert dashboard.derived([v], inv, down) == []
+
+
+@pytest.mark.parametrize("code, kind", [
+    ("reboot-required", "post"), ("herdr-restart-pending", "post"), ("behind-tooling", "post"),
+    ("not-on-overlay", "post"), ("unreachable", "post"),
+    # These need a shell, or wait for later PRs (certificates, overlay): copy the command.
+    ("agent-waiting", "command"), ("disk-nearly-full", "command"),
+    ("host-cert-expiring", "command"), ("ssh-trust-behind", "command"),
+    ("overlay-down", "command"),
+])
+def test_fixes_the_ui_can_do_are_buttons(code, kind):
+    action = dashboard.action_for(code, "ship-01", None, None)
+    assert action.kind == kind
+    if kind == "post":
+        assert action.title.startswith("ship-fleet ")  # the CLI equivalent, as a tooltip
+        # Anything that changes the Ship goes through the dialog; checking again does not.
+        assert (action.confirm is None) == (code == "unreachable")
 
 
 def test_unknown_codes_link_to_the_ship(store):
