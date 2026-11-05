@@ -11,8 +11,9 @@ A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
   seed ISO that FleetLedger writes for each Ship (`contracts/seed.md`). The seed carries the
   Ship's identity, its pinned SSH host key, its settings (`ship.toml`) and the
   tooling bundle. It carries no service tokens.
-- **Users:** `fleet` (admin, for FleetLedger) and `agent` (runs herdr and every
-  agent, owns every sign-in; no sudo by default).
+- **Users:** `fleet` (admin, for FleetLedger), `agent` (runs herdr and every
+  agent, owns every sign-in; no sudo by default) and your own login, with sudo
+  (`human` unless `ship-fleet owner` names another).
 - **On boot:** herdr runs as a systemd user service, restores its layout, and
   resumes each Claude Code conversation in the mode it was in. A hidden client
   attaches briefly, because herdr resumes agents only once a client is attached.
@@ -21,8 +22,9 @@ A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
   config, and the catalogue tools installed for agents.
 - **Interface:** `ship-ctl` reports status as one JSON document and applies
   changes (`contracts/ship-ctl.md`).
-- **Network:** there is no network control. SSH is the only way in, on the LAN
-  or, once a Ship joins the overlay network (phase 5), from your other machines
+- **Network:** no proxy or internet filter; the optional LAN guard refuses new
+  connections to your local network other than the gateway and DNS. SSH is the
+  only way in, on the LAN or, once a Ship joins the overlay network, from your other machines
   anywhere ([runbooks/remote-access.md](runbooks/remote-access.md)). A collector
   records which programs reach which domains, for review ([network.md](network.md)).
 
@@ -71,7 +73,8 @@ your computer                                   Proxmox (or any hypervisor)
 - **Sign-in.** The login concierge runs each tool's own no-browser sign-in on the
   Ship in a terminal over SSH, relays the link and the code, and checks the
   account against the Ship's tags. The Ship notices the sign-in by itself and
-  starts its autostart agents.
+  starts its autostart agents (one in a private GitHub repo once GitHub is
+  signed in too).
 - **Changes.** `ship-fleet set`, `tag` and `tools` call `ship-ctl` on the Ship,
   which validates and applies them; FleetLedger keeps the inventory in step.
 
