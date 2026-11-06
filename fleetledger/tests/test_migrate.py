@@ -386,12 +386,13 @@ def make_fleet(a: Computer, monkeypatch) -> None:
     (data / "images" / "base").mkdir(parents=True)
     (data / "images" / "base" / "noble.img").write_bytes(b"ubuntu")
     (a.root / "config" / "proxmox-setup-progress.json").write_text("{}\n")
-    (a.root / "config" / "remote-ui.json").write_text(json.dumps(
-        {"origin": "https://desktop.example-tailnet.ts.net", "port": 8765}))
-    web = data / "web"  # the remote web UI's paired browsers and pairing links
-    web.mkdir()
-    for name in ("devices.json", "pairings.json", ".lock"):
-        (web / name).write_text("{}\n")
+    from fleetledger.web import devices, remote
+
+    remote.save(remote.Remote("https://desktop.example-tailnet.ts.net", 8765))  # a piece-1 setting
+    store = devices.Devices()  # the remote web UI's paired browsers and pairing links
+    with store._locked():
+        for f in (store.devices_file, store.pairings_file):
+            paths.write_private(f, json.dumps({"schema": 1, "items": []}).encode())
     assert a.run("ls")[0] == 0  # the status cache, and FleetLedger's known_hosts
 
 
@@ -935,9 +936,10 @@ def test_a_ship_behind_on_the_revocation_list_is_a_warning_not_ok(computers, mon
 
 def test_the_remote_web_ui_logins_are_said_not_turned_on(computers, monkeypatch):
     a, b, world = computers
-    (a.root / "config" / "remote-ui.json").write_text(json.dumps({
-        "origin": "https://desktop.example-tailnet.ts.net", "port": 8765,
-        "logins": ["you@example.com"]}))
+    from fleetledger.web import remote
+
+    remote.save(remote.Remote("https://desktop.example-tailnet.ts.net", 8765,
+                              ("you@example.com",)))
     assert receive(b, monkeypatch, send_bytes(a, monkeypatch)) == migrate.VERIFIED
     assert "--port 8765 --login you@example.com (docs/runbooks/remote-ui.md)" in \
         b.out.getvalue()
