@@ -324,6 +324,7 @@ def _plan_images(plan: Plan, inv, moving: set[Path], with_images: bool) -> None:
 
 def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None:
     from fleetledger import proxmox_setup, trustcmd
+    from fleetledger.web import remote
 
     base = paths.config_dir()
     for f in _files(base):
@@ -337,6 +338,10 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
         elif rel == trustcmd.THIS_COMPUTER:
             plan.leave(f, "which machine entry is this computer: a fact about this computer, "
                        "not the fleet")
+        elif rel == remote.REMOTE_FILE:
+            plan.leave(f, "the remote web UI setting: a fact about this computer (its own "
+                       "name on the tailnet); turn it on there if you want it: ship-fleet ui "
+                       "remote")
         elif rel == proxmox_setup.PROGRESS_FILE:
             plan.leave(f, "a part-finished Proxmox setup (run setup again there if needed)")
         elif rel.startswith(keys.PASSPHRASE_DIR + "/"):

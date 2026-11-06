@@ -386,6 +386,7 @@ def make_fleet(a: Computer, monkeypatch) -> None:
     (data / "images" / "base").mkdir(parents=True)
     (data / "images" / "base" / "noble.img").write_bytes(b"ubuntu")
     (a.root / "config" / "proxmox-setup-progress.json").write_text("{}\n")
+    (a.root / "config" / "remote-ui.json").write_text("{}\n")
     assert a.run("ls")[0] == 0  # the status cache, and FleetLedger's known_hosts
 
 
@@ -466,8 +467,8 @@ def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed
 
     # What never moves; known_hosts is written afresh from the pins.
     assert not (b.root / "config" / "this-computer.json").exists()
-    for gone in ("config/proxmox-setup-progress.json", "data/inbox-spool",
-                 "data/images/base"):
+    for gone in ("config/proxmox-setup-progress.json", "config/remote-ui.json",
+                 "data/inbox-spool", "data/images/base"):
         assert not (b.root / gone).exists(), gone
     assert "known_hosts" not in b_doc["fleet"]
     assert (b.root / "config" / "known_hosts").read_text() == \
@@ -598,6 +599,7 @@ def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
     for path, why in (("this-computer.json", "a fact about this computer"),
                       ("known_hosts", "rebuilt from the inventory"),
                       ("proxmox-setup-progress.json", "part-finished Proxmox setup"),
+                      ("remote-ui.json", "the remote web UI setting: a fact about this computer"),
                       ("inbox-spool/half-sent", "half-way to a Ship"),
                       ("images/base/noble.img", "Ubuntu's cloud image"),
                       ("shipshape_ed25519", "stay on your machines")):
