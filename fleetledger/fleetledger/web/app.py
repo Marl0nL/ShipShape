@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import attempts, commands, net, ops, signins
+from fleetledger import attempts, commands, inbox, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -41,6 +41,7 @@ from fleetledger.web import (
     destroy,
     fleetactions,
     images,
+    inboxweb,
     network,
     overlayweb,
     settings,
@@ -63,7 +64,7 @@ SERVICES = ("claude", "gcloud", "gcloud-adc", "github", "all")
 AUTH_ORDER = ("claude", "gcloud", "gcloud_adc", "github")
 NO_SUCH_SHIP = "No such Ship in the inventory."
 LOG_LINES = ("100", "300", "1000", "3000")  # the Logs tab's "last N lines" choices
-TABS = ("overview", "access", "settings", "snapshots", "logs", "network")
+TABS = ("overview", "access", "settings", "inbox", "snapshots", "logs", "network")
 
 
 @dataclasses.dataclass
@@ -78,6 +79,7 @@ class UI:
     env: Environment
     setups: Any = None  # web.setup.Setups: each session's progress through /setup
     health: Any = None  # web.settings.Health: the last "Check now" on Settings
+    spool: Any = None  # web.inboxweb.Spool: files dropped for a Ship, waiting to be sent
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
     started: set[str] = dataclasses.field(default_factory=set)
     destroyed: dict[str, tuple[float, bool]] = dataclasses.field(  # name -> (when, forgot)
@@ -139,6 +141,7 @@ def make_env() -> Environment:
         restartable=shipsettings.restartable,
         restartable_by_name=lambda view: {r["name"]: r for r in shipsettings.restartable(view)},
         human_bytes=net.human_bytes,
+        inbox_size=inbox.human,
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
         op_confirm=dashboard.op_confirm,
@@ -426,6 +429,8 @@ async def ship_page(request: Request) -> Response:
                                                    context["view"])
     if tab == "snapshots":
         context.update(await snapshots.tab_context(ui.app, name))
+    if tab == "inbox":
+        context.update(await inboxweb.tab_context(ui.app, name))
     if tab == "access":
         context.update(overlayweb.tab_context(context["snap"].inventory, context["ship"],
                                               context["doc"]))
@@ -874,6 +879,8 @@ async def job_card(request: Request) -> Response:
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind == "inbox" and _on_ship_page(request, job.ships):
+        response.headers["HX-Refresh"] = "true"  # the Inbox tab lists the new files
     return response
 
 
@@ -1156,6 +1163,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         *activity.routes(),
         *setup.routes(),
         *snapshots.routes(),
+        *inboxweb.routes(),
         *adopt.routes(),
         *destroy.routes(),
         *settings.routes(),

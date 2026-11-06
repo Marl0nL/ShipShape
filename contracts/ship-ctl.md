@@ -397,6 +397,52 @@ LAN. Only Tailscale (or Headscale, through `--login-server`) is supported.
 Tailscale SSH is never turned on: OpenSSH with the pinned host key stays the only
 way in, over the overlay as on the LAN.
 
+### `ship-ctl inbox list|put|remove|notify [--json]`
+
+The file inbox: `~/inbox/` (agent, 0700), where a person drops files for the
+Ship's agents (`ship-fleet put`, the web UI's Inbox tab). FleetLedger streams each
+file over its usual SSH login; the Ship opens nothing new for it. ship-ctl runs as
+root inside a home the agent controls, so every folder and file is opened without
+following a symlink (as `apply` writes agent files); a symlink where `~/inbox` or
+the staging folder should be is refused (`invalid-input`) and left alone.
+
+- `put --name NAME --size BYTES --json`: reads exactly BYTES from **stdin** into a
+  new file (0600, owned by agent) in `~/.local/state/shipshape/incoming/`, syncs
+  it, then links it into `~/inbox/` and removes the staging name, so an agent only
+  ever sees a complete file. NAME is cleaned first: only its last path part, NFC,
+  letters and digits of any script plus ` ._-+,@()[]#%=~` (any other character
+  becomes `_`; control and format characters such as bidi overrides are dropped),
+  no leading dot, dash, `~` or `#`, at most 200 bytes (the extension kept), `file`
+  if nothing is left. A name already taken gets `-2`, `-3` ... before its
+  extension, the part after the last dot if it is at most 16 bytes, a `.tar.*` pair
+  kept together (`report v1.2-2.pdf`, `archive-2.tar.gz`, `README-2`): nothing is
+  ever overwritten, even when two files
+  arrive at once (linkat refuses an existing name). Refused before a byte is read
+  (`invalid-input`): a file over 256 MiB, or one that would leave less than 1 GiB
+  free on the home's filesystem. Fewer or more bytes than BYTES keeps nothing
+  (`invalid-input`). Files never get an execute bit; nothing reads, runs or
+  unpacks them. Each `put` first removes staging `.part` files untouched for an
+  hour (a transfer cut off by a kill or a reboot). `data`: `{ "name": stored name, "given": NAME as sent, "size",
+  "path", "renamed": bool }`; `changed` is the path. Recorded in the journal
+  (`ship-ctl logs system`, tag `ship-ctl`).
+- `list --json`: `data`: `{ "path": "/home/agent/inbox", "exists", "files": [{
+  "name", "size", "modified" (UTC) }], "others": count of entries that are not
+  plain files (folders, links) or whose names are not UTF-8, "truncated", "max_bytes",
+  "free_bytes" }`, newest first, at most 500 files. Folders are not entered.
+- `remove NAME... --json`: removes plain files with exactly these names from
+  `~/inbox/` (no `/`). `data`: `{ "removed": [...], "missing": [...], "refused":
+  [names that are not plain files] }`. Missing is not an error: an agent may have
+  moved the file already.
+- `notify --count N --json`: tells the core (`[[autostart]]`) agents, exactly as
+  `notify-signin` does (the same agents, the same states typed into, the same
+  skips, recorded the same way), with one line that carries a count and no file
+  name: `ShipShape: N new files in your inbox (~/inbox), sent by the person.
+  Handle them as the ship skill says when your work needs them.` `data`: `{
+  "count", "sent", "skipped" }`.
+
+The `ship` skill tells agents what the inbox is for and how to treat what is in it
+(untrusted input; move a file out once it is dealt with).
+
 ### `ship-ctl version [--json]`
 
 Needs no root. `data`:
@@ -406,11 +452,12 @@ Needs no root. `data`:
   "tooling": "0.1.0",
   "commit": "0123456789ab",
   "contracts": { "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1, "runtime": 1,
-                 "ssh-trust": 1, "net-summary": 1 }
+                 "ssh-trust": 1, "net-summary": 1, "inbox": 1 }
 }
 ```
 
 FleetLedger checks `contracts` before using a Ship and refuses (with a clear
 message) any major version it does not know. A Ship without `ssh-trust` or
 `net-summary` predates phase 3: FleetLedger skips certificates and network
-visibility for it until it is updated.
+visibility for it until it is updated. A Ship without `inbox` predates the file
+inbox: `ship-fleet put` says to update it first.

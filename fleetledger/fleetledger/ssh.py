@@ -12,19 +12,23 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import shlex
 import subprocess
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 from fleetledger import paths
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
 
 SHIP_CTL = "/usr/local/bin/ship-ctl"
+SEND_CHUNK = 256 * 1024
 
 HOST_KEY_ERRORS = (
     "host key verification failed",
@@ -101,6 +105,7 @@ class SSH:
         *,
         ssh_bin: str = "ssh",
         runner: Runner = subprocess.run,
+        popen: Callable[..., subprocess.Popen] = subprocess.Popen,
         connect_timeout: int = 10,
         fleet_user: str = "fleet",
         extra_options: Sequence[str] = (),
@@ -110,6 +115,7 @@ class SSH:
         self.extra_options = list(extra_options)
         self.ssh_bin = ssh_bin
         self.runner = runner
+        self.popen = popen  # send(): a file streamed to a command's stdin
         self.connect_timeout = connect_timeout
         self._synced = False
 
@@ -228,6 +234,79 @@ class SSH:
                     failures.append(f"{host}: {_last_line(stderr) or 'connection failed'}")
                     continue
             return Result(proc.returncode, proc.stdout, stderr, host)
+        raise Unreachable(f"Cannot reach {ship.name}: " + "; ".join(failures))
+
+    def send(
+        self,
+        ship: Ship,
+        command: Sequence[str],
+        source: BinaryIO,
+        *,
+        on_progress: Callable[[int], None] | None = None,
+        timeout: float = 600,
+    ) -> Result:
+        """Run a command on the Ship as fleet with source's bytes streamed to its stdin
+        (a file for the inbox), never all in memory; on_progress(bytes sent so far).
+
+        Each of the Ship's names is tried in order until one answers (ship-ctl keeps
+        nothing of a cut-short file, so sending again is safe). A command that stops
+        reading (it refused the file) ends the stream; its own answer is returned.
+        """
+        failures = []
+        start = source.tell()
+        for host in ship.names:
+            source.seek(start)
+            try:
+                proc = self.popen(self.argv(ship, host, command), stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            except FileNotFoundError as exc:
+                raise FleetError(f"{self.ssh_bin} not found; install OpenSSH.") from exc
+            out: list[bytes] = []
+            err: list[bytes] = []
+            readers = [threading.Thread(target=lambda s=s, b=b: b.append(s.read()), daemon=True)
+                       for s, b in ((proc.stdout, out), (proc.stderr, err))]
+            for reader in readers:
+                reader.start()
+            timer = threading.Timer(timeout, proc.kill)
+            timer.start()
+            sent = 0
+            try:
+                while chunk := source.read(SEND_CHUNK):
+                    try:
+                        proc.stdin.write(chunk)
+                    except (BrokenPipeError, ValueError):
+                        break  # it stopped reading: its answer says why
+                    sent += len(chunk)
+                    if on_progress:
+                        on_progress(sent)
+                with contextlib.suppress(BrokenPipeError, ValueError):
+                    proc.stdin.close()
+                code = proc.wait()
+                for reader in readers:
+                    reader.join()
+            finally:
+                timed_out = not timer.is_alive()
+                timer.cancel()
+                if proc.poll() is None:
+                    proc.kill()
+            stdout = b"".join(out)
+            stderr = b"".join(err).decode("utf-8", errors="replace")
+            if timed_out:
+                raise FleetError(f"{ship.name}: sending timed out after {timeout:.0f}s.")
+            if code == 255 and not stdout:
+                lowered = stderr.lower()
+                if any(marker in lowered for marker in HOST_KEY_ERRORS):
+                    raise HostKeyMismatch(
+                        f"{ship.name} ({host}) did not present its pinned host key; refusing "
+                        "to connect.", hint="If you rebuilt this Ship from a new seed, re-pin "
+                        "it with `ship-fleet adopt`.")
+                if "permission denied" in lowered:
+                    raise FleetError(f"{ship.name} ({host}) refused FleetLedger's admin key.")
+                # ship-ctl keeps nothing of a cut-short file, so the next name can
+                # simply be sent the whole file again.
+                failures.append(f"{host}: {_last_line(stderr) or 'connection failed'}")
+                continue
+            return Result(code, stdout, stderr, host)
         raise Unreachable(f"Cannot reach {ship.name}: " + "; ".join(failures))
 
     def probe_certificate(self, ship: Ship, known_hosts: Path, timeout: float = 30) -> str | None:

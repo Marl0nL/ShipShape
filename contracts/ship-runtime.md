@@ -89,6 +89,8 @@ Agent home (`/home/agent`), owned by `agent`:
 | `~/.local/state/shipshape/modes.json` | Mode ledger: Claude session id to permission mode (`settings.md`). |
 | `~/.local` | npm global prefix: packages in `~/.local/lib/node_modules`, commands in `~/.local/bin`. |
 | `~/work/` | Default root for project folders. |
+| `~/inbox/` | The file inbox, mode 0700: files a person sends with `ship-fleet put` (or the web UI's Inbox tab) for the agents, each 0600 and never executable (`ship-ctl inbox`). Separate from `~/work/`, so a file sent is never inside a git checkout by accident. |
+| `~/.local/state/shipshape/incoming/` | Internal, mode 0700: where `ship-ctl inbox put` writes a file until every byte is there, so `~/inbox/` never shows a half-written one. |
 
 Phase 4 and 5 add:
 

@@ -25,12 +25,13 @@ COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
-    "image", "overlay",
+    "image", "overlay", "put", "inbox",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
-EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd")
+EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
+                         "fleetledger.inbox")
 
 
 @dataclass

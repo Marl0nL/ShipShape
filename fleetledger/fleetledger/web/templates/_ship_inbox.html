@@ -1,0 +1,69 @@
+{# The Ship page's Inbox tab (included by ship.html). Context from web/inboxweb.py:
+   inbox (ship-ctl inbox list's data) or inbox_error and inbox_hint, INBOX_MAX,
+   INBOX_FILES. The drop zone needs static/app.js: it streams each file to
+   /ships/NAME/inbox/upload, then sends the #inbox-send form, which starts the job
+   shown under the header. #}
+<section class="inbox">
+  <h2>Inbox</h2>
+  <p class="hint">Files dropped here go to <code>~/inbox</code> on {{ ship.name }}, for its agents, over FleetLedger's own SSH login.
+    A file appears there only once it is complete, and never replaces another (a taken name gets <code>-2</code>, <code>-3</code> …).
+    Up to {{ INBOX_FILES }} files at once, {{ (INBOX_MAX // 1048576) }} MB each. Agents treat them as untrusted input and move each one out once dealt with.
+    From a terminal: <code class="cmd">ship-fleet put {{ ship.name }} FILE…</code></p>
+
+  <form id="inbox-send" class="inbox-drop" method="post" action="/ships/{{ ship.name }}/inbox/send"
+    data-inbox-upload="/ships/{{ ship.name }}/inbox/upload" data-inbox-max="{{ INBOX_MAX }}" data-inbox-files="{{ INBOX_FILES }}" data-inbox-ship="{{ ship.name }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="dropzone" id="inbox-dropzone" hidden>
+      <svg class="drop-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path d="M16 4v16M9 13l7 7 7-7M5 22v6h22v-6"/></svg>
+      <p class="drop-title" id="inbox-drop-title">Drop files for this Ship's agents</p>
+      <p class="hint">or <button type="button" id="inbox-choose" aria-describedby="inbox-drop-title">Choose files…</button></p>
+      <input type="file" id="inbox-files" multiple tabindex="-1" class="file-picker" aria-hidden="true">
+    </div>
+    <noscript><p class="flash bad">Dropping files here needs this page's script. From a terminal: <code>ship-fleet put {{ ship.name }} FILE…</code></p></noscript>
+    <ul class="inbox-queue" id="inbox-queue" aria-live="polite" hidden></ul>
+    <div class="inbox-send-row" id="inbox-send-row" hidden>
+      <label class="check"><input type="checkbox" name="tell" value="yes"> Tell its autostart agents how many files arrived</label>
+      <button type="submit" id="inbox-start" title="ship-fleet put {{ ship.name }} FILE…">Send to {{ ship.name }}</button>
+      <button type="button" class="ghost" id="inbox-clear">Clear</button>
+    </div>
+    <p class="hint" id="inbox-status" role="status"></p>
+  </form>
+
+  <h3>In <code>{{ (inbox.path if inbox else "~/inbox") }}</code> now</h3>
+  {% if inbox_error %}
+  <p class="flash bad">{{ inbox_error }}{% if inbox_hint %} {{ inbox_hint }}{% endif %}</p>
+  {% elif inbox.files %}
+  <table class="inbox-list">
+    <thead><tr><th>File</th><th>Size</th><th>When (UTC)</th><th></th></tr></thead>
+    <tbody>
+    {% for f in inbox.files %}
+    <tr>
+      <td class="file-name">{{ f.name }}</td>
+      <td class="num">{{ inbox_size(f.size) }}</td>
+      <td class="num">{{ f.modified|replace("T", " ")|replace("Z", "") }}</td>
+      <td class="row-actions">
+        <form method="post" action="/ships/{{ ship.name }}/inbox/remove" class="inline"
+          data-confirm-title="Remove {{ f.name }}?"
+          data-confirm="{{ f.name }} is deleted from {{ ship.name }}'s inbox. An agent that has not picked it up yet will not see it."
+          data-confirm-action="Remove it" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="name" value="{{ f.name }}">
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost small" title="ship-fleet inbox rm {{ ship.name }} NAME">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="quiet">Empty: nothing is waiting for {{ ship.name }}'s agents.</p>
+  {% endif %}
+  {% if inbox and not inbox_error %}
+  <p class="hint">
+    {% if inbox.others %}{{ inbox.others }} folder{{ "s" if inbox.others != 1 }} or link{{ "s" if inbox.others != 1 }} not shown. {% endif %}
+    {% if inbox.truncated %}Only the newest {{ inbox.files|length }} files are shown. {% endif %}
+    {% if inbox.free_bytes is not none %}{{ inbox_size(inbox.free_bytes) }} free on {{ ship.name }}.{% endif %}
+  </p>
+  {% endif %}
+</section>
