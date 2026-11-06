@@ -155,8 +155,9 @@
       With a repo, the Ship clones it into <code>~/work/&lt;name&gt;</code> first (a private
       one once GitHub is signed in) and the agent works there. One you stop starting keeps
       running until it is stopped or the Ship reboots.</p>
-    <p>Attach from here: <code>{{ ("herdr --remote " if attach_here else "ship-fleet ssh ") ~ ship.name }}</code>.
-      Every way to attach, as the agent or as you, is on the <a href="/ships/{{ ship.name }}/access">Access</a> tab.</p>
+    <p>{% if attach_cmd %}Attach from {{ "here" if not remote_session else here_label }}: <code>{{ attach_cmd }}</code>.
+      {% else %}Nothing attaches from {{ here_label }} yet.
+      {% endif %}Every way to attach, as the agent or as you, is on the <a href="/ships/{{ ship.name }}/access">Access</a> tab.</p>
   </section>
 
   <section class="grid">

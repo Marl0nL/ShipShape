@@ -212,9 +212,34 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         here=activity.here(request),  # where a card's Dismiss comes back to
         this_device=session.device,  # a paired browser on the remote address, else None
         remote_on=ui.gate.remote is not None,
+        machine_due=_machine_due(ui, session),
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
+
+
+NOT_FROM_A_DEVICE = ("That sets up the FleetLedger computer itself, not this device: open the "
+                     "UI on that computer for it. For this device, choose its trusted machine "
+                     "and download that machine's bundle (a Ship's Access tab).")
+
+
+def _machine_due(ui: UI, session: Session) -> dict[str, Any] | None:
+    """On a paired device whose machine you said: that machine's certificate, if it lapses
+    within a day or has (a banner offers its bundle). Read from the poller's inventory."""
+    from fleetledger import ca, trustcmd
+    from fleetledger.web import devicesweb
+
+    inv = ui.fleet.snapshot.inventory
+    if session.device is None or session.device.machine is None or inv is None:
+        return None
+    m = devicesweb.machine_of(session.device, inv)
+    until = ca.parse_stamp(m.last_valid_before) if m else None
+    if m is None or until is None:
+        return None
+    left = (until - ca.utc_now()).total_seconds()
+    if left > trustcmd.RENEW_WITHIN_S:
+        return None
+    return {"name": m.name, "until": m.last_valid_before, "lapsed": left <= 0}
 
 
 def partial(request: Request, template: str, **context: Any) -> Response:
@@ -361,7 +386,7 @@ async def charts_partial(request: Request) -> Response:
 # --- one Ship ------------------------------------------------------------------------
 
 
-def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
+def _ship_context(ui: UI, name: str, session: Session | None = None) -> dict[str, Any] | None:
     snap = ui.fleet.snapshot
     view = snap.by_name.get(name)
     if view is None or snap.inventory is None:
@@ -387,23 +412,38 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "jobs": ui.jobs.for_ship(name, shown=True),
         "workspaces": workspaces,
         "snap": snap,
-        **_attach_context(inv, view.ship),
+        **_attach_context(inv, view.ship, session),
         "signins_used": signins.used(view.ship),
     }
 
 
-def _attach_context(inv, ship) -> dict[str, Any]:
-    """How to attach from here, whether this computer can be set up for it, and
-    whether the Ship is on the overlay."""
+def _attach_context(inv, ship, session: Session | None = None) -> dict[str, Any]:
+    """How to attach from the machine this browser is on, whether it can be set up for
+    it, and whether the Ship is on the overlay. A browser on this computer: this
+    computer's trust (this-computer.json), as ever. A paired device: the trusted
+    machine it runs on (devices.Device.machine), if you said; never this computer's."""
     from fleetledger import ca, trustcmd
+    from fleetledger.web import devicesweb
 
-    return {
-        "attach_here": trustcmd.attaches_here(inv, ship),
-        "attach_until": trustcmd.this_computer_until(inv),
-        "can_trust_here": ca.config(inv) is not None,
-        "overlay_set": bool(inv.overlay),
-        "on_overlay": ship.overlay_node is not None,
-    }
+    device = session.device if session is not None else None
+    common = {"can_trust_here": ca.config(inv) is not None, "overlay_set": bool(inv.overlay),
+              "on_overlay": ship.overlay_node is not None, "remote_session": device is not None}
+    if device is None:
+        here = trustcmd.attaches_here(inv, ship)
+        return {**common, "attach_here": here, "attach_owner": here,
+                "attach_until": trustcmd.this_computer_until(inv), "here_machine": None,
+                "here_label": "this computer",
+                "attach_cmd": ("herdr --remote " if here else "ship-fleet ssh ") + ship.name}
+    m = devicesweb.machine_of(device, inv)
+    reaches = bool(m and m.reaches(inv, ship) and trustcmd.has_cert(ship))
+    agent = reaches and "agent" in m.logins
+    owner = reaches and "owner" in m.logins
+    return {**common, "attach_here": agent, "attach_owner": owner,
+            "attach_until": m.last_valid_before if m else None,
+            "here_machine": m.name if m else None, "here_label": m.name if m else device.name,
+            "machine_choices": devicesweb.machine_choices(inv),
+            "attach_cmd": (f"herdr --remote {ship.name}" if agent else
+                           f"ssh {inv.owner}@{ship.name}" if owner else None)}
 
 
 async def ship_page(request: Request) -> Response:
@@ -411,7 +451,7 @@ async def ship_page(request: Request) -> Response:
     ui.fleet.touch()
     name = _ship_name(request)
     tab = request.path_params.get("tab", "overview")
-    context = _ship_context(ui, name) if name else None
+    context = _ship_context(ui, name, session_of(request)) if name else None
     if context is None and name and (gone := destroy.gone_since(ui, name)) is not None:
         at, forgotten = gone
         text = (f"{name} was forgotten at {_clock(at)}: it is no longer in the inventory, and "
@@ -637,7 +677,8 @@ async def ship_size(request: Request) -> Response:
 
 
 async def attach_here(request: Request) -> Response:
-    """Trust this computer (your key) so plain ssh and herdr --remote reach Ships."""
+    """Trust this computer (your key) so plain ssh and herdr --remote reach Ships. Never
+    from a paired device: it would trust the FleetLedger computer, not the device."""
     from fleetledger import trustcmd
 
     ui = ui_of(request)
@@ -646,6 +687,9 @@ async def attach_here(request: Request) -> Response:
     where = f"/ships/{name}" if name and NAME_RE.match(name) else "/"
     if where != "/" and one(fields, "from") == "access":
         where += "/access"
+    if session_of(request).device is not None:
+        ui.flash(session_of(request), "bad", NOT_FROM_A_DEVICE)
+        return back(where)
     said: list[str] = []
     try:
         ok = await run_in_threadpool(trustcmd.trust_this_computer, ui.app,

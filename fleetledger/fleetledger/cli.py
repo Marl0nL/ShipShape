@@ -472,6 +472,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--identity", default="~/.ssh/shipshape/id_ed25519",
                    help="path of the private key on that machine (default %(default)s)")
     p.add_argument("--out", help="bundle folder (default ~/.local/share/fleetledger/trust/NAME)")
+    p.add_argument("--hostnames", choices=("here", "overlay"), default="here",
+                   help="each Ship's HostName in the bundle: the first of its names that "
+                   "resolves here (default), or its overlay name when it is on the overlay "
+                   "(for a machine elsewhere, such as the web UI's Download bundle)")
     p.add_argument("--print-cert", action="store_true", help="print only the certificate")
     p.add_argument("--install", action="store_true",
                    help="also install the bundle here (this is the machine)")
@@ -549,7 +553,20 @@ def build_parser() -> argparse.ArgumentParser:
     lk.add_argument("--name", help="what to call the device (default: a guess from its "
                                    "browser, renamable in Settings)")
     lk.add_argument("--qr", action="store_true", help="also print the link as a QR code")
-    ui_sub.add_parser("devices", help="list the devices paired with the remote web UI")
+    lk.add_argument("--machine", help="the trusted machine the device runs on, so the UI "
+                                      "shows its attach commands and bundle")
+    dv = ui_sub.add_parser(
+        "devices", help="list the devices paired with the remote web UI, or change one",
+        description="List the paired devices; or, naming one, rename it or say which\n"
+                    "trusted machine it runs on (the UI then shows that machine's attach\n"
+                    "commands and offers its bundle):\n\n"
+                    "  ship-fleet ui devices laptop --machine laptop\n"
+                    "  ship-fleet ui devices 1a2b3c4d --name phone --no-machine",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    dv.add_argument("device", nargs="?", metavar="NAME|ID", help="the device to change")
+    dv.add_argument("--name", help="its new name")
+    dv.add_argument("--machine", help="the trusted machine it runs on")
+    dv.add_argument("--no-machine", action="store_true", help="it runs on no trusted machine")
     rv = ui_sub.add_parser("revoke", help="sign a paired device out of the remote web UI")
     rv.add_argument("device", nargs="?", metavar="NAME|ID",
                     help="its name or id, as ship-fleet ui devices shows")

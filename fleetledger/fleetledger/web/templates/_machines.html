@@ -1,7 +1,8 @@
 {# Settings ▸ Access ▸ Trusted machines (web.trust): each machine you attach from, the
-   Ships it reaches, what it may log in as, its certificate and bundle; Untrust;
-   this computer's Renew; Trust a machine. Context: inv, csrf, back, machines and
-   this_machine (setup.access_context), and trust.section_context(). #}
+   Ships it reaches, what it may log in as, its certificate and bundle; Download
+   bundle; Untrust; this computer's Renew (not from a paired device); Trust a machine.
+   Context: inv, csrf, back, machines and this_machine (setup.access_context),
+   trust.section_context(), and this_device (a paired browser, else None). #}
 {% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
 <h3 id="machines">Trusted machines</h3>
 {% if flash_at == "machines" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
@@ -13,17 +14,20 @@
   keep both. A Ship not updated yet still lets any of the agent's certificates log in as
   you: update every Ship before relying on "the agent only".</p>
 <div class="this-computer">
+  {% set it = "The FleetLedger computer" if this_device else "This computer" %}
   {% if this_until %}
-  <p>This computer{% if this_machine %} ({{ this_machine }}){% endif %} has a certificate until
+  <p>{{ it }}{% if this_machine %} ({{ this_machine }}){% endif %} has a certificate until
     {{ until(this_until) }}; FleetLedger renews it in its last day whenever it runs.</p>
   {% else %}
-  <p>This computer is not trusted yet: <code>ssh &lt;ship&gt;</code> and
+  <p>{{ it }} is not trusted yet: <code>ssh &lt;ship&gt;</code> and
     <code>herdr --remote &lt;ship&gt;</code> need it (<code>ship-fleet ssh</code> works without).</p>
   {% endif %}
+  {% if not this_device %}
   <form method="post" action="/settings/machines/renew-here" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit" class="ghost" title="ship-fleet trust --this-computer">{{ "Renew now" if this_until else "Let this computer use ssh" }}</button>
   </form>
+  {% endif %}
 </div>
 {% if machines %}
 <table class="machines">
@@ -32,9 +36,10 @@
   {% for m in machines %}
   {% set here = m.name == this_machine %}
   <tr>
-    <td>{{ m.name }}{% if here %} <span class="quiet">(this computer)</span>{% endif %}
+    {% set browsers = this_device and this_device.machine == m.name %}
+    <td>{{ m.name }}{% if here %} <span class="quiet">({{ "the FleetLedger computer" if this_device else "this computer" }})</span>{% endif %}{% if browsers %} <span class="quiet">(this browser's machine)</span>{% endif %}
       <br><code class="fp" title="its key's fingerprint">{{ fingerprints[m.name] }}</code>
-      {% if bundles[m.name] and not here %}<br><span class="hint">bundle <code>{{ bundles[m.name] }}</code></span>{% endif %}</td>
+      {% if bundles[m.name] and not here and not this_device %}<br><span class="hint">bundle <code>{{ bundles[m.name] }}</code></span>{% endif %}</td>
     <td>
       {% if here %}{{ m.scope|join(", ") }}{% else %}
       <details class="scope">
@@ -71,6 +76,13 @@
     </td>
     <td>{{ until(m.last_valid_before) }}</td>
     <td class="row-actions">
+      {% if not here %}
+      <form method="post" action="/settings/machines/bundle" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="machine" value="{{ m.name }}">
+        <button type="submit" class="ghost small" title="ship-fleet trust {{ m.name }}{{ ' --hostnames overlay' if this_device }}: a new certificate, and its bundle as a download">Download bundle</button>
+      </form>
+      {% endif %}
       <form method="post" action="/settings/machines/untrust" class="inline"
         data-confirm-title="Untrust {{ m.name }}?"
         data-confirm="{{ m.name }}'s key goes into the revocation list on every Ship, so none lets it in. This cannot be undone: trust it again only under a new name, with a new key.{% if here %} This is this computer: ssh and herdr --remote stop working here (ship-fleet ssh still works).{% endif %}"
@@ -93,8 +105,10 @@
 <h4>Trust a machine</h4>
 <p class="hint">On that machine, make a key (<code>ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519</code>)
   and paste the one line of its <code>.pub</code> file here. FleetLedger writes the machine's
-  bundle (its certificate, SSH config and the CA line) to a folder here: copy it over and run
-  <code>sh install.sh</code> there.</p>
+  bundle (its certificate, SSH config and the CA line): <strong>Download bundle</strong> in its row
+  (on that machine: <code>tar xzf shipshape-NAME.tar.gz &amp;&amp; sh shipshape-NAME/install.sh</code>),
+  or copy its folder over and run <code>sh install.sh</code> there. Download it again to renew
+  the certificate.</p>
 <form method="post" action="/settings/machines/trust" class="trust-machine" autocomplete="off">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label>Name <input name="machine" pattern="[a-z0-9][a-z0-9\-]{0,30}" maxlength="31" required placeholder="desk"></label>
@@ -112,5 +126,8 @@
       <option value="owner">you only (sudo)</option>
     </select></label>
   <label>Certificate hours <input name="hours" inputmode="numeric" pattern="[0-9]*" size="5" placeholder="{{ certs.user_cert_hours }}"></label>
+  {% if this_device %}
+  <label class="mine"><input type="checkbox" name="mine" value="yes"> this browser ({{ this_device.name }}) runs on it</label>
+  {% endif %}
   <button type="submit" title="ship-fleet trust NAME --key LINE --scope ... --logins ...">Trust it</button>
 </form>

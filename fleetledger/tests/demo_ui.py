@@ -682,8 +682,9 @@ def demo_spawner(argv: list[str]):
 
 def seed_remote(port: int):
     """--remote: the remote web UI as on, at a made-up address, with two paired devices
-    (one paired 6 hours ago, so it needs pairing again for danger actions). Nothing is
-    served through a real Tailscale: the Serve check is skipped."""
+    (one paired 6 hours ago, so it needs pairing again for danger actions; the other on
+    the trusted machine "laptop"). Nothing is served through a real Tailscale: the Serve
+    check is skipped."""
     import secrets
 
     from fleetledger.web import devices, remote
@@ -692,11 +693,11 @@ def seed_remote(port: int):
                             ("you@example.com",))
     remote.save(setting)
     now = time.time()
-    for name, how, ago in (("phone", "laptop", 6 * 3600),
-                           ("laptop", devices.FROM_LINK, 1800)):
+    for name, how, ago, machine in (("phone", "laptop", 6 * 3600, None),
+                                    ("laptop", devices.FROM_LINK, 1800, "laptop")):
         devices.Devices(wall=lambda ago=ago: now - ago).add(
             secrets.token_urlsafe(32), name=name, login="you@example.com",
-            origin=setting.origin, how=how)
+            origin=setting.origin, how=how, machine=machine)
     return setting
 
 

@@ -230,9 +230,9 @@ class Gate:
             pairing = self.devices.take_pairing(token)
             if pairing is None:
                 return None
-            name, how = pairing.name, pairing.how
+            name, how, machine = pairing.name, pairing.how, pairing.machine
         elif mine:
-            name, how = None, devices_mod.FROM_TERMINAL
+            name, how, machine = None, devices_mod.FROM_TERMINAL, None
         else:
             return None
         # The device this browser held before, if the same login paired it (another
@@ -242,7 +242,7 @@ class Gate:
         device = self.devices.add(
             session_id, name=name or (old.name if old else devices_mod.guess_name(user_agent)),
             login=login, origin=self.remote.origin, how=how,
-            replaces=old.key if old else None)
+            replaces=old.key if old else None, machine=machine)
         from fleetledger.concierge import audit
 
         audit.record("-", "ui-pair", "web", "again" if old else "ok", account=login)

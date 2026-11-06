@@ -12,14 +12,26 @@
   (`untrust NAME`, behind the dialog) and renewing this computer's certificate
   (`trust --this-computer`) are jobs too. What a machine may log in as stays the
   /setup/machine form.
+- **Download bundle** (a machine's row, and a paired device's own machine on a
+  Ship's Access tab or in the banner when its certificate is due) renews the
+  machine's certificate with `ship-fleet trust NAME` (with `--hostnames overlay` from
+  a paired device: what resolves on this computer may not there) and answers with
+  the bundle as shipshape-NAME.tar.gz. It holds no secret: a certificate for a key
+  whose private half stays on that machine, the CA's public line, SSH config and
+  install.sh. Run in the request (it signs here and contacts no Ship), so the
+  download is the answer; never for this computer's own entry, which renews itself.
 - Every action is the CLI's own command (jobs.run_cli), so its checks, messages and
   audit entries are the CLI's.
 """
 
 from __future__ import annotations
 
+import io
+import re
+import tarfile
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
@@ -99,13 +111,17 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
 
 
 def _start(request: Request, kind: str, ships: list[str], argv: list[str],
-           title: str) -> bool:
+           title: str, after: Any = None) -> bool:
+    """Start the command as a job; after(), if given, runs once it has succeeded."""
     from fleetledger.web import jobs
 
     ui = _ui(request)
 
     def run(job: Any) -> int:
-        return jobs.run_cli(ui.app, argv, job)
+        code = jobs.run_cli(ui.app, argv, job)
+        if code == 0 and after is not None:
+            after(job)
+        return code
 
     try:
         ui.jobs.start(kind, ships, run, title=title)
@@ -216,7 +232,7 @@ async def renew_ship(request: Request) -> Response:
 # --- machines -----------------------------------------------------------------------
 async def trust_machine(request: Request) -> Response:
     from fleetledger import ca, trustcmd
-    from fleetledger.web.app import form, one
+    from fleetledger.web.app import form, one, session_of
 
     fields = await form(request)
     inv = _inventory(request)
@@ -246,8 +262,32 @@ async def trust_machine(request: Request) -> Response:
     # --key=LINE: one argument, and it starts with ssh-, so the CLI never reads a file.
     argv = ["trust", name, f"--key={key}", *[f"--scope={s}" for s in scope],
             f"--logins={one(fields, 'logins')}", *([f"--hours={hours}"] if hours else [])]
-    _start(request, "trust", [], argv, f"Trust {name}")
+    device = session_of(request).device
+    after = None
+    if device is not None and one(fields, "mine") == "yes":
+        argv.append("--hostnames=overlay")  # its bundle is for a machine elsewhere
+        after = _runs_on(request, device, name)
+    _start(request, "trust", [], argv, f"Trust {name}", after)
     return _to_machines()
+
+
+def _runs_on(request: Request, device: Any, machine: str) -> Any:
+    """After trusting a machine from a paired device that says it runs on it: record that
+    (devices.change, as ship-fleet ui devices DEVICE --machine NAME)."""
+    from fleetledger.web import devices
+
+    ui = _ui(request)
+    store = ui.gate.devices or devices.Devices()
+
+    def after(job: Any) -> None:
+        try:
+            devices.change(store, ui.app.store_factory().load(), device, machine=machine)
+        except FleetError as exc:
+            job.write(f"(Not recorded as this device's machine: {exc.message})\n")
+        else:
+            job.write(f"{device.name} runs on {machine}: Download bundle in its row.\n")
+
+    return after
 
 
 def _trusted(request: Request, inv: Any, name: str) -> Any:
@@ -304,14 +344,99 @@ async def untrust(request: Request) -> Response:
 
 
 async def renew_here(request: Request) -> Response:
-    """This computer's certificate and SSH config, now (`trust --this-computer`)."""
-    from fleetledger.web.app import form
+    """This computer's certificate and SSH config, now (`trust --this-computer`). Never
+    from a paired device: it is the FleetLedger computer's, not the device's."""
+    from fleetledger.web.app import NOT_FROM_A_DEVICE, form, session_of
 
     await form(request)
-    if _inventory(request) is not None:
+    if session_of(request).device is not None:
+        _flash(request, "bad", NOT_FROM_A_DEVICE)
+    elif _inventory(request) is not None:
         _start(request, "trust", [], ["trust", "--this-computer"],
                "Renew this computer's certificate")
     return _to_machines()
+
+
+BUNDLE_FILES = ("config", "known_hosts", "install.sh", "bundle.json")  # and NAME-cert.pub
+IDENTITY_LINE = re.compile(r"^\s*IdentityFile\s+(\S+)\s*$", re.M)
+
+
+def _identity_before(name: str) -> str | None:
+    """The private key path the machine's last bundle named, so a renewal keeps it."""
+    from fleetledger import ca
+
+    try:
+        found = IDENTITY_LINE.search((ca.bundle_dir(name) / "config").read_text())
+    except OSError:
+        return None
+    path = found.group(1) if found else None
+    return path if path and re.fullmatch(r"[~A-Za-z0-9_./-]{1,200}", path) else None
+
+
+def bundle_archive(name: str) -> bytes:
+    """The machine's bundle folder as shipshape-NAME.tar.gz: its known files only, owned
+    by nobody in particular, 0600 in a 0700 folder."""
+    from fleetledger import ca
+
+    folder = ca.bundle_dir(name)
+    top = f"shipshape-{name}"
+
+    def tidy(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        info.mode = 0o700 if info.isdir() else 0o600
+        return info
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(folder, arcname=top, recursive=False, filter=tidy)
+        for file in (*BUNDLE_FILES, f"{name}-cert.pub"):
+            tar.add(folder / file, arcname=f"{top}/{file}", filter=tidy)
+    return buf.getvalue()
+
+
+async def download_bundle(request: Request) -> Response:
+    """Renew a trusted machine's certificate (`ship-fleet trust NAME`) and answer with its
+    bundle to download. from=access&ship=S returns to that Ship's Access tab on a
+    refusal; else Trusted machines."""
+    from fleetledger import trustcmd
+    from fleetledger.web import jobs
+    from fleetledger.web.app import NAME_RE, form, one, session_of
+
+    fields = await form(request)
+    ship = one(fields, "ship")
+    where = (f"/ships/{ship}/access" if one(fields, "from") == "access" and ship
+             and NAME_RE.match(ship) else TO_MACHINES)
+    inv = _inventory(request)
+    m = inv and _trusted(request, inv, one(fields, "machine"))
+    if not m:
+        return RedirectResponse(where, status_code=303)
+    here = trustcmd.this_computer()
+    if here and here["machine"] == m.name:
+        _flash(request, "bad", f"{m.name} is this computer: FleetLedger renews its certificate "
+                               "itself (Renew now).")
+        return RedirectResponse(where, status_code=303)
+    identity = _identity_before(m.name)
+    argv = ["trust", m.name, *([f"--identity={identity}"] if identity else []),
+            *(["--hostnames=overlay"] if session_of(request).device is not None else [])]
+    said = io.StringIO()
+    code = await run_in_threadpool(jobs.run_cli, _ui(request).app, argv, said)
+    if code != 0:
+        lines = [x for x in said.getvalue().splitlines() if x.strip()]
+        _flash(request, "bad", f"{m.name}'s bundle was not renewed: "
+                               + (lines[-1] if lines else "the command failed."))
+        return RedirectResponse(where, status_code=303)
+    # The pages read the poller's inventory: take the new certificate's date in now
+    # (no Ship is asked), so a "certificate due" banner goes at once.
+    await run_in_threadpool(_ui(request).fleet.poll, [])
+    try:
+        data = await run_in_threadpool(bundle_archive, m.name)
+    except OSError as exc:
+        _flash(request, "bad", f"{m.name}'s certificate was renewed, but its bundle could not "
+                               f"be read ({exc.strerror}).")
+        return RedirectResponse(where, status_code=303)
+    return Response(data, media_type="application/gzip", headers={
+        "content-disposition": f'attachment; filename="shipshape-{m.name}.tar.gz"'})
 
 
 def routes() -> list[Route]:
@@ -322,4 +447,5 @@ def routes() -> list[Route]:
         Route("/settings/machines/scope", machine_scope, methods=["POST"]),
         Route("/settings/machines/untrust", untrust, methods=["POST"]),
         Route("/settings/machines/renew-here", renew_here, methods=["POST"]),
+        Route("/settings/machines/bundle", download_bundle, methods=["POST"]),
     ]

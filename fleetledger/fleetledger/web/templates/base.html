@@ -31,6 +31,18 @@
   {% endif %}
 </header>
 <main>
+{% if machine_due %}
+  <div class="warning machine-due">
+    <form method="post" action="/settings/machines/bundle" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="machine" value="{{ machine_due.name }}">
+      {{ machine_due.name }}'s certificate {{ "lapsed" if machine_due.lapsed else "lapses" }} at
+      {{ machine_due.until[:10] }} {{ machine_due.until[11:16] }} UTC: ssh and herdr --remote from it
+      {{ "stopped" if machine_due.lapsed else "stop" }} then.
+      <button type="submit" class="small" title="ship-fleet trust {{ machine_due.name }} --hostnames overlay">Renew and download its bundle</button>
+    </form>
+  </div>
+{% endif %}
 {% for kind, text in flashes %}
   <p class="flash {{ kind }}">{{ text }}</p>
 {% endfor %}

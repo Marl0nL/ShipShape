@@ -1,6 +1,6 @@
 {# Settings ▸ Devices (web.devicesweb): the browsers paired with the remote web UI;
-   Rename, Revoke, Sign out every other device; Pair a device. Context: csrf and
-   devicesweb.section_context(). #}
+   Rename, Runs on, Revoke, Sign out every other device; Pair a device. Context: csrf
+   and devicesweb.section_context(). #}
 <section id="devices" class="setup-step settings-group">
   <h2>Devices</h2>
   {% if flash_at == "devices" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
@@ -12,6 +12,8 @@
     (this <code>ship-fleet ui</code> started without it: start it again){% endif %}.
     {% if remote_ui.logins %}Only {{ remote_ui.logins|join(", ") }} may, and each browser pairs once.
     {% else %}Nobody may yet: <code>ship-fleet ui remote --login you@example.com</code>.{% endif %}</p>
+  <p class="hint">Say which trusted machine a device runs on, and a Ship's pages show that
+    machine's attach commands there, and offer its bundle (its certificate, renewed).</p>
   <p class="hint">A paired device stays signed in across restarts, until it is unused for 12 hours,
     30 days after pairing, or you revoke it. Destroy, rollback, trusting machines, setup's keys and
     pairing another device need one paired in the last {{ fresh_hours }} hours: pair it again for
@@ -25,7 +27,7 @@
 
   {% if devices %}
   <table class="devices">
-    <thead><tr><th>Device</th><th>Tailscale login</th><th>Paired</th><th>Last used</th><th>Danger actions</th><th></th></tr></thead>
+    <thead><tr><th>Device</th><th>Tailscale login</th><th>Runs on</th><th>Paired</th><th>Last used</th><th>Danger actions</th><th></th></tr></thead>
     <tbody>
     {% for d in devices %}
     <tr>
@@ -42,6 +44,17 @@
         <code class="fp" title="its id, for ship-fleet ui revoke">{{ d.short }}</code>
       </td>
       <td data-label="Tailscale login">{{ d.login }}</td>
+      <td data-label="Runs on">
+        <form method="post" action="/settings/devices/machine" class="inline runs-on">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="device" value="{{ d.key }}">
+          <select name="machine" aria-label="The trusted machine {{ d.name }} runs on">
+            <option value="">no machine said</option>
+            {% for m in machine_choices %}<option value="{{ m }}"{% if m == d.machine %} selected{% endif %}>{{ m }}</option>{% endfor %}
+          </select>
+          <button type="submit" class="ghost small" title="ship-fleet ui devices {{ d.short }} --machine NAME">Save</button>
+        </form>
+      </td>
       <td data-label="Paired">{{ d.paired }}<br><span class="hint">from {{ d.how }}</span></td>
       <td data-label="Last used">{{ d.seen }}</td>
       <td data-label="Danger actions">{% if d.fresh_until %}until {{ d.fresh_until }}{% else %}<span class="pill muted">pair again</span>{% endif %}</td>
@@ -83,7 +96,10 @@
   <form method="post" action="/settings/devices/pair" class="inline" autocomplete="off">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Name <input name="name" maxlength="40" size="14" placeholder="phone"></label>
-    <button type="submit" title="ship-fleet ui link --name NAME">Pair a device</button>
+    {% if machine_choices %}
+    <label>Runs on <select name="machine"><option value="">no machine said</option>{% for m in machine_choices %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></label>
+    {% endif %}
+    <button type="submit" title="ship-fleet ui link --name NAME --machine MACHINE">Pair a device</button>
   </form>
   {% endif %}
 </section>

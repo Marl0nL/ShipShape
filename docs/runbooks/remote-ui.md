@@ -152,6 +152,44 @@ ssh desktop ship-fleet ui link --name phone --qr
 The page shows the link once and never again. Pairing another device from the laptop
 needs the laptop to have been paired in the last 4 hours (below).
 
+## 6. Attach from the laptop: its machine and bundle
+
+A Ship's pages show the attach commands of the machine your browser is on. On the
+desktop's own browser that is the desktop, as ever. On a paired device it is the
+trusted machine you say it runs on; until you say, the pages ask (a Ship's Access
+tab, "This browser's machine"), and they never offer "Let this computer use ssh",
+which would trust the desktop rather than the laptop.
+
+Once, on the laptop:
+
+1. Make it a key: `ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519`.
+2. In the remote web UI, Settings ▸ Trusted machines ▸ **Trust a machine**: name it
+   (`laptop`), paste the one line of `~/.ssh/shipshape/id_ed25519.pub`, choose its Ships
+   and logins, and tick **this browser runs on it**. (Already trusted? Choose it on a
+   Ship's Access tab, in Settings ▸ Devices ▸ Runs on, or
+   `ship-fleet ui devices laptop --machine laptop`; `ship-fleet ui link --machine
+   laptop` says it at pairing.)
+3. **Download bundle** (in its row, or a Ship's Access tab: Renew and download its
+   bundle), then in the folder it downloaded to:
+
+   ```sh
+   tar xzf shipshape-laptop.tar.gz && sh shipshape-laptop/install.sh
+   ```
+
+   Its `HostName`s are the Ships' overlay names, which work wherever the laptop is.
+
+Then `ssh ship-01` and `herdr --remote ship-01` work from the laptop, and its pages
+show those commands.
+
+**Renewing.** The laptop's certificate lasts the
+fleet's certificate lifetime, 7 days by default. In its last day, every page on the
+laptop shows a banner with **Renew and download its bundle**; run the same two commands.
+Downloading a bundle does not need a fresh pairing: a certificate is no use without the
+laptop's private key, which never leaves it. If the laptop is lost, untrust it
+(Settings ▸ Trusted machines) as well as revoking its device.
+
+A phone has no ssh: leave its machine unsaid.
+
 ## What a device may do, and for how long
 
 - Everything the UI does, as from the desktop.

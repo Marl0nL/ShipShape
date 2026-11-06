@@ -149,6 +149,19 @@ send only the new certificate, use:
 ship-fleet trust laptop --print-cert | ssh laptop 'cat > ~/.ssh/shipshape/laptop-cert.pub'
 ```
 
+Or, from the web UI (on this computer, or on the laptop itself through the remote web
+UI, [remote-ui.md](remote-ui.md)): **Download bundle** in the machine's row under
+Settings ▸ Trusted machines. It runs `ship-fleet trust laptop` and hands you the bundle
+as `shipshape-laptop.tar.gz`; on the laptop,
+`tar xzf shipshape-laptop.tar.gz && sh shipshape-laptop/install.sh`. The bundle holds
+no secret (a certificate for the laptop's key, the CA's public line, SSH config and
+`install.sh`), and a renewal keeps the private key path the last bundle named.
+
+Each Ship's `HostName` in a bundle is the first of its names that resolves on the
+computer FleetLedger runs on. For a machine elsewhere, `--hostnames overlay` writes the
+overlay name of each Ship on the overlay instead (the remote web UI's Download bundle
+does that).
+
 Re-run `install.sh` after adding Ships, so the new Ships get `Host` blocks and
 herdr entries.
 
