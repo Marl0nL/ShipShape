@@ -91,6 +91,15 @@ class Repo:
             return GitState("unknown", False)
         return GitState(commit, bool(status.strip()))
 
+    def on_remote(self, commit: str) -> bool | None:
+        """Is commit on a remote-tracking branch, so another checkout can fetch it?
+        None outside git."""
+        try:
+            out = _git(self.root, "branch", "-r", "--contains", commit)
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        return bool(out.strip())
+
     def git_files(self, subdir: str) -> list[str] | None:
         """Tracked and untracked-but-not-ignored files under subdir, or None outside git."""
         try:

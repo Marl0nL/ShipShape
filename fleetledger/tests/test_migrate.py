@@ -1,0 +1,1000 @@
+"""ship-fleet migrate (migrate.py): moving FleetLedger to another computer.
+
+Two computers in one test, each with a home of its own (HOME and FleetLedger's
+folders, at different paths), its own fake keyring and its own ssh-agent, and one
+checkout at one commit. Copy A is made the way the first run makes a fleet (managed
+keys, a CA), with Ships, trusted machines, a narrowed scope and an untrusted machine.
+
+The Ships are fakes behind FleetLedger's real SSH code: a fake runner stands in for
+ssh and the network. Like a real Ship, each answers only when FleetLedger's own
+known_hosts pins the host key it really has, and only to the admin key it was seeded
+with, once that key is opened on the calling computer (in its ssh-agent). Each keeps
+the trust `ship-fleet ca sign` gave it (host certificate, user CA keys, revocation
+list) and records every command that would change it.
+
+Nothing here touches a real home, keyring, agent or network.
+"""
+
+from __future__ import annotations
+
+import base64
+import copy
+import hashlib
+import io
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import socket
+import sqlite3
+import stat
+import subprocess
+import tarfile
+import tempfile
+import threading
+import tomllib
+from pathlib import Path
+
+import pytest
+from conftest import REPO_ROOT, keygen
+from fleetledger.drivers import proxmox_api
+from fleetledger.errors import FleetError
+from fleetledger.overlay import secret_store
+from fleetledger.ssh import SHIP_CTL
+from fleetledger.store import TomlFileStore
+from test_cli import RUNNING, result
+from test_secret_store import fake_backend
+
+from fleetledger import ca, cli, inuse, keys, migrate, paths, schemas
+
+pytestmark = pytest.mark.skipif(
+    not (shutil.which("ssh-keygen") and shutil.which("ssh-agent") and shutil.which("ssh-add")),
+    reason="needs OpenSSH's ssh-keygen, ssh-agent and ssh-add")
+
+VERSION = result("version", data={"tooling": "0.1.0", "commit": "0123456789ab", "contracts": {
+    "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1,
+    "runtime": 1, "ssh-trust": 1}})
+CERT_ALGO = "ssh-ed25519-cert-v01@openssh.com"
+
+
+# --- the Ships ----------------------------------------------------------------------------
+
+
+def cert_facts(cert_line: str) -> dict:
+    """What a Ship reports about its host certificate (contracts/ship-status), read
+    from the certificate itself with ssh-keygen -L."""
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "c-cert.pub"
+        f.write_text(cert_line + "\n")
+        text = subprocess.run(["ssh-keygen", "-L", "-f", str(f)], capture_output=True,
+                              text=True, check=True, env={**os.environ, "TZ": "UTC"}).stdout
+    valid = re.search(r"Valid: from (\S+) to (\S+)", text)
+    principals = text.split("Principals:", 1)[1].split("Critical Options:", 1)[0].split()
+    return {"serial": int(re.search(r"Serial: (\d+)", text).group(1)),
+            "key_id": re.search(r'Key ID: "(.*)"', text).group(1),
+            "principals": principals,
+            "valid_after": valid.group(1) + "Z", "valid_before": valid.group(2) + "Z",
+            "ca_fingerprint": re.search(r"Signing CA: \S+ (SHA256:\S+)", text).group(1),
+            "subject": re.search(r"Public key: \S+ (SHA256:\S+)", text).group(1)}
+
+
+class FakeShip:
+    def __init__(self, name, ship_id, names, tags, host_key):
+        self.name, self.id, self.names, self.tags = name, ship_id, tuple(names), list(tags)
+        self.host_key = host_key  # its real host key, pinned in the seed
+        self.admin = None  # the authorized admin key cloud-init wrote (type blob)
+        self.cert = None
+        self.trust = None  # the last ssh-trust document it took
+        self.changes = []  # every command that would change it
+
+    def state(self):
+        return (self.admin, self.cert, json.dumps(self.trust, sort_keys=True),
+                tuple(map(tuple, self.changes)))
+
+    def ssh_block(self):
+        if self.trust is None:
+            return {"host_certificate": None, "user_ca": [], "agent_principals": [],
+                    "revoked_keys_sha256": None}
+        facts = cert_facts(self.cert) if self.cert else None
+        if facts:
+            facts.pop("subject")
+        return {"host_certificate": facts,
+                "user_ca": [ca.fingerprint(k) for k in self.trust["user_ca_keys"]],
+                "agent_principals": ["agent:all"] + [f"agent:tag:{t}" for t in self.tags],
+                "revoked_keys_sha256": hashlib.sha256(
+                    base64.b64decode(self.trust["revoked_keys"])).hexdigest()}
+
+    def answer(self, argv, input):
+        if argv[:3] != ["sudo", "-n", SHIP_CTL]:
+            return (0, "", "") if argv == ["true"] else (127, "", "unknown command")
+        verb = argv[3]
+        if verb == "version":
+            return 0, json.dumps(VERSION), ""
+        if verb == "status":
+            doc = copy.deepcopy(RUNNING)
+            doc["ship"].update(name=self.name, id=self.id, tags=self.tags)
+            doc["ssh"] = self.ssh_block()
+            return 0, json.dumps(doc), ""
+        self.changes.append(argv)
+        if verb == "ssh-trust":
+            doc = json.loads(input)
+            schemas.check("ssh-trust", doc, "ssh-trust")
+            if doc.get("host_certificate"):
+                facts = cert_facts(doc["host_certificate"])
+                assert facts["subject"] == ca.fingerprint(self.host_key), "not my key"
+                self.cert = doc["host_certificate"]
+            self.trust = doc
+        return 0, json.dumps(result(verb, changed=["/etc/ssh/x"])), ""
+
+    def presents_certificate(self, host, known_hosts: Path) -> bool:
+        if not self.cert:
+            return False
+        facts = cert_facts(self.cert)
+        for line in known_hosts.read_text().splitlines():
+            parts = line.split()
+            if parts[:1] == ["@cert-authority"] and host in parts[1].split(",") and \
+                    ca.fingerprint(" ".join(parts[2:4])) == facts["ca_fingerprint"]:
+                return host in facts["principals"]
+        return False
+
+
+def done(argv, code, out="", err=""):
+    out = out.encode() if isinstance(out, str) else out
+    return subprocess.CompletedProcess(argv, code, out, err.encode())
+
+
+class World:
+    """The network and the Ships, as FleetLedger's ssh meets them."""
+
+    def __init__(self, folder: Path):
+        self.folder = folder
+        folder.mkdir()
+        self.ships: dict[str, FakeShip] = {}
+        self.calls = []  # (ship, argv) of every command that reached a Ship
+        self.down: set[str] = set()
+
+    def make(self, name, ship_id, names, tags) -> str:
+        keygen(self.folder / name, name)
+        host_key = " ".join((self.folder / f"{name}.pub").read_text().split()[:2])
+        self.ships[name] = FakeShip(name, ship_id, names, tags, host_key)
+        return host_key
+
+    def seed_admin(self, admin_pub: Path) -> None:
+        for ship in self.ships.values():
+            ship.admin = keys.public_line(admin_pub.with_suffix(""))
+
+    def state(self):
+        return {n: s.state() for n, s in self.ships.items()}
+
+    def runner(self, argv, input=b"", **_kw):
+        opts, identity, user, i = {}, None, None, 1
+        while argv[i] != "--":
+            if argv[i] == "-o":
+                key, value = argv[i + 1].split("=", 1)
+                opts.setdefault(key, value)  # ssh keeps the first value it reads
+                i += 2
+            elif argv[i] in ("-i", "-l", "-p"):
+                identity = argv[i + 1] if argv[i] == "-i" else identity
+                user = argv[i + 1] if argv[i] == "-l" else user
+                i += 2
+            else:
+                i += 1
+        host, command = argv[i + 1], argv[i + 2:]
+        ship = next((s for s in self.ships.values() if host in s.names), None)
+        if ship is None or ship.name in self.down:
+            return done(argv, 255, err=f"ssh: connect to host {host} port 22: No route to host")
+        known = Path(opts["UserKnownHostsFile"])
+        if opts.get("HostKeyAlgorithms") == CERT_ALGO:
+            if not ship.presents_certificate(host, known):
+                return done(argv, 255, err="Host key verification failed.")
+        else:
+            alias = opts["HostKeyAlias"]
+            pinned = {line.split(None, 1)[1] for line in known.read_text().splitlines()
+                      if line.startswith(alias + " ")}
+            if ship.host_key not in pinned:
+                return done(argv, 255, err="Host key verification failed.")
+        if user != "fleet" or identity is None or not self._opens(Path(identity), ship):
+            return done(argv, 255, err="fleet@ship: Permission denied (publickey).")
+        remote = shlex.split(command[0]) if command else []
+        self.calls.append((ship.name, remote))
+        code, out, err = ship.answer(remote, input)
+        return done(argv, code, out, err)
+
+    @staticmethod
+    def _opens(identity: Path, ship: FakeShip) -> bool:
+        """The admin key it was seeded with, usable here: unencrypted, or held by this
+        computer's ssh-agent (so this computer's store opened it)."""
+        if keys.public_line(identity) != ship.admin:
+            return False
+        if not keys.needs_passphrase(identity):
+            return True
+        held = subprocess.run(["ssh-add", "-L"], capture_output=True, text=True).stdout
+        return ship.admin in {" ".join(line.split()[:2]) for line in held.splitlines()}
+
+
+# --- two computers ------------------------------------------------------------------------
+
+
+class Computer:
+    def __init__(self, name: str, root: Path, short: Path, checkout, world: World):
+        self.name, self.root, self.checkout, self.world = name, root, checkout, world
+        self.home = root / "home"
+        self.home.mkdir(parents=True, exist_ok=True)
+        self.env = {"HOME": str(self.home),
+                    "FLEETLEDGER_CONFIG_DIR": str(root / "config"),
+                    "FLEETLEDGER_DATA_DIR": str(root / "data"),
+                    "FLEETLEDGER_RUNTIME_DIR": str(short / f"{name}-run")}
+        self.ring = fake_backend()
+        self.sock = short / f"{name}.sock"
+        out = subprocess.run(["ssh-agent", "-a", str(self.sock)], capture_output=True,
+                             text=True, check=True, timeout=10).stdout
+        self.agent_pid = int(out.split("SSH_AGENT_PID=")[1].split(";")[0])
+        self.store = TomlFileStore(root / "config" / "ships.toml")
+        self.out, self.err = io.StringIO(), io.StringIO()
+        self.app = cli.App(
+            out=self.out, err=self.err, store_factory=lambda: self.store,
+            repo_factory=lambda: self.checkout, ssh_factory=self.ssh,
+            stdin_isatty=lambda: False, resolves=lambda host: True, sleep=lambda s: None,
+            keyscan=lambda host: (_ for _ in ()).throw(AssertionError("keyscan")),
+            herdr=False)
+
+    def ssh(self, inv):
+        """What ship-fleet itself does (cli._ssh_with_managed_keys), over the World."""
+        from fleetledger.ssh import SSH
+
+        keys.ensure_loaded(inv)
+        return SSH(inv, runner=self.world.runner)
+
+    def use(self, monkeypatch) -> Computer:
+        for key, value in self.env.items():
+            monkeypatch.setenv(key, value)
+        for key in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "SHIPSHAPE_REPO",
+                    "PYTHONPATH"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("SSH_AUTH_SOCK", str(self.sock))
+        monkeypatch.setattr(secret_store, "get_keyring", lambda: self.ring)
+        monkeypatch.setattr(keys, "_ADDED", {})
+        monkeypatch.setattr(socket, "gethostname", lambda: self.name)
+        return self
+
+    def run(self, *argv):
+        for stream in (self.out, self.err):
+            stream.seek(0)
+            stream.truncate()
+        code = cli.main(list(argv), self.app)
+        return code, self.out.getvalue(), self.err.getvalue()
+
+    def files(self) -> dict[str, bytes]:
+        """Every file this computer holds, by path under its root (locks aside)."""
+        found = {}
+        for base in (self.root, Path(self.env["FLEETLEDGER_RUNTIME_DIR"])):
+            for f in sorted(base.rglob("*")):
+                if f.is_file() and not f.name.endswith(".lock"):
+                    found[str(f.relative_to(base))] = f.read_bytes()
+        return found
+
+
+def commit_all(root: Path, message: str = "fleet") -> str:
+    git = ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    if not (root / ".git").exists():
+        subprocess.run([*git, "init", "-q"], check=True)
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", message, "--allow-empty"], check=True)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+@pytest.fixture
+def checkout(fake_repo):
+    commit_all(fake_repo.root)
+    return fake_repo
+
+
+@pytest.fixture
+def short():
+    """A short folder for agent sockets (Unix socket paths are limited)."""
+    folder = Path(tempfile.mkdtemp(prefix="flm-", dir="/tmp"))
+    yield folder
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory):
+    """Copy A, made once (it takes a few seconds) and put back exactly as it was, at
+    the same paths, before each test."""
+    from fleetledger.repo import Repo
+
+    root = tmp_path_factory.mktemp("fleet")
+    sockets = Path(tempfile.mkdtemp(prefix="flm-", dir="/tmp"))
+    world = World(root / "world")
+    with pytest.MonkeyPatch.context() as mp:
+        a = Computer("desktop", root / "a", sockets, Repo(REPO_ROOT), world)
+        try:
+            make_fleet(a, mp)
+        finally:
+            os.kill(a.agent_pid, signal.SIGTERM)
+    snapshot = root / "snapshot"
+    shutil.copytree(a.root, snapshot, symlinks=True)
+    yield a.root, snapshot, dict(a.ring.items), world
+    shutil.rmtree(sockets, ignore_errors=True)
+
+
+@pytest.fixture
+def computers(built, tmp_path, short, checkout, monkeypatch):
+    a_root, snapshot, ring, built_world = built
+    shutil.rmtree(a_root)
+    shutil.copytree(snapshot, a_root, symlinks=True)
+    world = copy.deepcopy(built_world)
+    a = Computer("desktop", a_root, short, checkout, world)
+    a.ring.items.update(ring)
+    b = Computer("vm", tmp_path / "b" / "elsewhere", short, checkout, world)
+    a.use(monkeypatch)
+    yield a, b, world
+    for c in (a, b):
+        os.kill(c.agent_pid, signal.SIGTERM)
+
+
+SHIPS = [("ship-01", "7c9e6679-7425-40de-944b-e07fc1f90ae7", ["ship-01.local"], ["work"]),
+         ("ship-02", "2f1b8a54-3c6e-4d1f-9a2b-5e8c7d6f4a31",
+          ["ship-02.local", "ship-02.example.net"], ["personal"])]
+
+
+def make_fleet(a: Computer, monkeypatch) -> None:
+    """Copy A, as the first run and a few weeks of use leave it."""
+    from fleetledger.web import setup
+
+    a.use(monkeypatch)
+    setup._new_fleet(a.app, {"store": ["keyring"], "your_key": ["new"]})
+    with a.store.edit() as ed:
+        ed.set_default("driver", "manual")
+        for name, ship_id, names, tags in SHIPS:
+            host_key = a.world.make(name, ship_id, names, tags)
+            ed.add_ship(name, {"id": ship_id, "tags": tags, "driver": "manual", "names": names,
+                               "host_key": host_key, "enrolled": "2026-01-01T00:00:00Z"})
+    a.world.seed_admin(a.store.load().admin_key.with_name("shipshape_fleet_ed25519.pub"))
+    machines = a.root / "machines"
+    machines.mkdir()
+    for name in ("laptop", "old-laptop", "phone"):
+        keygen(machines / name, name)
+    you = a.home / ".ssh" / "shipshape_ed25519.pub"
+    steps = [("trust", "desktop", "--key", str(you)),
+             ("trust", "laptop", "--key", str(machines / "laptop.pub")),
+             ("trust", "phone", "--key", str(machines / "phone.pub")),
+             ("trust", "phone", "--scope", "tag:work"),  # narrowed: its wider certificate revoked
+             ("trust", "old-laptop", "--key", str(machines / "old-laptop.pub")),
+             ("untrust", "old-laptop"),
+             ("ca", "sign")]
+    for argv in steps:
+        code, out, err = a.run(*argv)
+        assert code == 0, (argv, out, err)
+    (a.root / "config" / "this-computer.json").write_text(json.dumps(
+        {"machine": "desktop", "identity": "~/.ssh/shipshape_ed25519"}))
+    data = a.root / "data"
+    (data / "audit.log").write_text("2026-01-01T00:00:00Z ship-01 claude ok work@example.com\n")
+    (data / "attempts.json").write_text("[]\n")
+    (data / "net").mkdir()
+    (data / "net" / "ship-01.json").write_text("{}\n")
+    db = sqlite3.connect(data / "history.sqlite3")
+    db.execute("create table samples (ship text, at real)")
+    db.execute("insert into samples values ('ship-01', 1.0)")
+    db.commit()
+    db.close()
+    (data / "inbox-spool").mkdir()
+    (data / "inbox-spool" / "half-sent").write_bytes(b"x")
+    (data / "images" / "base").mkdir(parents=True)
+    (data / "images" / "base" / "noble.img").write_bytes(b"ubuntu")
+    (a.root / "config" / "proxmox-setup-progress.json").write_text("{}\n")
+    assert a.run("ls")[0] == 0  # the status cache, and FleetLedger's known_hosts
+
+
+def send_bytes(a: Computer, monkeypatch, **kw) -> bytes:
+    a.use(monkeypatch)
+    out = io.BytesIO()
+    migrate.send(a.app, out, **kw)
+    return out.getvalue()
+
+
+def receive(b: Computer, monkeypatch, stream: bytes, **kw) -> int:
+    b.use(monkeypatch)
+    for s in (b.out, b.err):
+        s.seek(0)
+        s.truncate()
+    return migrate.receive(b.app, io.BytesIO(stream), **kw)
+
+
+def invariant(doc):
+    return migrate._invariant(doc)
+
+
+# --- the whole move -----------------------------------------------------------------------
+
+
+def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed(
+        computers, monkeypatch):
+    a, b, world = computers
+    a_files, a_doc = a.files(), tomllib.loads(a.store.path.read_text())
+    a_krl = (a.root / "data" / "ca" / "revoked-keys.krl").read_bytes()
+    ships_before = world.state()
+    phone = a_doc["machine"]["phone"]
+    assert phone["issued"] and a_doc["machine"]["old-laptop"]["revoked"]  # what must not be lost
+
+    stream = send_bytes(a, monkeypatch)
+    world.calls.clear()
+    code = receive(b, monkeypatch, stream)
+    out = b.out.getvalue()
+    assert code == migrate.VERIFIED, out + b.err.getvalue()
+    assert "no remote branch" not in out
+
+    # Every Ship answered B on its pin with the same admin key, and nothing on any changed.
+    assert world.state() == ships_before
+    assert world.calls and all(argv[3:4] in (["status"], ["version"]) for _s, argv in world.calls)
+    assert "FAIL" not in out and "WARN" not in out
+    for name, *_ in SHIPS:
+        assert f"{name} certificate" in out and "signed by this CA; same revocation list" in out
+
+    # The whole inventory came: every Ship and pin, machine, issued certificate, revocation.
+    b_doc = tomllib.loads(b.store.path.read_text())
+    assert invariant(b_doc) == invariant(a_doc)
+    assert b_doc["machine"]["phone"]["issued"] == phone["issued"]
+    assert (b.root / "elsewhere").exists() is False  # nothing written outside its folders
+    b_krl = (b.root / "data" / "ca" / "revoked-keys.krl").read_bytes()
+    assert b_krl == a_krl and ca.build_krl(b.store.load()) == a_krl  # byte for byte
+
+    # The keys: same files at the same place under B's home; passphrases stored again
+    # under B's own item names (a passphrase's item depends on the key's full path).
+    for name in ("shipshape_fleet_ed25519", "shipshape_host_ca_ed25519",
+                 "shipshape_user_ca_ed25519"):
+        for f in (name, name + ".pub"):
+            assert (b.home / ".ssh" / f).read_bytes() == (a.home / ".ssh" / f).read_bytes()
+        assert stat.S_IMODE((b.home / ".ssh" / name).stat().st_mode) == 0o600
+        item_b = keys.item(b.home / ".ssh" / name)
+        assert item_b != keys.item(a.home / ".ssh" / name)
+        assert b.ring.items[("fleetledger", item_b)] == \
+            a.ring.items[("fleetledger", keys.item(a.home / ".ssh" / name))]
+    assert b_doc["fleet"]["managed_keys"] == {"store": "keyring", "keys": [
+        "~/.ssh/shipshape_fleet_ed25519", "~/.ssh/shipshape_host_ca_ed25519",
+        "~/.ssh/shipshape_user_ca_ed25519"]}
+
+    # Your own key FleetLedger made stays on your machines: only its .pub moves.
+    assert not (b.home / ".ssh" / "shipshape_ed25519").exists()
+    own = b.root / "config" / "agent-keys" / "shipshape_ed25519.pub"
+    assert own.read_bytes() == (a.home / ".ssh" / "shipshape_ed25519.pub").read_bytes()
+    assert [paths.expand(k) for k in b_doc["fleet"]["agent_keys"]] == [own]
+    assert not any("shipshape_ed25519-" in item for _svc, item in b.ring.items)
+
+    # What never moves; known_hosts is written afresh from the pins.
+    assert not (b.root / "config" / "this-computer.json").exists()
+    for gone in ("config/proxmox-setup-progress.json", "data/inbox-spool",
+                 "data/images/base"):
+        assert not (b.root / gone).exists(), gone
+    assert "known_hosts" not in b_doc["fleet"]
+    assert (b.root / "config" / "known_hosts").read_text() == \
+        (a.root / "config" / "known_hosts").read_text()
+    # What does: history and caches.
+    for kept in ("audit.log", "attempts.json", "net/ship-01.json", "status/ship-01.json",
+                 "trust/laptop", "trust/phone"):
+        assert (b.root / "data" / kept).exists(), kept
+    rows = sqlite3.connect(b.root / "data" / "history.sqlite3").execute(
+        "select * from samples").fetchall()
+    assert rows == [("ship-01", 1.0)]
+
+    # Copy B now acts on the fleet as A did: ca sign finds every Ship up to date, a
+    # renewal is recorded beside A's certificates, and still nothing changed on the Ships.
+    code, out, err = b.run("ca", "sign")
+    assert code == 0 and out.count("up to date") == 2, out + err
+    code, out, err = b.run("trust", "laptop", "--print-cert")
+    assert code == 0 and out.startswith("ssh-ed25519-cert-v01@openssh.com "), err
+    laptop = tomllib.loads(b.store.path.read_text())["machine"]["laptop"]
+    before = [i["serial"] for i in a_doc["machine"]["laptop"]["issued"]]
+    assert [i["serial"] for i in laptop["issued"]] == [*before, laptop["last_serial"]]
+    code, out, err = b.run("ls")
+    assert code == 0 and "ship-01" in out and "ship-02" in out
+    assert world.state() == ships_before
+
+    # Nothing on the old computer changed.
+    a.use(monkeypatch)
+    assert a.files() == a_files
+
+
+def test_the_file_store_keeps_every_secret_in_0600_files(computers, monkeypatch):
+    a, b, world = computers
+    code = receive(b, monkeypatch, send_bytes(a, monkeypatch), store_kind="file")
+    assert code == migrate.VERIFIED, b.out.getvalue()
+    doc = tomllib.loads(b.store.path.read_text())
+    assert doc["fleet"]["managed_keys"]["store"] == "file"
+    for name in ("shipshape_fleet_ed25519", "shipshape_host_ca_ed25519",
+                 "shipshape_user_ca_ed25519"):
+        secret = keys.passphrase_file(b.home / ".ssh" / name)
+        assert stat.S_IMODE(secret.stat().st_mode) == 0o600
+    assert b.ring.sets == []
+    b_files = b.files()
+    code, out, err = b.run("migrate", "check")  # and it can move on again from here
+    assert code == 0 and "Ready to move" in out, out + err
+    assert b.files() == b_files
+
+
+def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
+        computers, monkeypatch):
+    a, b, world = computers
+    a.use(monkeypatch)
+    token_item = secret_store.proxmox_item("fleet@pve!ledger")
+    oauth_item = secret_store.oauth_item("k123EXAMPLE")
+    a.ring.set_password("fleetledger", token_item, "11111111-2222-3333-4444-555555555555")
+    a.ring.set_password("fleetledger", oauth_item, "tskey-client-k123EXAMPLE-SECRET")
+    with a.store.edit() as ed:
+        ed.set_driver("proxmox", {
+            "api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
+            "pool": "shipshape", "template_vmid": 9000, "seed_storage": "local",
+            "disk_storage": "local-lvm", "bridge": "vmbr0", "token_id": "fleet@pve!ledger",
+            "token_store": "keyring", "keyring_item": token_item,
+            "tls_fingerprint": ":".join(["AB"] * 32)})
+        ed.set_overlay({"provider": "tailscale", "tags": ["tag:ship"],
+                        "key_source": "tailscale-api",
+                        "api": {"tailnet": "-", "oauth_client_id": "k123EXAMPLE",
+                                "secret_store": "keyring", "keyring_item": oauth_item}})
+    stream = send_bytes(a, monkeypatch)
+    assert b"11111111-2222" not in stream.split(b"secrets.json")[0]  # only in the secrets
+
+    seen = {}
+
+    class PVE:
+        def __init__(self, config):
+            seen["token"] = proxmox_api.token_secret(config)
+
+        def get(self, path):
+            return {"version": "8.2"}
+
+    class Tailnet:
+        granted = frozenset({"auth_keys"})
+
+        def __init__(self, api):
+            seen["oauth"] = secret_store.load(api)
+
+        def token(self):
+            return "t"
+
+    b.app.proxmox_api = PVE
+    b.app.overlay_api = Tailnet
+    code = receive(b, monkeypatch, stream, store_kind="file")
+    out = b.out.getvalue()
+    assert code == migrate.VERIFIED, out
+    assert seen == {"token": "11111111-2222-3333-4444-555555555555",
+                    "oauth": "tskey-client-k123EXAMPLE-SECRET"}
+    doc = tomllib.loads(b.store.path.read_text())
+    pve = doc["drivers"]["proxmox"]
+    assert "token_store" not in pve and "keyring_item" not in pve
+    token_file = paths.expand(pve["token_file"])
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+    assert doc["overlay"]["api"]["secret_store"] == "file"
+    assert "works through the pinned certificate" in out and "scopes the keys level" in out
+
+    # Into a keyring, under the names this computer works out.
+    b.root.joinpath("config").rename(b.root / "config-file")
+    shutil.rmtree(b.root / "data")
+    shutil.rmtree(b.home / ".ssh")
+    code = receive(b, monkeypatch, stream, store_kind="keyring")
+    assert code == migrate.VERIFIED, b.out.getvalue()
+    assert b.ring.items[("fleetledger", token_item)].startswith("11111111")
+    assert b.ring.items[("fleetledger", oauth_item)].startswith("tskey-client")
+
+
+# --- what moves, what stays, what stops it --------------------------------------------------
+
+
+def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
+    a, b, world = computers
+    code, out, err = a.run("migrate", "check")
+    assert code == 0, out + err
+    moves, stays = out.split("Stays here:")
+    for what in ("inventory: 2 Ship(s), 4 trusted machine(s) (1 untrusted)", "fleet admin key",
+                 "host CA key", "user CA key", "your key for Ships (public half)", "audit log",
+                 "last status", "charts and Activity history", "failed Ship attempts",
+                 "network summaries", "revocation list", "trust bundle",
+                 "secrets, stored again there", "3 key passphrase(s)"):
+        assert what in moves, what
+    assert "revoked host key" in moves and "issued certificate(s) on record" in moves
+    for path, why in (("this-computer.json", "a fact about this computer"),
+                      ("known_hosts", "rebuilt from the inventory"),
+                      ("proxmox-setup-progress.json", "part-finished Proxmox setup"),
+                      ("inbox-spool/half-sent", "half-way to a Ship"),
+                      ("images/base/noble.img", "Ubuntu's cloud image"),
+                      ("shipshape_ed25519", "stay on your machines")):
+        line = next((x for x in stays.splitlines() if path in x), "")
+        assert why in line, (path, stays)
+    assert "Ready to move" in out
+    assert "is on no remote branch yet: push it" in out  # said here, not on the new computer
+    assert a.run("migrate", "check")[0] == 0  # read-only: the same again
+
+
+@pytest.mark.parametrize("where", ["config/notes.txt", "data/backup/ships.toml.bak",
+                                   "data/ca/old.krl"])
+def test_a_file_fleetledger_does_not_know_stops_the_move(computers, monkeypatch, where):
+    a, b, world = computers
+    path = a.root / where
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("mine\n")
+    code, out, err = a.run("migrate", "check")
+    assert code == 1 and "Stops the move" in out and "does not know this file" in out
+    with pytest.raises(FleetError, match="Not moving"):
+        send_bytes(a, monkeypatch)
+
+
+def test_a_ship_not_enrolled_yet_or_a_seed_stops_the_move(computers, monkeypatch):
+    a, b, world = computers
+    with a.store.edit() as ed:
+        ed.set_field("ship-02", "enrolled", None)
+    seeds = a.root / "data" / "seeds"
+    seeds.mkdir()
+    (seeds / "ship-02-1.iso").write_bytes(b"seed")
+    code, out, err = a.run("migrate", "check")
+    assert code == 1
+    assert "Ship ship-02: is not enrolled yet" in out and "seed holds a Ship's private host" in out
+
+
+def test_another_ship_fleet_running_stops_the_move_and_waits_for_none(computers, monkeypatch):
+    a, b, world = computers
+    with inuse.using(a.store):  # the web UI, or a sign-in in another terminal
+        code, out, err = a.run("migrate", "check")
+        assert code == 1 and "Another ship-fleet is running on this computer" in out
+        code, out, err = a.run("migrate", "push", "you@vm.example")
+        assert code == 1 and "Another ship-fleet is running" in err
+        with pytest.raises(FleetError, match="Another ship-fleet"):
+            send_bytes(a, monkeypatch)
+    with inuse.exclusive(a.store):  # a migrate copying the fleet: nothing else starts
+        code, out, err = a.run("ls")
+        assert code == 1 and "being moved to or from another computer" in err
+    assert a.run("ls")[0] == 0
+
+
+def test_a_locked_keyring_stops_the_move_before_anything_is_sent(computers, monkeypatch):
+    a, b, world = computers
+    a.ring = fake_backend(locked=True)
+    code, out, err = a.run("migrate", "check")
+    assert code == 1 and "the fleet admin key's passphrase" in out and "locked" in out
+    with pytest.raises(FleetError):
+        send_bytes(a, monkeypatch)
+
+
+def test_uncommitted_changes_in_the_checkout_stop_the_move(computers, monkeypatch):
+    a, b, world = computers
+    (a.checkout.root / "ship" / "bin" / "ship-ctl").write_text("#!/bin/sh\necho changed\n")
+    code, out, err = a.run("migrate", "check")
+    assert code == 1 and "uncommitted changes" in out
+
+
+def test_send_writes_only_into_a_pipe(computers, monkeypatch, tmp_path):
+    a, b, world = computers
+    with open(tmp_path / "fleet.tar", "wb") as fh, pytest.raises(FleetError, match="never into"):
+        migrate._pipe_only(fh)
+    assert not (tmp_path / "fleet.tar").read_bytes()
+    r, w = os.pipe()
+    with os.fdopen(w, "wb") as fh:
+        migrate._pipe_only(fh)  # a pipe is fine
+    os.close(r)
+
+
+def test_send_stops_cleanly_when_the_other_side_stops_reading(computers, monkeypatch):
+    a, b, world = computers
+
+    class Gone(io.RawIOBase):
+        def writable(self):
+            return True
+
+        def write(self, data):
+            raise BrokenPipeError
+
+    a.app.stdout_bytes = Gone()
+    before = a.files()
+    code, out, err = a.run("migrate", "send")
+    assert code == 1 and "stopped reading" in err and out == ""
+    assert a.files() == before
+
+
+# --- receive: refusals, and nothing written ---------------------------------------------------
+
+
+def test_receive_never_writes_over_a_fleetledger(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    (b.root / "data").mkdir(parents=True)
+    (b.root / "data" / "audit.log").write_text("another fleet\n")
+    with pytest.raises(FleetError, match="already has a FleetLedger"):
+        receive(b, monkeypatch, stream)
+    assert not b.store.path.exists() and not (b.home / ".ssh").exists()
+
+
+def test_receive_wants_the_same_commit(computers, monkeypatch, tmp_path):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    other = tmp_path / "other-checkout"
+    shutil.copytree(a.checkout.root, other)
+    (other / "ship" / "files" / "herdr.service").write_text("[Unit]\nDescription=newer\n")
+    commit_all(other, "newer")
+    from fleetledger.repo import Repo
+
+    b.checkout = Repo(other)
+    with pytest.raises(FleetError, match="both must run the same commit"):
+        receive(b, monkeypatch, stream)
+    assert not b.store.path.exists()
+
+
+def _members(stream: bytes) -> list[tuple[tarfile.TarInfo, bytes]]:
+    with tarfile.open(fileobj=io.BytesIO(stream), mode="r|") as tar:
+        return [(m, tar.extractfile(m).read()) for m in tar]
+
+
+def _pack(members) -> bytes:
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w|", format=tarfile.PAX_FORMAT) as tar:
+        for info, data in members:
+            info = copy.copy(info)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return out.getvalue()
+
+
+def _tamper(stream: bytes, how: str) -> bytes:
+    members = _members(stream)
+    if how == "flipped":
+        members = [(i, d[:-2] + bytes([d[-2] ^ 1]) + d[-1:]) if i.name == "keys/admin.pub"
+                   else (i, d) for i, d in members]
+    elif how == "cut short":
+        members = [m for m in members if m[0].name != "data/audit.log"]
+    elif how == "extra":
+        extra = tarfile.TarInfo("data/net/extra.json")
+        members.insert(2, (extra, b"{}"))
+    elif how == "manifest":
+        manifest = json.loads(members[0][1])
+        manifest["files"][0]["member"] = "../../outside"
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+    elif how == "secrets":
+        manifest = json.loads(members[0][1])
+        bad = b"not json"
+        entry = next(f for f in manifest["files"] if f["member"] == "secrets.json")
+        entry.update(size=len(bad), sha256=hashlib.sha256(bad).hexdigest())
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+        members[-1] = (members[-1][0], bad)
+    elif how == "control character":
+        secrets = json.loads(members[-1][1])
+        secrets["passphrases"]["admin"] += "\r"
+        data = json.dumps(secrets).encode()
+        manifest = json.loads(members[0][1])
+        entry = next(f for f in manifest["files"] if f["member"] == "secrets.json")
+        entry.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+        members[-1] = (members[-1][0], data)
+    elif how == "truncated":
+        return stream[: len(stream) // 2]
+    return _pack(members)
+
+
+@pytest.mark.parametrize("how", ["flipped", "cut short", "extra", "manifest", "secrets",
+                                 "control character", "truncated"])
+def test_a_stream_that_is_not_what_was_sent_writes_nothing(computers, monkeypatch, how):
+    a, b, world = computers
+    bad = _tamper(send_bytes(a, monkeypatch), how)
+    b.use(monkeypatch)
+    with pytest.raises(FleetError, match="nothing was written|not a FleetLedger move"):
+        receive(b, monkeypatch, bad)
+    assert not b.store.path.exists() and not (b.home / ".ssh").exists()
+    assert b.ring.sets == []
+    assert not list((b.root / "data").glob(migrate.STAGING + "*"))
+    assert receive(b, monkeypatch, send_bytes(a, monkeypatch)) == migrate.VERIFIED  # then fine
+
+
+def test_a_key_already_there_and_different_is_never_overwritten(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    (b.home / ".ssh").mkdir(mode=0o700)
+    keygen(b.home / ".ssh" / "shipshape_host_ca_ed25519", "someone else's CA")
+    before = (b.home / ".ssh" / "shipshape_host_ca_ed25519").read_bytes()
+    with pytest.raises(FleetError, match="Not writing over files already here"):
+        receive(b, monkeypatch, stream)
+    assert (b.home / ".ssh" / "shipshape_host_ca_ed25519").read_bytes() == before
+    assert not b.store.path.exists() and not (b.home / ".ssh" / "shipshape_fleet_ed25519").exists()
+
+
+def test_the_same_key_already_there_is_kept_as_it_is(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    (b.home / ".ssh").mkdir(mode=0o700)
+    for f in ("shipshape_fleet_ed25519", "shipshape_fleet_ed25519.pub"):
+        shutil.copy(a.home / ".ssh" / f, b.home / ".ssh" / f)  # copied by hand before
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+
+
+def test_a_failure_part_way_takes_back_everything_it_wrote(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    b.ring.set_password("fleetledger", "key-passphrase:unrelated", "keep me")
+    real = b.ring.set_password
+    calls = []
+
+    def flaky(service, item, value):
+        calls.append(item)
+        if len(calls) == 2:
+            raise RuntimeError("the keyring went away")
+        real(service, item, value)
+
+    b.ring.set_password = flaky
+    with pytest.raises(FleetError, match="Could not store"):
+        receive(b, monkeypatch, stream)
+    assert not b.store.path.exists()
+    assert not (b.home / ".ssh" / "shipshape_fleet_ed25519").exists()
+    assert not list((b.root / "data").rglob("*.*"))
+    assert set(b.ring.items) == {("fleetledger", "key-passphrase:unrelated")}
+
+
+def test_the_keyring_asked_for_but_locked_is_refused_not_swapped(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.ring = fake_backend(locked=True)
+    with pytest.raises(FleetError, match="Cannot keep the secrets in the keyring here"):
+        receive(b, monkeypatch, stream, store_kind="keyring")
+    assert not b.store.path.exists()
+
+
+# --- verify --------------------------------------------------------------------------------
+
+
+def test_a_ship_the_new_computer_cannot_reach_leaves_it_unverified(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    world.down.add("ship-02")
+    code = receive(b, monkeypatch, stream)
+    out = b.out.getvalue()
+    assert code == migrate.UNVERIFIED and "FAIL" in out and "ship-02" in out
+    assert "ship-fleet migrate verify" in out
+    assert b.store.path.exists()  # written: fix it, then verify
+    world.down.clear()
+    code, out, err = b.run("migrate", "verify")
+    assert code == 0 and "FAIL" not in out, out + err
+
+
+def test_a_different_time_zone_is_said(computers, monkeypatch):
+    a, b, world = computers
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    stream = send_bytes(a, monkeypatch)
+    monkeypatch.setenv("TZ", "America/New_York")
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED
+    assert "time zone" in b.out.getvalue() and "Europe/Berlin" in b.out.getvalue()
+
+
+# --- images --------------------------------------------------------------------------------
+
+
+IMAGE = "26.04-20261102-3f9a1c2e"
+
+
+def _with_image(a: Computer, published: bool) -> Path:
+    image = a.root / "data" / "images" / f"{IMAGE}.qcow2"
+    image.write_bytes(b"qcow2" * 1000)
+    (a.root / "data" / "images" / f"{IMAGE}.json").write_text("{}\n")
+    entry = {"created": "2026-11-02T10:00:00Z", "sha256": "0" * 64, "file": str(image),
+             "ubuntu": {"release": "26.04", "build": "20261016"}, "tooling": "0.1.0",
+             "commit": "0" * 40, "recipes": []}
+    if published:
+        entry["published"] = {"proxmox": {"template_vmid": 9181}}
+    with a.store.edit() as ed:
+        ed.add_image(IMAGE, entry)
+    return image
+
+
+def test_baked_images_stay_unless_asked_for(computers, monkeypatch):
+    a, b, world = computers
+    image = _with_image(a, published=True)
+    code, out, err = a.run("migrate", "check")
+    assert code == 0 and "published to proxmox, so new Ships still use it" in out
+    assert receive(b, monkeypatch, send_bytes(a, monkeypatch)) == migrate.VERIFIED
+    doc = tomllib.loads(b.store.path.read_text())
+    assert "file" not in doc["image"][IMAGE] and doc["image"][IMAGE]["published"]
+    assert not (b.root / "data" / "images" / image.name).exists()
+
+
+def test_with_images_moves_them_too(computers, monkeypatch):
+    a, b, world = computers
+    image = _with_image(a, published=False)
+    code, out, err = a.run("migrate", "check")
+    assert "not published anywhere" in out
+    stream = send_bytes(a, monkeypatch, with_images=True)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED
+    doc = tomllib.loads(b.store.path.read_text())
+    moved = paths.expand(doc["image"][IMAGE]["file"])
+    assert moved == b.root / "data" / "images" / image.name
+    assert moved.read_bytes() == image.read_bytes()
+    assert (b.root / "data" / "images" / f"{IMAGE}.json").exists()
+
+
+# --- push: over SSH into receive ---------------------------------------------------------------
+
+
+class FakeSSHProcess:
+    """ssh to the new computer: takes the stream, answers as receive would."""
+
+    def __init__(self, argv, code, said=b""):
+        self.argv, self.code = argv, code
+        r, w = os.pipe()
+        self.stdin = os.fdopen(w, "wb")
+        self._r = os.fdopen(r, "rb")
+        self.stdout = io.BytesIO(said)
+        self.stderr = io.BytesIO(b"")
+        self.received = b""
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+
+    def _read(self):
+        self.received = self._r.read()
+
+    def wait(self):
+        self._reader.join(timeout=30)
+        return self.code
+
+
+def test_push_streams_everything_into_receive_over_ssh(computers, monkeypatch):
+    a, b, world = computers
+    procs = []
+
+    def popen(argv, **kw):
+        procs.append(FakeSSHProcess(argv, 0, b"This computer has the fleet\n"))
+        return procs[-1]
+
+    a.app.popen = popen
+    code, out, err = a.run("migrate", "push", "you@vm.example", "--store", "file",
+                           "-o", "Port=2222", "-o", "StrictHostKeyChecking=no")
+    assert code == 0, out + err
+    argv = procs[0].argv
+    assert argv[:2] == ["ssh", "-T"] and argv[-2] == "you@vm.example"
+    opts = [argv[i + 1] for i, x in enumerate(argv) if x == "-o"]
+    assert opts.index("StrictHostKeyChecking=yes") < opts.index("StrictHostKeyChecking=no")
+    assert "ForwardAgent=no" in opts and "Port=2222" in opts
+    assert argv[-1] == "sh -lc 'exec ship-fleet migrate receive --store file'"
+    assert "vm.example: This computer has the fleet" in out
+    assert "use only one of them" in out
+    assert receive(b, monkeypatch, procs[0].received, store_kind="file") == migrate.VERIFIED
+
+
+@pytest.mark.parametrize("exit_code,says", [
+    (255, "ssh could not log in to"), (127, "has no ship-fleet on PATH"),
+    (migrate.UNVERIFIED, "could not check all of it yet"), (1, "did not take the fleet")])
+def test_push_says_what_happened_there(computers, monkeypatch, exit_code, says):
+    a, b, world = computers
+    a.app.popen = lambda argv, **kw: FakeSSHProcess(argv, exit_code)
+    code, out, err = a.run("migrate", "push", "vm.example")
+    assert code == exit_code if exit_code not in (255, 127) else code == 1
+    assert says in out + err
+
+
+def test_push_refuses_a_host_that_is_not_one(computers, monkeypatch):
+    a, b, world = computers
+    a.app.popen = lambda argv, **kw: pytest.fail("ssh ran")
+    for host in ("-oProxyCommand=evil", "vm example", "a@b@c", ""):
+        code, out, err = a.run("migrate", "push", host)
+        assert code != 0, host
+
+
+def test_a_key_lands_in_ssh_or_fleetledgers_folders_only(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("FLEETLEDGER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("FLEETLEDGER_DATA_DIR", str(tmp_path / "data"))
+    src = {"home": "/srv/old", "config_dir": "/srv/old/.config/fleetledger",
+           "data_dir": "/srv/fleetledger"}
+    home = tmp_path / "home"
+    assert migrate._target_key_path("/srv/old/.ssh/sub/admin", src) == home / ".ssh/sub/admin"
+    assert migrate._target_key_path("/srv/old/.config/fleetledger/k/ca", src) == \
+        tmp_path / "config" / "k" / "ca"
+    assert migrate._target_key_path("/srv/fleetledger/ca/host", src) == tmp_path / "data/ca/host"
+    for elsewhere in ("/srv/old/.bashrc", "/srv/old/.config/autostart/x", "/etc/keys/admin",
+                      "/srv/old/.ssh/../.profile"):
+        assert migrate._target_key_path(elsewhere, src).parent == home / ".ssh", elsewhere
+
+
+def test_the_remote_command_quotes_a_path_under_home():
+    assert migrate.remote_command("~/.local/bin/ship-fleet", None) == \
+        "sh -lc 'exec \"$HOME\"/.local/bin/ship-fleet migrate receive'"
+    assert migrate.remote_command("/opt/x y/ship-fleet", "keyring") == \
+        "sh -lc 'exec '\"'\"'/opt/x y/ship-fleet'\"'\"' migrate receive --store keyring'"
