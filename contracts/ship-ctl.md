@@ -422,7 +422,7 @@ the staging folder should be is refused (`invalid-input`) and left alone.
   free on the home's filesystem. Fewer or more bytes than BYTES keeps nothing
   (`invalid-input`). Files never get an execute bit; nothing reads, runs or
   unpacks them. Each `put` first removes staging `.part` files untouched for an
-  hour (a transfer cut off by a kill or a reboot). `data`: `{ "name": stored name, "given": NAME as sent, "size",
+  hour (a transfer cut off by a kill or a reboot), before it checks free space. `data`: `{ "name": stored name, "given": NAME as sent, "size",
   "path", "renamed": bool }`; `changed` is the path. Recorded in the journal
   (`ship-ctl logs system`, tag `ship-ctl`).
 - `list --json`: `data`: `{ "path": "/home/agent/inbox", "exists", "files": [{

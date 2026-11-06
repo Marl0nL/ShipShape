@@ -122,7 +122,7 @@ def env(store, fake_repo):
 @pytest.mark.parametrize("name", [
     "report.pdf", "../../etc/passwd", ".hidden", "-rf", "a‮b.txt", "tab\tname",
     "Résumé (final) [v2].pdf", "x" * 400 + ".tar.gz", "$(id)`x`;|&.sh", "", "~/a", "日本語.txt",
-    "A\u202e\u0301B.txt", "report v1.2.pdf",
+    "A\u202e\u0301B.txt", "report v1.2.pdf", "=\u202e\u0338.txt",
 ])
 def test_fleetledger_cleans_names_exactly_as_the_ship_does(name):
     cleaned = inbox.clean_name(name)
