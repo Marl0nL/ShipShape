@@ -205,6 +205,17 @@ class HomeFS:
         finally:
             os.close(dfd)
 
+    def open_dir(self, rel: str, *, create: bool, mode: int = 0o700) -> int | None:
+        """An fd for the folder ~/rel (the caller closes it), reached without following
+        a symlink; None if it is missing and not `create`. Folders it creates get `mode`."""
+        dfd, name = self._parent(rel, create=create, dir_mode=mode)
+        if dfd is None:
+            return None
+        try:
+            return self._open_dir(dfd, name, rel, create=create, mode=mode)
+        finally:
+            os.close(dfd)
+
     def mkdirs(self, rel: str, mode: int = 0o755) -> None:
         dfd, name = self._parent(rel, create=True, dir_mode=mode)
         try:

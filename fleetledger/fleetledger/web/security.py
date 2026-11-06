@@ -14,6 +14,11 @@ Following Jupyter's model:
   the X-CSRF-Token header or a `csrf` form field, and an Origin header naming
   this server exactly. Bodies are capped at MAX_BODY bytes and must be plain
   form posts.
+- One exception to "plain form posts": a file for a Ship's inbox is posted to
+  UPLOAD_PATH as the raw bytes of one file (application/octet-stream), with the
+  CSRF token in the X-CSRF-Token header (never the body), the same Origin check,
+  and a Content-Length of at most MAX_UPLOAD; the body is streamed to the handler
+  and cut off at the declared length, never buffered here.
 - The live terminal's WebSocket needs the session cookie and an Origin naming
   this server; the socket handler then asks for the CSRF token as its first
   message.
@@ -27,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import secrets
 import threading
 import time
@@ -39,6 +45,9 @@ from urllib.parse import parse_qs
 TOKEN_TTL = 15 * 60
 SESSION_IDLE = 12 * 3600
 MAX_BODY = 64 * 1024
+# A file for a Ship's inbox (web/inboxweb.py): the inbox's own per-file limit.
+UPLOAD_PATH = re.compile(r"^/ships/[a-z0-9][a-z0-9-]{0,30}/inbox/upload$")
+MAX_UPLOAD = 256 * 1024 * 1024
 SAFE_METHODS = ("GET", "HEAD")
 # Paths reachable without a session: the token link and the static files.
 OPEN_PREFIXES = ("/static/",)
@@ -267,6 +276,9 @@ class GateMiddleware:
         if not self.gate.origin_ok(headers.get("origin")):
             await _plain(send_secured, 403, "Cross-origin request refused.")
             return
+        if method == "POST" and UPLOAD_PATH.match(path):
+            await self._upload(scope, receive, send_secured, headers, session)
+            return
         kind = headers.get("content-type", "").split(";")[0].strip().lower()
         if kind not in ("", "application/x-www-form-urlencoded"):
             await _plain(send_secured, 415, "Only form posts are accepted.")
@@ -308,6 +320,41 @@ class GateMiddleware:
             return await receive()
 
         await self.app(scope, replay, send_secured)
+
+    async def _upload(self, scope: Scope, receive: Receive, send: Send,
+                      headers: dict[str, str], session: Session) -> None:
+        """One file's raw bytes (the inbox's drop zone). Checked before a byte is
+        read: the CSRF header, the type and the declared size. The handler then
+        reads the body as a stream, which ends at the declared length."""
+        kind = headers.get("content-type", "").split(";")[0].strip().lower()
+        if kind != "application/octet-stream":
+            await _plain(send, 415, "A file upload is sent as application/octet-stream.")
+            return
+        if not self.gate.csrf_ok(session, headers.get("x-csrf-token")):
+            await _plain(send, 403, "Missing or wrong CSRF token; reload the page.")
+            return
+        declared = headers.get("content-length")
+        if declared is None or not declared.isdigit():
+            await _plain(send, 411, "A file upload needs its length.")
+            return
+        if int(declared) > MAX_UPLOAD:
+            await _plain(send, 413, f"Too large: the inbox takes files of up to "
+                         f"{MAX_UPLOAD // (1024 * 1024)} MB each.")
+            return
+        left = int(declared)
+
+        async def capped() -> Message:
+            nonlocal left
+            message = await receive()
+            if message["type"] == "http.request":
+                body = message.get("body", b"")
+                if len(body) > left:  # more than declared: the server should not allow it
+                    return {"type": "http.disconnect"}
+                left -= len(body)
+            return message
+
+        scope.setdefault("state", {})["upload_length"] = int(declared)
+        await self.app(scope, capped, send)
 
     async def _login(self, scope: Scope, send: Send) -> None:
         query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
