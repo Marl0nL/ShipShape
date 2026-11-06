@@ -71,6 +71,12 @@ def herdr(s: dict, a: list[str]) -> int:
             )
             return 1
         rest = a[a.index("--") + 1 :] if "--" in a else []
+        # `claude --resume <id>` continues that session; anything else is a new one.
+        session = rest[rest.index("--resume") + 1] if "--resume" in rest else f"sess-{name}"
+        if "--resume" not in rest and any(ag.get("agent_session", {}).get("value") == session
+                                          for ag in h.get("exited", [])):
+            session = f"sess-{name}-{h.get('next_session', 2)}"
+            h["next_session"] = h.get("next_session", 2) + 1
         agents.append(
             {
                 "name": name,
@@ -86,13 +92,44 @@ def herdr(s: dict, a: list[str]) -> int:
                     "source": "herdr:claude",
                     "agent": "claude",
                     "kind": "id",
-                    "value": f"sess-{name}",
+                    "value": session,
                 },
                 "args": rest,
             }
         )
         save(s)
         out({"result": {"type": "agent_info"}})
+        return 0
+    def find(target: str) -> dict | None:
+        return next((ag for ag in agents if target in (ag.get("name"), ag.get("pane_id"))), None)
+
+    if a[:2] in (["agent", "send-keys"], ["pane", "send-keys"]):
+        ag = find(a[2])
+        if ag is None:
+            print(json.dumps({"error": {"code": "agent_not_found", "message": "x"}}),
+                  file=sys.stderr)
+            return 1
+        h.setdefault("keys", []).append(a[2:])
+        if "esc" in a[3:] and ag.get("agent_status") in ("working", "blocked", "unknown"):
+            ag["agent_status"] = "idle"
+        if a[3:] == ["ctrl+c", "ctrl+c"] and ag.get("name") in h.get("exit_on_ctrl_c", []):
+            agents.remove(ag)
+            h.setdefault("exited", []).append(ag)
+        save(s)
+        out({"result": {}})
+        return 0
+    if a[:2] == ["agent", "prompt"] and a[3:4] == ["/exit"]:
+        ag = find(a[2])
+        if ag is None or ag.get("agent_status") == "blocked":
+            code = "agent_blocked" if ag else "agent_not_found"
+            print(json.dumps({"error": {"code": code, "message": "x"}}), file=sys.stderr)
+            return 1
+        h.setdefault("prompts", []).append(a[2:4])
+        if ag.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
+            agents.remove(ag)  # claude exits; herdr clears the name with it
+            h.setdefault("exited", []).append(ag)
+        save(s)
+        out({"result": {}})
         return 0
     if a[:2] == ["agent", "prompt"]:
         if a[2] in h.get("fail_prompt", []):

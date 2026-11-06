@@ -402,6 +402,10 @@ table.machines td:first-child code { overflow-wrap: anywhere; }
 table.machines td:not(:first-child), table.machines th { white-space: nowrap; }
 table.machines details.scope form label { white-space: nowrap; }
 details.scope { margin: 0; }
+/* The Overview's agent list: Restart in mode... (web.app ship_agent_restart) */
+details.agent-restart { margin: 0; }
+details.agent-restart form label { display: block; margin: 4px 0; font-size: 13px;
+  white-space: nowrap; }
 details.scope form label { display: block; margin: 4px 0; font-size: 13px; }
 .this-computer { display: flex; gap: 4px 12px; align-items: baseline; flex-wrap: wrap; }
 .this-computer p { margin: 6px 0; }

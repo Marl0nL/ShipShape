@@ -142,10 +142,20 @@ covers the gap:
   ```
 
 - `/opt/shipshape/shim/claude`, first on herdr's PATH, passes every launch
-  straight to `~/.local/bin/claude`. The one exception is `--resume <id>` for a
-  session the ledger lists as `bypassPermissions` on a Ship with
-  `allow_bypass = true`: there it adds `--dangerously-skip-permissions`.
+  straight to `~/.local/bin/claude`. The one exception is `--resume <id>` with no
+  mode flag, for a session the ledger knows: it adds that mode's flag, so the
+  session comes back in the mode the ledger (and the status document) says. For
+  `bypassPermissions` that is `--dangerously-skip-permissions`, and only on a Ship
+  with `allow_bypass = true`; for any other mode, `--permission-mode <mode>`
+  (Claude Code would restore the session's last mode itself, but a session just
+  restarted in a new mode may not have recorded it in its transcript yet).
 - The status document reports each agent's `mode` from the ledger.
+
+A running agent keeps its mode when `default_mode` changes: the new default
+applies to agents started afterwards, and a reboot resumes each agent in the mode
+it was in. `ship-ctl agent restart` (`ship-fleet agent restart`) swaps a running
+agent for one in the new mode, continuing its conversation, and records the new
+mode in the ledger (`ship-ctl.md`).
 
 ## How ships.toml becomes a Ship's ship.toml
 

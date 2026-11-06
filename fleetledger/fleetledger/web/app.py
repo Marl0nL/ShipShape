@@ -134,6 +134,8 @@ def make_env() -> Environment:
         SSH_LISTEN=shipsettings.SSH_LISTEN,
         setting_now=shipsettings.current,
         setting_older=shipsettings.older_hint,
+        restartable=shipsettings.restartable,
+        restartable_by_name=lambda view: {r["name"]: r for r in shipsettings.restartable(view)},
         human_bytes=net.human_bytes,
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
@@ -471,7 +473,15 @@ async def ship_settings(request: Request) -> Response:
         ui.flash(session, "muted", "Nothing to change.")
         return back(f"/ships/{name}/settings")
     outcome = await run_in_threadpool(actions.set_settings, ui.app, name, assignments)
+    mode_changed = outcome.ok and any(a.startswith("default_mode=") for a in assignments)
+    if mode_changed:  # the page offers the swap itself, instead of the CLI's command
+        outcome = dataclasses.replace(outcome, details=tuple(
+            d for d in outcome.details if not d.startswith("Running agents keep")))
     _flash_outcome(ui, session, outcome)
+    if mode_changed:
+        ui.flash(session, "muted", "Running agents keep the mode they are in; the new default "
+                 "applies to agents started from now on. To switch them now, use Apply the "
+                 "default mode to running agents, below.")
     await run_in_threadpool(ui.fleet.poll, [name])
     return back(f"/ships/{name}/settings")
 
@@ -519,6 +529,34 @@ async def ship_agents(request: Request) -> Response:
     _flash_outcome(ui, session, outcome)
     await run_in_threadpool(ui.fleet.poll, [name])
     return back(f"/ships/{name}")
+
+
+async def ship_agent_restart(request: Request) -> Response:
+    """Restart running agents in place, in a new mode (ship-fleet agent restart), as a
+    job, after its confirm dialog: one agent from the Overview's agent list, or the
+    agents not in the mode they would start in, from the Settings tab."""
+    ui = ui_of(request)
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
+    fields = await form(request)
+    session = session_of(request)
+    where = f"/ships/{name}" + ("/settings" if one(fields, "from") == "settings" else "")
+    if one(fields, "confirm") != "yes":
+        ui.flash(session, "bad", "Tick the box to confirm.")
+        return back(where)
+    agents = [a.strip() for a in fields.get("agent", []) if a.strip()]
+    try:
+        actions.start_agent_restart(ui.jobs, ui.app, name, agents,
+                                    mode=one(fields, "mode") or None,
+                                    fresh=one(fields, "fresh") == "yes",
+                                    force=one(fields, "force") == "yes",
+                                    poll=ui.fleet.poll)
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(where)
+    ui.flash(session, "ok", f"Restarting {', '.join(agents)}; its progress is above.")
+    return back(where)
 
 
 async def ship_signins(request: Request) -> Response:
@@ -818,6 +856,8 @@ async def job_card(request: Request) -> Response:
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind in (*trust.KINDS, "leave"):  # what the page shows changed
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind == "agent-restart":  # the agent list shows the new modes
+        response.headers["HX-Refresh"] = "true"
     if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
         response.headers["HX-Refresh"] = "true"
     return response
@@ -1074,6 +1114,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/settings", ship_settings, methods=["POST"]),
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
+        Route("/ships/{name}/agents/restart", ship_agent_restart, methods=["POST"]),
         Route("/ships/{name}/tools", ship_tools, methods=["POST"]),
         Route("/ships/{name}/size", ship_size, methods=["POST"]),
         Route("/ships/{name}/signins", ship_signins, methods=["POST"]),

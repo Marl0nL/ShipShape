@@ -52,6 +52,8 @@ SHIPS = {
 }
 DOWN = {"ship-05"}
 LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
+MODES_NOW: dict[tuple[str, str], str] = {}  # (Ship, agent) -> mode after a demo restart
+CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo run
 DEMO_CA: dict[str, str] = {}  # the demo CA's fingerprints, once home() has made it
 
 INVENTORY = """\
@@ -346,6 +348,8 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
     if name == "ship-06":
         doc["herdr"]["agents"] = []
         doc["state"] = "ready"
+    for a in doc["herdr"]["agents"]:
+        a["mode"] = MODES_NOW.get((name, a.get("name")), a["mode"])
     if doc["herdr"]["agents"] and doc["state"] != "running":
         doc["state"] = "running"
     adc = doc["auth"]["gcloud_adc"]
@@ -367,6 +371,9 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         settings["network"]["ssh_listen"] = doc["overlay"]["ssh_listen"] if doc.get(
             "overlay") else "any"
         doc["settings"] = settings
+    if doc.get("settings") and CLAUDE_SET.get(name):  # set in this demo run
+        doc["settings"]["claude"].update(CLAUDE_SET[name])
+        doc["claude"].update(CLAUDE_SET[name])
     return doc
 
 
@@ -419,6 +426,19 @@ def make_ssh(inventory):
                 answer = ctl_result("overlay")
                 answer["data"] = {"overlay": doc["overlay"]}
                 return Result(0, json.dumps(answer).encode(), "", ship.names[0])
+            if verb == "agent":  # restart: the agents come back in the mode asked for
+                return Result(*demo_restart(ship.name, command[5:-1]), ship.names[0])
+            if verb == "set":  # the Claude Code settings, so Settings shows a change
+                changed = CLAUDE_SET.setdefault(ship.name, {})
+                for pair in command[4:-1]:
+                    key, _, value = pair.partition("=")
+                    if key in ("claude.default_mode", "claude.allow_bypass"):
+                        field = key.split(".")[1]
+                        changed[field] = value == "true" if field == "allow_bypass" else value
+                answer = ctl_result("set")
+                answer["changed"] = ["/etc/shipshape/ship.toml"]
+                answer["messages"] = ["Saved and applied."]
+                return Result(0, json.dumps(answer).encode(), "", ship.names[0])
             if verb in ("version", "ssh-trust"):  # so certificate jobs succeed
                 return Result(0, json.dumps(ctl_result(verb)).encode(), "", ship.names[0])
             return Result(0, b"{}", "", ship.names[0])
@@ -427,6 +447,47 @@ def make_ssh(inventory):
             return None  # as if the Ship presented its new certificate
 
     return DemoSSH(inventory)
+
+
+def demo_restart(name: str, argv: list[str]) -> tuple[int, bytes, str]:
+    """`ship-ctl agent restart` on a demo Ship: as the Ship answers it, without herdr."""
+    tags, _joined = SHIPS[name]
+    doc = status_doc(name, tags, list(SHIPS).index(name) + 1, time.time())
+    settings = doc.get("settings") or {}
+    claude = settings.get("claude") or doc["claude"]
+    own = {e["name"]: e.get("mode") for e in settings.get("autostart") or []}
+    mode = argv[argv.index("--mode") + 1] if "--mode" in argv else None
+    agents = {a["name"]: a for a in doc["herdr"]["agents"] if a.get("name")}
+    names = list(agents) if "--all" in argv else [
+        a for a in argv if not a.startswith("--") and a != mode]
+    answer = ctl_result("agent")
+    restarted, skipped = [], []
+    for agent in names:
+        new = mode or own.get(agent) or claude["default_mode"]
+        if new == "bypassPermissions" and not claude["allow_bypass"]:
+            answer.update(ok=False, error={"code": "invalid-input", "message": (
+                "bypassPermissions is not allowed on this Ship (claude.allow_bypass is "
+                "false); allow it first, then restart the agent")})
+            return 1, json.dumps(answer).encode(), ""
+        if agents[agent]["state"] in ("working", "unknown") and "--force" not in argv:
+            skipped.append({"name": agent, "reason": "it is working; not interrupted"})
+            continue
+        restarted.append({"name": agent, "mode": new, "previous_mode": agents[agent]["mode"],
+                          "conversation": "fresh" if "--fresh" in argv else "continued",
+                          "was": agents[agent]["state"]})
+        MODES_NOW[(name, agent)] = new
+    answer["data"] = {"restarted": restarted, "skipped": skipped}
+    answer["changed"] = [r["name"] for r in restarted]
+    answer["messages"] = [f"{r['name']} restarted in {r['mode']}, continuing its conversation."
+                          for r in restarted]
+    if skipped:
+        answer["messages"] += [f"{s['name']} is working: left alone. Try again when it is "
+                               "idle, or force it (which interrupts its turn)." for s in skipped]
+        answer.update(ok=False, error={"code": "agent-busy", "message": (
+            f"{len(skipped)} agent(s) are busy and were not restarted (force to interrupt "
+            "them)")})
+        return 1, json.dumps(answer).encode(), ""
+    return 0, json.dumps(answer).encode(), ""
 
 
 def ctl_result(verb: str) -> dict:

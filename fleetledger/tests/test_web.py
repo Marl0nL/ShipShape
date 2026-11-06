@@ -1675,3 +1675,91 @@ def test_logs_show_the_chosen_number_of_lines(web, monkeypatch):
     assert seen == [1000] and "<option selected>1000</option>" in page
     web.client.get("/ships/ship-01/logs?source=provision&lines=999999")
     assert seen[-1] == 300  # not a choice: the default
+
+
+# --- restarting agents in a new mode (ship-fleet agent restart) ---------------------
+
+
+def _agent_calls(web):
+    return [c for _, c in web.ship.calls if c[3:4] == ["agent"]]
+
+
+def test_each_agent_has_restart_in_mode_behind_a_dialog(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    forms = re.findall(r'<form method="post" action="/ships/ship-01/agents/restart"(.*?)</form>',
+                       page, re.S)
+    assert len(forms) == 2  # main and builder
+    main = next(f for f in forms if 'name="agent" value="main"' in f)
+    assert 'data-confirm-title="Restart main on ship-01?"' in main
+    assert 'name="confirm" value="yes" data-confirm-field' in main
+    assert "that question is dismissed" in main  # main is waiting for an answer
+    assert 'name="force"' not in main
+    assert '<option value="plan">' in main
+    assert '<option value="bypassPermissions">' not in main  # not allowed on ship-01
+    builder = next(f for f in forms if 'name="agent" value="builder"' in f)
+    assert 'name="force" value="yes"' in builder and "It is working now" in builder
+
+
+def test_restart_in_mode_runs_ship_fleet_agent_restart_as_a_job(web):
+    web.sign_in()
+    refused = web.post("/ships/ship-01/agents/restart", {"agent": "main", "mode": "plan"})
+    assert refused.headers["location"] == "/ships/ship-01"
+    assert web.app_ui.jobs.recent() == [] and not _agent_calls(web)
+    done = web.post("/ships/ship-01/agents/restart",
+                    {"agent": "main", "mode": "plan", "fresh": "yes", "confirm": "yes"})
+    assert done.headers["location"] == "/ships/ship-01"
+    [job] = web.app_ui.jobs.recent()
+    assert job.kind == "agent-restart" and job.title == "Restart main on ship-01 in plan"
+    wait_for(lambda: job.done)
+    assert _agent_calls(web)[-1][3:] == ["agent", "restart", "main", "--mode", "plan",
+                                         "--fresh", "--json"]
+    card = web.client.get(f"/jobs/{job.id}")
+    assert card.headers.get("HX-Refresh") == "true"  # the agent list shows the new mode
+
+
+@pytest.mark.parametrize("fields,why", [
+    ({"agent": "main", "mode": "yolo"}, "Mode: not one of the choices."),
+    ({"agent": "Main!"}, "Not an agent name."),
+    ({}, "Which agents?"),
+])
+def test_restart_in_mode_refuses_bad_choices_on_the_page(web, fields, why):
+    web.sign_in()
+    web.post("/ships/ship-01/agents/restart", {**fields, "confirm": "yes"})
+    assert web.app_ui.jobs.recent() == []
+    assert why in web.client.get("/ships/ship-01").text
+
+
+def test_settings_offer_to_apply_the_default_mode_to_running_agents(web):
+    doc = _reporting(web)
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text
+    block = page[page.index("<h3>Running agents</h3>"):]
+    # builder runs in bypassPermissions but would start in the default, auto.
+    assert "builder (bypassPermissions; starts in auto)" in block
+    form = block[:block.index("</form>")]
+    assert re.findall(r'name="agent" value="([^"]+)"', form) == ["builder"]
+    assert "builder goes from bypassPermissions to auto." in form
+    assert 'name="force" value="yes"' in form  # builder is working
+    response = web.post("/ships/ship-01/agents/restart",
+                        {"agent": "builder", "from": "settings", "confirm": "yes"})
+    assert response.headers["location"] == "/ships/ship-01/settings"
+    [job] = web.app_ui.jobs.recent()
+    wait_for(lambda: job.done)
+    assert _agent_calls(web)[-1][3:] == ["agent", "restart", "builder", "--json"]
+    # Every agent in the mode it starts in: nothing to apply.
+    doc["herdr"]["agents"][1]["mode"] = "auto"
+    web.fleet.poll()
+    page = web.client.get("/ships/ship-01/settings").text
+    assert "Every running agent is in the mode it starts in." in page
+    assert "Apply the default mode to running agents</button>" not in page
+
+
+def test_changing_the_default_mode_says_running_agents_keep_theirs(web):
+    _reporting(web)
+    web.sign_in()
+    web.post("/ships/ship-01/settings", {"default_mode": "plan"})
+    page = web.client.get("/ships/ship-01/settings").text
+    assert "Running agents keep the mode they are in" in page
+    assert "Apply the default mode to running agents, below" in page
+    assert "ship-fleet agent restart ship-01 --all" not in page  # the CLI's own hint

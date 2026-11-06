@@ -23,7 +23,7 @@ Exit codes:
 | Code | Meaning | `error.code` |
 |---|---|---|
 | 0 | Success | (null) |
-| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `invalid-input`, `overlay-failed`, `overlay-not-joined`, `internal` |
+| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `agent-busy`, `agent-failed`, `invalid-input`, `overlay-failed`, `overlay-not-joined`, `internal` |
 | 2 | Bad arguments | `usage` |
 | 3 | Not running as root | `not-root` |
 | 4 | `ship.toml` (or the replacement given) fails the schema | `invalid-ship-toml` |
@@ -141,6 +141,58 @@ at every status refresh. An agent removed from `[[autostart]]` takes its repo st
 and attention item with it. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
+
+### `ship-ctl agent restart (NAME... | --all) [--mode MODE] [--fresh] [--force] [--json]`
+
+Swaps running Claude agents for ones in another permission mode, in place. A
+running session keeps its mode across a resume, so a new `default_mode` (or an
+`[[autostart]]` mode) reaches only agents started afterwards; this is how a
+running one adopts it. NAME is a herdr agent name; `--all` is every Claude agent
+herdr lists with a name (one without a name is skipped, with a reason).
+
+- **Mode:** `--mode`, else the mode the agent would start in now: its
+  `[[autostart]]` entry's `mode`, else `claude.default_mode`.
+  `bypassPermissions` on a Ship whose `claude.allow_bypass` is false is refused
+  (`invalid-input`) before any agent is touched; every agent's mode is checked
+  first.
+- **Gracefully, one agent at a time.** An agent herdr reports as `working` (or
+  `unknown`: its foreground is not known) is left alone unless `--force`;
+  forced, its turn is interrupted with Escape and the messages say so. An agent
+  waiting at a question (`blocked`) has it dismissed with Escape, and the
+  messages say so. `idle` and `done` agents are simply stopped.
+- **Stopping:** Ctrl+C (clears a half-typed line), then `/exit` typed with
+  `herdr agent prompt`; ship-ctl waits up to 30 seconds for herdr to see no agent
+  in the pane, then tries Ctrl+C twice. An agent that still does not exit is
+  left running as it was.
+- **Starting again:** `herdr agent start <name> --kind claude --pane <the same
+  pane>`, so the same workspace, folder and name, with the mode's flag
+  (`--permission-mode MODE`, or `--dangerously-skip-permissions`) and
+  `--resume <its session>`: the conversation continues. `--fresh` starts a new
+  conversation instead, with `--name` as autostart names it, and an
+  `[[autostart]]` agent gets its first prompt again. An agent whose session herdr
+  does not report can only be restarted `--fresh`. Remote Control comes back by
+  itself (managed settings; a resumed session reconnects to its own Remote
+  Control session), and session names survive the resume.
+- **Recorded:** the mode ledger gets the session in its new mode, so the status
+  document reports it, `ship-fleet reboot` expects it, and the resume shim puts it
+  back after the next reboot (`settings.md`, "Permission modes across reboots").
+  For an `[[autostart]]` agent, autostart's own record gets the mode and session.
+
+`data`: `{ "restarted": [{ "name", "mode", "previous_mode" (from the ledger, or
+null), "conversation": "continued" | "fresh", "was": <its herdr state> }],
+"skipped": [{ "name", "reason" }] }`; `changed` lists the agents restarted.
+Errors, with `data` still saying what did happen: `agent-busy` when only busy
+agents were left alone (run again with `--force`, or when they are idle),
+`agent-failed` when an agent did not exit, did not start again, or has no known
+session; `herdr-unavailable` when herdr does not answer; `invalid-input` for an
+agent name herdr does not list.
+
+Doing it by hand, on the Ship as `agent` (attach with herdr and go to its pane):
+exit the agent (`/exit`), then in the same pane run
+`claude --permission-mode MODE --continue` (or `--dangerously-skip-permissions`
+for bypass, or `--resume <session id>` for one session of several in that folder).
+The mode-ledger hook records the new mode as the session starts (it reads the
+launch flags), so a reboot keeps it.
 
 ### `ship-ctl notify-signin SERVICE [--json]`
 

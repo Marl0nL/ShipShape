@@ -203,3 +203,35 @@ def start_power(jobs: Any, app: Any, verb: str, name: str):
     return jobs.start(verb, [name],
                       lambda job: run_cli(RecordingApp(app, job), [verb, name], job),
                       f"{POWER[verb]} {name}'s VM")
+
+
+def start_agent_restart(jobs: Any, app: Any, name: str, agents: list[str], *,
+                        everyone: bool = False, mode: str | None = None,
+                        fresh: bool = False, force: bool = False,
+                        poll: Callable[[list[str]], Any] | None = None):
+    """Restart running agents on one Ship in place, as one job running
+    `ship-fleet agent restart NAME ...` (ops.restart_agents, as the CLI does). Checked
+    here first, so a bad choice is refused on the page, not in a failed job. With poll,
+    the job checks the Ship before it ends, so the page it refreshes shows the new modes."""
+    from fleetledger.web.jobs import run_cli
+
+    agents = list(dict.fromkeys(agents))
+    if bool(agents) == everyone:
+        raise FleetError("Which agents? Choose at least one.")
+    if not all(ops.AGENT_NAME_RE.match(a) for a in agents):
+        raise FleetError("Not an agent name.")
+    if mode is not None and mode not in ops.MODES:
+        raise FleetError("Mode: not one of the choices.")
+    argv = ["agent", "restart", name, *(["--all"] if everyone else agents)]
+    argv += [*(["--mode", mode] if mode else []), *(["--fresh"] if fresh else []),
+             *(["--force"] if force else [])]
+    who = "every agent" if everyone else ", ".join(agents)
+    title = f"Restart {who} on {name}" + (f" in {mode}" if mode else "")
+
+    def run(job: Any) -> int:
+        code = run_cli(app, argv, job)
+        if poll is not None:
+            poll([name])
+        return code
+
+    return jobs.start("agent-restart", [name], run, title)
