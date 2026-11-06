@@ -291,6 +291,9 @@ def build_parser() -> argparse.ArgumentParser:
              "turn); one waiting for an answer has that question dismissed. bypassPermissions\n"
              "needs allow_bypass=true on the Ship.\n\n"
              "  ship-fleet agent restart ship-01 main --mode bypassPermissions\n"
+             "--all restarts every named agent, also one already in the mode it starts\n"
+             "in (so a restart in the same mode picks up other settings, such as Remote\n"
+             "Control); the web UI's Apply the default mode restarts only the others.\n\n"
              "  ship-fleet agent restart ship-01 --all          after changing default_mode\n"
              "  ship-fleet agent restart ship-01 main --fresh   a new conversation")
     p.add_argument("action", choices=("restart",))

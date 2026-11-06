@@ -102,3 +102,24 @@ def test_ssh_listen_is_its_own_form():
     assert shipsettings.assignments(fields, view, ("ssh_listen",)) == ["ssh_listen=overlay"]
     with pytest.raises(FleetError, match="SSH listens: not one"):
         shipsettings.assignments(posted(ssh_listen="lan"), view, ("ssh_listen",))
+
+
+def test_an_agent_starts_in_its_own_autostart_mode_else_the_default():
+    reported = {**REPORTED, "claude": {**REPORTED["claude"], "default_mode": "acceptEdits"},
+                "autostart": [{"name": "main", "cwd": "~/work/main", "mode": "plan"},
+                              {"name": "docs", "cwd": "~/work/docs"}]}
+    agents = [{"name": "main", "kind": "claude", "state": "idle", "mode": "plan"},
+              {"name": "docs", "kind": "claude", "state": "working", "mode": "auto"},
+              {"name": "shell", "kind": "unknown", "state": "idle", "mode": None},
+              {"name": None, "kind": "claude", "state": "idle", "mode": "auto"}]
+    view = View(status={"herdr": {"agents": agents}, "claude": {}}, settings=reported)
+    assert shipsettings.start_mode(view, "main") == "plan"
+    assert shipsettings.start_mode(view, "docs") == "acceptEdits"
+    assert shipsettings.restartable(view) == [
+        {"name": "main", "state": "idle", "mode": "plan", "start_mode": "plan",
+         "drifted": False},
+        {"name": "docs", "state": "working", "mode": "auto", "start_mode": "acceptEdits",
+         "drifted": True}]
+    # An older Ship: the default from its claude block.
+    older = View(status={"herdr": {"agents": agents[:1]}, "claude": {"default_mode": "auto"}})
+    assert shipsettings.restartable(older)[0]["start_mode"] == "auto"

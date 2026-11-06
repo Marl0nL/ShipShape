@@ -46,7 +46,16 @@ def herdr(s: dict, a: list[str]) -> int:
         return 1
     agents = h.setdefault("agents", [])
     if a[:2] == ["agent", "list"]:
-        out({"id": "cli", "result": {"type": "agent_list", "agents": agents}})
+        settling = [ag for ag in agents if "settle_in" in ag]
+        for ag in settling:  # herdr sees Escape take effect a few polls later
+            ag["settle_in"] -= 1
+            if ag["settle_in"] <= 0:
+                del ag["settle_in"]
+                ag["agent_status"] = "idle"
+        if settling:
+            save(s)
+        shown = [{k: v for k, v in ag.items() if k != "settle_in"} for ag in agents]
+        out({"id": "cli", "result": {"type": "agent_list", "agents": shown}})
         return 0
     if a[:2] == ["workspace", "create"]:
         n = h.get("next_ws", 1)
@@ -111,7 +120,10 @@ def herdr(s: dict, a: list[str]) -> int:
             return 1
         h.setdefault("keys", []).append(a[2:])
         if "esc" in a[3:] and ag.get("agent_status") in ("working", "blocked", "unknown"):
-            ag["agent_status"] = "idle"
+            if ag.get("name") in h.get("slow_esc", []):
+                ag["settle_in"] = h.get("slow_esc_polls", 2)
+            else:
+                ag["agent_status"] = "idle"
         if a[3:] == ["ctrl+c", "ctrl+c"] and ag.get("name") in h.get("exit_on_ctrl_c", []):
             agents.remove(ag)
             h.setdefault("exited", []).append(ag)

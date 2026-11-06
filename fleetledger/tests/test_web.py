@@ -1763,3 +1763,13 @@ def test_changing_the_default_mode_says_running_agents_keep_theirs(web):
     assert "Running agents keep the mode they are in" in page
     assert "Apply the default mode to running agents, below" in page
     assert "ship-fleet agent restart ship-01 --all" not in page  # the CLI's own hint
+
+
+def test_interrupt_it_while_it_works_passes_force(web):
+    web.sign_in()
+    web.post("/ships/ship-01/agents/restart",
+             {"agent": "builder", "mode": "acceptEdits", "force": "yes", "confirm": "yes"})
+    [job] = web.app_ui.jobs.recent()
+    wait_for(lambda: job.done)
+    assert _agent_calls(web)[-1][3:] == ["agent", "restart", "builder", "--mode",
+                                         "acceptEdits", "--force", "--json"]

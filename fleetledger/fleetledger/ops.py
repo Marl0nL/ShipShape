@@ -673,7 +673,7 @@ def set_settings(
 
 # --- agents ---------------------------------------------------------------------
 
-AGENT_RESTART_TIMEOUT = 300  # per agent: stop, then start again (the Ship's own limits)
+AGENT_RESTART_TIMEOUT = 360  # per agent: stop, then start again (the Ship's own limits)
 
 
 def restart_agents(

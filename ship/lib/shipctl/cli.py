@@ -55,11 +55,14 @@ SET_KEYS = {
     "owner.keys": "list",
 }
 RC_CHANGE_NOTE = (
-    "Remote Control changes reach running Claude sessions only when they restart "
-    "(a reboot restarts them); the Claude app can take a few minutes to show or drop them."
+    "Remote Control changes reach running Claude sessions only when they restart: "
+    "`ship-fleet agent restart {ship} --all` restarts them, continuing their conversations "
+    "(on the Ship: `ship-ctl agent restart --all`; a reboot restarts them too). The Claude "
+    "app can take a few minutes to show or drop them."
 )
 PREFIX_CHANGE_NOTE = (
-    "Running sessions keep their names; send /rename <name> or restart them. "
+    "Running sessions keep their names, even across a restart; send /rename <name>, or "
+    "start them in a new conversation (`ship-fleet agent restart {ship} --all --fresh`). "
     "New autostart sessions use the new prefix."
 )
 
@@ -246,9 +249,9 @@ def cmd_set(ctx: Context, args) -> dict:
     applied, messages = apply.apply(ctx, new_ship)
     messages = messages or ["Saved and applied."]
     if (current.claude["remote_control"] == "on") != (new_ship.claude["remote_control"] == "on"):
-        messages.append(RC_CHANGE_NOTE)
+        messages.append(RC_CHANGE_NOTE.format(ship=new_ship.name))
     if current.claude["session_prefix"] != new_ship.claude["session_prefix"]:
-        messages.append(PREFIX_CHANGE_NOTE)
+        messages.append(PREFIX_CHANGE_NOTE.format(ship=new_ship.name))
     return result("set", changed=changed + applied, messages=messages)
 
 

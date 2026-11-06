@@ -555,7 +555,7 @@ async def ship_agent_restart(request: Request) -> Response:
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(where)
-    ui.flash(session, "ok", f"Restarting {', '.join(agents)}; its progress is above.")
+    ui.flash(session, "ok", f"Restarting {', '.join(agents)}; the progress is above.")
     return back(where)
 
 

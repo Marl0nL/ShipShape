@@ -240,3 +240,60 @@ def test_without_herdr(running):
     ship.set(herdr={"server": False})
     rc, doc, _ = ship.ctl("agent", "restart", "--all", "--json")
     assert rc == 1 and doc["error"]["code"] == "herdr-unavailable"
+
+
+def test_exit_waits_until_escape_has_dismissed_the_question(running):
+    # herdr reads the screen, so it sees the question gone a poll or two after Escape,
+    # and refuses a prompt to an agent it still sees waiting.
+    ship = running
+    ship.env["SHIPCTL_TEST_WAIT_S"] = "5"
+    s = ship.scenario()
+    s["herdr"]["slow_esc"] = ["main"]
+    (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
+    set_state(ship, "main", "blocked")
+    pane = agent(ship, "main")["pane_id"]
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 0, doc
+    h = ship.scenario()["herdr"]
+    assert [pane, "/exit"] in h["prompts"]  # the graceful way, not the fallback
+    assert [pane, "ctrl+c", "ctrl+c"] not in h["keys"]
+    assert any("its open question was dismissed" in m for m in doc["messages"])
+
+
+def test_an_agent_in_an_unknown_state_counts_as_busy(running):
+    ship = running
+    set_state(ship, "main", "unknown")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 1 and doc["error"]["code"] == "agent-busy"
+    assert doc["data"]["skipped"][0]["reason"] == (
+        "it is in a state herdr cannot tell; not interrupted")
+    assert not ship.scenario()["herdr"].get("keys")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--force", "--json")
+    assert rc == 0, doc
+    assert any("herdr could not tell its state" in m for m in doc["messages"])
+
+
+def test_an_agent_that_stops_but_does_not_start_again_says_how_to_start_it(running):
+    ship = running
+    s = ship.scenario()
+    s["herdr"]["fail_start"] = ["main"]
+    (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--mode", "plan", "--json")
+    assert rc == 1
+    assert_valid("ship-ctl-result", doc)
+    assert doc["error"]["code"] == "agent-failed"
+    assert doc["data"]["skipped"] == [{"name": "main", "reason": (
+        "stopped, but did not start again: agent_not_ready")}]
+    assert any(m.endswith("Start it in its pane with: claude --permission-mode plan "
+                          "--resume sess-main") for m in doc["messages"])
+    starts = [c for c in ship.calls("herdr") if c[1:3] == ["agent", "start"]]
+    assert len(starts) == 4  # two autostart launches, then a try and one retry
+
+
+def test_set_notes_name_the_restart_command(running):
+    ship = running
+    rc, doc, _ = ship.ctl("set", "claude.remote_control=off", "claude.session_prefix=lab",
+                          "--json")
+    assert rc == 0, doc
+    assert any("ship-fleet agent restart ship-01 --all" in m for m in doc["messages"])
+    assert any("ship-fleet agent restart ship-01 --all --fresh" in m for m in doc["messages"])

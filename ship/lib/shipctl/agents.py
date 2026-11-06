@@ -46,7 +46,7 @@ LEDGER_HOOK = "files/hooks/mode_ledger.py"  # in the release; installed as Paths
 STOP_TIMEOUT_S = 30  # for /exit to end the agent
 SETTLE_TIMEOUT_S = 15  # for Escape to end a turn or a question
 POLL_S = 1.0
-READY_STATES = ("idle", "done", "blocked")  # waiting for you, or nothing to do
+SETTLED = ("idle", "done")  # at its prompt: /exit can be typed
 BUSY_STATES = ("working", "unknown")
 
 
@@ -131,21 +131,31 @@ def _check_mode(ship: ShipToml, mode: str) -> None:
 def _stop(ctx: Context, pane: str, state: str) -> tuple[bool, list[str]]:
     """End the agent in `pane`; (stopped, notes)."""
     notes: list[str] = []
+    settled = lambda: (_in_pane(ctx, pane) or {}).get("agent_status") in SETTLED  # noqa: E731
     if state in ("working", "unknown", "blocked"):
         _herdr(ctx, ["agent", "send-keys", pane, "esc"])
-        if state == "blocked":
-            notes.append("its open question was dismissed")
-        else:
-            notes.append("its turn was interrupted")
-        _wait_until(ctx, SETTLE_TIMEOUT_S,
-                    lambda: (_in_pane(ctx, pane) or {}).get("agent_status") != "working")
+        notes.append({"blocked": "its open question was dismissed",
+                      "working": "its turn was interrupted"}.get(
+                          state, "it was interrupted (herdr could not tell its state)"))
+        # herdr refuses a prompt to an agent it still sees at a question, so /exit
+        # waits until Escape has visibly taken effect.
+        _wait_until(ctx, SETTLE_TIMEOUT_S, settled)
     _herdr(ctx, ["agent", "send-keys", pane, "ctrl+c"])  # clears a half-typed line
-    _herdr(ctx, ["agent", "prompt", pane, "/exit"], timeout=30)
-    if _wait_until(ctx, STOP_TIMEOUT_S, lambda: _in_pane(ctx, pane) is None):
+    sent, why = _herdr(ctx, ["agent", "prompt", pane, "/exit"], timeout=30)
+    if not sent and why == "agent_blocked":  # Escape had not shown yet: once more
+        _wait_until(ctx, SETTLE_TIMEOUT_S, settled)
+        sent, why = _herdr(ctx, ["agent", "prompt", pane, "/exit"], timeout=30)
+    if not sent:
+        ctx.log(f"/exit not typed into {pane}: {why}")
+    if sent and _wait_until(ctx, STOP_TIMEOUT_S, lambda: _in_pane(ctx, pane) is None):
+        return True, notes
+    if _in_pane(ctx, pane) is None:
         return True, notes
     _herdr(ctx, ["pane", "send-keys", pane, "ctrl+c", "ctrl+c"])
     if _wait_until(ctx, SETTLE_TIMEOUT_S, lambda: _in_pane(ctx, pane) is None):
         return True, notes
+    if not sent:
+        notes.append(f"/exit was refused ({why})")
     return False, notes
 
 
@@ -182,8 +192,8 @@ def restart(ctx: Context, ship: ShipToml, names: list[str], *, everyone: bool = 
     targets, skipped = _targets(live, names, everyone)
     if not targets and not skipped:
         return {"restarted": [], "skipped": []}, [], ["No Claude agent is running."]
-    for a in targets:  # every mode is checked before any agent is touched
-        _check_mode(ship, wanted_mode(ship, a["name"], mode))
+    # A mode not given is the one it would start in, which ship.toml's schema only
+    # allows to be bypassPermissions where allow_bypass is true: nothing more to check.
 
     path = ctx.paths.state / "autostart.json"
     record = read_json(path, {})
@@ -221,7 +231,8 @@ def restart(ctx: Context, ship: ShipToml, names: list[str], *, everyone: bool = 
         if not stopped:
             failed += 1
             skipped.append({"name": name, "reason": "it did not exit; left running"})
-            messages.append(f"{name} did not exit when asked; it is still running as before.")
+            messages.append(f"{name} did not exit when asked; it is still running as before"
+                            + (f" ({'; '.join(notes)})" if notes else "") + ".")
             continue
         if not fresh:  # stopped: from now on the session is in its new mode
             record_mode(ctx, session, new_mode)

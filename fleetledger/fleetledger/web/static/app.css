@@ -404,8 +404,16 @@ table.machines details.scope form label { white-space: nowrap; }
 details.scope { margin: 0; }
 /* The Overview's agent list: Restart in mode... (web.app ship_agent_restart) */
 details.agent-restart { margin: 0; }
-details.agent-restart form label { display: block; margin: 4px 0; font-size: 13px;
-  white-space: nowrap; }
+details.agent-restart form label { display: block; margin: 4px 0; font-size: 13px; }
+details.agent-restart select { max-width: 100%; }
+@media (max-width: 640px) {  /* an agent per block, like health items; its form full width */
+  table.agents thead { display: none; }
+  table.agents tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.agents td { display: inline-block; border: 0; padding: 2px 8px 2px 0; }
+  table.agents td:empty { display: none; }
+  table.agents td.row-actions { display: block; }
+  details.agent-restart select { width: 100%; }
+}
 details.scope form label { display: block; margin: 4px 0; font-size: 13px; }
 .this-computer { display: flex; gap: 4px 12px; align-items: baseline; flex-wrap: wrap; }
 .this-computer p { margin: 6px 0; }
