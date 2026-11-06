@@ -1093,11 +1093,12 @@ async def signin_start(request: Request) -> Response:
         ui.flash(session, "bad", exc.message)
         return failed()
     if on_list:  # the same view, at the new sign-in's card
-        done = _signin_back(fields)
+        # without the group filter: the cards are drawn with the page, and a sign-in
+        # just started is in no group's cards yet (nor its row in the group it left)
+        filters = _signin_filters({k: one(fields, f"f_{k}") for k in SIGNIN_FILTERS})
         started = ui.concierge.batch(batch)
-        if started:
-            done.headers["location"] += f"#flow-{started[0].id}"
-        return done
+        anchor = f"#flow-{started[0].id}" if started else ""
+        return RedirectResponse(_signin_url(filters, group="") + anchor, status_code=303)
     return back("/signin", batch=batch)
 
 

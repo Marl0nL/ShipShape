@@ -2,6 +2,9 @@
    polled and redrawn when the fleet or a sign-in changes. Severity is an icon and a
    word as well as a colour. Each row's action is the same form the Ship page uses. #}
 {% from "_macros.html" import sev %}
+{# A group filter's page may lack a card (it was drawn before the sign-in reached the
+   group): Continue and Show then open the view without the group, which has it. #}
+{% set card_href = signin_url(filters, group="") if filters.group else "" %}
 <div id="signin-list" hx-get="/partials/signins?{% for k, v in filters|dictsort %}{{ k }}={{ v|urlencode }}&amp;{% endfor %}v={{ version }}" hx-trigger="every 5s" hx-swap="outerHTML">
 {% if stale %}<p class="hint">Not checked yet: showing each Ship's last known status.</p>{% endif %}
 {% if rows %}
@@ -20,9 +23,9 @@
       <td class="detail">{{ r.message }}{% if r.account and r.group != "healthy" %} <span class="quiet">({{ r.account }})</span>{% endif %}{% if r.deadline %} <span class="quiet">Link valid for <span data-deadline="{{ r.deadline|int }}">…</span>.</span>{% endif %}{% if r.note %} <span class="quiet note">{{ r.note }}</span>{% endif %}</td>
       <td class="row-actions">
         {% if r.state == "waiting" %}
-          <a class="button" href="#flow-{{ r.flow }}">Continue</a>
+          <a class="button" href="{{ card_href }}#flow-{{ r.flow }}">Continue</a>
         {% elif r.group == "underway" %}
-          <a class="button ghost" href="#flow-{{ r.flow }}">Show</a>
+          <a class="button ghost" href="{{ card_href }}#flow-{{ r.flow }}">Show</a>
         {% elif r.group == "off" %}
           <a class="button ghost" href="/ships/{{ r.ship }}/settings" title="ship-fleet signins {{ r.ship }} --on">Turn on (Settings)</a>
         {% elif not r.answers %}

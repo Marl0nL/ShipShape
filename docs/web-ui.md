@@ -256,7 +256,9 @@ picker; every filter is in the address (`/signin?service=claude&group=action`),
 so a view can be bookmarked or shared, and each group's chip shows its count
 for the Ships and services chosen. The list redraws itself when a Ship's status
 or a sign-in changes. After a row's or a card's button you come back to the same
-view (after **Sign in**, at the new sign-in's card). The link a sign-in started from the forms below opens (`/signin?batch=...`) still shows
+view (after **Sign in**, at the new sign-in's card, with the group filter
+dropped so the card is on the page; under a group filter **Continue** and
+**Show** open that view too). The link a sign-in started from the forms below opens (`/signin?batch=...`) still shows
 only those sign-ins' cards, with **Show every sign-in**.
 
 `ship-fleet signins` with no Ship named prints the same rows in the same order,

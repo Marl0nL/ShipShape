@@ -2048,18 +2048,38 @@ def test_a_rows_sign_in_comes_back_to_the_same_view_at_its_card(web):
     page = web.client.get("/signin?service=claude&group=action").text
     row = page[page.index('data-ship="ship-02" data-service="claude"'):]
     row = row[:row.index("</tr>")]
-    assert 'name="from" value="signin"' in row and 'name="f_group" value="action"' in row
+    sign_in = row[row.index('action="/signin"'):]  # the Sign in form, not Sign out's
+    sign_in = sign_in[:sign_in.index("</form>")]
+    assert 'name="from" value="signin"' in sign_in
+    assert 'name="f_service" value="claude"' in sign_in
+    assert 'name="f_group" value="action"' in sign_in
     response = web.post("/signin", {"ship": "ship-01", "service": "claude", "from": "signin",
                                     "f_service": "claude", "f_group": "action"})
     flow = flow_of(web)
-    assert response.headers["location"] == (
-        f"/signin?service=claude&group=action#flow-{flow.id}")
+    # the group is dropped: a sign-in just started is in no group's cards yet
+    assert response.headers["location"] == f"/signin?service=claude#flow-{flow.id}"
+    landing = web.client.get(response.headers["location"].split("#")[0]).text
+    assert f'id="flow-{flow.id}"' in landing
     # refused (already under way): the same view, with why
     response = web.post("/signin", {"ship": "ship-01", "service": "claude", "from": "signin",
                                     "f_service": "claude"})
     assert response.headers["location"] == "/signin?service=claude"
     assert "already under way" in web.client.get("/signin?service=claude").text
     web.concierge.cancel_all()
+
+
+def test_continue_under_a_group_filter_opens_the_view_with_the_card(web):
+    web.sign_in()
+    flow = WebFlow("1-00000000", "ab" * 6, "ship-01", "claude", "Claude Code", "paste-back",
+                   state=flows.CODE, url="https://example.com/oauth")
+    with web.concierge._lock:
+        web.concierge._flows[flow.id] = flow
+        web.concierge._order.append(flow.id)
+    page = web.client.get("/signin?service=claude&group=action").text
+    assert f'href="/signin?service=claude#flow-{flow.id}">Continue<' in page
+    assert f'id="flow-{flow.id}"' in web.client.get("/signin?service=claude").text
+    page = web.client.get("/signin?service=claude").text  # no group: the card is here
+    assert f'href="#flow-{flow.id}">Continue<' in page
 
 
 def test_a_timed_out_sign_in_says_so_and_offers_try_again(web):
