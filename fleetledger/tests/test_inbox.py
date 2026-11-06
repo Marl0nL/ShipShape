@@ -122,9 +122,13 @@ def env(store, fake_repo):
 @pytest.mark.parametrize("name", [
     "report.pdf", "../../etc/passwd", ".hidden", "-rf", "a‮b.txt", "tab\tname",
     "Résumé (final) [v2].pdf", "x" * 400 + ".tar.gz", "$(id)`x`;|&.sh", "", "~/a", "日本語.txt",
+    "A\u202e\u0301B.txt", "report v1.2.pdf",
 ])
 def test_fleetledger_cleans_names_exactly_as_the_ship_does(name):
-    assert inbox.clean_name(name) == ship_inbox.clean_name(name)
+    cleaned = inbox.clean_name(name)
+    assert cleaned == ship_inbox.clean_name(name)
+    assert inbox.clean_name(cleaned) == cleaned  # what is sent is what the Ship keeps
+    assert inbox.numbered(cleaned, 3) == ship_inbox.numbered(cleaned, 3)
 
 
 def test_the_size_limits_agree():
@@ -239,6 +243,40 @@ def test_an_empty_inbox_says_so(env):
 
 
 # --- SSH.send: a file streamed to a command's stdin --------------------------------------
+
+
+class HungProc:
+    """An ssh that never answers until it is killed."""
+
+    def __init__(self):
+        import threading
+
+        self.killed = threading.Event()
+        self.stdin = io.BytesIO()
+        self.stdout = self
+        self.stderr = self
+
+    def read(self):
+        self.killed.wait(10)
+        return b""
+
+    def wait(self):
+        self.killed.wait(10)
+        return -9
+
+    def poll(self):
+        return -9 if self.killed.is_set() else None
+
+    def kill(self):
+        self.killed.set()
+
+
+def test_send_gives_up_after_its_timeout(store):
+    proc = HungProc()
+    ssh = SSH(store.load(), popen=lambda argv, **kw: proc)
+    with pytest.raises(FleetError, match="sending timed out after 0s"):
+        ssh.send(store.load().ship("ship-01"), ["x"], io.BytesIO(b"abc"), timeout=0.2)
+    assert proc.killed.is_set()
 
 
 class FakeProc:

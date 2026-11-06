@@ -24,6 +24,7 @@ import os
 import re
 import secrets
 import stat
+import time
 import unicodedata
 from datetime import UTC, datetime
 from typing import BinaryIO
@@ -41,6 +42,8 @@ KEEP_FREE = 1024 * 1024 * 1024  # never fill the disk: leave at least 1 GiB free
 NAME_BYTES = 200  # a cleaned name's length, in UTF-8 bytes
 LIST_MAX = 500
 CHUNK = 1024 * 1024
+STALE = 3600  # seconds: a staging file this old belongs to a transfer that died
+_PART = re.compile(r"^\.[0-9a-f]{16}\.part$")
 # Besides letters and digits (any script): characters that are harmless in a file
 # name. Quotes, $, backticks, backslashes, ;|&<>*?!{}: and control or format
 # characters (such as bidi overrides) become _ or go.
@@ -73,23 +76,36 @@ def clean_name(raw: str) -> str:
             out.append(ch)
         else:
             out.append("_")
-    name = re.sub(r" +", " ", "".join(out)).lstrip(_LEADING).rstrip(" .")
+    # NFC again: a dropped format character between a letter and its combining mark
+    # leaves a pair that composes now; without this a second pass would change it.
+    name = unicodedata.normalize("NFC", "".join(out))
+    name = re.sub(r" +", " ", name).lstrip(_LEADING).rstrip(" .")
     if len(name.encode("utf-8")) > NAME_BYTES:
-        stem, dot, ext = name.rpartition(".")
-        if not dot or not stem or len(ext.encode("utf-8")) > 16:
-            stem, ext = name, ""
+        stem, ext = split_ext(name)
         room = NAME_BYTES - len(ext.encode("utf-8")) - (1 if ext else 0)
         stem = stem.encode("utf-8")[:room].decode("utf-8", "ignore").rstrip(" .")
-        name = f"{stem}.{ext}" if ext else stem
+        name = unicodedata.normalize("NFC", f"{stem}.{ext}" if ext else stem)
     return name or "file"
 
 
+def split_ext(name: str) -> tuple[str, str]:
+    """(stem, extension without its dot): the last dot's, if the extension is short
+    (at most 16 bytes) and the stem not empty; a .tar.* pair stays together.
+    "report v1.2.pdf" -> ("report v1.2", "pdf"); "a.tar.gz" -> ("a", "tar.gz")."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot or not stem or len(ext.encode("utf-8")) > 16:
+        return name, ""
+    inner, dot, tar = stem.rpartition(".")
+    if dot and inner and tar.lower() == "tar":
+        return inner, f"{tar}.{ext}"
+    return stem, ext
+
+
 def numbered(name: str, n: int) -> str:
-    """report.pdf -> report-2.pdf; archive.tar.gz -> archive-2.tar.gz."""
-    stem, dot, ext = name.partition(".")
-    if not stem:  # cannot happen for a cleaned name (no leading dot)
-        return f"{name}-{n}"
-    return f"{stem}-{n}{dot}{ext}"
+    """The nth name for a taken one, before its extension: report v1.2.pdf ->
+    report v1.2-2.pdf; archive.tar.gz -> archive-2.tar.gz; README -> README-2."""
+    stem, ext = split_ext(name)
+    return f"{stem}-{n}.{ext}" if ext else f"{stem}-{n}"
 
 
 def _inbox_path(ctx: Context) -> str:
@@ -167,6 +183,26 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[n:]
 
 
+def sweep(staging: int, now: float | None = None) -> list[str]:
+    """Remove staging files a transfer left behind (ship-ctl killed, the Ship rebooted
+    mid-transfer): plain .part files not written to for STALE seconds. A transfer in
+    progress writes all the time, and FleetLedger gives up on one long before."""
+    now = time.time() if now is None else now
+    gone = []
+    with os.scandir(staging) as entries:
+        for entry in entries:
+            if not _PART.match(entry.name):
+                continue
+            try:
+                st = entry.stat(follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode) and now - st.st_mtime > STALE:
+                    os.unlink(entry.name, dir_fd=staging)
+                    gone.append(entry.name)
+            except OSError:
+                continue
+    return gone
+
+
 def put(ctx: Context, raw_name: str, size: int, stream: BinaryIO) -> tuple[dict, list, list]:
     """Receive one file of `size` bytes from stream into ~/inbox. Returns (data,
     changed, messages). Refused before a byte is read if it is too big or would
@@ -185,6 +221,7 @@ def put(ctx: Context, raw_name: str, size: int, stream: BinaryIO) -> tuple[dict,
                        "free. Clear the inbox or grow the disk.")
     owner = ctx.agent_owner
     staging = _open(ctx, INCOMING, create=True)
+    sweep(staging)
     tmp = f".{secrets.token_hex(8)}.part"
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,

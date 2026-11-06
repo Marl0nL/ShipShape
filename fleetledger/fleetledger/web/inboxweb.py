@@ -79,7 +79,9 @@ class Spool:
             self._expire_locked()
             mine = [i for i in self._items.values() if i.session == session and i.ship == ship]
             if len(mine) >= inbox.MAX_FILES:
-                raise FleetError(f"At most {inbox.MAX_FILES} files at once: send these first.")
+                raise FleetError(f"At most {inbox.MAX_FILES} files at once are waiting to be "
+                                 "sent: send them, or drop new ones in an hour, when "
+                                 "unsent ones are let go.")
             folder = self._folder()
             item_id = secrets.token_hex(12)
             item = Spooled(item_id, session, ship, name, size, folder / item_id, self.clock())

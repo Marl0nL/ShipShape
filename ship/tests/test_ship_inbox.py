@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import unicodedata
 
 import pytest
 from ship_harness import SHIP, assert_valid
@@ -81,6 +82,49 @@ def test_names_are_cleaned_but_still_read_like_the_original(given, stored):
     assert inbox.clean_name(given) == stored
 
 
+@pytest.mark.parametrize("name, second", [
+    ("report.pdf", "report-2.pdf"),
+    ("report v1.2.pdf", "report v1.2-2.pdf"),
+    ("2026.11.06 notes.md", "2026.11.06 notes-2.md"),
+    ("archive.tar.gz", "archive-2.tar.gz"),
+    ("backup.TAR.ZST", "backup-2.TAR.ZST"),
+    ("README", "README-2"),
+    ("odd.extension-that-is-far-too-long", "odd.extension-that-is-far-too-long-2"),
+])
+def test_a_taken_name_is_numbered_before_its_extension(name, second):
+    assert inbox.numbered(name, 2) == second
+
+
+@pytest.mark.parametrize("name", [
+    "A\u202e\u0301B.txt",  # a bidi override between a letter and its accent
+    "e\u200b\u0301\u00e9.md", "Résumé (final).pdf", "../$(x)\u202e.txt", "x" * 300 + ".tar.gz",
+    "\u0301leading mark.txt", "  -.~#name. .",
+])
+def test_cleaning_a_clean_name_changes_nothing(name):
+    once = inbox.clean_name(name)
+    assert inbox.clean_name(once) == once
+    assert once == unicodedata.normalize("NFC", once)
+
+
+def test_put_sweeps_staging_files_a_dead_transfer_left(ship, tmp_path):
+    stage = staging(ship)
+    stage.mkdir(parents=True)
+    old, fresh = stage / f".{'a' * 16}.part", stage / f".{'b' * 16}.part"
+    other = stage / "notes.txt"
+    for f in (old, fresh, other):
+        f.write_bytes(b"x" * 10)
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    os.utime(other, (1_700_000_000, 1_700_000_000))
+    link = stage / f".{'c' * 16}.part"
+    link.symlink_to(tmp_path / "target")
+    (tmp_path / "target").write_text("keep")
+    os.utime(link, (1_700_000_000, 1_700_000_000), follow_symlinks=False)
+    assert put(ship, "a.txt", b"hi")[0] == 0
+    assert not old.exists()
+    assert fresh.exists() and other.exists() and link.is_symlink()
+    assert (tmp_path / "target").read_text() == "keep"
+
+
 def test_a_long_name_is_cut_and_keeps_its_extension():
     name = inbox.clean_name("é" * 300 + ".pdf")
     assert name.endswith(".pdf") and len(name.encode()) <= inbox.NAME_BYTES
@@ -136,13 +180,16 @@ def test_the_list_shows_plain_files_newest_first_and_counts_the_rest(ship, tmp_p
     os.utime(box(ship) / "old.txt", (1_700_000_000, 1_700_000_000))
     (box(ship) / "a-folder").mkdir()
     (box(ship) / "a-link").symlink_to(tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("a file elsewhere, " * 100)
+    (box(ship) / "file-link.txt").symlink_to(secret)  # listed by neither name nor size
     rc, doc, _ = ship.ctl("inbox", "list", "--json")
     assert rc == 0
     assert_valid("ship-ctl-result", doc)
     data = doc["data"]
     assert [f["name"] for f in data["files"]] == ["new.txt", "old.txt"]
     assert data["files"][1] == {"name": "old.txt", "size": 1, "modified": "2023-11-14T22:13:20Z"}
-    assert data["others"] == 2 and data["exists"] is True and data["truncated"] is False
+    assert data["others"] == 3 and data["exists"] is True and data["truncated"] is False
     assert data["path"] == "/home/agent/inbox" and data["max_bytes"] == inbox.MAX_BYTES
 
 

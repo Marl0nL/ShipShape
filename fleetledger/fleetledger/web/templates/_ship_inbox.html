@@ -11,7 +11,7 @@
     From a terminal: <code class="cmd">ship-fleet put {{ ship.name }} FILE…</code></p>
 
   <form id="inbox-send" class="inbox-drop" method="post" action="/ships/{{ ship.name }}/inbox/send"
-    data-inbox-upload="/ships/{{ ship.name }}/inbox/upload" data-inbox-max="{{ INBOX_MAX }}" data-inbox-files="{{ INBOX_FILES }}">
+    data-inbox-upload="/ships/{{ ship.name }}/inbox/upload" data-inbox-max="{{ INBOX_MAX }}" data-inbox-files="{{ INBOX_FILES }}" data-inbox-ship="{{ ship.name }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <div class="dropzone" id="inbox-dropzone" hidden>
       <svg class="drop-mark" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true" focusable="false"><path d="M16 4v16M9 13l7 7 7-7M5 22v6h22v-6"/></svg>

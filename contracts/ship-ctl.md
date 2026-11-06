@@ -414,12 +414,15 @@ the staging folder should be is refused (`invalid-input`) and left alone.
   becomes `_`; control and format characters such as bidi overrides are dropped),
   no leading dot, dash, `~` or `#`, at most 200 bytes (the extension kept), `file`
   if nothing is left. A name already taken gets `-2`, `-3` ... before its
-  extension (`report-2.pdf`): nothing is ever overwritten, even when two files
+  extension, the part after the last dot if it is at most 16 bytes, a `.tar.*` pair
+  kept together (`report v1.2-2.pdf`, `archive-2.tar.gz`, `README-2`): nothing is
+  ever overwritten, even when two files
   arrive at once (linkat refuses an existing name). Refused before a byte is read
   (`invalid-input`): a file over 256 MiB, or one that would leave less than 1 GiB
   free on the home's filesystem. Fewer or more bytes than BYTES keeps nothing
   (`invalid-input`). Files never get an execute bit; nothing reads, runs or
-  unpacks them. `data`: `{ "name": stored name, "given": NAME as sent, "size",
+  unpacks them. Each `put` first removes staging `.part` files untouched for an
+  hour (a transfer cut off by a kill or a reboot). `data`: `{ "name": stored name, "given": NAME as sent, "size",
   "path", "renamed": bool }`; `changed` is the path. Recorded in the journal
   (`ship-ctl logs system`, tag `ship-ctl`).
 - `list --json`: `data`: `{ "path": "/home/agent/inbox", "exists", "files": [{

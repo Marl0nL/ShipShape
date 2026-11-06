@@ -19,7 +19,7 @@ const APP_JS = readFileSync(join(HERE, "../../fleetledger/web/static/app.js"), "
 const PAGE = `
 <meta name="csrf-token" content="tok-123">
 <form id="inbox-send" method="post" action="/ships/ship-01/inbox/send"
-  data-inbox-upload="/ships/ship-01/inbox/upload" data-inbox-max="10" data-inbox-files="3">
+  data-inbox-upload="/ships/ship-01/inbox/upload" data-inbox-max="10" data-inbox-files="3" data-inbox-ship="ship-01">
   <input type="hidden" name="csrf" value="tok-123">
   <div class="dropzone" id="inbox-dropzone" hidden>
     <p id="inbox-drop-title">Drop files for this Ship's agents</p>
@@ -103,7 +103,7 @@ test("the drop zone shows only with script, and lists chosen files", on((p) => {
   const rows = Array.from(p.document.querySelectorAll("#inbox-queue li"));
   assert.equal(rows.length, 2);
   assert.match(rows[0].textContent, /notes\.txt.*4 bytes.*ready/);
-  assert.equal(p.$("#inbox-start").textContent, "Send 2 files to the Ship");
+  assert.equal(p.$("#inbox-start").textContent, "Send 2 files to ship-01");
   assert.equal(p.requests.length, 0, "nothing is uploaded before Send");
 }));
 

@@ -43,10 +43,11 @@ do most; `inbox ls|rm` follows `snapshot ls|rm`. Both take `--json`.
 - **Whole files only.** The Ship writes the bytes to
   `~/.local/state/shipshape/incoming/` first, and links the file into `~/inbox/`
   only once every byte is there and synced. An agent never sees half a file; a
-  transfer that is cut short leaves nothing.
+  transfer that is cut short leaves nothing (a staging file left by a Ship that
+  rebooted mid-transfer is removed by a later `put` once it is an hour old).
 - **Nothing is overwritten.** A name already in the inbox gets `-2`, `-3` ...
-  before its extension (`report.pdf`, `report-2.pdf`), even if two files arrive at
-  once.
+  before its extension (`report.pdf`, `report-2.pdf`; `archive.tar.gz`,
+  `archive-2.tar.gz`), even if two files arrive at once.
 - **Names are cleaned up, not replaced.** Only the last part of the name is kept;
   letters and digits of any script stay, as do spaces and `._-+,@()[]#%=~`; any
   other character becomes `_` (`$(id).txt` becomes `_(id).txt`); control and

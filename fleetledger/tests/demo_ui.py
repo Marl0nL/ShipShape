@@ -481,12 +481,13 @@ def make_ssh(inventory):
                 time.sleep(0.15)
                 if on_progress:
                     on_progress(sent)
+            from fleetledger.inbox import numbered
+
             box = INBOX.setdefault(ship.name, {})
             stored, n = name, 1
             while stored in box:
                 n += 1
-                stem, dot, ext = name.partition(".")
-                stored = f"{stem}-{n}{dot}{ext}"
+                stored = numbered(name, n)
             box[stored] = (size, time.time())
             answer = ctl_result("inbox")
             answer["data"] = {"name": stored, "given": name, "size": size,

@@ -313,6 +313,7 @@
     const max = Number(attr(sendForm, "data-inbox-max"));
     const most = Number(attr(sendForm, "data-inbox-files"));
     const url = attr(sendForm, "data-inbox-upload");
+    const shipName = attr(sendForm, "data-inbox-ship") || "the Ship";
     const csrf = document.querySelector('meta[name="csrf-token"]').content;
     const queue = [];  // { file, li, state: ready|uploading|uploaded|failed|refused, id }
     let busy = false;
@@ -338,7 +339,7 @@
       start.disabled = busy || ready + done === 0;
       start.textContent = ready === 0 && done > 0
         ? "Send the " + done + " uploaded"
-        : "Send " + (ready + done) + " file" + (ready + done === 1 ? "" : "s") + " to the Ship";
+        : "Send " + (ready + done) + " file" + (ready + done === 1 ? "" : "s") + " to " + shipName;
       document.getElementById("inbox-clear").disabled = busy;
     }
     function add(file, why) {
