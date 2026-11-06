@@ -65,20 +65,10 @@ def clean_name(raw: str) -> str:
     """A safe file name that still reads like the original: the last path part only,
     NFC, harmless characters, no leading dot or dash, at most NAME_BYTES."""
     name = unicodedata.normalize("NFC", raw).replace("\\", "/").rsplit("/", 1)[-1]
-    out = []
-    for ch in name:
-        cat = unicodedata.category(ch)
-        if cat[0] == "Z" or ch.isspace():
-            out.append(" ")  # tabs, newlines and odd spaces read as one space
-        elif cat[0] == "C":
-            continue  # other control and format characters (bidi overrides), surrogates
-        elif ch.isalnum() or cat[0] == "M" or ch in _KEEP:
-            out.append(ch)
-        else:
-            out.append("_")
-    # NFC again: a dropped format character between a letter and its combining mark
-    # leaves a pair that composes now; without this a second pass would change it.
-    name = unicodedata.normalize("NFC", "".join(out))
+    # Characters, then NFC, twice: dropping a format character can let a pair compose
+    # (a letter and its accent, or = and U+0338 into the symbol ≠, which the second
+    # pass turns into _). After two rounds, cleaning a cleaned name changes nothing.
+    name = _characters(_characters(name))
     name = re.sub(r" +", " ", name).lstrip(_LEADING).rstrip(" .")
     if len(name.encode("utf-8")) > NAME_BYTES:
         stem, ext = split_ext(name)
@@ -86,6 +76,24 @@ def clean_name(raw: str) -> str:
         stem = stem.encode("utf-8")[:room].decode("utf-8", "ignore").rstrip(" .")
         name = unicodedata.normalize("NFC", f"{stem}.{ext}" if ext else stem)
     return name or "file"
+
+
+def _characters(name: str) -> str:
+    """Keep harmless characters: letters, digits, marks and _KEEP; spaces of any kind
+    as a space; drop control and format characters (bidi overrides); others become _.
+    NFC-normalises what it returns."""
+    out = []
+    for ch in name:
+        cat = unicodedata.category(ch)
+        if cat[0] == "Z" or ch.isspace():
+            out.append(" ")  # tabs, newlines and odd spaces read as one space
+        elif cat[0] == "C":
+            continue  # other control and format characters, surrogates
+        elif ch.isalnum() or cat[0] == "M" or ch in _KEEP:
+            out.append(ch)
+        else:
+            out.append("_")
+    return unicodedata.normalize("NFC", "".join(out))
 
 
 def split_ext(name: str) -> tuple[str, str]:
@@ -214,14 +222,16 @@ def put(ctx: Context, raw_name: str, size: int, stream: BinaryIO) -> tuple[dict,
         raise CtlError("invalid-input", f"{name} is {human(size)}; the inbox takes files of "
                        f"up to {human(MAX_BYTES)} each. Copy bigger files another way "
                        "(scp as agent, say).")
+    owner = ctx.agent_owner
+    staging = _open(ctx, INCOMING, create=True)
+    # Sweep first: a transfer that died may have left what fills the disk.
+    sweep(staging)
     free = _free_bytes(ctx)
     if free is not None and free - size < KEEP_FREE:
+        os.close(staging)
         raise CtlError("invalid-input", f"Not enough disk space for {name} ({human(size)}): "
                        f"{human(max(free, 0))} free, and the Ship keeps {human(KEEP_FREE)} "
                        "free. Clear the inbox or grow the disk.")
-    owner = ctx.agent_owner
-    staging = _open(ctx, INCOMING, create=True)
-    sweep(staging)
     tmp = f".{secrets.token_hex(8)}.part"
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,

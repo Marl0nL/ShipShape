@@ -99,6 +99,7 @@ def test_a_taken_name_is_numbered_before_its_extension(name, second):
     "A\u202e\u0301B.txt",  # a bidi override between a letter and its accent
     "e\u200b\u0301\u00e9.md", "Résumé (final).pdf", "../$(x)\u202e.txt", "x" * 300 + ".tar.gz",
     "\u0301leading mark.txt", "  -.~#name. .",
+    "=\u202e\u0338.txt",  # = and a combining long solidus: they compose into ≠
 ])
 def test_cleaning_a_clean_name_changes_nothing(name):
     once = inbox.clean_name(name)
@@ -123,6 +124,31 @@ def test_put_sweeps_staging_files_a_dead_transfer_left(ship, tmp_path):
     assert not old.exists()
     assert fresh.exists() and other.exists() and link.is_symlink()
     assert (tmp_path / "target").read_text() == "keep"
+
+
+def test_a_full_disk_is_cleared_of_dead_transfers_before_the_space_check(ship, monkeypatch):
+    """A stale staging file can be what fills the disk: put sweeps it before it
+    refuses for lack of space, so the next try can succeed."""
+    from shipctl.context import Context
+    from shipctl.errors import CtlError
+    from shipctl.paths import Paths
+
+    stage = staging(ship)
+    stage.mkdir(parents=True)
+    dead = stage / f".{'d' * 16}.part"
+    dead.write_bytes(b"x" * 100)
+    os.utime(dead, (1_700_000_000, 1_700_000_000))
+    seen = []
+
+    def free(_ctx):
+        seen.append(dead.exists())
+        return inbox.KEEP_FREE  # nothing to spare: refused
+    monkeypatch.setattr(inbox, "_free_bytes", free)
+    ctx = Context(Paths(root=ship.root, bundle=ship.bundle), quiet=True)
+    with pytest.raises(CtlError, match="Not enough disk space"):
+        inbox.put(ctx, "a.bin", 10, open(os.devnull, "rb"))
+    assert seen == [False]  # swept before free space was measured
+    assert not dead.exists()
 
 
 def test_a_long_name_is_cut_and_keeps_its_extension():
