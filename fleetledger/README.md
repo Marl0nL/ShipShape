@@ -47,6 +47,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
 | `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |
 | `fleetledger/inbox.py`, `web/inboxweb.py` | | the file inbox: `ship-fleet put`, `ship-fleet inbox ls\|rm`, and the web UI's Inbox tab (drop zone, upload spool, the send job) ([send-files.md](../docs/runbooks/send-files.md)) |
+| `fleetledger/migrate.py`, `inuse.py` | | moving FleetLedger to another computer: `ship-fleet migrate check\|push\|send\|receive\|verify` (one checked stream over SSH; secrets stored again in the new computer's store; a read-only check of every Ship) and the in-use lock every command holds, so a move never copies a fleet mid-change ([move-fleetledger.md](../docs/runbooks/move-fleetledger.md)) |
 | `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
@@ -63,6 +64,8 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.config/fleetledger/known_hosts` | FleetLedger's own known-hosts file, written from the inventory |
 | `~/.config/fleetledger/key-passphrases/` | passphrases of the keys FleetLedger looks after, when there is no usable keyring (0600) |
 | `~/.config/fleetledger/proxmox-token`, `tailscale-oauth` | the Proxmox API token and Tailscale OAuth secret, when kept in a file rather than the keyring (0600) |
+| `~/.config/fleetledger/agent-keys/` | the `.pub` of your keys for Ships, on a computer FleetLedger was moved to (`ship-fleet migrate`): their private halves stay on your machines |
+| `~/.config/fleetledger/ships.toml.lock` | guards each change to the inventory. Every `ship-fleet` also holds a shared lock (flock) on the folder itself while it runs, and `migrate` holds it alone, so a move never copies a fleet mid-change |
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
