@@ -99,9 +99,19 @@ Or tick them on the New Ship form (and setup's first Ship), or in a Ship's
 **Settings** under **GitHub scopes**.
 
 Changing the choice never changes the sign-in on the Ship. Until you sign in again,
-its status says so (`signin-scopes-differ`: "lacks workflow", "has project, not
-chosen"), and the Sign-ins page lists the row under **Needs you** with **Sign in
-again with these scopes**. Signing in to GitHub, from anywhere, asks for exactly the
+its status says so (`signin-scopes-differ`), and the Sign-ins page lists the row
+under **Needs you**:
+
+- The token **lacks** a chosen scope: **Sign in again with these scopes** adds it.
+- The token **has** a catalogue scope that is not chosen, most likely one you added
+  by hand before this choice existed (say `gh auth refresh -s workflow` over SSH):
+  **Keep workflow: tick it in Settings** comes first (`ship-fleet set SHIP
+  github_scopes=workflow`, which the fix column says). Signing in again would drop
+  it, and its button says so (**Sign in again and drop workflow**).
+
+A scope the Ship reports as chosen that this FleetLedger does not know (chosen by a
+newer FleetLedger, or `ship.toml` edited by hand) is shown on its Settings, never
+asked for, and dropped from the choice if you save the tickboxes there. Signing in to GitHub, from anywhere, asks for exactly the
 chosen scopes: on a Ship not signed in, `gh auth login --scopes ...`; on one signed
 in with other scopes, `gh auth refresh --scopes <added> --remove-scopes <dropped>`,
 in the same device flow, for the same account (GitHub shows the scopes to approve).

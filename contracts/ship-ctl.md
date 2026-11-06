@@ -75,7 +75,7 @@ Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `reboot-required`, `herdr-restart-pending`, `provision-failed`, `tool-waiting`,
 `tool-failed`, `signin-scopes-differ` (GitHub is signed in, and its token lacks an
 extra scope `github.scopes` chooses, or has a catalogue scope it no longer chooses;
-`settings.md`, "Extra GitHub scopes"), `host-cert-expiring` (the host certificate ends within 14 days),
+`settings.md`, "Extra GitHub scopes"; for a scope it has but does not choose, the message says to tick it to keep it before it says that signing in again drops it), `host-cert-expiring` (the host certificate ends within 14 days),
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
 running), `overlay-down` (joined, but the overlay is not `running`).
 FleetLedger adds its own on top (`signin-wrong-account` from the tag check,

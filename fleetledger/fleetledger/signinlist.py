@@ -80,6 +80,10 @@ class Row:
     tags: tuple[str, ...] = ()
     expires_at: str | None = None  # an expiring sign-in: the soonest to go comes first
     note: str | None = None  # a second line: what the last attempt did (it timed out)
+    # scopes differ: what signing in again would drop from the token (given by hand,
+    # most likely), and the choice that keeps it instead (ghscopes)
+    drops: tuple[str, ...] = ()
+    keep: tuple[str, ...] = ()
 
     @property
     def provider(self) -> str:
@@ -186,8 +190,10 @@ def _status_row(view: ShipView, service: str, tags: tuple[str, ...]) -> Row:
     if scopes is not None and state in SIGNED_IN:
         # Its token lacks a scope chosen for the Ship, or has one no longer chosen:
         # nothing changes it but signing in again, which you choose (ghscopes).
+        gh = ghscopes.summary(view.ship, view.status)
         return Row(**base, group="action", state="scopes differ", level="warning", rank=2,
-                   message=scopes["message"])
+                   message=scopes["message"], drops=gh.differ.extra,
+                   keep=tuple(gh.differ.keep(gh.chosen)) if gh.differ.extra else ())
     if state == "expired":
         if entry.get("expires_at"):
             base["since"] = entry["expires_at"]
@@ -319,6 +325,8 @@ def fix_command(row: Row) -> str:
         return f"ship-fleet status {row.ship}"
     if row.state == "wrong account":
         return f"ship-fleet logout {row.ship} {row.provider}"
+    if row.drops:  # keep what the token has first; signing in again would drop it
+        return f"ship-fleet set {row.ship} github_scopes={','.join(row.keep)}"
     if row.group == "healthy":
         return ""
     return f"ship-fleet login {row.ship} {row.provider}"

@@ -51,7 +51,10 @@ def test_set_github_scopes_then_the_token_lacks_one(ship):
 def test_a_scope_no_longer_chosen_is_said_never_dropped(ship):
     ship.set(gh={"login": "example-user", "scopes": ["gist", "read:org", "repo", "workflow"]})
     _, doc, _ = ship.ctl("status", "--json")
-    assert "has workflow, not chosen" in _item(doc)["message"]
+    message = _item(doc)["message"]
+    assert "has workflow, not chosen" in message
+    # keeping it comes first; signing in again is said to drop it
+    assert message.index("To keep workflow, tick it") < message.index("drops it")
     # Scopes outside the choice (given by hand) are not FleetLedger's to judge.
     ship.set(gh={"login": "example-user", "scopes": ["admin:org", "gist", "read:org", "repo"]})
     _, doc, _ = ship.ctl("status", "--json")

@@ -687,7 +687,10 @@ async def ship_github_scopes(request: Request) -> Response:
     view = ui.fleet.snapshot.by_name.get(name)
     now = ghscopes.summary(view.ship, view.status) if view is not None else None
     said = f"{name}: GitHub scopes {ghscopes.describe(wanted)}."
-    if now is not None and now.differ:
+    if now is not None and now.differ.extra:
+        said += (f" Its GitHub sign-in {now.differ.describe()}: tick it to keep it; signing "
+                 "in again drops it.")
+    elif now is not None and now.differ:
         said += (f" Its GitHub sign-in {now.differ.describe()}: nothing changes on the Ship "
                  "until you sign in again with these scopes.")
     ui.flash(session, "ok", said)

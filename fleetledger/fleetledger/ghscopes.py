@@ -73,9 +73,17 @@ def reported(doc: Mapping[str, Any] | None) -> list[str] | None:
 
 def chosen(ship: Any, doc: Mapping[str, Any] | None = None) -> list[str]:
     """What this Ship's GitHub sign-in asks for: what the Ship reports, else the
-    inventory's copy (a Ship not answering, or with older tooling)."""
+    inventory's copy (a Ship not answering, or with older tooling). Only catalogue
+    scopes: one this FleetLedger does not know (a newer catalogue, a hand-edited
+    ship.toml) is never asked for, and is shown apart (unknown)."""
     found = reported(doc)
-    return check(found if found is not None else getattr(ship, "github_scopes", ()) or ())
+    values = found if found is not None else getattr(ship, "github_scopes", ()) or ()
+    return [s for s in IDS if s in values]
+
+
+def unknown(doc: Mapping[str, Any] | None) -> list[str]:
+    """Scopes the Ship reports as chosen that are not in this FleetLedger's catalogue."""
+    return [s for s in reported(doc) or () if s not in BY_ID]
 
 
 def granted(doc: Mapping[str, Any] | None) -> list[str] | None:
@@ -100,8 +108,12 @@ class Difference:
         if self.missing:
             parts.append(f"lacks {', '.join(self.missing)}")
         if self.extra:
-            parts.append(f"still has {', '.join(self.extra)}")
+            parts.append(f"has {', '.join(self.extra)}, not chosen")
         return " and ".join(parts)
+
+    def keep(self, wanted: Sequence[str]) -> list[str]:
+        """The choice that keeps what the token has beyond it (ticking it), in order."""
+        return [s for s in IDS if s in wanted or s in self.extra]
 
 
 def difference(wanted: Sequence[str], token: Sequence[str] | None) -> Difference:
@@ -131,6 +143,7 @@ class Summary:
     token: tuple[str, ...] | None  # None: not signed in, or not known
     differ: Difference
     reported: bool  # the Ship reports its choice (else the inventory's copy is shown)
+    unknown: tuple[str, ...] = ()  # reported as chosen, not in this catalogue
 
     @property
     def token_extras(self) -> list[str]:
@@ -141,4 +154,4 @@ def summary(ship: Any, doc: Mapping[str, Any] | None) -> Summary:
     wanted = chosen(ship, doc)
     token = granted(doc)
     return Summary(tuple(wanted), None if token is None else tuple(token),
-                   difference(wanted, token), reported(doc) is not None)
+                   difference(wanted, token), reported(doc) is not None, tuple(unknown(doc)))

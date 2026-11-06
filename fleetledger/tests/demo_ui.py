@@ -68,7 +68,9 @@ CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo
 # chose write:packages after it signed in, so its token lacks it: scopes differ.
 GITHUB_CHOSEN: dict[str, list[str]] = {"ship-01": ["workflow"],
                                        "ship-02": ["workflow", "write:packages"]}
-GITHUB_TOKEN: dict[str, list[str]] = {"ship-01": ["workflow"], "ship-02": ["workflow"]}
+# ship-04's owner added workflow by hand, before choosing it here: keep it, or drop it.
+GITHUB_TOKEN: dict[str, list[str]] = {"ship-01": ["workflow"], "ship-02": ["workflow"],
+                                      "ship-04": ["workflow"]}
 INBOX: dict[str, dict[str, tuple[int, float]]] = {  # Ship -> file name -> (size, when)
     "ship-01": {"design-notes.md": (18_342, time.time() - 3 * 3600),
                 "sample-data.csv": (2_411_520, time.time() - 26 * 3600)},
@@ -310,6 +312,14 @@ def _stamp(when: datetime) -> str:
     return when.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def scopes_differ(doc: dict) -> str | None:
+    """The Ship's own GitHub scopes check (ship/lib/shipctl/status.py), on a demo doc."""
+    sys.path.insert(0, str(ROOT / "ship" / "lib"))
+    from shipctl.status import scopes_differ as ship_check
+
+    return ship_check(doc)
+
+
 def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
     """A plausible status document for one demo Ship, wobbling with time."""
     base = json.loads((EXAMPLES / "ship-status" / "running-overlay.json").read_text())
@@ -405,15 +415,10 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         github["scopes"] = sorted(["gist", "read:org", "repo", *GITHUB_TOKEN.get(name, [])])
     if doc.get("settings"):
         doc["settings"]["github"] = {"scopes": list(GITHUB_CHOSEN.get(name, []))}
-        missing = [s for s in GITHUB_CHOSEN.get(name, []) if s not in github.get("scopes", [])]
-        extra = [s for s in GITHUB_TOKEN.get(name, []) if s not in GITHUB_CHOSEN.get(name, [])]
-        if github["state"] == "ok" and (missing or extra):  # as the Ship says it
-            parts = ([f"lacks {', '.join(missing)}, chosen for this Ship"] if missing else []
-                     ) + ([f"has {', '.join(extra)}, not chosen"] if extra else [])
-            doc["attention"].append({
-                "code": "signin-scopes-differ", "subject": "github",
-                "message": f"The GitHub sign-in {' and '.join(parts)}: sign in to GitHub "
-                           "again with the chosen scopes."})
+        differ = scopes_differ(doc)  # the Ship's own check and words
+        if differ:
+            doc["attention"].append({"code": "signin-scopes-differ", "subject": "github",
+                                     "message": differ})
     if doc.get("settings") and CLAUDE_SET.get(name):  # set in this demo run
         doc["settings"]["claude"].update(CLAUDE_SET[name])
         doc["claude"].update(CLAUDE_SET[name])
