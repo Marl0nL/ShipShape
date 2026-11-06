@@ -191,7 +191,8 @@ class Jobs:
             return self.store.last_id() + 1
         except (OSError, sqlite3.Error):
             # Unreadable for now (busy, say): start past any id it can hold, so a
-            # save never replaces an older operation's record.
+            # save never replaces an older operation's record. Ids carry on from
+            # there for good (ten digits); they only order and name records.
             return int(time.time())
 
     def _save(self, job: Job, ended: bool) -> None:

@@ -240,10 +240,27 @@ class Operation:
 IDENT = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
-def _scrub(text: str) -> str:
+# The characters redact() counts as part of a token: a name is kept in a log line
+# only where it stands alone, not inside a longer run (which may be a secret).
+TOKEN_CHAR = r"A-Za-z0-9_\-+/="
+
+
+def _scrub(text: str, keep: tuple[str, ...] = ()) -> str:
+    """text, cleaned and redacted. Each name in keep (the job's own Ship names,
+    identifiers saved in clear in the same record) stays readable where it stands
+    alone, however long: a 24+ character name would otherwise read as a token."""
     from fleetledger.concierge.redact import clean, redact
 
-    return redact(clean(text))[:OPS_MAX_LINE]
+    text = clean(text)  # no control characters left: \0 marks a kept name below
+    long = sorted((n for n in keep if len(n) >= 24), key=len, reverse=True)
+    for i, name in enumerate(long):
+        alone = re.compile(rf"(?<![{TOKEN_CHAR}.]){re.escape(name)}"
+                           rf"(?![{TOKEN_CHAR}]|\.[{TOKEN_CHAR}.])")
+        text = alone.sub(f"\0{i}\0", text)
+    text = redact(text)
+    for i, name in enumerate(long):
+        text = text.replace(f"\0{i}\0", name)
+    return text[:OPS_MAX_LINE]
 
 
 def _ident(text: str) -> str:
@@ -260,16 +277,18 @@ def _label(text: str) -> str:
 
 
 def scrubbed(op: Operation) -> Operation:
-    """op as it is saved: the log and error redacted and bounded, the title cleared of
-    addresses and link queries, Ship names and the kind kept (identifiers)."""
-    log = [line for line in (_scrub(raw).rstrip() for raw in op.log) if line.strip()]
+    """op as it is saved: the log and error redacted and bounded (the job's own Ship
+    names left readable in them), the title cleared of addresses and link queries,
+    Ship names and the kind kept (identifiers)."""
+    keep = tuple(s for s in op.ships if IDENT.match(s))
+    log = [line for line in (_scrub(raw, keep).rstrip() for raw in op.log) if line.strip()]
     if len(log) > OPS_MAX_LINES:
         cut = len(log) - OPS_MAX_LINES
         log = log[:OPS_MAX_LINES] + [f"({cut} more line{'s' if cut != 1 else ''} not kept)"]
     return replace(op, kind=_ident(op.kind), title=_label(op.title),
                    ships=tuple(_ident(s) for s in op.ships),
                    outcome=op.outcome if op.outcome in OUTCOMES else "failed",
-                   error=_scrub(op.error) if op.error else None,
+                   error=_scrub(op.error, keep) if op.error else None,
                    log=tuple(log), lines=len(log))
 
 

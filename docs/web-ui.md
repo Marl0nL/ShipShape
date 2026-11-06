@@ -216,7 +216,8 @@ start and end time, outcome, error and log (what its card showed: the command's
 output, each Ship's log, the outcome's lines), and whether its card was
 dismissed. The log and error are passed through the concierge's redaction as
 they are saved (long token-like strings, email addresses and link queries are
-replaced; so is a long path), the title loses email addresses and link queries,
+replaced; so is a long path; the job's own Ship names stay readable where they
+stand alone, however long), the title loses email addresses and link queries,
 and Ship names and the kind are kept as they are (identifiers). A log keeps at
 most 2,000 lines of 1,000 characters. So a record holds no secret even if a
 command printed one. Records are kept for 30 days, and at most

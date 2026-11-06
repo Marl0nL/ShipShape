@@ -74,6 +74,28 @@ def test_ship_names_and_kinds_are_kept_whole_however_long(home):
     assert store.get(2).ships == ("[redacted]",) and store.get(2).kind == "[redacted]"
 
 
+def test_the_jobs_own_long_ship_names_stay_readable_in_its_log_and_error(home):
+    """Several long-named Ships in one log: each line still says which Ship it is
+    about. A name inside a longer run (a host name, a path, a secret) is still
+    redacted whole, and so is a secret beside a name."""
+    a, b = "my-very-long-ship-name-here-01", "my-very-long-ship-name-here-02"
+    store = Operations()
+    store.save(op(1, ships=(a, b), outcome="failed", error=f"{b} did not answer over SSH.",
+                  log=(f"{a}: converged", f"{b}: failed: {b}: cannot reach it.",
+                       f"Rebooting {a}.", f"reach {a}.example.invalid now",
+                       f"key /srv/{a}/key", f"{a}={TOKEN}", f"{a} uses {TOKEN}",
+                       f"glued s3cr3tPart{a} end", f"glued {a}s3cr3tPart end",
+                       "another-ship-with-a-long-name-03 answered")))
+    got = store.get(1)
+    assert got.error == f"{b} did not answer over SSH."
+    assert got.log == (f"{a}: converged", f"{b}: failed: {b}: cannot reach it.",
+                       f"Rebooting {a}.", "reach [redacted] now", "key [redacted]",
+                       "[redacted]", f"{a} uses [redacted]",
+                       "glued [redacted] end", "glued [redacted] end",
+                       "[redacted] answered")  # not this job's Ship: a token as ever
+    assert TOKEN.encode() not in history.history_path().read_bytes()
+
+
 def test_a_long_log_is_cut_and_says_so(home):
     store = Operations()
     store.save(op(1, log=tuple(f"line {i} " + "x" * 2000 for i in range(2500))))
