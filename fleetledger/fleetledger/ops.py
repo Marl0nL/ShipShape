@@ -485,23 +485,48 @@ def up_to_date(doc: dict[str, Any], bundle: bundle_mod.Bundle) -> bool:
     )
 
 
-def rolls_back(repo, doc: dict[str, Any], bundle: bundle_mod.Bundle) -> str | None:
-    """Why converging the Ship (its status) to bundle would roll its tooling back to
-    an older ShipShape commit, or None. Told by git ancestry: the Ship's commit must
-    be the bundle's or one in its history. Nothing to tell when the Ship reports no
+@dataclass(frozen=True)
+class Backwards:
+    """Why updating a Ship to this checkout's bundle may take it back, and what to do."""
+
+    why: str
+    steps: list[str]
+
+
+def rolls_back(repo, doc: dict[str, Any], bundle: bundle_mod.Bundle,
+               ship_name: str = "SHIP") -> Backwards | None:
+    """Why converging the Ship (its status) to bundle may roll its tooling back to an
+    older ShipShape commit, or None. Told by git ancestry: the Ship's commit must be
+    the bundle's or one in its history. Nothing to tell when the Ship reports no
     commit (it predates bundles), already runs the bundle's commit, or this checkout
-    is not a git checkout."""
+    is not a git checkout. When git cannot tell, it counts as backwards."""
     theirs = doc["ship"].get("bundle_commit")
     ours = bundle.manifest["commit"]
     if not theirs or ours.startswith(theirs) or not repo.has_commit(ours):
         return None
+    force = (f"ship-fleet update {ship_name} --force (in the web UI: Fleet actions, Update, "
+             "with its \"converge even\" box ticked)")
+    if not repo.has_commit(theirs) and repo.is_shallow():
+        return Backwards(f"it runs ShipShape {theirs}, which this shallow clone cannot see "
+                         "(it may well be older)",
+                         ["Fetch the rest of the history (git fetch --unshallow), then update "
+                          f"again; or, if you know it is older: {force}."])
     if not repo.has_commit(theirs):
-        return (f"it runs ShipShape {theirs}, a commit this checkout does not have: newer, "
-                "from another computer's checkout?")
+        return Backwards(f"it runs ShipShape {theirs}, a commit this checkout does not have "
+                         "(newer, from another computer's checkout, or from a branch since "
+                         "deleted)",
+                         ["If another checkout is ahead, bring this one up to date (git fetch, "
+                          "git pull), then update again.",
+                          "If the Ship was updated from a branch since merged or rebased, this "
+                          f"is the move forward: {force}."])
     if repo.is_ancestor(theirs, ours):
         return None
-    return (f"it runs ShipShape {theirs}, newer than this checkout's {ours[:12]} (or on "
-            "another branch)")
+    return Backwards(f"it runs ShipShape {theirs}, newer than this checkout's {ours[:12]} (or "
+                     "on another branch)",
+                     ["If this checkout is behind, bring it up to date (git pull), then update "
+                      "again.",
+                      "If the Ship was updated from a branch since merged or rebased (the move "
+                      f"forward), or to roll it back on purpose: {force}."])
 
 
 def _check_reboot_policy(policy: str) -> None:
@@ -548,12 +573,13 @@ def update_one(
                 ship.name, True, f"already on {release}", details, data), wait, times)
         return Outcome(ship.name, True, f"already on {release}", details, data)
 
-    backwards = None if force else rolls_back(fleet.repo_factory(), before, bundle)
-    if backwards:
+    backwards = rolls_back(fleet.repo_factory(), before, bundle, ship.name)
+    if backwards and not force:
         on_event(ship.name, "not updated: that would roll it back")
-        return Outcome(ship.name, False, f"not updated: {backwards}", [
-            "Bring this checkout up to date first (git pull), then update again; or, to roll "
-            f"the Ship back to {release} on purpose, add --force."], data)
+        return Outcome(ship.name, False, f"not updated: {backwards.why}", backwards.steps, data)
+    if backwards:  # forced: deliberate, and said so in the events, the result and --json
+        on_event(ship.name, f"rolling back on purpose (--force): {backwards.why}")
+        data["rolled_back"] = backwards.why
 
     on_event(ship.name, f"uploading the bundle ({len(bundle.data) // 1024} KiB)")
     path = upload_bundle(fleet, inventory, ship, bundle)
@@ -576,7 +602,10 @@ def update_one(
                        f"converge finished but the Ship reports bundle "
                        f"{after['ship'].get('bundle_commit')}, not {release}", details, data)
     pending = has_attention(after, "herdr-restart-pending")
-    outcome = Outcome(ship.name, True, f"updated to {release}", details, data)
+    if data.get("rolled_back"):
+        details.insert(0, f"Rolled back on purpose (--force): {data['rolled_back']}.")
+    outcome = Outcome(ship.name, True, ("rolled back to " if data.get("rolled_back") else
+                                        "updated to ") + release, details, data)
     needs_reboot = reboot_policy == "always" or (reboot_policy == "auto" and pending)
     if not needs_reboot:
         if pending:

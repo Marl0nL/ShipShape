@@ -1162,13 +1162,20 @@ def test_update_never_rolls_a_ship_back_to_an_older_commit(world, history):
     assert not outcome.ok, outcome
     assert outcome.summary == (f"not updated: it runs ShipShape {two[:12]}, newer than this "
                                f"checkout's {one[:12]} (or on another branch)")
-    assert "git pull" in outcome.details[0] and "--force" in outcome.details[0]
+    said = " ".join(outcome.details)
+    assert "git pull" in said and "ship-fleet update ship-01 --force" in said
+    assert "Fleet actions" in said  # the web UI's way too
     assert sim.converged == [] and not list((world.incoming / "ship-01").glob("*"))
     assert ("ship-01", "not updated: that would roll it back") in seen
 
+    seen, on_event = events()
     [forced] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=one),
-                          force=True)
-    assert forced.ok and sim.converged == [one]  # on purpose
+                          force=True, on_event=on_event)
+    assert forced.ok and sim.converged == [one]  # on purpose, and said so
+    assert forced.summary == f"rolled back to 0.2.0-{one[:12]}"
+    assert forced.details[0].startswith("Rolled back on purpose (--force): it runs ShipShape")
+    assert forced.data["rolled_back"].startswith(f"it runs ShipShape {two[:12]}")
+    assert any(text.startswith("rolling back on purpose (--force)") for _, text in seen)
 
 
 def test_update_brings_a_ship_forward(world, history):
@@ -1188,6 +1195,36 @@ def test_a_ship_on_another_branch_or_an_unknown_commit_is_left_alone(world, hist
     sim.bundle_commit = side[:12] if where == "side" else "abcdef012345"
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
     assert not outcome.ok and says in outcome.summary and sim.converged == []
+
+
+def test_a_ship_on_a_commit_this_checkout_lacks_may_be_a_merged_branch(world, history):
+    one, two, _ = history
+    world.sims["ship-01"].bundle_commit = "abcdef012345"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
+    said = " ".join(outcome.details)
+    assert "since merged or rebased, this is the move forward" in said and "--force" in said
+
+
+def test_a_shallow_clone_says_it_cannot_tell(world, history, fake_repo, tmp_path):
+    from fleetledger.repo import Repo
+
+    one, two, _ = history
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{fake_repo.root}",
+                    str(shallow)], check=True, capture_output=True)
+    world.fleet.repo_factory = lambda: Repo(shallow)
+    sim = world.sims["ship-01"]
+    sim.bundle_commit = one[:12]  # older: but past the clone's depth
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
+    assert not outcome.ok and "this shallow clone cannot see" in outcome.summary
+    assert "git fetch --unshallow" in outcome.details[0] and sim.converged == []
+
+
+def test_commits_reach_git_only_as_hex(history, fake_repo):
+    for odd in ("--help", "-C/tmp", "HEAD", "main", "ABCDEF0123456", ""):
+        assert fake_repo.has_commit(odd) is False, odd
+        assert fake_repo.is_ancestor(odd, "HEAD") is None, odd
+    assert fake_repo.has_commit(history[0][:12])
 
 
 def test_a_ship_already_on_this_commit_is_not_a_roll_back(world, history):
