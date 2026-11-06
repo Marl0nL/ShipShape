@@ -48,7 +48,7 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="ship" value="{{ a.ship }}">
       <input type="hidden" name="service" value="{{ a.action.value }}">
-      <button type="submit">Sign in</button>
+      <button type="submit">{{ a.action.label }}</button>
     </form>
   {% elif a.action.kind == "command" %}
     <span class="hint">{{ a.action.hint }}</span>

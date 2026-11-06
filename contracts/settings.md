@@ -74,6 +74,7 @@ integration and agents edit these files too):
 | `updates.auto_reboot`, `updates.reboot_time` | `/etc/apt/apt.conf.d/52shipshape-unattended-upgrades`: `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-Time` (see "OS updates") |
 | `network.ssh_listen` | `/etc/ssh/sshd_config.d/20-shipshape-listen.conf`: absent for `any`; for `overlay`, a `Match LocalAddress` block that denies every user on any local address other than loopback and the Ship's own overlay addresses (phase 5, `ship-ctl.md` overlay) |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
+| `github.scopes` | nothing on disk: FleetLedger's GitHub sign-in asks for these extra scopes, and `ship-ctl status` compares them with the token's (see "Extra GitHub scopes") |
 | `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
 
 ## LAN guard
@@ -157,6 +158,27 @@ it was in. `ship-ctl agent restart` (`ship-fleet agent restart`) swaps a running
 agent for one in the new mode, continuing its conversation, and records the new
 mode in the ledger (`ship-ctl.md`).
 
+## Extra GitHub scopes
+
+gh signs in with its own minimum scopes (`repo`, `read:org`, `gist`). A Ship may
+choose extra ones from a short catalogue (the schema's `githubScope`; explained in
+`fleetledger/fleetledger/ghscopes.py`): `workflow` (push changes to
+`.github/workflows/`), `project` (GitHub Projects), `write:packages` (GitHub
+Packages, such as ghcr.io images). Scopes that delete or administer (`delete_repo`,
+`admin:*`) are not offered.
+
+- The choice lives in `ship.toml` `github.scopes`, with a copy in `ships.toml`
+  `ship.<name>.github_scopes` for the seed; `ship-fleet set SHIP github_scopes=...`
+  changes both. The default is none: the sign-in is as it always was.
+- FleetLedger's GitHub sign-in asks for exactly the chosen scopes: `gh auth login
+  --scopes ...` on a Ship not signed in; on one signed in whose token's scopes differ,
+  `gh auth refresh --scopes <missing> --remove-scopes <no longer chosen>`, which keeps
+  the account. Only catalogue scopes are added or removed: gh's minimum and scopes
+  given by hand stay as they are.
+- Changing the choice never changes the token. `ship-ctl status` reports the token's
+  scopes (`auth.github.scopes`) and, while they differ from the choice, the attention
+  item `signin-scopes-differ` (subject `github`), until you sign in again.
+
 ## How ships.toml becomes a Ship's ship.toml
 
 The seed generator builds `ship.toml` like this, then validates it before writing
@@ -173,6 +195,7 @@ the seed:
 | `tools.profiles` | `ship.<name>.profiles`, else `defaults.profiles` |
 | `profile_options` | for each profile: `profile_options.<profile>`. A missing required option stops seed creation with a clear message. |
 | `autostart`, `agent`, `network` | from the `ship-fleet new` options; absent by default |
+| `github.scopes` | `ship.<name>.github_scopes` (`ship-fleet new --github-scopes`); absent when there are none |
 
 The `[tag.*]` expected accounts stay in `ships.toml`: they are never copied to a
 Ship. FleetLedger compares them with the `account` values in each status document.

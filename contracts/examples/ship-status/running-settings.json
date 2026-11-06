@@ -91,6 +91,7 @@
     "github": {
       "state": "ok",
       "account": "example-work",
+      "scopes": ["gist", "read:org", "repo", "workflow"],
       "checked_at": "2026-01-01T00:00:00Z"
     }
   },
@@ -161,6 +162,7 @@
       "auto_reboot": false,
       "reboot_time": "04:00"
     },
+    "github": { "scopes": ["workflow"] },
     "owner": "human",
     "autostart": [
       {

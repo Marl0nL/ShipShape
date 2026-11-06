@@ -138,8 +138,16 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     """The one action that fixes an attention code on a Ship. attach_here: this
     computer can reach the Ship with plain herdr --remote (trustcmd.attaches_here),
     so that is the command offered for a waiting agent; else ship-fleet ssh."""
+    if code == "signin-scopes-differ" and view is not None:
+        from fleetledger import ghscopes
+
+        extra = ghscopes.summary(view.ship, view.status).differ.extra
+        if extra:  # given by hand, most likely: keep it first; signing in would drop it
+            return Action("link", f"Keep {', '.join(extra)}: tick it in Settings",
+                          f"/ships/{ship}/settings#github-scopes")
     if signin:
-        return Action("signin", "Sign in", signin)
+        return Action("signin", "Sign in again with these scopes"
+                      if code == "signin-scopes-differ" else "Sign in", signin)
     if code.startswith("signin-"):
         return Action("link", "Sign-ins", "/signin")
     # Fixes the UI can do itself are buttons; the CLI command is the tooltip.

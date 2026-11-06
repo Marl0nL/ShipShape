@@ -210,6 +210,9 @@ def build_parser() -> argparse.ArgumentParser:
                    "~/work/NAME first (a private one after the GitHub sign-in)")
     p.add_argument("--signins", metavar="claude,gcloud,github",
                    help="the sign-ins it uses (default: all); see ship-fleet signins")
+    p.add_argument("--github-scopes", metavar="workflow,...",
+                   help="extra GitHub scopes its GitHub sign-in asks for (default: none, "
+                   "gh's minimum): workflow, project, write:packages")
     p.add_argument("--no-overlay", action="store_true",
                    help="do not join the overlay after it enrols (with [overlay] set up)")
     p.add_argument("--yes", action="store_true",
@@ -245,10 +248,15 @@ def build_parser() -> argparse.ArgumentParser:
              "Sign Ships in to a service. FleetLedger runs the tool's own sign-in on the\n"
              "Ship, shows you the link, types the code you paste, and checks the account\n"
              f"against the Ship's tags. Services: {services}.\n\n"
-             "  ship-fleet login ship-01 claude\n  ship-fleet login --tag work all")
+             "  ship-fleet login ship-01 claude\n  ship-fleet login --tag work all\n"
+             "  ship-fleet login ship-01 github --scopes workflow")
     p.add_argument("args", nargs="+", metavar="[SHIP ...] SERVICE")
     p.add_argument("--tag", help="every Ship with this tag")
     p.add_argument("--open", action="store_true", help="open each link in your browser")
+    p.add_argument("--scopes", metavar="workflow,...|none",
+                   help="github: choose the Ship's extra GitHub scopes first (as ship-fleet "
+                   "set SHIP github_scopes=...), then sign in with them; a Ship already "
+                   "signed in has its token's scopes refreshed in place")
 
     p = _add(sub, "logout", "sign a Ship out of a service")
     p.add_argument("name")

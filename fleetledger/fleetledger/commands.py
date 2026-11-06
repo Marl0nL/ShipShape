@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fleetledger import concierge, enrol, images, ops, paths, schemas, signins, status
+from fleetledger import concierge, enrol, ghscopes, images, ops, paths, schemas, signins, status
 from fleetledger.catalogue import Catalogue
 from fleetledger.concierge import audit, providers
 from fleetledger.drivers import SeedFile
@@ -63,6 +63,10 @@ def auth_cell(view: status.ShipView, service: str) -> str:
     if any(a["code"] == "signin-wrong-account" and a.get("subject") == service
            for a in view.attention):
         return "Wrong account"
+    if entry["state"] in ("ok", "expiring") and any(
+            a["code"] == "signin-scopes-differ" and a.get("subject") == service
+            for a in view.attention):
+        return "Scopes differ"  # ghscopes: sign in again with the chosen scopes
     return AUTH_LABELS.get(entry["state"], entry["state"])
 
 
@@ -310,6 +314,7 @@ def _new(args, app, progress: dict[str, Any]) -> int:
         image=image_id,
         signins=(None if args.signins is None else
                  tuple(signins.check(args.signins.split(",")))),
+        github_scopes=tuple(ghscopes.parse(args.github_scopes or "")),
     )
     if args.tools is not None or args.no_default_tools:
         base = [] if args.no_default_tools else tools_for(inv, draft, catalogue)
@@ -631,6 +636,11 @@ def cmd_status(args, app) -> int:
         wanted = " or ".join(sorted(expected.accounts))
         want = f" (tag expects {wanted})" if wanted else ""
         app.say(f"  {service:<11} {auth_cell(view, service):<14} {entry['account'] or ''}{want}")
+    wanted, token = ghscopes.chosen(ship, doc), ghscopes.granted(doc)
+    if wanted or ghscopes.extras(token):
+        app.say(f"  GitHub scopes: chosen {ghscopes.describe(wanted)}"
+                + (f"; the token has {ghscopes.describe(ghscopes.extras(token))}"
+                   if token is not None else ""))
     app.say("Agents:")
     for agent in doc["herdr"]["agents"] or []:
         app.say(f"  {agent['name'] or '-':<12} {agent['state']:<8} {agent['mode'] or ''}")
@@ -683,6 +693,20 @@ def cmd_login(args, app) -> int:
     chosen = providers.resolve(service)
     inv = app.store_factory().load()
     ships = inv.select(names, args.tag)
+    if args.scopes is not None:
+        if not any(p.takes_scopes for p in chosen):
+            raise FleetError("--scopes is for the GitHub sign-in: ship-fleet login SHIP github "
+                             "--scopes workflow")
+        scopes = ghscopes.parse(args.scopes)
+        on = [s for s in ships if signins.provider_on(s, "github")]
+        outcomes = ops.set_settings(_fleet(app), on, [f"github_scopes={','.join(scopes)}"])
+        for outcome in outcomes:
+            app.say(f"{outcome.ship}: GitHub scopes {ghscopes.describe(scopes)}"
+                    if outcome.ok else outcome.summary)
+        if not all(o.ok for o in outcomes):
+            return 1  # never sign in with scopes the Ship did not take
+        inv = app.store_factory().load()
+        ships = inv.select(names, args.tag)
     ssh = _ssh(app, inv)
     failures = 0
     for ship in ships:
@@ -749,6 +773,8 @@ def cmd_signins(args, app) -> int:
         for choice in signins.CHOICES:
             state = "on" if choice in signins.used(ship) else "off"
             app.say(f"{choice:8} {state}")
+        if ship.github_scopes:
+            app.say(f"github scopes: {', '.join(ship.github_scopes)}")
         return 0
     return 0 if set_signins(app, store, ship.name, wanted, app.say) else 1
 

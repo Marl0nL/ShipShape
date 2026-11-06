@@ -53,6 +53,7 @@ class Ship:
     image: str | None = None  # the base image it was made from (None: before images)
     overlay_node: str | None = None  # overlay node id recorded at join (phase 5)
     signins: tuple[str, ...] | None = None  # the sign-ins it uses; None: all of them
+    github_scopes: tuple[str, ...] = ()  # extra GitHub scopes it signs in with (ghscopes)
 
     @classmethod
     def from_entry(cls, name: str, entry: Mapping[str, Any]) -> Ship:
@@ -74,6 +75,7 @@ class Ship:
             image=entry.get("image"),
             overlay_node=entry.get("overlay_node"),
             signins=tuple(entry["signins"]) if "signins" in entry else None,
+            github_scopes=tuple(entry.get("github_scopes", ())),
         )
 
     @property

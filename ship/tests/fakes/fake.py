@@ -235,9 +235,15 @@ def gh(s: dict, a: list[str]) -> int:
     login = s.setdefault("gh", {}).get("login")
     if a[:2] == ["auth", "status"]:
         if login:
+            # scopes: the token's scopes (default gh's minimum); None: no scopes line.
+            scopes = s["gh"].get("scopes", ["gist", "read:org", "repo"])
+            listed = ("\n  - Token scopes: " + ", ".join(f"'{x}'" for x in scopes)
+                      if scopes is not None else "")
             print(
                 f"github.com\n  ✓ Logged in to github.com account {login} (keyring)\n"
-                "  - Token: gho_************************************",
+                "  - Active account: true\n"
+                "  - Git operations protocol: https\n"
+                "  - Token: gho_************************************" + listed,
                 file=sys.stderr,
             )
             return 0

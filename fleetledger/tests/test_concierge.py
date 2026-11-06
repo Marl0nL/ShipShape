@@ -455,7 +455,8 @@ def test_github_after_command(store, fake_ssh, monkeypatch, tmp_path):
     result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("github"), Prompter(),
                              spawner=fake_spawner("github.txt", monkeypatch, tmp_path))
     assert result.outcome == "ok" and result.account == "example-work"
-    assert seen[1] == "gh auth setup-git --hostname github.com"
+    # (the status call before it decides the scopes: none chosen, so a plain login)
+    assert [c for c in seen if c != "--json"][1] == "gh auth setup-git --hostname github.com"
 
 
 def test_signed_out_status_is_a_failure(store, fake_ssh, monkeypatch, tmp_path):
@@ -572,3 +573,91 @@ def test_a_failed_notice_never_fails_the_sign_in(store, fake_ssh, monkeypatch, t
     assert result.outcome == "ok"
     assert result.notes[-1].startswith("The Ship's agents were not told about this sign-in:")
     assert audit.read()[-1]["outcome"] == "ok"
+
+
+# --- extra GitHub scopes (ghscopes) ---------------------------------------------
+
+SETTINGS_STATUS = json.loads((HERE.parents[1] / "contracts" / "examples" / "ship-status"
+                              / "running-settings.json").read_text())
+
+
+def github_side(store, *, chosen, token, state="ok"):
+    """A fake Ship whose status chooses these scopes and whose GitHub token has these."""
+    inv = store.load()
+    ship = inv.ship("ship-01")
+    doc = json.loads(json.dumps(SETTINGS_STATUS))
+    doc["ship"].update(name=ship.name, id=ship.id)
+    doc["settings"]["github"] = {"scopes": chosen}
+    doc["auth"]["github"].update(state=state, scopes=token)
+    if state != "ok":
+        doc["auth"]["github"].pop("scopes")
+
+    def handler(_ship, cmd, inp):
+        if cmd == ["true"] or "setup-git" in cmd[-1]:
+            return 0, b"", ""
+        if cmd[:4] == ["sudo", "-n", "/usr/local/bin/ship-ctl", "status"]:
+            return 0, json.dumps(doc).encode(), ""
+        if cmd[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"]:
+            return ship_ctl_side(cmd)
+        return 0, b"example-work\n", ""
+
+    return handler
+
+
+MIN = ["gist", "read:org", "repo"]
+
+
+def test_a_ship_not_signed_in_asks_for_its_chosen_scopes(store, fake_ssh, monkeypatch, tmp_path):
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(github_side(store, chosen=["workflow", "project"], token=None,
+                                            state="missing")), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("github"), Prompter(),
+                             spawner=fake_spawner("github.txt", monkeypatch, tmp_path))
+    assert result.outcome == "ok"
+    assert ssh.argvs[0][-1].endswith(
+        "gh auth login --hostname github.com --git-protocol https --web --scopes "
+        "workflow,project'")
+    assert "This sign-in asks for the extra scopes workflow, project." in result.notes
+
+
+def test_a_signed_in_ship_with_other_scopes_is_refreshed_in_place(store, fake_ssh, monkeypatch,
+                                                                  tmp_path):
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(github_side(store, chosen=["workflow"],
+                                            token=[*MIN, "project"])), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("github"), Prompter(),
+                             spawner=fake_spawner("github.txt", monkeypatch, tmp_path))
+    assert result.outcome == "ok"
+    command = ssh.argvs[0][-1]
+    assert ("GH_PROMPT_DISABLED=1 gh auth refresh --hostname github.com --scopes workflow "
+            "--remove-scopes project'") in command
+    assert "auth login" not in command
+    assert any("add workflow and drop project" in n for n in result.notes)
+
+
+def test_scopes_given_by_hand_outside_the_catalogue_are_left_alone(store, fake_ssh, monkeypatch,
+                                                                    tmp_path):
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(github_side(store, chosen=[], token=[*MIN, "admin:org"])), store)
+    concierge.login(ssh, inv, inv.ship("ship-01"), provider("github"), Prompter(),
+                    spawner=fake_spawner("github.txt", monkeypatch, tmp_path))
+    command = ssh.argvs[0][-1]
+    assert "gh auth login" in command and "scopes" not in command  # as before: no change
+
+
+def test_a_ship_that_does_not_answer_status_uses_the_inventory_copy(store, fake_ssh, monkeypatch,
+                                                                    tmp_path):
+    with store.edit() as ed:
+        ed.set_field("ship-01", "github_scopes", ["write:packages"])
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(lambda s, cmd, inp: (0, b"example-work\n", "")), store)
+    concierge.login(ssh, inv, inv.ship("ship-01"), provider("github"), Prompter(),
+                    spawner=fake_spawner("github.txt", monkeypatch, tmp_path))
+    assert ssh.argvs[0][-1].endswith("--web --scopes write:packages'")
+
+
+def test_scope_flags_are_never_free_text():
+    gh = provider("github")
+    assert gh.takes_scopes and not provider("claude").takes_scopes
+    assert gh.with_scopes([]) is gh
+    assert gh.with_scopes(["workflow; rm -rf ~"]).run.endswith("--scopes 'workflow; rm -rf ~'")

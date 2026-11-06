@@ -16,6 +16,10 @@ HEADER = (
     "Schema: contracts/ship.toml.schema.json in the ShipShape repo."
 )
 
+# The extra GitHub scopes a Ship may ask for (the schema's githubScope; FleetLedger's
+# catalogue, fleetledger/ghscopes.py, explains each). A test keeps the three in step.
+GITHUB_SCOPES = ("workflow", "project", "write:packages")
+
 CLAUDE_DEFAULTS = {
     "remote_control": "on",
     "default_mode": "auto",
@@ -77,6 +81,11 @@ class ShipToml:
         """The owner's login ([owner] name and keys), or None: no owner login."""
         owner = self.doc.get("owner")
         return dict(owner) if owner and owner.get("name") else None
+
+    @property
+    def github_scopes(self) -> list[str]:
+        """Extra GitHub scopes the GitHub sign-in asks for (settings.md); none by default."""
+        return list(self.doc.get("github", {}).get("scopes", []))
 
     @property
     def autostart(self) -> list[dict]:
