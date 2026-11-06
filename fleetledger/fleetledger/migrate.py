@@ -785,20 +785,30 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
     for required in ("config/ships.toml", "keys/admin", "keys/admin.pub", "secrets.json"):
         if required not in seen:
             raise bad(f"no {required}")
+    claimed: set[str] = set()
     for k in manifest["keys"]:
         if not isinstance(k, dict) or k.get("role") not in (*KEY_ROLES, "agent") or \
                 not FILE_NAME.match(str(k.get("name", ""))) or \
                 not str(k.get("source", "")).startswith("/") or \
+                not FILE_NAME.match(Path(str(k["source"])).name) or \
                 {str(k["name"]), Path(str(k["source"])).name} & SSH_FILES:
-            raise bad("key entry")  # placement uses the source's name: check both
+            raise bad("key entry")  # placement uses the source's name: a file's, checked
         if k["role"] == "agent":
             member = k.get("member")
             if not isinstance(member, str) or not AGENT_MEMBER.match(member):
                 raise bad("key entry")
+            halves = {member}
         else:
             member = f"keys/{k['role']}"
-        if member not in seen or (k["role"] != "agent" and f"{member}.pub" not in seen):
+            halves = {member, f"{member}.pub"}
+        if not halves <= seen:
             raise bad(f"key {member} is not in the stream")
+        if halves & claimed:
+            raise bad(f"key {member} is listed twice")
+        claimed |= halves
+    unclaimed = sorted(m for m in seen if m.startswith("keys/") and m not in claimed)
+    if unclaimed:  # every key file has exactly one place to go
+        raise bad(f"{unclaimed[0]} is in the stream, but no key entry says what it is")
     remote_ui = manifest.get("remote_ui")
     if remote_ui is not None and (
             not isinstance(remote_ui, dict) or set(remote_ui) != {"port", "logins"}
@@ -1099,6 +1109,7 @@ def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
     this receive wrote, so the computer is left as it was."""
     undo: list[Callable[[], None]] = []
     written: list[Path] = []
+    placed: set[Path] = set()
     paths.private_dir(paths.config_dir())
     paths.private_dir(paths.data_dir())
     try:
@@ -1106,8 +1117,12 @@ def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
             if member == "config/ships.toml" or member in same:
                 continue
             target = where[member]
-            if target.exists():
-                continue  # the same file again (two keys roles sharing one key)
+            if target.exists() or target.is_symlink():
+                if target in placed:
+                    continue  # the same file again (two key roles sharing one key)
+                raise FleetError(f"{paths.tilde(target)} appeared while receiving; nothing "
+                                 "was written.")  # clashes() saw nothing there
+            placed.add(target)
             if member.startswith("keys/") and target.parent != paths.config_dir() / AGENT_KEYS_DIR:
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)  # e.g. ~/.ssh
             else:

@@ -79,7 +79,7 @@ stays with the reason. In short:
 | A key of your own that FleetLedger made (`~/.ssh/shipshape_ed25519`) | its private half and passphrase stay on your machines; the new computer never attaches as you. Its `.pub` moves |
 | `this-computer.json` | which machine entry is the old computer: a fact about that computer. The old computer stays a trusted machine like any other |
 | `remote-ui.json` | the remote web UI setting ([remote-ui.md](remote-ui.md)): the old computer's own name on the tailnet and its Serve port. Opening the UI to your other devices is yours to turn on, on each computer, so the move never does it: `receive` prints the exact command for the new computer, with the same logins (the allow-list) |
-| The remote web UI's paired browsers and pairing links (`~/.local/share/fleetledger/web/`) | bound to the old computer's address: pair each device again with the new one (`ship-fleet ui link`) |
+| The remote web UI's paired browsers and pairing links (`devices.json`, `pairings.json` and their lock in `~/.local/share/fleetledger/web/`; anything else there stops the move) | bound to the old computer's address: pair each device again with the new one (`ship-fleet ui link`) |
 | `known_hosts` | rebuilt from the pins in `ships.toml` |
 | A part-finished Proxmox setup, the inbox upload spool, Ubuntu's cached cloud image, locks | nothing the fleet needs |
 | Baked image files | unless `--with-images` (they are large); a published image still serves new Ships. `check` says which images would then be unpublishable |
