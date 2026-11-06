@@ -220,6 +220,12 @@ of the fleet is refused here. A copy on standby can be wiped at once.
   (`ship-fleet migrate wipe --now`), then push again.
 - **"an older state"**: the fleet coming in is older than one this computer handed
   on. Move the fleet from the active copy instead.
+- **"standby.json cannot be read"** (or `retired.json`): the marker was edited or
+  damaged, so this copy acts on nothing and no hand-over command acts on what it
+  seems to say. Find out which copy is the active one, then fix or delete the file.
+- **A push that replaces a copy on standby** clears that copy first, so if the new
+  stream then breaks off, the new computer is left empty. Nothing is lost (this
+  copy is still the active one): push again.
 - **"already has a FleetLedger"**: that computer has one. Move its files aside (or
   point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders).
 - **"Not writing over files already here"**: a key of that name is already in the
