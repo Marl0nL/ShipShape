@@ -18,6 +18,7 @@ from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.web import app as webapp
 from fleetledger.web import remote, security, server
+from fleetledger.web.devices import Devices
 from fleetledger.web.fleet import Fleet
 from fleetledger.web.remote import Remote
 from fleetledger.web.security import Gate
@@ -36,6 +37,7 @@ SERVE = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": NAME,
          "X-Forwarded-For": "192.0.2.7", "Tailscale-User-Login": LOGIN,
          "Tailscale-User-Name": "Example User"}
 REMOTE_ORIGIN = {"Origin": REMOTE}
+ON = Remote(REMOTE, PORT, (LOGIN,))  # the setting, with one login allowed
 
 
 class FakeTailscale:
@@ -69,7 +71,7 @@ def web(store, fake_repo):
                   repo_factory=lambda: fake_repo,
                   ssh_factory=lambda inv: ShipSSH(inv, FakeShip()),
                   stdin_isatty=lambda: False, sleep=lambda s: None)
-    gate = Gate(PORT, remote=Remote(REMOTE, PORT))
+    gate = Gate(PORT, remote=ON, devices=Devices())
     fleet = Fleet(app, interval=30)
     asgi = webapp.create_app(app, gate, fleet=fleet)
     fleet.poll()
@@ -182,7 +184,8 @@ def test_a_request_through_serve_cannot_pass_as_one_from_this_computer(web, host
 
 @pytest.mark.parametrize("header", ["X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
                                     "Forwarded", "Tailscale-User-Login", "Tailscale-User-Name",
-                                    "Tailscale-App-Capabilities"])
+                                    "Tailscale-App-Capabilities", "Tailscale-Funnel-Request",
+                                    "Tailscale-Headers-Info"])
 def test_this_computers_address_takes_no_proxied_request_even_when_off(store, fake_repo,
                                                                        header):
     gate = Gate(PORT)
@@ -197,8 +200,8 @@ def test_this_computers_address_takes_no_proxied_request_even_when_off(store, fa
 
 
 def test_the_header_says_where_the_browser_is(web, store, fake_repo):
-    web.sign_in(web.remote)
-    assert "remote, through Tailscale" in web.remote.get("/").text
+    web.sign_in(web.remote)  # a device named after its browser
+    assert re.search(r">browser, remote</a>", web.remote.get("/").text)
     web.sign_in(web.local)
     assert "this computer, and your devices" in web.local.get("/").text
     gate = Gate(PORT)
@@ -379,6 +382,8 @@ def test_the_serve_check_passes_for_exactly_this_setup():
         "Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}), "on port 8443"),
     (lambda f: f.serve["TCP"].update({"10000": {"TCPForward": "127.0.0.1:3000",
                                                 "TerminateTLS": NAME}}), "on port 10000"),
+    (lambda f: f.serve["Web"].update({NAME: {  # a key with no port: refused, not a crash
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}), "on port (none given)"),
     (lambda f: f.handlers.update({"/other": {"Proxy": "http://127.0.0.1:9000"}}),
      "to itself"),
     (lambda f: f.handlers.update({"/": {"Proxy": "http://127.0.0.1:9999"}}),
@@ -458,12 +463,12 @@ def run_cli(argv, fake=None):
 def test_turning_it_on_checks_serve_then_saves_a_private_setting(home):
     code, said = run_cli(["ui", "remote"])
     assert code == 0 and "off" in said
-    code, said = run_cli(["ui", "remote", REMOTE, "--port", str(PORT)])
+    code, said = run_cli(["ui", "remote", REMOTE, "--port", str(PORT), "--login", LOGIN])
     assert code == 0, said
     assert "on: " + REMOTE in said and "risks" in said
     path = home / "config" / remote.REMOTE_FILE
     assert path.stat().st_mode & 0o777 == 0o600
-    assert remote.load() == Remote(REMOTE, PORT)
+    assert remote.load() == ON
     assert [e["action"] for e in audit.read()] == ["ui-remote"]
     code, said = run_cli(["ui", "remote"])
     assert code == 0 and "Serve check: ok" in said
@@ -480,25 +485,26 @@ def test_turning_it_on_checks_serve_then_saves_a_private_setting(home):
 def test_it_is_not_turned_on_when_the_check_fails(home):
     fake = FakeTailscale()
     fake.handlers["/"]["Proxy"] = "http://127.0.0.1:9999"
-    code, said = run_cli(["ui", "remote", REMOTE, "--port", str(PORT)], fake)
+    code, said = run_cli(["ui", "remote", REMOTE, "--port", str(PORT), "--login", LOGIN], fake)
     assert code != 0 and "not to this UI" in said
     assert f"tailscale serve --bg 127.0.0.1:{PORT}" in said  # the fix
     assert remote.load() is None
-    code, said = run_cli(["ui", "remote", f"http://{NAME}", "--port", str(PORT)])
+    code, said = run_cli(["ui", "remote", f"http://{NAME}", "--port", str(PORT), "--login",
+                          LOGIN])
     assert code != 0 and "https://" in said and remote.load() is None
-    code, said = run_cli(["ui", "remote", REMOTE])
+    code, said = run_cli(["ui", "remote", REMOTE, "--login", LOGIN])
     assert code != 0 and "--port" in said and remote.load() is None
-    code, said = run_cli(["ui", "remote", REMOTE, "--port", "80"])
+    code, said = run_cli(["ui", "remote", REMOTE, "--port", "80", "--login", LOGIN])
     assert code != 0 and remote.load() is None
 
 
 def test_ship_fleet_ui_serves_the_remote_origin_only_after_the_check(home, monkeypatch):
-    remote.save(Remote(REMOTE, PORT))
+    remote.save(ON)
     called = []
     monkeypatch.setattr(server, "serve", lambda app, **kw: called.append(kw) or 0)
     code, said = run_cli(["ui", "--no-browser"])
     assert code == 0, said
-    assert called[-1]["remote"] == Remote(REMOTE, PORT)
+    assert called[-1]["remote"] == ON
     code, _ = run_cli(["ui", "--no-browser", "--local"])
     assert code == 0 and "remote" not in called[-1]
     # A failed check refuses to start (it never starts for this computer only by
@@ -513,7 +519,7 @@ def test_ship_fleet_ui_serves_the_remote_origin_only_after_the_check(home, monke
 
 
 def test_setup_never_serves_the_remote_origin(home, monkeypatch):
-    remote.save(Remote(REMOTE, PORT))
+    remote.save(ON)
     called = []
     monkeypatch.setattr(server, "serve", lambda app, **kw: called.append(kw) or 0)
     assert run_cli(["setup", "--no-browser"])[0] == 0
@@ -533,13 +539,52 @@ def test_the_server_prints_a_link_for_each_address(store, monkeypatch, home):
     app = cli.App(out=out, err=out, store_factory=lambda: store)
     monkeypatch.setattr(server.sys.stdin, "isatty", lambda: False, raising=False)
     assert server.serve(app, open_browser=False, interval=3600,
-                        remote=Remote(REMOTE, port)) == 0
+                        remote=Remote(REMOTE, port, (LOGIN,))) == 0
     assert seen["port"] == ("127.0.0.1", port)  # still loopback only, on Serve's port
     said = out.getvalue()
     local = re.search(rf"http://127\.0\.0\.1:{port}/login\?token=(\S+)", said).group(1)
     far = re.search(rf"{re.escape(REMOTE)}/login\?token=(\S+)", said).group(1)
     # Two tokens: the browser opened here uses up its own, never the remote one.
     assert local != far
+
+
+def test_enter_prints_a_new_link_per_address_each_with_its_own_token(store, monkeypatch,
+                                                                      home):
+    import threading
+
+    import uvicorn
+
+    free = server.bind(0)
+    port = free.getsockname()[1]
+    free.close()
+    out = io.StringIO()
+    asked = threading.Event()
+
+    class Terminal:  # Enter pressed once
+        def isatty(self):
+            return True
+
+        def __iter__(self):
+            yield "\n"
+            asked.set()
+
+    def run(self, sockets=None):
+        assert asked.wait(5)
+        for _ in range(100):  # the thread says the links right after reading the line
+            if out.getvalue().count("/login?token=") >= 4:
+                break
+            threading.Event().wait(0.02)
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    monkeypatch.setattr(server.sys, "stdin", Terminal())
+    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    assert server.serve(app, open_browser=False, interval=3600,
+                        remote=Remote(REMOTE, port, (LOGIN,))) == 0
+    said = out.getvalue()
+    tokens = re.findall(r"/login\?token=([A-Za-z0-9_-]+)", said)
+    assert len(tokens) == 4 and len(set(tokens)) == 4, said
+    assert f"{REMOTE}/login?token={tokens[3]}" in said  # the new pair: here, then remote
+    assert f"http://127.0.0.1:{port}/login?token={tokens[2]}" in said
 
 
 def test_the_browser_opened_here_leaves_the_remote_link_working(store, monkeypatch, home):
@@ -566,10 +611,11 @@ def test_the_browser_opened_here_leaves_the_remote_link_working(store, monkeypat
     out = io.StringIO()
     app = cli.App(out=out, err=out, store_factory=lambda: store)
     assert server.serve(app, open_browser=True, interval=3600,
-                        remote=Remote(REMOTE, port)) == 0
+                        remote=Remote(REMOTE, port, (LOGIN,))) == 0
     assert seen["browser"] is not None
+    assert isinstance(seen["gate"].allowed, remote.Allowed)  # follows the file while it runs
     far = re.search(rf"{re.escape(REMOTE)}/login\?token=(\S+)", out.getvalue()).group(1)
-    assert seen["gate"].redeem(far, REMOTE) is not None
+    assert seen["gate"].redeem(far, REMOTE, login=LOGIN) is not None
 
 
 def test_the_live_terminal_script_picks_wss_on_https():

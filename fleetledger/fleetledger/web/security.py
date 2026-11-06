@@ -13,9 +13,15 @@ Following Jupyter's model:
   loopback port. A request naming it must have come through Serve from a
   signed-in person's device (X-Forwarded-Proto https and a Tailscale-User-Login
   header, which Serve sets and strips from what clients send; Funnel and tagged
-  devices get none). Its Origin must be exactly https://NAME, its cookie is
-  `__Host-` and Secure, and a session made on one origin never works on the
-  other.
+  devices get none), and that login must be one you allowed (ship-fleet ui remote
+  --login), before anything else. Its Origin must be exactly https://NAME, its
+  cookie is `__Host-` and Secure, and a session made on one origin never works
+  on the other.
+- On the remote origin a browser signs in by pairing once (devices.py): a
+  one-time link makes a named device, kept hashed in a 0600 file so a restart
+  does not sign it out, tied to the login that paired it, revocable, with idle
+  and absolute lifetimes. Its danger actions (devices.FRESH_ONLY) need a pairing
+  younger than devices.FRESH.
 - You get in with a one-time link that `ship-fleet ui` prints (and opens). The
   token in it is swapped for a session cookie (HttpOnly, SameSite=Strict) and
   dropped from the address bar. Only a hash of the token is kept, and it works
@@ -52,6 +58,9 @@ from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import parse_qs
 
+from fleetledger.errors import FleetError
+from fleetledger.web import devices as devices_mod
+from fleetledger.web.devices import Device, Devices
 from fleetledger.web.remote import Remote
 
 TOKEN_TTL = 15 * 60
@@ -71,7 +80,8 @@ REMOTE_COOKIE = "__Host-fleetledger"
 # on, and the identity ones for a person's device). Never sent by a browser itself.
 PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded",
                  "tailscale-user-login", "tailscale-user-name", "tailscale-user-profile-pic",
-                 "tailscale-app-capabilities")
+                 "tailscale-app-capabilities", "tailscale-funnel-request",
+                 "tailscale-headers-info")
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -90,6 +100,7 @@ class Session:
     csrf: str
     seen: float
     where: str = LOCAL  # the origin it signed in on: LOCAL, or the remote origin
+    device: Device | None = None  # a paired browser on the remote origin
 
 
 @dataclass
@@ -98,6 +109,10 @@ class Gate:
 
     port: int
     remote: Remote | None = None  # the one HTTPS origin Tailscale Serve gives it, if on
+    devices: Devices | None = None  # the remote origin's paired browsers (none: no sign-in)
+    # () -> the logins allowed now (remote.Allowed, which follows the file); else the
+    # ones remote was made with.
+    allowed: Callable[[], tuple[str, ...]] | None = None
     clock: Callable[[], float] = time.monotonic
     token_ttl: float = TOKEN_TTL
     session_idle: float = SESSION_IDLE
@@ -158,6 +173,14 @@ class Gate:
         return (headers.get("x-forwarded-proto") == "https"
                 and bool(login.strip()) and not login.startswith("\0"))
 
+    def login_of(self, headers: dict[str, str]) -> str | None:
+        """The request's Tailscale login, if it is one you allowed; else None."""
+        login = headers.get("tailscale-user-login", "").strip().lower()
+        if self.remote is None or not login:
+            return None
+        allowed = self.allowed() if self.allowed is not None else self.remote.logins
+        return login if login in allowed else None
+
     # --- link tokens --------------------------------------------------------
     def new_token(self) -> str:
         """A fresh one-time token; only its hash is kept."""
@@ -172,10 +195,9 @@ class Gate:
         base = self.base_url if where == LOCAL else where
         return f"{base}{LOGIN_PATH}?token={token}"
 
-    def redeem(self, token: str | None, where: str = LOCAL) -> Session | None:
-        """Swap a valid, unused, unexpired token for a new session."""
-        if not token or len(token) > 200:
-            return None
+    def _take_token(self, token: str) -> bool | None:
+        """Use up one of this run's link tokens: True if valid, False if expired, None if
+        it is not one of them. One use only, valid or expired."""
         digest = _digest(token)
         expiry = None
         with self._lock:
@@ -184,18 +206,56 @@ class Gate:
                     expiry = exp
             if expiry is None:
                 return None
-            del self._tokens[digest]  # one use only, valid or expired
-        if expiry <= self.clock():
+            del self._tokens[digest]
+        return expiry > self.clock()
+
+    def redeem(self, token: str | None, where: str = LOCAL, *, login: str | None = None,
+               user_agent: str | None = None, replaces: str | None = None) -> Session | None:
+        """Swap a valid, unused, unexpired token for a new session. On the remote origin
+        that pairs a device (login: the allowed Tailscale login opening it; replaces:
+        the session id this browser held before, if any)."""
+        if not token or len(token) > 200:
             return None
-        session = Session(secrets.token_urlsafe(32), secrets.token_urlsafe(32), self.clock(),
-                          where=where)
-        self._sessions[_digest(session.id)] = session
-        return session
+        if where == LOCAL:
+            if not self._take_token(token):
+                return None
+            session = Session(secrets.token_urlsafe(32), secrets.token_urlsafe(32),
+                              self.clock(), where=where)
+            self._sessions[_digest(session.id)] = session
+            return session
+        if self.devices is None or self.remote is None or not login:
+            return None  # nobody signs in remotely without a device store and a login
+        mine = self._take_token(token)  # the terminal's link works here too
+        if mine is None:
+            pairing = self.devices.take_pairing(token)
+            if pairing is None:
+                return None
+            name, how = pairing.name, pairing.how
+        elif mine:
+            name, how = None, devices_mod.FROM_TERMINAL
+        else:
+            return None
+        # The device this browser held before, if the same login paired it (another
+        # login's device is neither replaced nor lends its name).
+        old = self.devices.get(replaces, login) if replaces else None
+        session_id = secrets.token_urlsafe(32)
+        device = self.devices.add(
+            session_id, name=name or (old.name if old else devices_mod.guess_name(user_agent)),
+            login=login, origin=self.remote.origin, how=how,
+            replaces=old.key if old else None)
+        from fleetledger.concierge import audit
+
+        audit.record("-", "ui-pair", "web", "again" if old else "ok", account=login)
+        return Session(session_id, devices_mod.csrf_for(session_id), self.clock(),
+                       where=where, device=device)
 
     # --- sessions -------------------------------------------------------------
-    def session(self, cookie_value: str | None, where: str = LOCAL) -> Session | None:
+    def session(self, cookie_value: str | None, where: str = LOCAL,
+                login: str | None = None) -> Session | None:
         if not cookie_value or len(cookie_value) > 200:
             return None
+        if where != LOCAL:
+            return self._device_session(cookie_value, where, login)
         session = self._sessions.get(_digest(cookie_value))
         if session is None or session.where != where:  # never across origins
             return None
@@ -206,10 +266,32 @@ class Gate:
         session.seen = now
         return session
 
+    def _device_session(self, cookie_value: str, where: str,
+                        login: str | None) -> Session | None:
+        """A paired device's session: on the origin it was paired on, from the login that
+        paired it, not lapsed and not revoked (the file is re-read when it changes)."""
+        if self.devices is None or self.remote is None or where != self.remote.origin:
+            return None
+        device = self.devices.get(cookie_value, login or "")
+        if device is None or device.origin != where:
+            return None
+        return Session(cookie_value, devices_mod.csrf_for(cookie_value), self.clock(),
+                       where=where, device=device)
+
     def cookie_header(self, session: Session) -> str:
         if session.where == LOCAL:
             return f"{self.cookie_name}={session.id}; HttpOnly; SameSite=Strict; Path=/"
-        return f"{REMOTE_COOKIE}={session.id}; Secure; HttpOnly; SameSite=Strict; Path=/"
+        # Kept when the browser closes; the device itself lapses on the server's terms.
+        return (f"{REMOTE_COOKIE}={session.id}; Secure; HttpOnly; SameSite=Strict; Path=/; "
+                f"Max-Age={devices_mod.ABSOLUTE}")
+
+    def fresh_enough(self, session: Session, path: str) -> bool:
+        """May this session make this change? A danger action (devices.FRESH_ONLY) from a
+        remote device needs one paired within devices.FRESH; this computer's are never
+        held to it."""
+        if session.device is None or not devices_mod.needs_fresh(path):
+            return True
+        return self.devices is not None and session.device.fresh(self.devices.wall())
 
     # --- request checks -------------------------------------------------------
     def host_ok(self, host: str | None) -> bool:
@@ -317,20 +399,29 @@ class GateMiddleware:
         if where == LOCAL and self.gate.proxied(headers):
             await _plain(send_secured, 400, PROXIED)
             return
-        if where != LOCAL and not self.gate.through_serve(headers):
-            await _plain(send_secured, 403, NOT_THROUGH_SERVE)
-            return
+        login = None
+        if where != LOCAL:
+            if not self.gate.through_serve(headers):
+                await _plain(send_secured, 403, NOT_THROUGH_SERVE)
+                return
+            login = self.gate.login_of(headers)
+            if login is None:  # before anything else, static files included
+                await _plain(send_secured, 403, NOT_ALLOWED)
+                return
         path = scope.get("path", "")
         method = scope.get("method", "GET").upper()
         if path.startswith(OPEN_PREFIXES) and method in SAFE_METHODS:
             await self.app(scope, receive, send_secured)
             return
+        cookie = _cookie(headers, self.gate.cookie_name_for(where))
         if path == LOGIN_PATH and method == "GET":  # not HEAD: a link preview must not use it
-            await self._login(scope, send_secured, where)
+            await self._login(scope, send_secured, where, login=login,
+                              user_agent=headers.get("user-agent"), replaces=cookie)
             return
-        session = self.gate.session(_cookie(headers, self.gate.cookie_name_for(where)), where)
+        session = self.gate.session(cookie, where, login)
         if session is None:
-            await _plain(send_secured, 401, NOT_SIGNED_IN)
+            await _plain(send_secured, 401, NOT_SIGNED_IN if where == LOCAL
+                         else NOT_PAIRED)
             return
         scope.setdefault("state", {})["session"] = session
         if method in SAFE_METHODS:
@@ -340,6 +431,9 @@ class GateMiddleware:
         # A change: same origin, plain form (or empty) body, CSRF token.
         if not self.gate.origin_ok(headers.get("origin"), where):
             await _plain(send_secured, 403, "Cross-origin request refused.")
+            return
+        if session.device is not None and not self.gate.fresh_enough(session, path):
+            await _plain(send_secured, 403, NOT_FRESH)
             return
         if method == "POST" and UPLOAD_PATH.match(path):
             await self._upload(scope, receive, send_secured, headers, session)
@@ -421,16 +515,24 @@ class GateMiddleware:
         scope.setdefault("state", {})["upload_length"] = int(declared)
         await self.app(scope, capped, send)
 
-    async def _login(self, scope: Scope, send: Send, where: str) -> None:
+    async def _login(self, scope: Scope, send: Send, where: str, *, login: str | None,
+                     user_agent: str | None, replaces: str | None) -> None:
         query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         tokens = query.get("token", [])
-        session = self.gate.redeem(tokens[0] if len(tokens) == 1 else None, where)
+        try:
+            session = self.gate.redeem(tokens[0] if len(tokens) == 1 else None, where,
+                                       login=login, user_agent=user_agent, replaces=replaces)
+        except FleetError as exc:  # too many devices paired: say so
+            await _plain(send, 403, exc.message)
+            return
         if session is None:
             await _plain(
                 send,
                 403,
                 "That link is used, expired or wrong. Press Enter in the terminal running "
-                "`ship-fleet ui` for a new one.",
+                "`ship-fleet ui` for a new one." if where == LOCAL else
+                "That link is used, expired or wrong. Get a new one: `ship-fleet ui link` on "
+                "the FleetLedger computer (over ssh is fine).",
             )
             return
         # A same-origin refresh (not a redirect), so the SameSite=Strict cookie
@@ -458,14 +560,17 @@ class GateMiddleware:
         self, scope: Scope, receive: Receive, send: Send, headers: dict[str, str]
     ) -> None:
         where = self.gate.where(headers.get("host"))
-        session = where and self.gate.session(
-            _cookie(headers, self.gate.cookie_name_for(where)), where)
+        remote_ok = where == LOCAL or (where is not None and self.gate.through_serve(headers)
+                                       and self.gate.login_of(headers) is not None)
+        session = remote_ok and self.gate.session(
+            _cookie(headers, self.gate.cookie_name_for(where)), where,
+            None if where == LOCAL else self.gate.login_of(headers))
         if (
             where is None
             or (where == LOCAL and self.gate.proxied(headers))
-            or (where != LOCAL and not self.gate.through_serve(headers))
+            or not remote_ok
             or not self.gate.origin_ok(headers.get("origin"), where)
-            or session is None
+            or not session
         ):
             message = await receive()  # websocket.connect
             if message["type"] == "websocket.connect":
@@ -479,6 +584,17 @@ NOT_SIGNED_IN = ("Not signed in to this FleetLedger. Open a link `ship-fleet ui`
                  "(press Enter in its terminal for a new one).")
 PROXIED = ("This computer's address (127.0.0.1 or localhost) takes no request a proxy passed "
            "on. From your other devices, open the remote address FleetLedger printed.")
+NOT_PAIRED = ("This device is not signed in to this FleetLedger. Pair it once: run "
+              "`ship-fleet ui link` on the FleetLedger computer (over ssh is fine) and open "
+              "the link here, or use Settings, Devices, Pair a device on a browser that is "
+              "signed in.")
+NOT_FRESH = (f"This device was paired more than {devices_mod.FRESH // 3600} hours ago, and "
+             "this action (destroy, "
+             "rollback, trusting machines, setup's keys, pairing another device ...) needs a "
+             "fresh pairing. Pair this browser again: run `ship-fleet ui link` on the "
+             "FleetLedger computer (over ssh is fine) and open the link here.")
+NOT_ALLOWED = ("This Tailscale login may not use this FleetLedger (or its remote address is "
+               "off). Its owner allows logins with `ship-fleet ui remote --login`.")
 NOT_THROUGH_SERVE = ("This address works only through Tailscale Serve, from a device signed in "
                      "to your tailnet as a person (not a tagged device, and never through "
                      "Funnel).")

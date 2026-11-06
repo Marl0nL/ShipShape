@@ -519,18 +519,41 @@ def build_parser() -> argparse.ArgumentParser:
                     "MagicDNS name and forwards to 127.0.0.1:PORT. FleetLedger still listens\n"
                     "on 127.0.0.1 only.\n\n"
                     "  tailscale serve --bg 127.0.0.1:8765          first, once\n"
-                    "  ship-fleet ui remote https://NAME --port 8765\n"
+                    "  ship-fleet ui remote https://NAME --port 8765 --login you@example.com\n"
                     "  ship-fleet ui remote                         what is set, and the check\n"
+                    "  ship-fleet ui remote --login you@example.com  who may (replaces the list)\n"
                     "  ship-fleet ui remote --off\n\n"
                     "Every start of ship-fleet ui checks that Serve sends exactly that name\n"
-                    "to that port, with Funnel off, and refuses to start otherwise.\n"
+                    "to that port, with Funnel off, and refuses to start otherwise. Only the\n"
+                    "Tailscale logins you list get past it, and each browser still pairs\n"
+                    "once (ship-fleet ui link).\n"
                     "Read the risks first: docs/runbooks/remote-ui.md.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     r.add_argument("origin", nargs="?", metavar="https://NAME",
                    help="this computer's MagicDNS name, as Tailscale Serve serves it")
     r.add_argument("--port", type=int, default=None,
                    help="the loopback port Tailscale Serve forwards to")
+    r.add_argument("--login", action="append", default=[], metavar="LOGIN",
+                   help="a Tailscale login that may use it (repeat for more; the list given "
+                        "replaces the one saved)")
     r.add_argument("--off", action="store_true", help="turn the remote web UI off")
+    lk = ui_sub.add_parser(
+        "link", help="a one-time link that pairs one of your devices with the remote web UI",
+        description="Print a pairing link for the remote web UI: open it on the laptop or\n"
+                    "phone, signed in to Tailscale as a login you allowed, while ship-fleet ui\n"
+                    "runs. It works once, within 15 minutes, and the device stays signed in\n"
+                    "(across restarts) until it lapses or you revoke it. Fine over ssh:\n\n"
+                    "  ssh desktop ship-fleet ui link --name laptop\n"
+                    "  ship-fleet ui link --name phone --qr         a QR code to scan",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    lk.add_argument("--name", help="what to call the device (default: a guess from its "
+                                   "browser, renamable in Settings)")
+    lk.add_argument("--qr", action="store_true", help="also print the link as a QR code")
+    ui_sub.add_parser("devices", help="list the devices paired with the remote web UI")
+    rv = ui_sub.add_parser("revoke", help="sign a paired device out of the remote web UI")
+    rv.add_argument("device", nargs="?", metavar="NAME|ID",
+                    help="its name or id, as ship-fleet ui devices shows")
+    rv.add_argument("--all", action="store_true", help="every paired device")
 
     import importlib
 

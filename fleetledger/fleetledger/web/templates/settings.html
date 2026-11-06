@@ -9,6 +9,7 @@
   <a href="#health">Health</a>
   <a href="#where">Where Ships run</a>
   <a href="#access">Access</a>
+  <a href="#devices">Devices</a>
   <a href="#images">Images</a>
   <a href="#activity">Activity log</a>
 </nav>
@@ -82,6 +83,8 @@
   {% include "_fleet_access.html" %}
   {% if certs %}{% include "_machines.html" %}{% endif %}
 </section>
+
+{% include "_settings_devices.html" %}
 
 <section id="images" class="setup-step settings-group">
   <h2>Images</h2>

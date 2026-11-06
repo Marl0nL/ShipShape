@@ -680,10 +680,33 @@ def demo_spawner(argv: list[str]):
     return engine.spawn([sys.executable, str(HERE / "fake_cli.py"), str(path)])
 
 
+def seed_remote(port: int):
+    """--remote: the remote web UI as on, at a made-up address, with two paired devices
+    (one paired 6 hours ago, so it needs pairing again for danger actions). Nothing is
+    served through a real Tailscale: the Serve check is skipped."""
+    import secrets
+
+    from fleetledger.web import devices, remote
+
+    setting = remote.Remote("https://fleetledger.example-tailnet.ts.net", port,
+                            ("you@example.com",))
+    remote.save(setting)
+    now = time.time()
+    for name, how, ago in (("phone", "laptop", 6 * 3600),
+                           ("laptop", devices.FROM_LINK, 1800)):
+        devices.Devices(wall=lambda ago=ago: now - ago).add(
+            secrets.token_urlsafe(32), name=name, login="you@example.com",
+            origin=setting.origin, how=how)
+    return setting
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8790)
     parser.add_argument("--home", help="use this (empty) folder as the FleetLedger home")
+    parser.add_argument("--remote", action="store_true",
+                        help="show the remote web UI as on (Settings, Devices), with made-up "
+                             "paired devices; never through a real Tailscale")
     args = parser.parse_args()
     base = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="fleetledger-demo-"))
     home(base)
@@ -705,7 +728,8 @@ def main() -> int:
 
     app.signer = ca.Signer(agent_keys=lambda: set())  # the demo CA's keys; never ssh-agent
     print(f"Demo FleetLedger home: {base}", flush=True)
-    return server.serve(app, port=args.port, open_browser=False, interval=10)
+    extra = {"remote": seed_remote(args.port)} if args.remote else {}
+    return server.serve(app, port=args.port, open_browser=False, interval=10, **extra)
 
 
 if __name__ == "__main__":

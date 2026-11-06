@@ -3,7 +3,9 @@
 - Binds 127.0.0.1 only; there is deliberately no option to listen elsewhere.
   Your other devices reach it only through Tailscale Serve, once you turn that
   on (`ship-fleet ui remote`, web/remote.py), and only after a check that Serve
-  sends exactly this computer's name to this port, on the tailnet only.
+  sends exactly this computer's name to this port, on the tailnet only. There
+  each browser pairs once (web/devices.py: `ship-fleet ui link`, `devices`,
+  `revoke`).
 - Prints a one-time sign-in link and, unless --no-browser, opens it. The
   browser is opened on a private (0600) local file that refreshes to the link,
   so the token never appears in any process's command line. The link is always
@@ -82,9 +84,11 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
                          hint="Rerun fleetledger/install.sh.") from exc
     from fleetledger.history import History, Operations
     from fleetledger.web.app import create_app
+    from fleetledger.web.devices import Devices
     from fleetledger.web.fleet import Fleet
     from fleetledger.web.flows import Concierge
     from fleetledger.web.jobs import Jobs
+    from fleetledger.web.remote import Allowed
     from fleetledger.web.security import Gate
 
     store = app.store_factory()
@@ -94,7 +98,10 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
         start_page = "/setup"
     sock = bind(remote.port if remote is not None else port)
     port = sock.getsockname()[1]
-    gate = Gate(port, remote=remote)
+    # The remote address's paired browsers, kept across restarts (web/devices.py).
+    # Who may use it follows remote-ui.json while it runs (web/remote.py, Allowed).
+    gate = Gate(port, remote=remote, devices=Devices() if remote is not None else None,
+                allowed=Allowed(remote) if remote is not None else None)
     fleet = Fleet(app, interval=interval, history=History())
     concierge = Concierge(app, on_finished=lambda ship: fleet.poll([ship]))
     jobs = Jobs(app, on_finished=lambda ships: fleet.poll(ships), store=Operations())
@@ -117,6 +124,9 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
         # Its own token: the browser opened here uses up the one above at once.
         app.say("Sign-in link for one of your other devices (works once, for 15 minutes):"
                 f"\n  {gate.link(gate.new_token(), remote.origin)}")
+        app.say(f"Devices paired before stay signed in. Pair another: ship-fleet ui link "
+                f"--name NAME (over ssh is fine). Only {', '.join(remote.logins)} may use "
+                f"{remote.origin}.")
     if open_browser:
         opened = open_file(link, port)
         if webbrowser.open(opened.as_uri()):
@@ -152,10 +162,13 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
 
 
 def cmd_ui(args, app) -> int:
-    from fleetledger.web import remote
+    from fleetledger.web import devices, remote
 
-    if getattr(args, "ui_command", None) == "remote":
+    verb = getattr(args, "ui_command", None)
+    if verb == "remote":
         return remote.cmd_remote(args, app)
+    if verb in ("link", "devices", "revoke"):
+        return getattr(devices, f"cmd_{verb}")(args, app)
     found = remote.for_ui(app, port=args.port, local=args.local)  # refuses on a bad setup
     kwargs = {"remote": found} if found is not None else {}
     return serve(app, port=args.port, open_browser=not args.no_browser,

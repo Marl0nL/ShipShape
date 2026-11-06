@@ -460,6 +460,18 @@ table.machines td:first-child code { overflow-wrap: anywhere; }
 table.machines td:not(:first-child), table.machines th { white-space: nowrap; }
 table.machines details.scope form label { white-space: nowrap; }
 details.scope { margin: 0; }
+/* Devices: the browsers paired with the remote web UI (web.devicesweb) */
+table.devices td { vertical-align: top; }
+table.devices td:not(:first-child), table.devices th { white-space: nowrap; }
+details.rename { margin: 0; }
+details.rename form { margin: 4px 0; }
+.pairing { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: center; margin: 12px 0; }
+figure.qr { margin: 0; }
+svg.qr { width: 220px; height: 220px; display: block; }
+.pair-link { min-width: 0; flex: 1 1 20em; }
+.pair-link code { overflow-wrap: anywhere; }
+header.top a.local { text-decoration: none; }
+header.top a.local:hover { text-decoration: underline; }
 /* The Overview's agent list: Restart in mode... (web.app ship_agent_restart) */
 details.agent-restart { margin: 0; }
 details.agent-restart form label { display: block; margin: 4px 0; font-size: 13px; }
@@ -496,10 +508,11 @@ form.trust-machine > button { justify-self: start; }
   table.health td:empty { display: none; }
 }
 @media (max-width: 640px) {  /* a certificate or machine per block, like health items */
-  table.certs thead, table.machines thead { display: none; }
-  table.certs tr, table.machines tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.certs thead, table.machines thead, table.devices thead { display: none; }
+  table.certs tr, table.machines tr, table.devices tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   table.certs td { display: inline-block; border: 0; padding: 2px 8px 2px 0; }
-  table.machines td { display: block; border: 0; padding: 2px 0; white-space: normal; }
+  table.machines td, table.devices td { display: block; border: 0; padding: 2px 0; white-space: normal; }
+  table.devices td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: 12px; }
 }
 @media (max-width: 900px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
