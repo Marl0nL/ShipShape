@@ -80,7 +80,8 @@ REMOTE_COOKIE = "__Host-fleetledger"
 # on, and the identity ones for a person's device). Never sent by a browser itself.
 PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded",
                  "tailscale-user-login", "tailscale-user-name", "tailscale-user-profile-pic",
-                 "tailscale-app-capabilities")
+                 "tailscale-app-capabilities", "tailscale-funnel-request",
+                 "tailscale-headers-info")
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]

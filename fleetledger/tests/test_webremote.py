@@ -184,7 +184,8 @@ def test_a_request_through_serve_cannot_pass_as_one_from_this_computer(web, host
 
 @pytest.mark.parametrize("header", ["X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
                                     "Forwarded", "Tailscale-User-Login", "Tailscale-User-Name",
-                                    "Tailscale-App-Capabilities"])
+                                    "Tailscale-App-Capabilities", "Tailscale-Funnel-Request",
+                                    "Tailscale-Headers-Info"])
 def test_this_computers_address_takes_no_proxied_request_even_when_off(store, fake_repo,
                                                                        header):
     gate = Gate(PORT)
@@ -381,6 +382,8 @@ def test_the_serve_check_passes_for_exactly_this_setup():
         "Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}), "on port 8443"),
     (lambda f: f.serve["TCP"].update({"10000": {"TCPForward": "127.0.0.1:3000",
                                                 "TerminateTLS": NAME}}), "on port 10000"),
+    (lambda f: f.serve["Web"].update({NAME: {  # a key with no port: refused, not a crash
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}), "on port (none given)"),
     (lambda f: f.handlers.update({"/other": {"Proxy": "http://127.0.0.1:9000"}}),
      "to itself"),
     (lambda f: f.handlers.update({"/": {"Proxy": "http://127.0.0.1:9999"}}),
@@ -543,6 +546,45 @@ def test_the_server_prints_a_link_for_each_address(store, monkeypatch, home):
     far = re.search(rf"{re.escape(REMOTE)}/login\?token=(\S+)", said).group(1)
     # Two tokens: the browser opened here uses up its own, never the remote one.
     assert local != far
+
+
+def test_enter_prints_a_new_link_per_address_each_with_its_own_token(store, monkeypatch,
+                                                                      home):
+    import threading
+
+    import uvicorn
+
+    free = server.bind(0)
+    port = free.getsockname()[1]
+    free.close()
+    out = io.StringIO()
+    asked = threading.Event()
+
+    class Terminal:  # Enter pressed once
+        def isatty(self):
+            return True
+
+        def __iter__(self):
+            yield "\n"
+            asked.set()
+
+    def run(self, sockets=None):
+        assert asked.wait(5)
+        for _ in range(100):  # the thread says the links right after reading the line
+            if out.getvalue().count("/login?token=") >= 4:
+                break
+            threading.Event().wait(0.02)
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    monkeypatch.setattr(server.sys, "stdin", Terminal())
+    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    assert server.serve(app, open_browser=False, interval=3600,
+                        remote=Remote(REMOTE, port, (LOGIN,))) == 0
+    said = out.getvalue()
+    tokens = re.findall(r"/login\?token=([A-Za-z0-9_-]+)", said)
+    assert len(tokens) == 4 and len(set(tokens)) == 4, said
+    assert f"{REMOTE}/login?token={tokens[3]}" in said  # the new pair: here, then remote
+    assert f"http://127.0.0.1:{port}/login?token={tokens[2]}" in said
 
 
 def test_the_browser_opened_here_leaves_the_remote_link_working(store, monkeypatch, home):

@@ -283,7 +283,9 @@ def check_serve(remote: Remote, run: Run) -> None:
                        if str(port) != str(remote.https_port) and isinstance(tcp, dict)
                        and str(tcp.get("TerminateTLS") or "").lower() == remote.hostname})
     if others:
-        ports = ", ".join(k.rsplit(":", 1)[1] for k in others)
+        # A key Tailscale wrote is NAME:PORT; one without a port (hand-edited, or a
+        # format to come) is still refused, never a crash.
+        ports = ", ".join(k.rsplit(":", 1)[1] if ":" in k else "(none given)" for k in others)
         raise FleetError(f"Tailscale Serve also serves {remote.hostname} on port {ports}. "
                          "FleetLedger must have the name to itself: your browser sends its "
                          "session cookie to every port of the name.",
