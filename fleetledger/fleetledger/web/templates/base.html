@@ -22,7 +22,13 @@
     {% if fleet_exists %}<a href="/settings">Settings</a>{% else %}<a href="/setup">Setup</a>{% endif %}
     {% if fleet_exists %}<a class="button new-ship-link" href="/new" title="ship-fleet new">+ New Ship</a>{% endif %}
   </nav>
+  {% if on_remote %}
+  <span class="local remote" title="Reached through Tailscale Serve; FleetLedger listens on 127.0.0.1 of the computer it runs on">remote, through Tailscale</span>
+  {% elif remote_on %}
+  <span class="local" title="Listens on 127.0.0.1; your other devices reach it through Tailscale Serve">this computer, and your devices</span>
+  {% else %}
   <span class="local" title="Listens on 127.0.0.1 only">this computer only</span>
+  {% endif %}
 </header>
 <main>
 {% for kind, text in flashes %}

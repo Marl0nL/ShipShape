@@ -54,6 +54,8 @@ class App:
     clock: Callable[[], float] = time.monotonic
     http_factory: Callable = None  # () -> pins.Http
     herdr: bool = True  # installing a trust bundle here may add herdr saved machines
+    # (args) -> stdout of the local `tailscale` command (read-only; web/remote.py)
+    tailscale: Callable[[list[str]], str] | None = None
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
 
     def __post_init__(self) -> None:
@@ -497,13 +499,38 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "ui", "open the local web UI: dashboard and sign-ins in your browser",
              "Serve the web UI on 127.0.0.1 (this computer only) and open it with a\n"
              "one-time link. Press Enter in this terminal for a new link.\n"
+             "With `ship-fleet ui remote` on, your other devices reach it too, through\n"
+             "Tailscale Serve (docs/runbooks/remote-ui.md).\n"
              "See docs/web-ui.md.")
     p.add_argument("--port", type=int, default=0,
-                   help="port on 127.0.0.1 (default: any free port)")
+                   help="port on 127.0.0.1 (default: any free port; the remote UI's port "
+                        "when that is on)")
     p.add_argument("--no-browser", action="store_true",
                    help="print the link instead of opening a browser")
     p.add_argument("--interval", type=float, default=30.0,
                    help="seconds between status checks while the UI is open (default 30)")
+    p.add_argument("--local", action="store_true",
+                   help="this computer only, even when the remote UI is on")
+    ui_sub = p.add_subparsers(dest="ui_command", metavar="<action>", title="actions")
+    r = ui_sub.add_parser(
+        "remote", help="show, turn on or turn off the web UI for your other devices",
+        description="Let your other devices (laptop, phone) open this computer's web UI\n"
+                    "through Tailscale Serve, which gives it HTTPS at this computer's\n"
+                    "MagicDNS name and forwards to 127.0.0.1:PORT. FleetLedger still listens\n"
+                    "on 127.0.0.1 only.\n\n"
+                    "  tailscale serve --bg 127.0.0.1:8765          first, once\n"
+                    "  ship-fleet ui remote https://NAME --port 8765\n"
+                    "  ship-fleet ui remote                         what is set, and the check\n"
+                    "  ship-fleet ui remote --off\n\n"
+                    "Every start of ship-fleet ui checks that Serve sends exactly that name\n"
+                    "to that port, with Funnel off, and refuses to start otherwise.\n"
+                    "Read the risks first: docs/runbooks/remote-ui.md.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    r.add_argument("origin", nargs="?", metavar="https://NAME",
+                   help="this computer's MagicDNS name, as Tailscale Serve serves it")
+    r.add_argument("--port", type=int, default=None,
+                   help="the loopback port Tailscale Serve forwards to")
+    r.add_argument("--off", action="store_true", help="turn the remote web UI off")
 
     import importlib
 

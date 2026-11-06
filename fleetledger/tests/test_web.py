@@ -381,7 +381,7 @@ def test_browser_gets_a_private_file_not_the_token(store, monkeypatch, home):
     assert not Path(opened[0][len("file://"):]).exists()  # removed on exit
 
 
-def test_ui_command_is_wired(monkeypatch):
+def test_ui_command_is_wired(monkeypatch, home):
     called = {}
     monkeypatch.setattr(server, "serve", lambda app, **kw: called.update(kw) or 0)
     assert cli.main(["ui", "--no-browser", "--port", "0"], cli.App()) == 0

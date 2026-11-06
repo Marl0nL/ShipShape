@@ -49,6 +49,7 @@ Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [create a Ship](docs/runbooks/create-ship.md),
 [baked images](docs/runbooks/images.md),
 [access from outside the LAN](docs/runbooks/remote-access.md),
+[the web UI from your laptop and phone](docs/runbooks/remote-ui.md) (Tailscale Serve),
 [sign it in](docs/runbooks/sign-in.md),
 [attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, herdr --remote),
 [update the fleet](docs/runbooks/update-fleet.md) (and switch running agents to a new

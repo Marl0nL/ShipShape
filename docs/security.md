@@ -211,7 +211,12 @@ is removed straight away; it is never written anywhere else.
 link swapped for a cookie, refuses foreign `Host` headers (DNS rebinding), and
 needs a CSRF token and an exact `Origin` on every change and on the live
 terminal's WebSocket. Pasted codes follow the concierge's rules above; request
-logging is off. The setup page takes secrets (the Proxmox token, an OAuth client
+logging is off. From your other devices it is reached only through Tailscale
+Serve, once you turn that on (`ship-fleet ui remote`): FleetLedger still binds
+`127.0.0.1`, checks at every start that Serve sends exactly this computer's name to
+its port with Funnel off, and then accepts that one HTTPS origin only for requests
+Serve brought from a person's device, with a `Secure` `__Host-` cookie and the same
+CSRF and `Origin` rules ([runbooks/remote-ui.md](runbooks/remote-ui.md)). The setup page takes secrets (the Proxmox token, an OAuth client
 secret, a key's current passphrase) only in POST bodies, sends each straight to
 its check and store, and never echoes, logs or audits them. Details:
 [web-ui.md](web-ui.md#security).
@@ -240,6 +245,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | Someone else on your LAN | fake an mDNS announcement; answer at a Ship's name; try passwords | pinned host keys; key-only SSH; announcements are hints only |
 | A leaked seed, snapshot or backup | impersonate a Ship (seed); reuse sign-ins (snapshot) | seeds deleted at enrolment and kept 0600 until then; disk-only snapshots, treated as sensitive; baked images hold no secrets; re-seed and `adopt --replace` (which also lists the old host key as revoked for trusted machines); host certificates last 90 days; sign Ships out from FleetLedger |
 | A stale VM id in the inventory | destroy or roll back someone else's VM | every destructive driver call checks the VM's name first; the token reaches only the pool |
+| A device of yours that can open the remote web UI (when it is on) | with a session: everything the UI does, so the whole fleet and the Proxmox pool | off unless you turn it on; Serve on the tailnet only (never Funnel), and your access rules; requests without a person's Tailscale identity refused; still the one-time link per browser; typed confirmations for destroy and rollback; stopping `ship-fleet ui` ends every session |
 | Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal |
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr pinned by checksum; recipes pin versions; verified Ubuntu images |

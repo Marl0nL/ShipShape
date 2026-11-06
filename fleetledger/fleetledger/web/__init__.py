@@ -2,5 +2,6 @@
 login concierge in a browser. See docs/web-ui.md.
 
 Local only: it binds 127.0.0.1, admits a browser through a one-time link, and
-checks Host, Origin and a CSRF token on every change (security.py).
+checks Host, Origin and a CSRF token on every change (security.py). Your other
+devices reach it only through Tailscale Serve, once you turn that on (remote.py).
 """

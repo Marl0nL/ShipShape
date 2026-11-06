@@ -1,7 +1,8 @@
 # The web UI (`ship-fleet ui`)
 
 FleetLedger's setup, dashboard and login concierge, in your browser, on your
-own computer only. The CLI stays complete: everything the UI does, a
+own computer only (and, once you turn it on, from your other devices through
+Tailscale Serve: [runbooks/remote-ui.md](runbooks/remote-ui.md)). The CLI stays complete: everything the UI does, a
 `ship-fleet` command does too, and the UI runs the same code.
 
 ## First run: the setup page
@@ -125,6 +126,7 @@ will bring those pop-ups.
 ship-fleet ui                 # opens your browser; Ctrl-C to stop
 ship-fleet ui --no-browser    # prints the link instead
 ship-fleet ui --port 8765     # a fixed port (default: any free one)
+ship-fleet ui --local         # this computer only, even with the remote UI on
 ```
 
 The link works once, for 15 minutes. It is printed in the terminal running
@@ -133,6 +135,11 @@ or "not found" page (sandboxed browsers, such as snaps, cannot read the private
 file FleetLedger opens them on), open the printed link instead. Press Enter in
 that terminal for a new link (for a second browser, or after restarting the
 browser). Stopping the UI ends every session and cancels any sign-in still open.
+
+From your laptop or phone: `ship-fleet ui remote https://NAME --port 8765`, after
+`tailscale serve --bg 127.0.0.1:8765`, then `ship-fleet ui` prints a second link
+for the remote address. Read the risks first:
+[runbooks/remote-ui.md](runbooks/remote-ui.md).
 
 ## What it shows
 
@@ -296,6 +303,24 @@ Following Jupyter's model, adapted to "one person, one computer":
 
 - **Local only.** The server binds `127.0.0.1`; there is no option to listen
   anywhere else. Nothing on a Ship talks to it.
+- **Your other devices only through Tailscale Serve, and only if you turn it on**
+  (`ship-fleet ui remote`, [runbooks/remote-ui.md](runbooks/remote-ui.md)). Serve
+  terminates HTTPS for this computer's own MagicDNS name and forwards to the same
+  loopback port. Each start checks, through the local `tailscale` command, that the
+  name is this computer's, that Serve sends it (and nothing else at it, on any
+  port: cookies ignore ports) to this port, and that Funnel is off for it;
+  otherwise the UI refuses to start. A request naming `127.0.0.1` or `localhost`
+  that carries a proxy's headers (`X-Forwarded-*`, `Forwarded`, `Tailscale-User-*`)
+  is refused, on or off: Serve keeps the browser's `Host`, so that is how a request
+  through it is told from a browser on this computer. The gate then
+  accepts exactly one more origin, `https://NAME`, and only for requests that carry
+  `X-Forwarded-Proto: https` and a `Tailscale-User-Login` (Serve sets both and
+  strips client copies; it sets no identity for Funnel or tagged devices). There
+  the cookie is `__Host-fleetledger` (`Secure`, `HttpOnly`, `SameSite=Strict`), the
+  `Origin` must be exactly `https://NAME`, a session made on one origin never
+  works on the other, and the CSP allows the live terminal's `wss://NAME`. The
+  one-time link is still the only way in: programs on this computer can forge
+  Serve's headers, so they are a filter, never a sign-in.
 - **One-time link.** `ship-fleet ui` makes a random token, keeps only its
   SHA-256, and puts it in the link. The first visit swaps it for a session
   cookie (`HttpOnly`, `SameSite=Strict`, named after the port) and refreshes to
@@ -367,6 +392,7 @@ and htmx for polling; no front-end build.
 | `security.py` | the gate: Host, link token, sessions, CSRF, Origin, headers |
 | `setup.py` | the setup page: the same steps as `ship-fleet setup --text`, through the same functions (keys.py, proxmox_setup.py, overlay_setup.py) |
 | `server.py` | `ship-fleet ui`: binding, the link, uvicorn (access log off) |
+| `remote.py` | the remote web UI through Tailscale Serve: `ship-fleet ui remote`, its setting (`remote-ui.json`, beside `ships.toml`) and the Serve check every start runs |
 | `app.py` | routes and pages |
 | `settings.py` | the Settings page and its Health check (`firstrun.everything`, the same as `ship-fleet doctor`) |
 | `shipsettings.py` | a Ship's Settings tab: every `ship-fleet set` key in groups, the current value from the Ship's status `settings`, and only what changed sent through `ops.set_settings` |
@@ -392,6 +418,8 @@ and htmx for polling; no front-end build.
 
 Tests: `fleetledger/tests/test_web.py` (the gate's every check, pages, actions,
 and real sign-in sessions in a terminal driven through the browser routes),
+`test_webremote.py` (the remote origin through a simulated Tailscale Serve: its
+headers, cookie, Origin and socket, the address, the setting and the Serve check),
 `test_websetup.py` (the setup page, with real OpenSSH keys, a fake keyring, a
 fake Proxmox and a fake Tailscale), `test_webfleetactions.py` (the Every Ship page: selection, the counts in the
 dialogs, each action's operation and per-Ship results), `test_weboverlay.py` (the Access tab, Leave, the
