@@ -28,7 +28,7 @@ copy, never moved with the fleet.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -45,11 +45,12 @@ ALLOWED = ("migrate", "doctor")
 
 @dataclass(frozen=True)
 class Marker:
-    role: str  # standby | retired
+    role: str  # standby | retired | unreadable (a marker file that cannot be read)
     when: str  # received / retired (RFC 3339)
     other: str | None  # the computer it came from (standby) or went to (retired)
     epoch: int  # standby: the epoch it activates with; retired: the epoch handed over to
     wiped: str | None = None  # retired: when its keys, secrets and state were deleted
+    path: str = field(default="", compare=False)  # the file it was read from
 
     @property
     def age(self) -> timedelta:
@@ -82,23 +83,30 @@ def _path(store, name: str) -> Path:
     return store.path.with_name(name)
 
 
-def _marker_path(m: Marker) -> Path:
-    return paths.config_dir() / (RETIRED if m.role == "retired" else STANDBY)
-
-
 def marker(store) -> Marker | None:
     """This copy's marker (standby or retired), or None: an active copy, or none at all.
-    A marker that cannot be read counts as retired: never as active."""
+    A marker that cannot be read, or holds anything but what FleetLedger writes, is
+    "unreadable": never active, and nothing acts on what it seems to say."""
     for name, role in ((RETIRED, "retired"), (STANDBY, "standby")):
         path = _path(store, name)
-        if not path.exists():
+        if not (path.exists() or path.is_symlink()):
             continue
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
-            return Marker(role, str(doc["when"]), doc.get("other"), int(doc["epoch"]),
-                          doc.get("wiped"))
-        except (OSError, ValueError, KeyError, TypeError):
-            return Marker("retired", "1970-01-01T00:00:00Z", None, 1 << 62)
+            m = Marker(role, doc["when"], doc.get("other"), doc["epoch"], doc.get("wiped"),
+                       str(path))
+            ok = (doc.get("schema") == SCHEMA and doc.get("role") == role
+                  and isinstance(m.when, str) and _parse(m.when)
+                  and (m.other is None or isinstance(m.other, str))
+                  and isinstance(m.epoch, int) and not isinstance(m.epoch, bool)
+                  and 0 <= m.epoch < 1 << 31
+                  and (m.wiped is None or (role == "retired" and isinstance(m.wiped, str)
+                                           and _parse(m.wiped))))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            ok = False
+        if not ok:
+            return Marker("unreadable", "", None, 0, None, str(path))
+        return m
     return None
 
 
@@ -113,6 +121,12 @@ def clear(store, role: str) -> None:
 
 
 def banner(m: Marker) -> FleetError:
+    if m.role == "unreadable":
+        return FleetError(
+            f"{paths.tilde(m.path)} cannot be read as FleetLedger wrote it, so this copy "
+            "does not act on the fleet: it may have been handed on (ship-fleet migrate).",
+            hint="Fix or delete that file once you know which copy is the active one (two "
+            "active copies undo each other's changes); docs/runbooks/move-fleetledger.md.")
     day = m.when[:10]
     if m.role == "standby":
         return FleetError(
@@ -126,7 +140,7 @@ def banner(m: Marker) -> FleetError:
                           f"the fleet is managed at {m.other or 'another computer'}.",
                           hint="To manage the fleet here again, move it back (ship-fleet "
                           "migrate push from there). To start another fleet here instead, "
-                          f"delete {paths.tilde(_marker_path(m))} first.")
+                          f"delete {paths.tilde(m.path)} first.")
     return FleetError(
         f"This FleetLedger was retired on {day}, when the fleet moved to "
         f"{m.other or 'another computer'} (epoch {m.epoch}): it no longer acts on the fleet. "
@@ -178,6 +192,8 @@ def activate(store) -> int:
 def unretire(store) -> int:
     """A retired copy acts on the fleet again, with an epoch above any it handed over."""
     m = marker(store)
+    if m is not None and m.role == "unreadable":
+        raise banner(m)
     if m is None or m.role != "retired":
         raise FleetError("This FleetLedger is not retired.")
     if m.wiped:
@@ -225,6 +241,8 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
                 gone.append(Gone(label, str(f)))
         if kind == "keyring":
             gone.append(Gone(f"the {label}'s passphrase", keys.item(path), keyring=True))
+        elif keys.passphrase_file(path).exists():
+            gone.append(Gone(f"the {label}'s passphrase", str(keys.passphrase_file(path))))
     staying = set()
     for path in managed:
         if path.resolve() not in role_paths:
@@ -241,11 +259,12 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
             gone.append(Gone(label, str(table[item_key]), keyring=True))
         elif table.get(file_key) and paths.expand(table[file_key]).exists():
             gone.append(Gone(label, str(paths.expand(table[file_key]))))
+    listed = {Path(g.where).resolve() for g in gone if not g.keyring}
     for base in (paths.config_dir(), paths.data_dir()):
         for f in _files(base):
             if f.name in (STANDBY, RETIRED) and f.parent == store.path.parent:
                 continue
-            if f.resolve() in staying:
+            if f.resolve() in staying or f.resolve() in listed:
                 continue
             gone.append(Gone("FleetLedger's own file", str(f)))
     return gone, kept
