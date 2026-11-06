@@ -23,6 +23,17 @@
   {% for o in job.outcomes if not (job.result.logs and o.ok) %}{# a log's lines say it already #}
   <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
   {% endfor %}
+  {% if job.kind == "create" and job.done and job.result.retry %}
+  {% set saved_at = attempt_saved_at(job.result.retry) %}
+  {% if saved_at is not none and saved_at == job.result.retry_at %}
+  <div class="attempt-actions">
+    <a class="button" href="/new?retry={{ job.result.retry }}" title="the New Ship form, filled in with what was tried">Edit and retry</a>
+    <span class="hint">opens the New Ship form with everything this attempt was given</span>
+  </div>
+  {% elif saved_at is not none %}
+  <p class="hint">A later attempt at {{ job.result.retry }} is saved: Edit and retry is on its card.</p>
+  {% endif %}
+  {% endif %}
   {% if job.kind == "destroy" and job.done and not job.result.gone and not job.result.forgotten %}
   {% from "_macros.html" import destroy_form with context %}
   <p class="hint">{{ "Once you have run those steps" if job.ok else "If its VM is gone already, or once you have deleted it by hand" }}, forget it here:</p>

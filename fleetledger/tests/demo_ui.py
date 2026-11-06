@@ -197,8 +197,8 @@ def make_driver():
                                         "snapshots": []})
         vm["snapshots"].append(Snapshot(f"snap-{taken[:10].replace('-', '')}", taken, note))
 
-    def factory(inventory, driver_id):
-        return demo if driver_id == "proxmox" else get_driver(inventory, driver_id)
+    def factory(inventory, driver_id, **kw):  # kw: what `new` passes (ubuntu_release)
+        return demo if driver_id == "proxmox" else get_driver(inventory, driver_id, **kw)
 
     return factory
 

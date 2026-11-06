@@ -187,6 +187,38 @@ on any tab. You type the Ship's name to confirm; it runs this command as a job.
 
 ## If something goes wrong
 
+### Try a failed Ship again
+
+When `ship-fleet new` fails, FleetLedger keeps what it was asked for (every option,
+nothing secret) and prints the exact command to run again, ready to edit:
+
+```sh
+ship-fleet: Proxmox POST failed: 500 storage full
+  To try again (edit what you need): ship-fleet new ship-03 --tag work --cores 4 --memory-mb 8192
+```
+
+In the web UI, the failed job's card (under Activity, also after a restart) has
+**Edit and retry**: it opens the New Ship form filled in with everything that
+attempt was given. Change what you need and **Make it again**. The New Ship page
+lists every saved attempt, each with Edit and retry and **Discard**, and a new
+Ship's default name skips their names. An attempt goes once a Ship of that name is
+made, or when you discard it (one that still names something it left on the
+hypervisor stays until that is removed); FleetLedger keeps the last 20.
+
+Nothing secret is kept: there are no passphrases, tokens or keys in a Ship's
+options, and sign-ins happen after the Ship is up, as always. The first agent's
+first prompt is the one free-text option; if it holds anything that looks like a
+token, an address or a link, it is not kept, and the form asks you to type it again.
+
+What blocks a retry, and what to do:
+
+| The attempt | What happens next |
+|---|---|
+| failed before the VM was made, or the driver removed what it made | nothing to clear: try again |
+| left a VM or seed volume the driver could not remove (it says which) | the next `new` of that name removes it first (after checking its name), so there is never a second VM of that Ship. It asks first: `ship-fleet new` wants the Ship's name typed, as `destroy` does, or `--yes` (without a terminal it refuses without `--yes`); the web forms (New Ship and setup's first Ship) ask in the dialog, whether you came from Edit and retry or typed the name, and remove only what the dialog named. If it still cannot, it says what is left: delete it on the hypervisor and try again, or discard the attempt |
+| made the VM, but the Ship did not finish enrolling | the Ship stays in the inventory: finish it (`ship-fleet status ship-03 --wait`, or **Finish enrolling** on its page) or remove it (`ship-fleet destroy ship-03`, or **Destroy…**) before trying again under that name, or give the retry another name |
+| a name that is taken now | the form says so, as for any new Ship: choose another name |
+
 | Symptom | Check |
 |---|---|
 | `new` waits a long time | the VM console in Proxmox, then `ship-fleet logs ship-01 provision` |

@@ -194,13 +194,93 @@ def parse_autostart(values: list[str], prompt: str | None = None) -> list[Autost
 
 
 def cmd_new(args, app) -> int:
+    """`ship-fleet new`; a failure is saved as an attempt (attempts.py) to try again."""
+    from fleetledger import attempts
+
+    progress: dict[str, Any] = {"stage": None, "driver": args.driver or "manual"}
+    try:
+        code = _new(args, app, progress)
+    except enrol.StillStarting:  # made: it may well finish by itself
+        _quietly_drop(args.name)
+        raise
+    except BaseException as exc:
+        if progress["stage"] is None:  # a bad or taken name: nothing to save under it
+            raise
+        if isinstance(exc, FleetError):
+            error = exc.message
+        elif isinstance(exc, KeyboardInterrupt):
+            error = "Interrupted."
+        else:
+            error = f"Internal error ({type(exc).__name__})."
+        from fleetledger.concierge.redact import clean
+
+        attempt = attempts.record(args, error=clean(error), stage=progress["stage"],
+                                  driver=progress["driver"],
+                                  left=getattr(exc, "left_behind", None))
+        again = _try_again(attempt)
+        if isinstance(exc, FleetError):
+            exc.hint = f"{exc.hint}\n  {again}" if exc.hint else again
+        else:
+            app.note(again)
+        raise
+    _quietly_drop(args.name)
+    return code
+
+
+def _quietly_drop(name: str) -> None:
+    from fleetledger import attempts
+
+    try:
+        attempts.drop(name)
+    except OSError:
+        pass
+
+
+def _confirm_clearing(app, attempt) -> None:
+    """Making attempt's Ship again removes what that attempt left on the hypervisor
+    first: ask for its name (as `destroy` does), or want --yes without a terminal."""
+    what = ", ".join(attempt.describe_left())
+    if not app.stdin_isatty():
+        raise FleetError(f"Making {attempt.name} first deletes {what}, left by its failed "
+                         "attempt; rerun with --yes.")
+    answer = app.confirm(f"Making {attempt.name} first deletes {what}, left by its failed "
+                         "attempt. Type its name to go on: ")
+    if answer.strip() != attempt.name:
+        raise FleetError("Nothing removed or made.")
+
+
+def _try_again(attempt) -> str:
+    """What to run next, for a failed attempt: the exact command, ready to edit."""
+    lines = []
+    if attempt.stage == "enrol":
+        lines.append(f"{attempt.name} stays in the inventory as far as it got: finish it "
+                     f"with ship-fleet status {attempt.name} --wait, or remove it with "
+                     f"ship-fleet destroy {attempt.name} before trying again.")
+    if attempt.left:
+        lines.append(f"Trying again removes first what this attempt left: "
+                     f"{', '.join(attempt.describe_left())} (it asks; --yes does not).")
+    lines.append(f"To try again (edit what you need): {attempt.command()}")
+    if "autostart_prompt" in attempt.dropped:
+        lines.append("(The first prompt is left out, as it may hold a secret: add "
+                     "--autostart-prompt again.)")
+    return "\n  ".join(lines)
+
+
+def _new(args, app, progress: dict[str, Any]) -> int:
+    from fleetledger import attempts
+
     store = app.store_factory()
     inv = store.load()
     name = args.name
     if not NAME_RE.match(name):
         raise FleetError(f"'{name}' is not a valid Ship name (a-z, 0-9 and -, up to 31).")
+    previous = attempts.get(name)
     if inv.has_ship(name):
-        raise FleetError(f"{name} is already in the inventory.")
+        said = previous is not None and attempts.blocker(inv, previous)
+        raise FleetError(said or f"{name} is already in the inventory.")
+    if previous is not None and previous.left and not getattr(args, "yes", False):
+        _confirm_clearing(app, previous)  # asks as destroy does; refused: nothing saved
+    progress["stage"] = "checks"
     repo = app.repo_factory()
     catalogue = Catalogue.from_repo(repo)
 
@@ -256,6 +336,9 @@ def cmd_new(args, app) -> int:
         agent_sudo=True if args.agent_sudo else None,
         timezone=args.timezone or local_timezone(),
     )
+    progress["driver"] = driver_id
+    if previous is not None and previous.left:  # never a second VM of this name
+        attempts.clear_left(app, inv, previous, app.say)
     seed = make_seed(inv, draft, repo, options)
     ref: dict[str, Any] = {"seed": seed.instance_id}
     if args.vmid is not None:
@@ -263,10 +346,17 @@ def cmd_new(args, app) -> int:
     ship = Ship(**{**draft.__dict__, "host_key": seed.host_public_key, "driver_ref": ref})
     with store.edit() as ed:
         ed.add_ship(name, ship_entry(ship))
+    progress["stage"] = "create"
     app.say(f"{name}: seed written, host key {seed.host_fingerprint} pinned.")
 
-    driver = app.driver_factory(store.load(), driver_id,
-                                ubuntu_release=repo.versions["ubuntu"]["release"])
+    try:
+        driver = app.driver_factory(store.load(), driver_id,
+                                    ubuntu_release=repo.versions["ubuntu"]["release"])
+    except BaseException:  # e.g. no Proxmox token: the name is not left claimed
+        with store.edit() as ed:
+            ed.remove_ship(name)
+        seed.path.unlink(missing_ok=True)
+        raise
     with audit.recorded(name, "create", driver_id) as audited:
         try:
             outcome = driver.create(ship, SeedFile(seed.path, seed.instance_id),
@@ -278,6 +368,7 @@ def cmd_new(args, app) -> int:
             raise
         with store.edit() as ed:  # the VM id is saved before the entry is written
             ed.set_field(name, "driver_ref", dict(outcome.driver_ref))
+        progress["stage"] = "enrol"  # from here on the Ship stays in the inventory
         if not outcome.done:
             audited["outcome"] = "steps"
     for message in outcome.messages:

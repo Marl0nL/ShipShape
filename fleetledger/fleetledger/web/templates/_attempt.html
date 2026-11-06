@@ -1,0 +1,19 @@
+{# A saved failed attempt at making a Ship (attempts.py): when, why, what it left, and
+   Edit and retry, which opens the New Ship form filled in with what was tried.
+   Expects: a (attempts.Attempt), csrf. #}
+<article class="flow job failed attempt" id="attempt-{{ a.name }}">
+  <header><strong>Make {{ a.name }}</strong> <span class="pill {{ "failed"|pill }}">failed</span>
+    <span class="when">tried {{ clock_dated(a.at) }}</span></header>
+  {% if a.error %}<p class="flash bad">{{ a.error }}</p>{% endif %}
+  {% if a.blocked %}<p class="hint">{{ a.blocked }}
+    <a href="/ships/{{ a.name }}">Open {{ a.name }}</a></p>{% endif %}
+  {% if a.left %}<p class="hint">It left {{ a.describe_left()|join(", ") }}, which FleetLedger
+    could not remove; trying again removes that first (it asks).</p>{% endif %}
+  <div class="attempt-actions">
+    <a class="button" href="/new?retry={{ a.name }}" title="the New Ship form, filled in with what was tried">Edit and retry</a>
+    <form method="post" action="/new/attempts/{{ a.name }}/discard" class="inline">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="ghost small" title="forget what was tried">Discard</button>
+    </form>
+  </div>
+</article>

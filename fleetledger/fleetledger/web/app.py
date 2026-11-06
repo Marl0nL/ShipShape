@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import commands, net, ops, signins
+from fleetledger import attempts, commands, net, ops, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -99,6 +99,15 @@ def _clock(wall: float | None) -> str:
     return datetime.fromtimestamp(wall, UTC).astimezone().strftime("%H:%M:%S")
 
 
+def _clock_dated(wall: float) -> str:
+    """A time for a record that outlives the day (a saved attempt): the date too,
+    unless it is today."""
+    when = datetime.fromtimestamp(wall, UTC).astimezone()
+    if when.date() == datetime.now(UTC).astimezone().date():
+        return when.strftime("%H:%M:%S")
+    return f"{when.day} {when:%b %Y} {when:%H:%M}"
+
+
 def make_env() -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(HERE / "templates")),
@@ -112,6 +121,8 @@ def make_env() -> Environment:
         usage_cell=commands.usage_cell,
         notes_cell=commands.notes_cell,
         clock=_clock,
+        clock_dated=_clock_dated,
+        attempt_saved_at=attempts.saved_at,
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
@@ -225,18 +236,35 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
     items = attention_items(views)
     flows_waiting = [f for f in ui.concierge.active() if f.needs_you]
     alerts = dashboard.alerts(views, items, flows_waiting, snap.inventory)
+    jobs = ui.jobs.recent()
     return {
         "tag": tag,
         "views": views,
         "alerts": alerts,
         "summary": dashboard.summary(views, alerts, snap.inventory),
         "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
-        "jobs": ui.jobs.recent(),
+        "jobs": jobs,
+        "saved_attempts": _saved_attempts(snap.inventory, jobs),
         "version": _fleet_version(ui),
         "snap": snap,
         "can_renew": _has_ca(snap.inventory),
         "overlay_set": bool(snap.inventory is not None and snap.inventory.overlay),
     }
+
+
+def _saved_attempts(inv: Any, jobs: list[Any]) -> list[Any]:
+    """Failed attempts at making a Ship (attempts.py) no job card here shows already,
+    so a failure is still in Activity after a restart."""
+    try:
+        saved = attempts.current(inv)
+    except OSError:
+        return []
+    # A card offers Edit and retry only for the attempt as saved when its job ended.
+    shown = {j.result.get("retry") for j in jobs
+             if any(a.name == j.result.get("retry") and a.at == j.result.get("retry_at")
+                    for a in saved)}
+    shown |= {s for j in jobs if j.running for s in j.ships}
+    return [a for a in saved if a.name not in shown]
 
 
 def _has_ca(inv: Any) -> bool:
@@ -685,7 +713,18 @@ async def new_ship_page(request: Request) -> Response:
     except FleetError as exc:  # no ShipShape checkout to read the catalogue from
         return render(request, "message.html", status_code=503,
                       title="Cannot make a Ship here", text=exc.message)
-    return render(request, "new.html", nf=nf)
+    saved = await run_in_threadpool(attempts.current, inv)
+    wanted = request.query_params.get("retry", "")
+    retry = next((a for a in saved if a.name == wanted), None)
+    if wanted and retry is None:
+        ui.flash(session_of(request), "bad", f"There is no saved attempt at {wanted} "
+                 "(it was made since, or discarded).")
+        return back("/new")
+    if retry is not None:
+        nf = newship.refill(nf, newship.fields_from(retry.options, nf))
+    return render(request, "new.html", nf=nf, retry=retry, saved=saved,
+                  blocker=retry and retry.blocked,
+                  clearing=[retry] if retry is not None and retry.left else [])
 
 
 async def new_ship_start(request: Request) -> Response:
@@ -699,20 +738,36 @@ async def new_ship_start(request: Request) -> Response:
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back("/new")
+    retry = await run_in_threadpool(newship.retry_of, fields)
+    clearing = await run_in_threadpool(newship.clearing, retry, one(fields, "name"))
     try:
         name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv)
-        newship.start(ui, name, argv)
+        # Nothing on the hypervisor is removed unless the dialog named it: the plain
+        # form too, when its name is a failed attempt's that left something.
+        cleared = newship.check_confirmed(fields, clearing)
+        newship.start(ui, name, argv, retry_of=retry.name if retry else None,
+                      cleared=cleared)
     except FleetError as exc:  # back to the form as it was posted, with the reason
         try:
             nf = await run_in_threadpool(newship.choices, ui.app, inv)
         except FleetError:
             ui.flash(session, "bad", exc.message)
             return back("/new")
+        saved = await run_in_threadpool(attempts.current, inv)
         return render(request, "new.html", status_code=400, flashes=[("bad", exc.message)],
-                      nf=newship.refill(nf, fields))
+                      nf=newship.refill(nf, fields), retry=retry, saved=saved, blocker=None,
+                      clearing=clearing)
     ui.flash(session, "ok", f"Making {name}; its progress is under Activity. Once it is "
              "up, it has a page of its own.")
     return back("/")
+
+
+async def discard_attempt(request: Request) -> Response:
+    """Forget a saved failed attempt at making a Ship (attempts.py)."""
+    name = request.path_params.get("name", "")
+    if NAME_RE.match(name) and await run_in_threadpool(attempts.drop, name):
+        ui_of(request).flash(session_of(request), "ok", f"Discarded the attempt at {name}.")
+    return back("/new")
 
 
 async def finish_enrolling(request: Request) -> Response:
@@ -1041,6 +1096,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/jobs/{job}", job_card),
         Route("/new", new_ship_page),
         Route("/new", new_ship_start, methods=["POST"]),
+        Route("/new/attempts/{name}/discard", discard_attempt, methods=["POST"]),
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
         *setup.routes(),
         *snapshots.routes(),

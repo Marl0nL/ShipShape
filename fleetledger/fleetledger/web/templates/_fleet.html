@@ -53,10 +53,11 @@
   {% endif %}
 </section>
 
-{% if jobs %}
+{% if jobs or saved_attempts %}
 <section class="operations activity">
   <h2>Activity</h2>
   {% for job in jobs %}{% include "_job.html" %}{% endfor %}
+  {% for a in saved_attempts|default([]) %}{% include "_attempt.html" %}{% endfor %}
 </section>
 {% endif %}
 

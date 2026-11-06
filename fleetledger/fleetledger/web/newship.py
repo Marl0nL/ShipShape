@@ -23,9 +23,19 @@ def _one(fields: dict[str, list[str]], key: str) -> str:
     return values[0].strip() if len(values) == 1 else ""
 
 
+one_field = _one
+
+
 def next_name(inv) -> str:
-    """The first free ship-NN."""
+    """The first free ship-NN: not in the inventory, nor the name of a saved failed
+    attempt (attempts.py), so a plain new Ship never takes over an attempt's name."""
+    from fleetledger import attempts
+
     taken = {s.name for s in inv.ships()} if inv is not None else set()
+    try:
+        taken |= {a.name for a in attempts.load()}
+    except OSError:
+        pass
     n = 1
     while f"ship-{n:02d}" in taken:
         n += 1
@@ -163,11 +173,57 @@ def refill(nf: FormChoices, fields: dict[str, list[str]]) -> FormChoices:
     return out
 
 
+def fields_from(options: dict[str, Any], nf: FormChoices) -> dict[str, list[str]]:
+    """The form fields that make these `ship-fleet new` options (a saved attempt,
+    attempts.py): what refill() takes, so the form shows what was tried."""
+    o = options
+    out: dict[str, list[str]] = {"name": [str(o["name"])]}
+    if o.get("tag"):
+        out["tag"] = [" ".join(o["tag"])]
+    for key in ("cores", "disk_gb"):
+        if o.get(key) is not None:
+            out[key] = [str(o[key])]
+    if o.get("memory_mb") is not None:
+        out["memory_gb"] = [str(max(1, round(o["memory_mb"] / 1024)))]
+    if o.get("signins") is not None:
+        out["signins_shown"], out["signin"] = ["yes"], o["signins"].split(",")
+    first = (o.get("autostart") or [""])[0].split(":")
+    if len(first) >= 2 or o.get("repo"):
+        out["agent_on"] = ["yes"]
+        if len(first) >= 2:
+            out["agent"], out["cwd"] = [first[0]], [first[1]]
+        if len(first) == 3:
+            out["agent_mode"] = [first[2]]
+        if o.get("repo"):
+            out["repo"] = [o["repo"]]
+    if o.get("autostart_prompt"):
+        out["prompt"] = [o["autostart_prompt"]]
+    out["overlay"] = [] if o.get("no_overlay") else ["yes"]
+    for key, field_ in (("driver", "driver"), ("image", "image"), ("mode", "mode"),
+                        ("timezone", "timezone")):
+        if o.get(key):
+            out[field_] = [o[key]]
+    if o.get("vmid") is not None:
+        out["vmid"] = [str(o["vmid"])]
+    if o.get("host"):
+        out["hosts"] = ["\n".join(o["host"])]
+    for flag in ("allow_bypass", "agent_sudo"):
+        if o.get(flag):
+            out[flag] = ["yes"]
+    extra = [t.strip() for t in (o.get("tools") or "").split(",") if t.strip()]
+    if o.get("no_default_tools") or extra:
+        base = [] if o.get("no_default_tools") else [t for t, _, on in nf.tools if on]
+        out["tools_shown"], out["tool"] = ["yes"], list(dict.fromkeys([*base, *extra]))
+    if o.get("profile"):
+        out["profile"] = list(o["profile"])
+    return out
+
+
 def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
          ) -> tuple[str, list[str]]:
     """(name, the `ship-fleet new` argv) from the form, checked: raises FleetError with
     a plain message on anything `new` would refuse."""
-    from fleetledger import github, ops, signins
+    from fleetledger import attempts, github, ops, signins
     from fleetledger.overlay import HOST_RE
     from fleetledger.seed.shiptoml import TIMEZONE_RE, known_timezone
     from fleetledger.web import setup
@@ -176,7 +232,9 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
     if not NAME_RE.match(name):
         raise FleetError("A Ship name uses a-z, 0-9 and -, up to 31 characters.")
     if inv is not None and inv.has_ship(name):
-        raise FleetError(f"{name} is already in the inventory: choose another name.")
+        tried = attempts.get(name)
+        raise FleetError((tried and attempts.blocker(inv, tried))
+                         or f"{name} is already in the inventory: choose another name.")
     out = ["new", name]
 
     raw_tags = _one(fields, "tag").replace(",", " ").split()
@@ -270,10 +328,12 @@ def _advanced(fields, app, inv, host_re, timezone_re, known_timezone) -> list[st
     return out
 
 
-def make_ship(app, name: str, argv_: list[str]):
+def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None):
     """The job that makes a Ship: `ship-fleet new` itself, then this computer trusted
-    so `ssh <ship>` and `herdr --remote <ship>` work at once."""
-    from fleetledger import trustcmd
+    so `ssh <ship>` and `herdr --remote <ship>` work at once. retry_of: the saved
+    attempt this one tries again (attempts.py); what it left is removed first, and
+    it goes once this one works. A failure is saved by `new` itself."""
+    from fleetledger import attempts, trustcmd
     from fleetledger.enrol import StillStarting
     from fleetledger.web.jobs import BrowserApp, run_cli
 
@@ -284,8 +344,21 @@ def make_ship(app, name: str, argv_: list[str]):
                           inv.defaults.get("driver", "manual"))
             job.result["manual"] = driver == "manual"
         except FleetError:
-            pass
-        code = run_cli(app, argv_, job)
+            inv = None
+        source = attempts.get(retry_of) if retry_of and retry_of != name else None
+        if source is not None and source.left:  # renamed: `new` would not see it
+            _offer(job, source.name)  # if this fails, offer that one again
+            attempts.clear_left(BrowserApp(app, job), inv, source, job.say)
+        try:
+            code = run_cli(app, argv_, job)
+        except BaseException:  # `new` saved it before this reached the job
+            _offer(job, name)
+            raise
+        if code != 0 and code != StillStarting.exit_code:
+            _offer(job, name)
+        elif source is not None:
+            job.result.pop("retry", None)
+            attempts.drop(source.name)
         job.result["still_starting"] = code == StillStarting.exit_code
         try:
             ship = app.store_factory().load().ship(name)
@@ -300,6 +373,60 @@ def make_ship(app, name: str, argv_: list[str]):
     return run
 
 
-def start(ui: Any, name: str, argv_: list[str]):
-    """Start making it (refused while something runs on that name)."""
-    return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_), f"Make {name}")
+def _offer(job, name: str) -> None:
+    """The job card offers Edit and retry of the attempt saved at name, as it is now
+    (retry_at: a later attempt at that name, or none, and the card stops offering it)."""
+    from fleetledger import attempts
+
+    at = attempts.saved_at(name)
+    job.result["retry"] = name if at is not None else None
+    job.result["retry_at"] = at
+
+
+def start(ui: Any, name: str, argv_: list[str], retry_of: str | None = None,
+          cleared: list[str] = ()):
+    """Start making it (refused while something runs on that name, or on the
+    attempt it retries). cleared: the attempts whose leftovers the person confirmed
+    removing (check_confirmed); for the one at name, `new` gets --yes."""
+    if name in cleared:
+        argv_ = [*argv_, "--yes"]
+    ships = [name] + ([retry_of] if retry_of and retry_of != name else [])
+    return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_, retry_of),
+                         f"Make {name}", locks=[f"attempt {s}" for s in ships])
+
+
+def clearing(retry, name: str) -> list:
+    """The saved attempts whose leftovers on the hypervisor making name removes first:
+    the one retried, and the one saved at name itself (`new` clears that one)."""
+    from fleetledger import attempts
+
+    at_name = attempts.get(name) if NAME_RE.match(name or "") else None
+    out = [a for a in (retry, at_name) if a is not None and a.left]
+    return [a for i, a in enumerate(out) if a.name not in {b.name for b in out[:i]}]
+
+
+def confirm_token(attempt) -> str:
+    """What the form's clear_left carries for an attempt: its name and when it was
+    made, so a confirmation never covers a later attempt at that name."""
+    return f"{attempt.name}@{attempt.at}"
+
+
+def check_confirmed(fields: dict[str, list[str]], clearing_: list) -> list[str]:
+    """Raise FleetError unless the confirmed dialog named every attempt in clearing_
+    (nothing on the hypervisor is removed that it did not name); returns their names."""
+    confirmed = set(fields.get("clear_left", [])) if _one(fields, "confirm") == "yes" else set()
+    unasked = [a for a in clearing_ if confirm_token(a) not in confirmed]
+    if unasked:
+        raise FleetError(
+            "; ".join(f"The failed attempt at {a.name} left {', '.join(a.describe_left())}"
+                      for a in unasked)
+            + ". Making the Ship removes that first: confirm it in the dialog.")
+    return [a.name for a in clearing_]
+
+
+def retry_of(fields: dict[str, list[str]]):
+    """The saved attempt a posted form retries, if any (attempts.py)."""
+    from fleetledger import attempts
+
+    name = _one(fields, "retry_of")
+    return attempts.get(name) if name and NAME_RE.match(name) else None

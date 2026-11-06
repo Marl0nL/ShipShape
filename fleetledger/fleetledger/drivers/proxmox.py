@@ -23,6 +23,7 @@ from typing import Any
 from fleetledger.drivers.base import (
     Driver,
     ImageFile,
+    LeftBehind,
     Outcome,
     PowerState,
     PublishedImage,
@@ -175,7 +176,7 @@ class ProxmoxDriver(Driver):
         vmid = int(ship.driver_ref["vmid"]) if "vmid" in ship.driver_ref else self.allocate_vmid()
         volume = seed_volume(cfg["seed_storage"], seed.instance_id)
         messages: list[str] = []
-        uploaded = cloned = False
+        uploaded = clone_asked = False
         try:
             self._task(
                 self.api.upload(
@@ -184,18 +185,16 @@ class ProxmoxDriver(Driver):
             )
             uploaded = True
             messages.append(f"Uploaded the seed as {volume}.")
-            self._task(
-                self.api.post(
-                    self._vm(template) + "/clone",
-                    newid=vmid,
-                    name=ship.name,
-                    pool=cfg["pool"],
-                    full=True,
-                    storage=cfg["disk_storage"],
-                ),
-                timeout=1200,
+            clone = self.api.post(
+                self._vm(template) + "/clone",
+                newid=vmid,
+                name=ship.name,
+                pool=cfg["pool"],
+                full=True,
+                storage=cfg["disk_storage"],
             )
-            cloned = True
+            clone_asked = True  # accepted: VM vmid is ours now, even if the clone fails
+            self._task(clone, timeout=1200)
             label = f"image {image.id}" if image else "the stock template"
             messages.append(f"Cloned {label} (VM {template}) to VM {vmid}.")
             self._task(  # POST config is asynchronous: it returns a task
@@ -213,12 +212,32 @@ class ProxmoxDriver(Driver):
             )
             self._task(self.api.post(self._vm(vmid) + "/status/start"))
             messages.append(f"Started VM {vmid}.")
-        except BaseException:
-            # Leave nothing behind from a half-made Ship.
-            if cloned:
-                self._destroy_vm(vmid, ship.name)
+        except BaseException as exc:
+            # Leave nothing behind from a half-made Ship; say what could not be removed,
+            # so the next attempt removes it first (remove_left) instead of making a
+            # second VM of that name.
+            left: list[dict] = []
+            if clone_asked:
+                try:
+                    self._destroy_vm(vmid, ship.name)  # gone, or never made: nothing to do
+                except NotOurs:
+                    pass  # that VMID holds another VM (why the clone failed): not ours
+                except Exception:  # noqa: BLE001 - the create's own error is the one to show
+                    left.append({"kind": "vm", "vmid": vmid, "name": ship.name})
             if uploaded:
-                self._delete_volume(volume)
+                try:
+                    self._delete_volume(volume)
+                except Exception:  # noqa: BLE001
+                    left.append({"kind": "volume", "volume": volume})
+            if left and isinstance(exc, Exception):
+                said = ", ".join(f"VM {i['vmid']}" if i["kind"] == "vm" else
+                                 f"the seed volume {i['volume']}" for i in left)
+                cause = exc.message if isinstance(exc, FleetError) else type(exc).__name__
+                raise LeftBehind(f"{cause} FleetLedger could not remove {said} afterwards; "
+                                 "the next attempt at this Ship removes it first.",
+                                 left) from exc
+            if left:
+                exc.left_behind = left  # Ctrl-C: stays an interrupt
             raise
         return Outcome(
             done=True,
@@ -498,6 +517,25 @@ class ProxmoxDriver(Driver):
                 raise
             return True
         return False
+
+    def remove_left(self, name: str, left: list[dict]) -> list[str]:
+        done: list[str] = []
+        for item in left:
+            if item.get("kind") == "vm":
+                vmid = int(item["vmid"])
+                if item.get("name") != name:
+                    raise FleetError(f"VM {vmid} was recorded for {item.get('name')}, "
+                                     f"not {name}; not touching it.")
+                gone = self._destroy_vm(vmid, name)  # checks its name first
+                done.append(f"VM {vmid} ({name}) was gone already." if gone else
+                            f"Deleted VM {vmid} ({name}).")
+            elif item.get("kind") == "volume":
+                volume = str(item["volume"])
+                if not volume.startswith(self.config["seed_storage"] + ":iso/"):
+                    raise FleetError(f"{volume} is not a seed volume; not touching it.")
+                self._delete_volume(volume)
+                done.append(f"Deleted the seed volume {volume}.")
+        return done
 
     def _delete_volume(self, volume: str) -> None:
         storage = volume.split(":", 1)[0]

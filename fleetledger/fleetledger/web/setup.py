@@ -72,6 +72,9 @@ class SetupState:
     overlay_checks: list[tuple[bool, str]] = dataclasses.field(default_factory=list)
     old_copy: dict[str, Any] | None = None
     ship: int | None = None  # the first Ship's job id (web.jobs)
+    # The first Ship's form as last posted, when it came back to confirm removing a
+    # failed attempt's leftovers (no secret: `new` options only); shown once.
+    ship_form: dict[str, list[str]] | None = None
 
 
 class Setups:
@@ -265,6 +268,11 @@ async def page(request: Request) -> Response:
             context["new_form"] = await run_in_threadpool(newship.choices, ui.app, inv)
         except FleetError as exc:  # no ShipShape checkout to read the catalogue from
             context["new_form"], context["new_form_error"] = None, exc.message
+        posted, state.ship_form = state.ship_form, None
+        if posted is not None and context["new_form"] is not None:
+            context["new_form"] = newship.refill(context["new_form"], posted)
+            context["new_clearing"] = await run_in_threadpool(
+                newship.clearing, None, newship.one_field(posted, "name"))
     from fleetledger import proxmox_setup
 
     context["px"] = state.proxmox
@@ -1024,7 +1032,15 @@ async def ship_start(request: Request) -> Response:
         inv = await run_in_threadpool(lambda: ui.app.store_factory().load())
         name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv,
                                              advanced=False)
-        job = newship.start(ui, name, argv)
+        # As on /new: a failed attempt's leftovers go only once the dialog named them.
+        clearing = await run_in_threadpool(newship.clearing, None, name)
+        try:
+            cleared = newship.check_confirmed(fields, clearing)
+        except FleetError:
+            state.ship_form = {k: v for k, v in fields.items()
+                               if k not in ("csrf", "confirm", "clear_left")}
+            raise
+        job = newship.start(ui, name, argv, cleared=cleared)
     except FleetError as exc:
         _flash(request, "bad", exc.message)
         return _back("ship")
