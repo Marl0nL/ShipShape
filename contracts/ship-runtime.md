@@ -166,7 +166,9 @@ overrides it. The only such lock on a Ship is APT's ("APT is installing or
 removing packages"): `apt`, `apt-get` and `unattended-upgrade` hold it while
 they install or remove packages, until the last of their own processes ends. An
 `apt` still going in an interactive login holds every reboot off until it ends
-or that session is closed. herdr holds a *delay* lock: it never refuses, it only
+or that session is closed, including while it waits at a question (a changed
+configuration file, a needrestart prompt) or runs its after-install hooks, when
+it can look finished. herdr holds a *delay* lock: it never refuses, it only
 delays the shutdown until herdr has saved (at most `InhibitDelayMaxSec`). Claude
 Code holds none on Linux. When a reboot is refused FleetLedger reads the locks
 as above and says what holds each one and where (the process, the user, the

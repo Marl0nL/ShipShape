@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 from fleetledger.concierge import audit, engine
+from fleetledger.errors import FleetError
 from fleetledger.web import actions, flows, network, security, server
 from fleetledger.web import app as webapp
 from fleetledger.web.fleet import Fleet, attention_items
@@ -1090,6 +1091,66 @@ def test_a_refused_reboot_offers_a_force_reboot_behind_its_own_dialog(web, monke
     assert job.title == "Force reboot" and job.ok is True
     assert not _force_form(web.client.get("/partials/fleet").text.split("</article>")[0],
                            "ship-01")  # done: nothing to force on its card
+
+
+def test_force_reboot_returns_to_the_page_it_was_sent_from(web, monkeypatch):
+    """From the Fleet page's Activity the form says from=fleet and comes back there;
+    on the Ship's own page (and its card refreshed by htmx there) it stays."""
+    calls = []
+
+    def fake_reboot(fleet, ships, **kw):
+        calls.append(kw)
+        return [ops.Outcome(ships[0].name, False, "reboot refused: apt holds a shutdown lock",
+                            ["Wait for it to finish, then reboot again."],
+                            {"waited": False, "refused": {"said": "denied", "blockers": []}})]
+
+    monkeypatch.setattr(ops, "reboot", fake_reboot)
+    web.sign_in()
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
+    wait_for(lambda: calls and web.app_ui.jobs.recent()[0].done)
+    job = web.app_ui.jobs.recent()[0]
+    from_fleet = 'name="from" value="fleet"'
+    assert from_fleet in _force_form(web.client.get("/partials/fleet").text, "ship-01")
+    on_ship = web.client.get("/ships/ship-01").text
+    card = on_ship[on_ship.index('<section class="ship-jobs">'):]
+    assert _force_form(card, "ship-01") and from_fleet not in _force_form(card, "ship-01")
+    for page, sent in (("/ships/ship-01", False), ("/", True)):
+        polled = web.client.get(f"/jobs/{job.id}",
+                                headers={"HX-Current-URL": f"http://127.0.0.1{page}"}).text
+        assert (from_fleet in _force_form(polled, "ship-01")) is sent
+    response = web.post("/operations", {"operation": "reboot", "ship": "ship-01",
+                                        "force": "yes", "confirm": "yes", "from": "fleet"})
+    assert response.headers["location"].split("?")[0] == "/"
+    wait_for(lambda: len(calls) == 2 and web.app_ui.jobs.recent()[0].done)
+    assert calls[1]["force"] is True
+
+
+def test_an_update_whose_reboot_was_refused_offers_force_reboot(web, monkeypatch):
+    """The update is done; its card says why the reboot was not, and offers Force reboot."""
+    def fake_update(fleet, ships, **kw):
+        return [ops.Outcome(ships[0].name, False,
+                            "updated to 0.2.0; reboot refused: apt (PID 4242, as root) in "
+                            "sam's SSH login session on pts/0 holds a shutdown lock",
+                            ["Let it finish, or close sam's session on the Ship"],
+                            {"rebooted": False, "reboot": {
+                                "waited": False, "refused": {"said": "denied",
+                                                             "blockers": []}}})]
+
+    monkeypatch.setattr(ops, "update", fake_update)
+    web.sign_in()
+    web.post("/operations", {"operation": "update", "ship": "ship-01", "confirm": "yes"})
+    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
+    page = web.client.get("/partials/fleet").text
+    assert "updated to 0.2.0; reboot refused: apt (PID 4242" in page
+    assert "<li>Let it finish, or close sam&#39;s session on the Ship</li>" in page
+    assert _force_form(page, "ship-01")
+
+
+def test_only_a_reboot_job_can_be_forced(web):
+    with pytest.raises(FleetError, match="Only a reboot can be forced"):
+        actions.start_operation(web.app_ui.jobs, web.app_ui.app, "update", ["ship-01"],
+                                force=True)
+    assert web.app_ui.jobs.recent() == []
 
 
 def test_only_one_ships_reboot_can_be_forced(web, monkeypatch):

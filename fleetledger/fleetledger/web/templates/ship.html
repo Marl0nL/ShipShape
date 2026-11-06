@@ -15,7 +15,7 @@
 {{ ship_action_bar() }}
 {% if jobs %}
 <section class="ship-jobs">
-  {% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}
+  {% with on_ship_page=True %}{% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}{% endwith %}
 </section>
 {% endif %}
 <nav class="tabs">

@@ -24,7 +24,8 @@
   {% if o.refused %}{# a shutdown lock refused its reboot: what holds it, the next steps, and the deliberate way past it #}
   <p class="flash bad">{{ o.ship }}: {{ o.summary }}</p>
   <ol class="howto">{% for d in o.details %}<li>{{ d }}</li>{% endfor %}</ol>
-  {% from "_macros.html" import force_reboot_form with context %}{{ force_reboot_form(o.ship, small=True) }}
+  {# off the Ship's own page (the Fleet page's Activity, say), it returns there #}
+  {% from "_macros.html" import force_reboot_form with context %}{{ force_reboot_form(o.ship, small=True, from_fleet=not (on_ship_page|default(false))) }}
   {% else %}
   <p class="{{ "quiet" if o.ok else "flash bad" }}">{{ o.ship }}: {{ o.summary }}{% for d in o.details %}; {{ d }}{% endfor %}</p>
   {% endif %}

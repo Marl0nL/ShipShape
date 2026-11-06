@@ -856,8 +856,9 @@ async def job_card(request: Request) -> Response:
         return Response(status_code=286)
     if request.query_params.get("v") == str(job.version):
         return Response(status_code=204)
-    response = partial(request, "_job.html", job=job)
-    if job.done and job.result.get("gone") and _on_ship_page(request, job.ships):
+    on_ship_page = _on_ship_page(request, job.ships)
+    response = partial(request, "_job.html", job=job, on_ship_page=on_ship_page)
+    if job.done and job.result.get("gone") and on_ship_page:
         response.headers["HX-Redirect"] = "/"  # destroyed: the page it was on is gone too
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
         response.headers["HX-Refresh"] = "true"

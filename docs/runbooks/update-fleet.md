@@ -114,6 +114,11 @@ ship-01: FAILED: reboot refused: a login session is blocking it: apt (PID 4242, 
   To reboot anyway: ship-fleet reboot ship-01 --force (in the web UI, Force reboot). ...
 ```
 
+apt holds the lock until it exits, not only while packages unpack: also while it
+waits at a question (a changed configuration file, or needrestart asking which
+services to restart, where it is set to ask) and while its after-install steps
+run. So an apt that looks finished can still hold it: look at that terminal.
+
 Let it finish, or close that session, and reboot again. To reboot anyway:
 
 ```sh

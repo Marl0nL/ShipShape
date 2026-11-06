@@ -324,8 +324,10 @@
 {% endmacro %}
 
 {# Reboot a Ship even past a shutdown lock (POST /operations, force=yes: ship-fleet
-   reboot N --force), behind the danger dialog. Needs csrf in the context. #}
-{% macro force_reboot_form(name, small=False) %}
+   reboot N --force), behind the danger dialog. Needs csrf in the context.
+   from_fleet: sent from anywhere but the Ship's own page, so it returns to the
+   Fleet page (whose Activity shows the job) instead of going to the Ship's. #}
+{% macro force_reboot_form(name, small=False, from_fleet=False) %}
 {% set c = op_confirm("force-reboot", name) %}
 <form method="post" action="/operations" class="inline"
   data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
@@ -334,6 +336,7 @@
   <input type="hidden" name="operation" value="reboot">
   <input type="hidden" name="force" value="yes">
   <input type="hidden" name="ship" value="{{ name }}">
+  {% if from_fleet %}<input type="hidden" name="from" value="fleet">{% endif %}
   <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
   <button type="submit" class="ghost danger{{ ' small' if small }}" title="ship-fleet reboot {{ name }} --force">Force reboot…</button>
 </form>

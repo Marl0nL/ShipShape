@@ -51,7 +51,8 @@ SHIPS = {
     "ship-06": (["work"], False),
 }
 DOWN = {"ship-05"}
-# Refuses a plain reboot: apt still running in someone's SSH login (Force reboot works).
+# Refuses a plain reboot: apt still running in someone's SSH login. Force reboot gets
+# past it, then waits for a fresh boot the demo never makes, like any demo reboot.
 LOCKED = {"ship-04": {
     "who": "APT", "why": "APT is installing or removing packages", "mode": "block",
     "user": "root", "pid": 4242,

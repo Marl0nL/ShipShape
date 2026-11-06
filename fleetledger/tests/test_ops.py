@@ -542,13 +542,17 @@ def test_force_overrides_the_lock_and_still_waits_for_the_agents(world):
     assert sim.probes == 0
 
 
-def test_a_refused_forced_reboot_is_reported_as_it_is(world):
+@pytest.mark.parametrize("said", ["Call to Reboot failed: Access denied",
+                                  "Call to Reboot failed: Operation denied due to active "
+                                  "block inhibitor"])
+def test_a_refused_forced_reboot_is_reported_as_it_is(world, said):
+    """Forcing was the way past a lock already: no lookup, no second try."""
     sim = world.sims["ship-01"]
-    sim.refuse_forced = "Call to Reboot failed: Access denied\n"
+    sim.refuse_forced, sim.blockers = said + "\n", [APT_IN_SESSION]
     [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], force=True)
     assert not outcome.ok
-    assert outcome.summary == "ship-01: the reboot command failed: Call to Reboot failed: " \
-        "Access denied"
+    assert outcome.summary == f"ship-01: the reboot command failed: {said}"
+    assert sim.probes == 0
 
 
 def test_update_then_a_refused_reboot_says_both_and_how_to_finish(world):
@@ -1035,6 +1039,8 @@ def test_cli_reboot_refused_by_a_lock_says_what_holds_it_then_force_reboots(app,
 
 
 def test_cli_force_reboot_of_many_asks_as_a_force_reboot(app, world):
+    code, _, err = app.run("reboot", "all", "--force")
+    assert code == 1 and "This would force-reboot 2 Ships (ship-01, ship-02)" in err
     app.tty["value"] = True
     app.answers.append("no")
     code, _, err = app.run("reboot", "all", "--force")
