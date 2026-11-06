@@ -505,7 +505,10 @@
     const state = document.getElementById("terminal-state");
     const line = document.getElementById("terminal-line");
     const csrf = document.querySelector('meta[name="csrf-token"]').content;
-    const url = "ws://" + location.host + "/flows/" + screen.dataset.flow + "/ws";
+    // wss: on an HTTPS page (the remote UI through Tailscale Serve): a browser
+    // refuses a plain ws: socket from one.
+    const scheme = location.protocol === "https:" ? "wss://" : "ws://";
+    const url = scheme + location.host + "/flows/" + screen.dataset.flow + "/ws";
     const socket = new WebSocket(url);
     const MAX_SCREEN_CHARS = 200000;  // keep the last 200k characters of output
 

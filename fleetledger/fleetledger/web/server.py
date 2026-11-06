@@ -1,6 +1,9 @@
 """Run the web UI: `ship-fleet ui`.
 
 - Binds 127.0.0.1 only; there is deliberately no option to listen elsewhere.
+  Your other devices reach it only through Tailscale Serve, once you turn that
+  on (`ship-fleet ui remote`, web/remote.py), and only after a check that Serve
+  sends exactly this computer's name to this port, on the tailnet only.
 - Prints a one-time sign-in link and, unless --no-browser, opens it. The
   browser is opened on a private (0600) local file that refreshes to the link,
   so the token never appears in any process's command line. The link is always
@@ -67,7 +70,9 @@ def uvicorn_config(asgi: Any, **kwargs: Any):
 
 
 def serve(app: Any, *, port: int = 0, open_browser: bool = True,
-          interval: float = 30.0, start_page: str | None = None) -> int:
+          interval: float = 30.0, start_page: str | None = None,
+          remote: Any = None) -> int:
+    """remote: a checked web.remote.Remote to accept as well (cmd_ui), else None."""
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover - a broken install
@@ -85,9 +90,9 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
         store.load()  # fail early on a broken inventory (none at all: the setup page)
     else:
         start_page = "/setup"
-    sock = bind(port)
+    sock = bind(remote.port if remote is not None else port)
     port = sock.getsockname()[1]
-    gate = Gate(port)
+    gate = Gate(port, remote=remote)
     fleet = Fleet(app, interval=interval, history=History())
     concierge = Concierge(app, on_finished=lambda ship: fleet.poll([ship]))
     jobs = Jobs(app, on_finished=lambda ships: fleet.poll(ships), store=Operations())
@@ -95,13 +100,20 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
                       jobs=jobs)
     server = uvicorn.Server(uvicorn_config(asgi))
 
-    link = gate.link(gate.new_token())
+    token = gate.new_token()
+    link = gate.link(token)
     opened = None
-    app.say(f"FleetLedger is running on {gate.base_url} (this computer only).")
     # The link goes to this terminal only (your own screen, not a command line
     # or a log). The browser gets a private page that refreshes to it, so the
     # token never appears in the browser's command line.
-    app.say(f"Sign-in link (works once, for 15 minutes):\n  {link}")
+    if remote is None:
+        app.say(f"FleetLedger is running on {gate.base_url} (this computer only).")
+        app.say(f"Sign-in link (works once, for 15 minutes):\n  {link}")
+    else:
+        app.say(f"FleetLedger is running on {gate.base_url}, and on {remote.origin} for "
+                "your other devices, through Tailscale Serve.")
+        app.say("Sign-in link (works once, for 15 minutes, on whichever address opens it "
+                f"first):\n  {link}\n  {gate.link(token, remote.origin)}")
     if open_browser:
         opened = open_file(link, port)
         if webbrowser.open(opened.as_uri()):
@@ -113,7 +125,10 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
 
         def links() -> None:
             for _ in sys.stdin:
-                app.say(f"  {gate.link(gate.new_token())}")
+                fresh = gate.new_token()
+                app.say(f"  {gate.link(fresh)}")
+                if remote is not None:
+                    app.say(f"  {gate.link(fresh, remote.origin)}")
 
         threading.Thread(target=links, name="ui-links", daemon=True).start()
 
@@ -135,5 +150,11 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
 
 
 def cmd_ui(args, app) -> int:
+    from fleetledger.web import remote
+
+    if getattr(args, "ui_command", None) == "remote":
+        return remote.cmd_remote(args, app)
+    found = remote.for_ui(app, port=args.port, local=args.local)  # refuses on a bad setup
+    kwargs = {"remote": found} if found is not None else {}
     return serve(app, port=args.port, open_browser=not args.no_browser,
-                 interval=args.interval)
+                 interval=args.interval, **kwargs)

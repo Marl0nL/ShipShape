@@ -6,6 +6,14 @@ Following Jupyter's model:
 - Every request must name this server in its Host header (127.0.0.1:PORT or
   localhost:PORT), so a page on another site cannot reach it through DNS
   rebinding.
+- One more origin only when you turn it on (web/remote.py): https://NAME, this
+  computer's own name, which Tailscale Serve terminates and sends to the same
+  loopback port. A request naming it must have come through Serve from a
+  signed-in person's device (X-Forwarded-Proto https and a Tailscale-User-Login
+  header, which Serve sets and strips from what clients send; Funnel and tagged
+  devices get none). Its Origin must be exactly https://NAME, its cookie is
+  `__Host-` and Secure, and a session made on one origin never works on the
+  other.
 - You get in with a one-time link that `ship-fleet ui` prints (and opens). The
   token in it is swapped for a session cookie (HttpOnly, SameSite=Strict) and
   dropped from the address bar. Only a hash of the token is kept, and it works
@@ -42,6 +50,8 @@ from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import parse_qs
 
+from fleetledger.web.remote import Remote
+
 TOKEN_TTL = 15 * 60
 SESSION_IDLE = 12 * 3600
 MAX_BODY = 64 * 1024
@@ -52,6 +62,9 @@ SAFE_METHODS = ("GET", "HEAD")
 # Paths reachable without a session: the token link and the static files.
 OPEN_PREFIXES = ("/static/",)
 LOGIN_PATH = "/login"
+LOCAL = "local"  # Session.where: a browser on this computer (else the remote origin)
+# Host-only, Secure and Path=/ by the browser's own rules; only on the HTTPS origin.
+REMOTE_COOKIE = "__Host-fleetledger"
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -69,6 +82,7 @@ class Session:
     id: str
     csrf: str
     seen: float
+    where: str = LOCAL  # the origin it signed in on: LOCAL, or the remote origin
 
 
 @dataclass
@@ -76,6 +90,7 @@ class Gate:
     """Who may use this server: the one-time link tokens and the sessions they made."""
 
     port: int
+    remote: Remote | None = None  # the one HTTPS origin Tailscale Serve gives it, if on
     clock: Callable[[], float] = time.monotonic
     token_ttl: float = TOKEN_TTL
     session_idle: float = SESSION_IDLE
@@ -85,12 +100,17 @@ class Gate:
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
-    def hosts(self) -> frozenset[str]:
+    def local_hosts(self) -> frozenset[str]:
         return frozenset({f"127.0.0.1:{self.port}", f"localhost:{self.port}"})
 
     @property
+    def hosts(self) -> frozenset[str]:
+        return self.local_hosts | ({self.remote.host} if self.remote else frozenset())
+
+    @property
     def origins(self) -> frozenset[str]:
-        return frozenset(f"http://{host}" for host in self.hosts)
+        return self.origins_for(LOCAL) | (
+            frozenset({self.remote.origin}) if self.remote else frozenset())
 
     @property
     def cookie_name(self) -> str:
@@ -100,6 +120,37 @@ class Gate:
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
+
+    def where(self, host: str | None) -> str | None:
+        """Which origin a request's Host header names: LOCAL, the remote origin, or
+        None (refused). The remote name is matched exactly, never as a pattern."""
+        if host is None:
+            return None
+        host = host.lower()
+        if host in self.local_hosts:
+            return LOCAL
+        if self.remote is not None and host in (self.remote.host, self.remote.hostport):
+            return self.remote.origin
+        return None
+
+    def origins_for(self, where: str) -> frozenset[str]:
+        if where == LOCAL:
+            return frozenset(f"http://{host}" for host in self.local_hosts)
+        return frozenset({where}) if self.remote and where == self.remote.origin else frozenset()
+
+    def cookie_name_for(self, where: str) -> str:
+        return self.cookie_name if where == LOCAL else REMOTE_COOKIE
+
+    @staticmethod
+    def through_serve(headers: dict[str, str]) -> bool:
+        """Did a request on the remote origin come through Tailscale Serve, over HTTPS,
+        from a signed-in person's device? Serve sets both headers and strips the
+        identity ones from what clients send; it sets none for Funnel or tagged
+        devices. (Another program on this computer could forge them, so this is
+        never the only check: a session is still needed.)"""
+        login = headers.get("tailscale-user-login", "")
+        return (headers.get("x-forwarded-proto") == "https"
+                and bool(login.strip()) and not login.startswith("\0"))
 
     # --- link tokens --------------------------------------------------------
     def new_token(self) -> str:
@@ -111,10 +162,11 @@ class Gate:
             self._tokens[_digest(token)] = now + self.token_ttl
         return token
 
-    def link(self, token: str) -> str:
-        return f"{self.base_url}{LOGIN_PATH}?token={token}"
+    def link(self, token: str, where: str = LOCAL) -> str:
+        base = self.base_url if where == LOCAL else where
+        return f"{base}{LOGIN_PATH}?token={token}"
 
-    def redeem(self, token: str | None) -> Session | None:
+    def redeem(self, token: str | None, where: str = LOCAL) -> Session | None:
         """Swap a valid, unused, unexpired token for a new session."""
         if not token or len(token) > 200:
             return None
@@ -129,16 +181,17 @@ class Gate:
             del self._tokens[digest]  # one use only, valid or expired
         if expiry <= self.clock():
             return None
-        session = Session(secrets.token_urlsafe(32), secrets.token_urlsafe(32), self.clock())
+        session = Session(secrets.token_urlsafe(32), secrets.token_urlsafe(32), self.clock(),
+                          where=where)
         self._sessions[_digest(session.id)] = session
         return session
 
     # --- sessions -------------------------------------------------------------
-    def session(self, cookie_value: str | None) -> Session | None:
+    def session(self, cookie_value: str | None, where: str = LOCAL) -> Session | None:
         if not cookie_value or len(cookie_value) > 200:
             return None
         session = self._sessions.get(_digest(cookie_value))
-        if session is None:
+        if session is None or session.where != where:  # never across origins
             return None
         now = self.clock()
         if now - session.seen > self.session_idle:
@@ -148,16 +201,17 @@ class Gate:
         return session
 
     def cookie_header(self, session: Session) -> str:
-        return (
-            f"{self.cookie_name}={session.id}; HttpOnly; SameSite=Strict; Path=/"
-        )
+        if session.where == LOCAL:
+            return f"{self.cookie_name}={session.id}; HttpOnly; SameSite=Strict; Path=/"
+        return f"{REMOTE_COOKIE}={session.id}; Secure; HttpOnly; SameSite=Strict; Path=/"
 
     # --- request checks -------------------------------------------------------
     def host_ok(self, host: str | None) -> bool:
-        return host is not None and host.lower() in self.hosts
+        return self.where(host) is not None
 
-    def origin_ok(self, origin: str | None) -> bool:
-        return origin is not None and origin.lower() in self.origins
+    def origin_ok(self, origin: str | None, where: str = LOCAL) -> bool:
+        """An Origin naming the same origin the request's Host does, exactly."""
+        return origin is not None and origin.lower() in self.origins_for(where)
 
     @staticmethod
     def csrf_ok(session: Session, presented: str | None) -> bool:
@@ -166,14 +220,17 @@ class Gate:
         )
 
 
-def content_security_policy(port: int) -> str:
+def content_security_policy(port: int, remote: Remote | None = None) -> str:
+    sockets = f"ws://127.0.0.1:{port} ws://localhost:{port}"
+    if remote is not None:  # the live terminal from an HTTPS page is wss:
+        sockets += f" {remote.websocket}"
     return "; ".join(
         [
             "default-src 'none'",
             "script-src 'self'",
             "style-src 'self'",
             "img-src 'self'",
-            f"connect-src 'self' ws://127.0.0.1:{port} ws://localhost:{port}",
+            f"connect-src 'self' {sockets}",
             "form-action 'self'",
             "frame-ancestors 'none'",
             "base-uri 'none'",
@@ -181,9 +238,9 @@ def content_security_policy(port: int) -> str:
     )
 
 
-def security_headers(port: int) -> list[tuple[bytes, bytes]]:
+def security_headers(port: int, remote: Remote | None = None) -> list[tuple[bytes, bytes]]:
     return [
-        (b"content-security-policy", content_security_policy(port).encode()),
+        (b"content-security-policy", content_security_policy(port, remote).encode()),
         (b"x-frame-options", b"DENY"),
         (b"x-content-type-options", b"nosniff"),
         # Not no-referrer: with it, browsers send `Origin: null` on form posts,
@@ -226,7 +283,7 @@ class GateMiddleware:
     def __init__(self, app: ASGIApp, gate: Gate) -> None:
         self.app = app
         self.gate = gate
-        self.extra_headers = security_headers(gate.port)
+        self.extra_headers = security_headers(gate.port, gate.remote)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -247,8 +304,12 @@ class GateMiddleware:
                 ]
             await send(message)
 
-        if not self.gate.host_ok(headers.get("host")):
+        where = self.gate.where(headers.get("host"))
+        if where is None:
             await _plain(send_secured, 400, "Bad Host header.")
+            return
+        if where != LOCAL and not self.gate.through_serve(headers):
+            await _plain(send_secured, 403, NOT_THROUGH_SERVE)
             return
         path = scope.get("path", "")
         method = scope.get("method", "GET").upper()
@@ -256,16 +317,11 @@ class GateMiddleware:
             await self.app(scope, receive, send_secured)
             return
         if path == LOGIN_PATH and method == "GET":  # not HEAD: a link preview must not use it
-            await self._login(scope, send_secured)
+            await self._login(scope, send_secured, where)
             return
-        session = self.gate.session(_cookie(headers, self.gate.cookie_name))
+        session = self.gate.session(_cookie(headers, self.gate.cookie_name_for(where)), where)
         if session is None:
-            await _plain(
-                send_secured,
-                401,
-                "Not signed in to this FleetLedger. Open the link `ship-fleet ui` printed "
-                "(press Enter in its terminal for a new one).",
-            )
+            await _plain(send_secured, 401, NOT_SIGNED_IN)
             return
         scope.setdefault("state", {})["session"] = session
         if method in SAFE_METHODS:
@@ -273,7 +329,7 @@ class GateMiddleware:
             return
 
         # A change: same origin, plain form (or empty) body, CSRF token.
-        if not self.gate.origin_ok(headers.get("origin")):
+        if not self.gate.origin_ok(headers.get("origin"), where):
             await _plain(send_secured, 403, "Cross-origin request refused.")
             return
         if method == "POST" and UPLOAD_PATH.match(path):
@@ -356,10 +412,10 @@ class GateMiddleware:
         scope.setdefault("state", {})["upload_length"] = int(declared)
         await self.app(scope, capped, send)
 
-    async def _login(self, scope: Scope, send: Send) -> None:
+    async def _login(self, scope: Scope, send: Send, where: str) -> None:
         query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
         tokens = query.get("token", [])
-        session = self.gate.redeem(tokens[0] if len(tokens) == 1 else None)
+        session = self.gate.redeem(tokens[0] if len(tokens) == 1 else None, where)
         if session is None:
             await _plain(
                 send,
@@ -392,10 +448,13 @@ class GateMiddleware:
     async def _websocket(
         self, scope: Scope, receive: Receive, send: Send, headers: dict[str, str]
     ) -> None:
-        session = self.gate.session(_cookie(headers, self.gate.cookie_name))
+        where = self.gate.where(headers.get("host"))
+        session = where and self.gate.session(
+            _cookie(headers, self.gate.cookie_name_for(where)), where)
         if (
-            not self.gate.host_ok(headers.get("host"))
-            or not self.gate.origin_ok(headers.get("origin"))
+            where is None
+            or (where != LOCAL and not self.gate.through_serve(headers))
+            or not self.gate.origin_ok(headers.get("origin"), where)
             or session is None
         ):
             message = await receive()  # websocket.connect
@@ -404,6 +463,13 @@ class GateMiddleware:
             return
         scope.setdefault("state", {})["session"] = session
         await self.app(scope, receive, send)
+
+
+NOT_SIGNED_IN = ("Not signed in to this FleetLedger. Open a link `ship-fleet ui` printed "
+                 "(press Enter in its terminal for a new one).")
+NOT_THROUGH_SERVE = ("This address works only through Tailscale Serve, from a device signed in "
+                     "to your tailnet as a person (not a tagged device, and never through "
+                     "Funnel).")
 
 
 async def _plain(send: Send, status: int, text: str) -> None:

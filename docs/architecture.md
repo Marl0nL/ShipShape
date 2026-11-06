@@ -92,6 +92,7 @@ Start here: [guide/your-own-fleet.md](guide/your-own-fleet.md). More:
 [creating a Ship](runbooks/create-ship.md),
 [baked images](runbooks/images.md),
 [access from outside the LAN](runbooks/remote-access.md),
+[the web UI from your other devices](runbooks/remote-ui.md),
 [signing in](runbooks/sign-in.md),
 [updating the fleet](runbooks/update-fleet.md),
 [SSH certificates and attaching from other machines](runbooks/trust-machines.md),
