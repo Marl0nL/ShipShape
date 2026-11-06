@@ -35,6 +35,12 @@
           "default": "~/.config/fleetledger/known_hosts",
           "description": "FleetLedger's own known-hosts file; never your ~/.ssh/known_hosts."
         },
+        "epoch": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Goes up by one each time a copy of this FleetLedger becomes the active one (ship-fleet migrate: activate, unretire), so a move can refuse an older state. Written by FleetLedger; never edit it."
+        },
         "managed_keys": {
           "type": "object",
           "additionalProperties": false,

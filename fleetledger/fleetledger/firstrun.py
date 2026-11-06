@@ -98,11 +98,27 @@ def agent_fingerprints(run: Runner = _run) -> list[str] | None:
             if len(line.split()) > 1]
 
 
+def copy_items(store, inv) -> list[Item]:
+    """Whether this copy acts on the fleet (ship-fleet migrate: active, standby, retired)."""
+    from fleetledger import handover
+
+    m = handover.marker(store)
+    if m is not None:
+        said = handover.banner(m)
+        return [Item("fleet", "this copy", "warn", said.message, said.hint or "")]
+    number = handover.epoch(inv)
+    return [Item("fleet", "this copy", "ok", f"active (epoch {number})")] if number else []
+
+
 def fleet(app) -> tuple[list[Item], Any]:
     """Inventory, admin key (and whether ssh-agent holds it), agent keys, CA."""
     run = getattr(app, "run_cmd", None) or _run
     store = app.store_factory()
     if not store.exists():
+        from fleetledger import handover
+
+        if handover.marker(store) is not None:  # a copy wiped after a move
+            return copy_items(store, None), None
         return [Item("fleet", "inventory", "missing", f"no {store.path}",
                      "ship-fleet setup")], None
     try:
@@ -111,6 +127,7 @@ def fleet(app) -> tuple[list[Item], Any]:
         return [Item("fleet", "inventory", "fail", exc.message,
                      f"edit {store.path} as the detail says")], None
     out = [Item("fleet", "inventory", "ok", str(store.path))]
+    out += copy_items(store, inv)
 
     admin, public = inv.admin_key, inv.admin_public_key_path
     if not admin.exists() or not public.exists():

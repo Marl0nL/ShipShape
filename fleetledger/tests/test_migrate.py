@@ -492,6 +492,16 @@ def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed
         "select * from samples").fetchall()
     assert rows == [("ship-01", 1.0)]
 
+    # B waits on standby until it is handed the fleet: A retires, then B activates.
+    code, out, err = b.run("ls")
+    assert code == 1 and "on standby" in err
+    a.use(monkeypatch)
+    assert a.run("migrate", "retire", "--to", "vm", "--yes")[0] == 0
+    a_files["config/retired.json"] = (a.root / "config" / "retired.json").read_bytes()
+    b.use(monkeypatch)
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0 and "now the active one (epoch 1)" in out, out + err
+
     # Copy B now acts on the fleet as A did: ca sign finds every Ship up to date, a
     # renewal is recorded beside A's certificates, and still nothing changed on the Ships.
     code, out, err = b.run("ca", "sign")
@@ -505,9 +515,11 @@ def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed
     assert code == 0 and "ship-01" in out and "ship-02" in out
     assert world.state() == ships_before
 
-    # Nothing on the old computer changed.
+    # Nothing on the old computer changed but its marker, and it refuses to act.
     a.use(monkeypatch)
     assert a.files() == a_files
+    code, out, err = a.run("ca", "sign")
+    assert code == 1 and "retired" in err and world.state() == ships_before
 
 
 def test_the_file_store_keeps_every_secret_in_0600_files(computers, monkeypatch):
@@ -521,6 +533,7 @@ def test_the_file_store_keeps_every_secret_in_0600_files(computers, monkeypatch)
         secret = keys.passphrase_file(b.home / ".ssh" / name)
         assert stat.S_IMODE(secret.stat().st_mode) == 0o600
     assert b.ring.sets == []
+    assert b.run("migrate", "activate", "--yes")[0] == 0
     b_files = b.files()
     code, out, err = b.run("migrate", "check")  # and it can move on again from here
     assert code == 0 and "Ready to move" in out, out + err
@@ -1027,22 +1040,26 @@ def test_with_images_moves_them_too(computers, monkeypatch):
 class FakeSSHProcess:
     """ssh to the new computer: takes the stream, answers as receive would."""
 
-    def __init__(self, argv, code, said=b""):
+    def __init__(self, argv, code, said=b"", stdin=subprocess.PIPE):
         self.argv, self.code = argv, code
-        r, w = os.pipe()
-        self.stdin = os.fdopen(w, "wb")
-        self._r = os.fdopen(r, "rb")
         self.stdout = io.BytesIO(said)
         self.stderr = io.BytesIO(b"")
         self.received = b""
-        self._reader = threading.Thread(target=self._read, daemon=True)
-        self._reader.start()
+        self.stdin = self._reader = None
+        if stdin == subprocess.PIPE:
+            r, w = os.pipe()
+            self.stdin = os.fdopen(w, "wb")
+            self._r = os.fdopen(r, "rb")
+            self._reader = threading.Thread(target=self._read, daemon=True)
+            self._reader.start()
 
     def _read(self):
-        self.received = self._r.read()
+        with self._r:
+            self.received = self._r.read()
 
     def wait(self):
-        self._reader.join(timeout=30)
+        if self._reader is not None:
+            self._reader.join(timeout=30)
         return self.code
 
 
@@ -1050,8 +1067,8 @@ def test_push_streams_everything_into_receive_over_ssh(computers, monkeypatch):
     a, b, world = computers
     procs = []
 
-    def popen(argv, **kw):
-        procs.append(FakeSSHProcess(argv, 0, b"This computer has the fleet\n"))
+    def popen(argv, stdin=None, **kw):
+        procs.append(FakeSSHProcess(argv, 0, b"This computer has the fleet\n", stdin))
         return procs[-1]
 
     a.app.popen = popen
@@ -1063,18 +1080,23 @@ def test_push_streams_everything_into_receive_over_ssh(computers, monkeypatch):
     opts = [argv[i + 1] for i, x in enumerate(argv) if x == "-o"]
     assert opts.index("StrictHostKeyChecking=yes") < opts.index("StrictHostKeyChecking=no")
     assert "ForwardAgent=no" in opts and "Port=2222" in opts
-    assert argv[-1] == "sh -lc 'exec ship-fleet migrate receive --store file'"
+    assert argv[-1] == "sh -lc 'exec ship-fleet migrate receive --pushed --store file'"
     assert "vm.example: This computer has the fleet" in out
-    assert "use only one of them" in out
+    # Checked there, so the hand-over: this copy retires first, then vm.example activates.
+    assert procs[1].argv[-1] == "sh -lc 'exec ship-fleet migrate activate --yes'"
+    assert "-o" in procs[1].argv and "Port=2222" in procs[1].argv
+    assert "now the active FleetLedger (epoch 1)" in out
+    assert json.loads((a.root / "config" / "retired.json").read_text())["other"] == \
+        "you@vm.example"
     assert receive(b, monkeypatch, procs[0].received, store_kind="file") == migrate.VERIFIED
 
 
 @pytest.mark.parametrize("exit_code,says", [
     (255, "ssh could not log in to"), (127, "has no ship-fleet on PATH"),
-    (migrate.UNVERIFIED, "could not check all of it yet"), (1, "did not take the fleet")])
+    (migrate.UNVERIFIED, "could not check all of it"), (1, "did not take the fleet")])
 def test_push_says_what_happened_there(computers, monkeypatch, exit_code, says):
     a, b, world = computers
-    a.app.popen = lambda argv, **kw: FakeSSHProcess(argv, exit_code)
+    a.app.popen = lambda argv, stdin=None, **kw: FakeSSHProcess(argv, exit_code, stdin=stdin)
     code, out, err = a.run("migrate", "push", "vm.example")
     assert code == exit_code if exit_code not in (255, 127) else code == 1
     assert says in out + err
@@ -1105,7 +1127,7 @@ def test_a_key_lands_in_ssh_or_fleetledgers_folders_only(monkeypatch, tmp_path):
 
 
 def test_the_remote_command_quotes_a_path_under_home():
-    assert migrate.remote_command("~/.local/bin/ship-fleet", None) == \
+    assert migrate.remote_command("~/.local/bin/ship-fleet", ["migrate", "receive"]) == \
         "sh -lc 'exec \"$HOME\"/.local/bin/ship-fleet migrate receive'"
-    assert migrate.remote_command("/opt/x y/ship-fleet", "keyring") == \
-        "sh -lc 'exec '\"'\"'/opt/x y/ship-fleet'\"'\"' migrate receive --store keyring'"
+    assert migrate.remote_command("/opt/x y/ship-fleet", ["migrate", "activate"]) == \
+        "sh -lc 'exec '\"'\"'/opt/x y/ship-fleet'\"'\"' migrate activate'"
