@@ -485,6 +485,25 @@ def up_to_date(doc: dict[str, Any], bundle: bundle_mod.Bundle) -> bool:
     )
 
 
+def rolls_back(repo, doc: dict[str, Any], bundle: bundle_mod.Bundle) -> str | None:
+    """Why converging the Ship (its status) to bundle would roll its tooling back to
+    an older ShipShape commit, or None. Told by git ancestry: the Ship's commit must
+    be the bundle's or one in its history. Nothing to tell when the Ship reports no
+    commit (it predates bundles), already runs the bundle's commit, or this checkout
+    is not a git checkout."""
+    theirs = doc["ship"].get("bundle_commit")
+    ours = bundle.manifest["commit"]
+    if not theirs or ours.startswith(theirs) or not repo.has_commit(ours):
+        return None
+    if not repo.has_commit(theirs):
+        return (f"it runs ShipShape {theirs}, a commit this checkout does not have: newer, "
+                "from another computer's checkout?")
+    if repo.is_ancestor(theirs, ours):
+        return None
+    return (f"it runs ShipShape {theirs}, newer than this checkout's {ours[:12]} (or on "
+            "another branch)")
+
+
 def _check_reboot_policy(policy: str) -> None:
     if policy not in REBOOT_POLICIES:
         raise FleetError(f"Unknown reboot policy '{policy}' (choose {', '.join(REBOOT_POLICIES)}).")
@@ -505,6 +524,8 @@ def update_one(
 
     reboot_policy: auto reboots only when the converge replaced herdr (the running
     server keeps the old binary until a reboot); always and never do what they say.
+    Never rolls a Ship back to an older ShipShape commit (rolls_back) unless force:
+    an older checkout, on another computer say, must not undo a newer roll-out.
     """
     _check_reboot_policy(reboot_policy)
     inventory = fleet.inventory
@@ -526,6 +547,13 @@ def update_one(
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
         return Outcome(ship.name, True, f"already on {release}", details, data)
+
+    backwards = None if force else rolls_back(fleet.repo_factory(), before, bundle)
+    if backwards:
+        on_event(ship.name, "not updated: that would roll it back")
+        return Outcome(ship.name, False, f"not updated: {backwards}", [
+            "Bring this checkout up to date first (git pull), then update again; or, to roll "
+            f"the Ship back to {release} on purpose, add --force."], data)
 
     on_event(ship.name, f"uploading the bundle ({len(bundle.data) // 1024} KiB)")
     path = upload_bundle(fleet, inventory, ship, bundle)

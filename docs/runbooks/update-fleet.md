@@ -65,6 +65,16 @@ works on four at a time, and ends with `N of M Ships OK`. Ships already on this
 bundle are skipped. Run it again for any Ship that failed once you have fixed the
 cause.
 
+**It never rolls a Ship back.** `update` packs `ship/` from this checkout, so an
+older checkout (another computer's, or a branch you forgot) would take Ships back
+to older tooling. Before converging, it compares the Ship's ShipShape commit with
+this checkout's in git: a Ship on this commit or an older one is updated; one on a
+newer commit, on another branch, or on a commit this checkout does not have is
+left as it is, with `not updated: it runs ShipShape <commit>, newer than this
+checkout's ...`. Bring this checkout up to date (`git pull`) and update again. To
+roll a Ship back on purpose, add `--force` (in the web UI, the **converge even ...**
+tick box). A checkout outside git cannot tell, and updates as before.
+
 ## 4. Check
 
 ```sh

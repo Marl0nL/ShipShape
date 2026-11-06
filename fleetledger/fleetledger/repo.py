@@ -9,6 +9,7 @@ SHIPSHAPE_REPO to point at another checkout.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tomllib
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from functools import cached_property
 from pathlib import Path
 
 from fleetledger.errors import ConfigError
+
+COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")  # a commit, full or abbreviated
 
 
 def _looks_like_repo(path: Path) -> bool:
@@ -90,6 +93,29 @@ class Repo:
         except (OSError, subprocess.CalledProcessError):
             return GitState("unknown", False)
         return GitState(commit, bool(status.strip()))
+
+    def has_commit(self, commit: str) -> bool:
+        """Is commit (hex, full or abbreviated) a commit in this checkout? False outside
+        git."""
+        if not COMMIT_RE.match(commit):
+            return False
+        try:
+            _git(self.root, "cat-file", "-e", f"{commit}^{{commit}}")
+        except (OSError, subprocess.CalledProcessError):
+            return False
+        return True
+
+    def is_ancestor(self, older: str, newer: str) -> bool | None:
+        """Is older the same commit as newer, or one in its history? None when git
+        cannot say (outside git, or a commit this checkout does not have)."""
+        if not (COMMIT_RE.match(older) and COMMIT_RE.match(newer)):
+            return None
+        try:
+            proc = subprocess.run(["git", "-C", str(self.root), "merge-base", "--is-ancestor",
+                                   older, newer], capture_output=True, check=False)
+        except OSError:
+            return None
+        return {0: True, 1: False}.get(proc.returncode)
 
     def git_files(self, subdir: str) -> list[str] | None:
         """Tracked and untracked-but-not-ignored files under subdir, or None outside git."""
