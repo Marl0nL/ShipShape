@@ -29,7 +29,8 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/images.py` | phase 4 | baked images: fetching and checking Ubuntu's image, ids and manifests, running `ship/image/bake` (`contracts/image.md`) |
 | `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `resize`, `snapshot` and `image` |
 | `fleetledger/github.py` | | an autostart agent's GitHub repo: the name check, and whether it is public |
-| `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins`) |
+| `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins SHIP`) |
+| `fleetledger/signinlist.py` | | every sign-in on every Ship, most urgent first: the Sign-ins page and `ship-fleet signins` with no Ship |
 | `fleetledger/history.py` | | the dashboard's bounded status history (`history.sqlite3`) |
 | `fleetledger/overlay/`, `access.py`, `overlay_setup.py` | phase 5 | the overlay network: providers, one-off keys (pasted, or minted with a Tailscale OAuth client whose secret is in the OS keyring or a 0600 file), `ship-fleet overlay setup|check|join|leave|status|policy` |
 | `fleetledger/firstrun.py`, `setupcmd.py` | first run | `ship-fleet setup` (the guided first run: each step checks first and skips what is done) and `ship-fleet doctor` (read-only: what is set up, what is missing, the next command); both use the checks in `firstrun.py` |
@@ -177,7 +178,10 @@ On top of the Ship's own attention items, FleetLedger adds:
 | `tags-differ` | the Ship's own tags differ from the inventory's |
 
 The last good document per Ship is cached at
-`~/.local/share/fleetledger/status/<ship>.json` (0600).
+`~/.local/share/fleetledger/status/<ship>.json` (0600), and next to it
+`<ship>.since.json`: per sign-in, its last state and account and when
+FleetLedger first saw it so (the "since" of the Sign-ins page and
+`ship-fleet signins`; a status says only when each sign-in was last checked).
 
 `shipctl.ShipCtl` runs every other ship-ctl command and checks the result
 against `ship-ctl-result.schema.json`. Before its first call to a Ship it runs
@@ -299,8 +303,8 @@ covers the core ones; the rest are documented with their feature: `setup`,
 `ca`, `trust`, `untrust` ([trust-machines.md](../docs/runbooks/trust-machines.md));
 `overlay` ([remote-access.md](../docs/runbooks/remote-access.md)); `destroy`,
 `resize`, `snapshot` ([create-ship.md](../docs/runbooks/create-ship.md));
-`image` ([images.md](../docs/runbooks/images.md)); `owner`, `signins` (their
-`--help`).
+`image` ([images.md](../docs/runbooks/images.md)); `signins`
+([sign-in.md](../docs/runbooks/sign-in.md)); `owner` (its `--help`).
 
 | Command | What it does |
 |---|---|

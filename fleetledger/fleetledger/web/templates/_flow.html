@@ -1,5 +1,8 @@
+{# One sign-in's card. card_from = "signin": it sits on the every-sign-in view, so its
+   buttons return there, with its filters (f_*), instead of to its batch. #}
+{% set back_fields %}{% if card_from %}<input type="hidden" name="from" value="{{ card_from }}">{% for k, v in (filters or {}).items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}{% endif %}{% endset %}
 <article class="flow {{ flow.state }}{% if flow.outcome %} {{ flow.outcome }}{% endif %}" id="flow-{{ flow.id }}"
-  {% if not flow.done %}hx-get="/flows/{{ flow.id }}/card?v={{ flow.version }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  {% if not flow.done %}hx-get="/flows/{{ flow.id }}/card?v={{ flow.version }}{% if card_from %}&amp;from={{ card_from }}{% for k, v in (filters or {}).items() %}&amp;{{ k }}={{ v|urlencode }}{% endfor %}{% endif %}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
   <header>
     <strong>{{ flow.ship }}</strong> · {{ flow.label }}
     <span class="pill {{ (flow.outcome or flow.state)|pill }}">{{ flow.outcome or flow.state }}</span>
@@ -21,7 +24,7 @@
       {% else %}
       <li>Approve, then paste the code the page shows:
         <form method="post" action="/flows/{{ flow.id }}/code" class="inline code-form">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">{{ back_fields }}
           <input type="password" name="code" autocomplete="off" autocapitalize="off" spellcheck="false" required maxlength="2048" placeholder="code">
           <button type="submit">Send to the Ship</button>
         </form>
@@ -35,7 +38,7 @@
     <p>{{ flow.reason }} The sign-in tool may have changed its wording.</p>
     {% if flow.seen %}<pre class="log">{{ flow.seen }}</pre>{% endif %}
     <form method="post" action="/flows/{{ flow.id }}/live" class="inline">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">{{ back_fields }}
       <button type="submit" name="take_over" value="yes">Take over the Ship's terminal</button>
       <button type="submit" name="take_over" value="no" class="ghost">Give up</button>
     </form>
@@ -57,7 +60,7 @@
   {% endif %}
   {% if not flow.done %}
   <form method="post" action="/flows/{{ flow.id }}/cancel" class="inline">
-    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">{{ back_fields }}
     <button type="submit" class="ghost">Cancel</button>
   </form>
   {% endif %}

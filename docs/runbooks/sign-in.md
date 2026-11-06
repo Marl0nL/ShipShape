@@ -18,6 +18,18 @@ Needs attention, or for a whole tag on the Sign-ins page
 ([web-ui.md](../web-ui.md#the-concierge-in-the-browser)). The rules below are
 the same.
 
+To see what needs signing in across the whole fleet, most urgent first (waiting,
+expired, wrong account, missing while something needs it, then expiring or
+unknown, then fine):
+
+```sh
+ship-fleet signins                  # every sign-in on every Ship, with its fix
+ship-fleet signins --group action   # only what needs you
+```
+
+The web UI's Sign-ins page shows the same list
+([web-ui.md](../web-ui.md#every-sign-in-in-one-list)).
+
 For each service:
 
 | Service | You do |

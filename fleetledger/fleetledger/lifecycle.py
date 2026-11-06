@@ -133,6 +133,7 @@ def cmd_destroy(args, app) -> int:
     if seed is not None:
         seed.unlink(missing_ok=True)
     status.cache_path(ship.name).unlink(missing_ok=True)
+    status.since_path(ship.name).unlink(missing_ok=True)
     try:  # its charts go with it; a history that cannot be opened never stops this
         history.History().forget(ship.name)
     except (OSError, sqlite3.Error):

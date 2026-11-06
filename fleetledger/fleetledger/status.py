@@ -45,6 +45,8 @@ class ShipView:
     message: str | None = None
     host: str | None = None
     attention: list[dict[str, str]] = field(default_factory=list)
+    # service -> when its sign-in was first seen as it is now (track_since)
+    auth_since: dict[str, str] = field(default_factory=dict)
 
     @property
     def unenrolled(self) -> bool:
@@ -156,6 +158,7 @@ def cached_view(inventory: Inventory, ship: Ship, missing: str) -> ShipView:
         return view
     attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, None)
     view.attention = signins.filter_attention(ship, attention, doc.get("tools"))
+    view.auth_since = read_since(ship.name)
     return view
 
 
@@ -212,6 +215,7 @@ def fetch(
         write_cache(ship.name, doc)
     except OSError:
         pass  # the cache only serves `ls --offline`; never fail a poll for it
+    view.auth_since = track_since(ship.name, doc)
     return view
 
 
@@ -258,3 +262,49 @@ def read_cache(name: str) -> dict[str, Any] | None:
         return json.loads(cache_path(name).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+# --- since when each sign-in has been as it is ------------------------------------
+# A status document says when each sign-in was last checked, not since when it has
+# been that way. Next to the cache FleetLedger keeps, per service, what it last saw
+# (state and account) and when it first saw it so; the Sign-ins page and
+# `ship-fleet signins` show that and put the oldest first.
+
+
+def since_path(name: str) -> Path:
+    return paths.status_cache_dir() / f"{name}.since.json"
+
+
+def _read_since_file(name: str) -> dict[str, dict[str, str]]:
+    try:
+        doc = json.loads(since_path(name).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    return {k: v for k, v in doc.items() if isinstance(v, dict)
+            and isinstance(v.get("seen"), str) and isinstance(v.get("since"), str)}
+
+
+def read_since(name: str) -> dict[str, str]:
+    """{service: since} as last recorded (offline)."""
+    return {k: v["since"] for k, v in _read_since_file(name).items()}
+
+
+def track_since(name: str, doc: dict[str, Any]) -> dict[str, str]:
+    """Record this status's sign-ins: a service seen as before keeps its since; a
+    changed one (another state or account) starts now, at its checked_at."""
+    old = _read_since_file(name)
+    new = {}
+    for service, entry in doc["auth"].items():
+        seen = f"{entry['state']}:{entry.get('account') or ''}"
+        before = old.get(service)
+        since = before["since"] if before and before["seen"] == seen else entry["checked_at"]
+        new[service] = {"seen": seen, "since": since}
+    if new != old:
+        try:
+            paths.private_dir(paths.status_cache_dir())
+            paths.write_private(since_path(name), json.dumps(new).encode("utf-8"))
+        except OSError:
+            pass  # a convenience: never fail a poll for it
+    return {k: v["since"] for k, v in new.items()}

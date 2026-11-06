@@ -251,7 +251,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("name")
     p.add_argument("service", help=services)
 
-    p = _add(sub, "signins", "choose which sign-ins a Ship uses (claude, gcloud, github)",
+    p = _add(sub, "signins", "every sign-in on every Ship; choose which ones a Ship uses",
+             "With no Ship named: every sign-in on every Ship, across every service, most\n"
+             "urgent first: what needs you (expired, wrong account, missing while something\n"
+             "needs it), then what is degraded or unknown, then what is fine, then what a\n"
+             "Ship does not use; within a group the oldest first. The same list as the web\n"
+             "UI's Sign-ins page, each with the command that fixes it.\n\n"
+             "  ship-fleet signins                               every sign-in\n"
+             "  ship-fleet signins --group action                only what needs you\n"
+             "  ship-fleet signins --tag work --service claude   narrowed\n\n"
+             "Named, it shows or changes which sign-ins that Ship uses:\n\n"
              "  ship-fleet signins ship-01                       show them\n"
              "  ship-fleet signins ship-01 --off gcloud          stop using one (signs it out)\n"
              "  ship-fleet signins ship-01 --on gcloud           use it again\n"
@@ -259,10 +268,17 @@ def build_parser() -> argparse.ArgumentParser:
              "A sign-in a Ship does not use gets no prompt, no sign-in flow and no attention\n"
              "item, and is shown as off; turning one off signs it out on the Ship, so no\n"
              "credentials for it stay there. Its tool may stay installed.")
-    p.add_argument("name")
+    p.add_argument("name", nargs="?", help="a Ship (omit it: every sign-in on every Ship)")
     p.add_argument("--on", action="append", default=[], metavar="NAME")
     p.add_argument("--off", action="append", default=[], metavar="NAME")
     p.add_argument("--only", metavar="NAME,NAME", help="exactly these (empty: none)")
+    p.add_argument("--tag", help="list: only Ships with this tag")
+    p.add_argument("--service", metavar="SERVICE",
+                   help="list: only this service (claude, gcloud, gcloud_adc, github)")
+    p.add_argument("--group", choices=("action", "underway", "degraded", "healthy", "off"),
+                   help="list: only this group (action: what needs you)")
+    p.add_argument("--json", action="store_true", help="list: print JSON")
+    p.add_argument("--offline", action="store_true", help="list: the last known status only")
 
     p = _add(sub, "set", "change settings on Ships (ship-ctl set)",
              "Change settings on one Ship, several, every Ship with a tag, or all.\n"

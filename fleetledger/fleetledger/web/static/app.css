@@ -332,6 +332,49 @@ article.flow header { display: flex; gap: 8px; align-items: center; flex-wrap: w
 .attempt-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0 2px; }
 .retry-of { margin: 10px 0 4px; }
 .retry-of > h2 { margin: 8px 0; }
+/* Every sign-in (/signin): filters, a chip per group with its count, then the table,
+   a row group per group. A row's severity is its icon and word, its left edge (double,
+   solid, dotted, as the alerts) and, when critical, its ground. */
+.signin-filters { margin: 10px 0 4px; justify-content: flex-start; gap: 8px 22px; }
+.signin-groups { margin: 10px 0 8px; }
+.chip .n { font-variant-numeric: tabular-nums; font-weight: 700; margin-left: 2px; }
+.chip.group-action:not(.on) .n { color: var(--bad); }
+.signin-cards { margin: 18px 0 14px; }
+.signin-cards > article.flow { scroll-margin-top: 12px; }
+.signin-cards > h2 { margin: 6px 0 0; }
+details.signin-done { margin: 14px 0 0; }
+details.signin-done > summary { cursor: pointer; margin-bottom: 8px; }
+table.signins tr.group-head th { font-size: 13px; color: var(--ink); background: var(--panel-2);
+  border-top: 2px solid var(--line-strong); letter-spacing: .05em; }
+table.signins tbody:first-of-type tr.group-head th { border-top: 0; }
+table.signins tr.group-head .n { margin-left: 6px; color: var(--muted); }
+table.signins tbody.group-action tr.group-head th { color: var(--bad); }
+table.signins td:first-child { border-left: 5px solid transparent; }
+table.signins tr.lvl-critical td { background-color: var(--bad-bg); }
+table.signins tr.lvl-critical td:first-child { border-left: 5px double var(--bad-mark); }
+table.signins tr.lvl-warning td:first-child { border-left: 5px solid var(--warn-mark); }
+table.signins tr.lvl-notice td:first-child { border-left: 5px dotted var(--line-strong); }
+table.signins td.ship a { font-weight: 700; }
+table.signins td.sev-cell, table.signins td.ship, table.signins td.service,
+table.signins td.when { white-space: nowrap; overflow-wrap: normal; }
+table.signins td.row-actions { white-space: nowrap; text-align: right; }
+table.signins td.row-actions form.inline, table.signins td.row-actions .button { margin: 0 0 4px 6px; }
+@media (max-width: 760px) {  /* a sign-in per block: severity, Ship, service, state; then the rest */
+  table.signins thead { display: none; }
+  table.signins tr { display: block; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  table.signins tr.group-head { padding: 0; }
+  table.signins tr.group-head th { display: block; }
+  table.signins td { display: inline-block; border: 0; padding: 2px 8px 2px 0; }
+  table.signins tr td:first-child, table.signins tr[class] td:first-child { border-left: 0; }
+  table.signins tr[class*="lvl-"] { border-left: 5px solid transparent; }
+  table.signins tr.lvl-critical { border-left: 5px double var(--bad-mark); background-color: var(--bad-bg); }
+  table.signins tr.lvl-warning { border-left-color: var(--warn-mark); }
+  table.signins tr.lvl-notice { border-left: 5px dotted var(--line-strong); }
+  table.signins td.detail, table.signins td.row-actions { display: block; text-align: left; white-space: normal; }
+  table.signins td.row-actions form.inline, table.signins td.row-actions .button { margin: 4px 6px 0 0; }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; border: 0; }
 code.device-code { font-size: 20px; letter-spacing: 2px; padding: 2px 8px; background: var(--warn-bg);
   color: var(--ink); border: 1px dashed var(--warn-mark); }
 .code-form input { min-width: 22em; max-width: 100%; }
