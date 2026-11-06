@@ -190,7 +190,9 @@ class Jobs:
         try:
             return self.store.last_id() + 1
         except (OSError, sqlite3.Error):
-            return 1
+            # Unreadable for now (busy, say): start past any id it can hold, so a
+            # save never replaces an older operation's record.
+            return int(time.time())
 
     def _save(self, job: Job, ended: bool) -> None:
         """Save job to the history: best effort, as a broken file must not stop a job."""

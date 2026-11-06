@@ -14,10 +14,12 @@ accounts or messages: only numbers and Ship names.
 
 Operations (the web UI's jobs: update, reboot, make a Ship ...) are saved in the
 same file once they end: kind, title, Ships, start and end time, outcome, error
-and log, newest `OPS_KEEP_COUNT` for `OPS_KEEP` (30 days). Every text is passed
-through redact() as it is saved (long token-like strings, email addresses and
-link queries are replaced), so a record holds no secret even if a command printed
-one. Whether its card was dismissed is kept with it.
+and log, newest `OPS_KEEP_COUNT` for `OPS_KEEP` (30 days). The log and error are
+passed through redact() as they are saved (long token-like strings, email
+addresses and link queries are replaced), so a record holds no secret even if a
+command printed one; the title loses addresses and link queries; Ship names and
+the kind are identifiers and are kept as they are. Whether its card was dismissed
+is kept with it.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -232,20 +235,39 @@ class Operation:
         return max(0.0, self.ended - self.started)
 
 
+# A Ship name or a job kind: an identifier, never a secret, so kept as it is (a long
+# Ship name would otherwise read as a token). Anything else is scrubbed in full.
+IDENT = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+
 def _scrub(text: str) -> str:
     from fleetledger.concierge.redact import clean, redact
 
     return redact(clean(text))[:OPS_MAX_LINE]
 
 
+def _ident(text: str) -> str:
+    return text if IDENT.match(text) else _scrub(text)
+
+
+def _label(text: str) -> str:
+    """A title ("Take snapshot before-upgrade-2026-11-06-full"): written by FleetLedger
+    from names it checked, so only addresses and link queries are taken out; long
+    runs stay readable."""
+    from fleetledger.concierge.redact import EMAIL, QUERY, clean
+
+    return EMAIL.sub("[email]", QUERY.sub(r"\1?[…]", clean(text)))[:OPS_MAX_LINE]
+
+
 def scrubbed(op: Operation) -> Operation:
-    """op as it is saved: every text redacted, the log bounded."""
+    """op as it is saved: the log and error redacted and bounded, the title cleared of
+    addresses and link queries, Ship names and the kind kept (identifiers)."""
     log = [line for line in (_scrub(raw).rstrip() for raw in op.log) if line.strip()]
     if len(log) > OPS_MAX_LINES:
         cut = len(log) - OPS_MAX_LINES
         log = log[:OPS_MAX_LINES] + [f"({cut} more line{'s' if cut != 1 else ''} not kept)"]
-    return replace(op, kind=_scrub(op.kind), title=_scrub(op.title),
-                   ships=tuple(_scrub(s) for s in op.ships),
+    return replace(op, kind=_ident(op.kind), title=_label(op.title),
+                   ships=tuple(_ident(s) for s in op.ships),
                    outcome=op.outcome if op.outcome in OUTCOMES else "failed",
                    error=_scrub(op.error) if op.error else None,
                    log=tuple(log), lines=len(log))

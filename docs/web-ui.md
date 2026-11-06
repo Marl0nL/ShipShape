@@ -214,10 +214,12 @@ Each job is saved when it ends to the same `history.sqlite3` (a second table),
 and the Activity page reads it. A record holds the job's kind, title, Ships,
 start and end time, outcome, error and log (what its card showed: the command's
 output, each Ship's log, the outcome's lines), and whether its card was
-dismissed. Everything is passed through the concierge's redaction as it is
-saved (long token-like strings, email addresses and link queries are replaced),
-and a log keeps at most 2,000 lines of 1,000 characters, so a record holds no
-secret even if a command printed one. Records are kept for 30 days, and at most
+dismissed. The log and error are passed through the concierge's redaction as
+they are saved (long token-like strings, email addresses and link queries are
+replaced; so is a long path), the title loses email addresses and link queries,
+and Ship names and the kind are kept as they are (identifiers). A log keeps at
+most 2,000 lines of 1,000 characters. So a record holds no secret even if a
+command printed one. Records are kept for 30 days, and at most
 the newest 200. A job cut short when FleetLedger stops is saved as "stopped".
 Job numbers carry on from the history's, so `/activity/<id>` names one operation
 across restarts. Delete the file to start again (it also clears the charts).

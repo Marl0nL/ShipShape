@@ -54,6 +54,26 @@ def test_a_saved_operation_comes_back_whole_and_redacted(home):
     assert stat.S_IMODE(history.history_path().stat().st_mode) == 0o600
 
 
+def test_ship_names_and_kinds_are_kept_whole_however_long(home):
+    """Identifiers are never secrets: a 24+ character Ship name must not read as a
+    token, or its history (and the per-Ship filter) would be lost."""
+    long_name = "my-very-long-ship-name-here-01"  # 30 characters, a valid name
+    store = Operations()
+    store.save(op(1, ships=(long_name, "ship-01"), kind="overlay-check",
+                  title=f"Take snapshot before-upgrade-2026-11-06-full of {long_name} "
+                        f"for {EMAIL} https://example.com/x?code=123456",
+                  log=(f"converged {long_name}",)))
+    got = store.get(1)
+    assert got.ships == (long_name, "ship-01") and got.kind == "overlay-check"
+    assert got.title == (f"Take snapshot before-upgrade-2026-11-06-full of {long_name} "
+                         "for [email] https://example.com/x?[…]")
+    assert [o.id for o in store.find(ship=long_name)] == [1]
+    assert store.ships() == [long_name, "ship-01"]
+    # Something that is not an identifier where one belongs is scrubbed in full.
+    store.save(op(2, ships=(TOKEN,), kind=TOKEN))
+    assert store.get(2).ships == ("[redacted]",) and store.get(2).kind == "[redacted]"
+
+
 def test_a_long_log_is_cut_and_says_so(home):
     store = Operations()
     store.save(op(1, log=tuple(f"line {i} " + "x" * 2000 for i in range(2500))))
@@ -82,7 +102,8 @@ def test_find_filters_by_ship_and_outcome_newest_first_in_pages(home):
     store.save(op(4, ships=()))
     assert [o.id for o in store.find()] == [4, 3, 2, 1]
     assert [o.id for o in store.find(ship="ship-02")] == [2, 1]
-    assert [o.id for o in store.find(ship="ship-1")] == []  # a whole name, not a part
+    assert [o.id for o in store.find(ship="ship-0")] == []  # a whole name, not a part
+    assert [o.id for o in store.find(ship="hip-01")] == []
     assert [o.id for o in store.find(outcome="failed")] == [2]
     assert [o.id for o in store.find(before=3, limit=1)] == [2]
     assert store.find()[0].log == ()  # lists leave the logs out
@@ -147,7 +168,14 @@ def test_outcomes_failed_by_hand_and_error(home):
         raise FleetError("No way through.", hint="Try the other door.")
 
     broke = _wait(jobs.start("update", ["ship-02"], boom))
+
+    def by_hand_but_broke(job):
+        job.result["by_hand"] = True
+        boom(job)
+
+    both = _wait(jobs.start("image", [], by_hand_but_broke))
     store = Operations()
+    assert store.get(both.id).outcome == "failed"  # an error is never "by hand"
     assert store.get(failed.id).outcome == "failed"
     assert store.get(manual.id).outcome == "by-hand"
     assert store.get(broke.id).error == "No way through. Try the other door."
@@ -174,6 +202,19 @@ def test_a_job_cut_short_by_stopping_is_saved_as_stopped(home):
     release.set()
 
 
+def test_an_unreadable_history_at_start_never_reuses_an_old_id(home):
+    store = Operations()
+    store.save(op(5))
+
+    class Busy(Operations):
+        def last_id(self):
+            raise OSError("database is locked")
+
+    jobs = Jobs(app=None, store=Busy())
+    job = _wait(jobs.start("update", ["ship-01"], lambda j: 0))
+    assert job.id > 5 and Operations().get(5) is not None
+
+
 def test_a_broken_history_never_stops_a_job(home):
     class Broken(Operations):
         def save(self, op):
@@ -184,7 +225,7 @@ def test_a_broken_history_never_stops_a_job(home):
 
     jobs = Jobs(app=None, store=Broken())
     job = _wait(jobs.start("update", ["ship-01"], lambda j: 0))
-    assert job.ok and job.id == 1
+    assert job.ok
 
 
 def test_only_a_finished_job_can_be_dismissed_and_the_store_says_so(home):
@@ -254,6 +295,41 @@ def test_dismiss_hides_the_card_everywhere_for_every_session(act):
         assert f'id="job-{done.id}"' not in client.get("/ships/ship-01").text
         assert f'id="job-{done.id}"' not in client.get("/partials/fleet").text
     assert act.client.get("/").text.count("<section class=\"operations activity\">") == 0
+
+
+def test_other_tabs_polling_the_fleet_get_the_list_without_the_card(act):
+    """Another tab's 5 s poll sends the version it drew: after a dismiss it must get
+    a redraw (200, without the card), not "unchanged" (204)."""
+    done = act.finished()
+    page = act.client.get("/").text
+    poll = re.search(r'hx-get="(/partials/fleet\?v=[^"]+)"', page).group(1)
+    assert act.client.get(poll).status_code == 204
+    act.post(f"/jobs/{done.id}/dismiss", {"next": "/"}, headers={"HX-Request": "true"})
+    redraw = act.client.get(poll)
+    assert redraw.status_code == 200 and f'id="job-{done.id}"' not in redraw.text
+
+
+def test_dismiss_buttons_have_ids_so_focus_survives_the_fleet_poll(act):
+    """htmx puts the focus back after a swap only on an element with an id."""
+    a, b = act.finished("ship-01"), act.finished("ship-02")
+    page = act.client.get("/partials/fleet").text
+    assert f'id="dismiss-job-{a.id}"' in page and f'id="dismiss-job-{b.id}"' in page
+    assert 'id="dismiss-all-fleet"' in page
+    assert 'id="dismiss-all-ship-01"' not in act.client.get("/ships/ship-01").text  # one card
+    act.finished("ship-01")
+    assert 'id="dismiss-all-ship-01"' in act.client.get("/ships/ship-01").text
+
+
+@pytest.mark.parametrize("kind, page", [
+    ("fleet-update", "/fleet/actions"),  # the Every Ship page
+    ("image", "/settings"),  # Settings > Images
+    ("scan", "/new/existing"),  # Add an existing Ship
+])
+def test_a_dismissed_card_leaves_every_page_that_lists_jobs(act, kind, page):
+    job = act.finished(kind=kind, title=f"Card {kind}", run=lambda j: 1)
+    assert f'id="job-{job.id}"' in act.client.get(page).text
+    act.post(f"/jobs/{job.id}/dismiss", {"next": page})
+    assert f'id="job-{job.id}"' not in act.client.get(page).text
 
 
 def test_dismiss_with_htmx_answers_empty_so_the_card_goes_in_place(act):
@@ -329,6 +405,14 @@ def test_activity_lists_past_operations_including_dismissed(act):
     assert '<a href="/activity">Activity</a>' in page  # the header
 
 
+def test_a_long_ship_name_has_its_own_history(act):
+    long_name = "my-very-long-ship-name-here-01"
+    job = act.finished(long_name)
+    page = act.client.get(f"/activity?ship={long_name}").text
+    assert f'id="op-{job.id}"' in page and f'href="/activity?ship={long_name}"' in page
+    assert "[redacted]" not in page
+
+
 def test_activity_filters_by_ship_and_each_ship_page_links_there(act):
     a, b = act.finished("ship-01"), act.finished("ship-02")
     assert 'href="/activity?ship=ship-01"' in act.client.get("/ships/ship-01").text
@@ -379,6 +463,8 @@ def test_running_operations_are_pointed_to_not_listed(act):
     act.jobs.start("update", ["ship-01"], lambda j: release.wait(5), title="Update")
     page = act.client.get("/activity?ship=ship-01").text
     assert "1 running now: Update (ship-01)" in page and 'id="op-' not in page
+    assert "running now" not in act.client.get("/activity?ship=ship-02").text
+    assert "1 running now" in act.client.get("/activity").text
     release.set()
 
 
