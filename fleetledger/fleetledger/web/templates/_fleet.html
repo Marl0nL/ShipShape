@@ -54,8 +54,9 @@
 </section>
 
 {% if jobs or saved_attempts %}
+{% from "_macros.html" import jobs_toolbar with context %}
 <section class="operations activity">
-  <h2>Activity</h2>
+  {{ jobs_toolbar("Activity", jobs, "/activity") }}
   {% for job in jobs %}{% include "_job.html" %}{% endfor %}
   {% for a in saved_attempts|default([]) %}{% include "_attempt.html" %}{% endfor %}
 </section>

@@ -8,9 +8,9 @@ changing anything FleetLedger checks the Ship speaks contract versions it knows.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, BinaryIO
 
 from fleetledger import schemas
 from fleetledger.errors import FleetError
@@ -86,6 +86,7 @@ class ShipCtl:
         self.ssh = ssh
         self.ship = ship
         self._checked = False
+        self.contracts: dict[str, Any] = {}  # what the Ship's `version` reported
 
     def call(
         self,
@@ -103,6 +104,19 @@ class ShipCtl:
         result = self.ssh.run(
             self.ship, ship_ctl(command, *args, "--json"), input=input, timeout=timeout
         )
+        return self._answer(command, result, partial)
+
+    def send(self, command: str, *args: str, source: BinaryIO,
+             on_progress: Callable[[int], None] | None = None,
+             timeout: float = 600) -> CtlResult:
+        """Run one command with a file streamed to its stdin (ssh.SSH.send). A failure
+        the Ship reported is returned (ok false), not raised: say, a refused file."""
+        self.ensure_compatible()
+        result = self.ssh.send(self.ship, ship_ctl(command, *args, "--json"), source,
+                               on_progress=on_progress, timeout=timeout)
+        return self._answer(command, result, partial=True)
+
+    def _answer(self, command: str, result: Result, partial: bool) -> CtlResult:
         if not_installed(result):
             raise ShipCtlError(
                 f"{self.ship.name}: ship-ctl is not installed yet (still provisioning?).",
@@ -139,6 +153,7 @@ class ShipCtl:
                 hint="Update FleetLedger: git pull in its checkout, then fleetledger/install.sh.",
             )
         self._checked = True
+        self.contracts = dict(contracts)
         return result.data
 
     # --- commands FleetLedger uses ---------------------------------------

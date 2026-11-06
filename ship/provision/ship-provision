@@ -437,6 +437,10 @@ step_agent_home() {
   home_dir "$AGENT_HOME/.claude" 0700 # holds the Claude sign-in
   home_dir "$AGENT_HOME/.local/state" 0700
   home_dir "$AGENT_HOME/.local/state/shipshape" 0700
+  # The file inbox (contracts/ship-runtime.md): files a person sends with ship-fleet
+  # put land in ~/inbox; ship-ctl writes them in incoming/ first, then links them in.
+  home_dir "$AGENT_HOME/.local/state/shipshape/incoming" 0700
+  home_dir "$AGENT_HOME/inbox" 0700
   home_npmrc
   home_gcloud_logs
   if [ ! -e "$ROOT/var/lib/systemd/linger/$AGENT" ]; then

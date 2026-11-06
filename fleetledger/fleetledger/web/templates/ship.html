@@ -9,17 +9,20 @@
     · driver {{ ship.driver }}
     {% if doc and doc.overlay %}· overlay: {{ doc.overlay.name or "no name yet" }} ({{ doc.overlay.state }}){% if doc.overlay.ssh_listen == "overlay" %}, SSH on the overlay only{% endif %}{% endif %}
     · {% if snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status{% endif %}
+    · <a href="/activity?ship={{ ship.name }}">past operations</a>
   </p>
 </section>
 {% from "_macros.html" import ship_action_bar with context %}
 {{ ship_action_bar() }}
 {% if jobs %}
-<section class="ship-jobs">
-  {% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}
+{% from "_macros.html" import jobs_toolbar with context %}
+<section class="ship-jobs" aria-label="Operations on {{ ship.name }}">
+  {{ jobs_toolbar(None, jobs, "/activity?ship=" ~ ship.name, ship=ship.name) }}
+  {% with on_ship_page=True %}{% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}{% endwith %}
 </section>
 {% endif %}
 <nav class="tabs">
-  {% for t, label in (("overview", "Overview"), ("access", "Access"), ("settings", "Settings"), ("snapshots", "Snapshots"), ("logs", "Logs"), ("network", "Network")) %}
+  {% for t, label in (("overview", "Overview"), ("access", "Access"), ("settings", "Settings"), ("inbox", "Inbox"), ("snapshots", "Snapshots"), ("logs", "Logs"), ("network", "Network")) %}
   <a href="/ships/{{ ship.name }}{% if t != "overview" %}/{{ t }}{% endif %}" class="{% if tab == t %}on{% endif %}">{{ label }}</a>
   {% endfor %}
 </nav>
@@ -30,6 +33,8 @@
 {% include "_ship_access.html" %}
 {% elif tab == "settings" %}
 {% include "_ship_settings.html" %}
+{% elif tab == "inbox" %}
+{% include "_ship_inbox.html" %}
 {% elif tab == "snapshots" %}
 {% include "_ship_snapshots.html" %}
 {% elif tab == "logs" %}

@@ -18,8 +18,9 @@ from pathlib import Path
 
 import pytest
 from fleetledger.concierge import audit, engine
+from fleetledger.errors import FleetError
+from fleetledger.web import actions, flows, network, security, server
 from fleetledger.web import app as webapp
-from fleetledger.web import flows, network, security, server
 from fleetledger.web.fleet import Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow, WebPrompter
 from fleetledger.web.security import Gate
@@ -545,13 +546,14 @@ def test_every_ship_tab_has_the_action_bar_above_the_tabs(web, tab):
     assert 'name="operation" value="update"' in bar and 'name="operation" value="reboot"' in bar
     assert 'class="ops"' not in page  # nothing left at the bottom of the Overview
     forms = bar.split("<form")[1:]
-    assert len(forms) == 7 and all('name="csrf"' in f for f in forms)  # else the gate refuses
-    assert 'action="/ships/ship-01/repin"' in forms[5]  # under More
+    assert len(forms) == 8 and all('name="csrf"' in f for f in forms)  # else the gate refuses
+    assert 'action="/ships/ship-01/repin"' in forms[6]  # under More
     update, reboot = forms[1], forms[2]
-    start, stop = forms[3], forms[4]  # under More
+    start, stop, force = forms[3], forms[4], forms[5]  # under More
     assert 'value="start"' in start and "data-confirm" not in start
     assert 'value="stop"' in stop and "data-confirm-danger" in stop
-    assert 'action="/ships/ship-01/destroy"' in forms[6]  # under More, typed, last
+    assert 'name="force" value="yes"' in force and "data-confirm-danger" in force
+    assert 'action="/ships/ship-01/destroy"' in forms[7]  # under More, typed, last
     assert 'data-confirm-title="Update ship-01?"' in update and "data-confirm-danger" not in update
     assert 'data-confirm-title="Reboot ship-01?"' in reboot and "data-confirm-danger" in reboot
 
@@ -1039,6 +1041,135 @@ def test_update_and_reboot_run_the_shared_operations_in_the_background(web, monk
     assert web.app_ui.jobs.recent()[1].ok is True
     web.post("/operations", {"operation": "rm", "ship": "ship-01", "confirm": "yes"})
     assert len(calls) == 2
+
+
+def _force_form(page: str, ship: str) -> str:
+    """The Force reboot form for ship on a page ("" if there is none)."""
+    for form in re.findall(r"<form .*?</form>", page, re.S):
+        if 'name="force" value="yes"' in form and f'name="ship" value="{ship}"' in form:
+            return form
+    return ""
+
+
+def test_a_refused_reboot_offers_a_force_reboot_behind_its_own_dialog(web, monkeypatch):
+    """A shutdown lock refused the reboot: the job card says what holds it and offers
+    Force reboot, which needs its danger dialog ticked and reboots with force."""
+    calls = []
+
+    def fake_reboot(fleet, ships, **kw):
+        calls.append(kw)
+        if kw.get("force"):
+            return [ops.Outcome(ships[0].name, True, "back after 40 s",
+                                data={"waited": True, "forced": True})]
+        return [ops.Outcome(ships[0].name, False,
+                            "reboot refused: a login session is blocking it: apt (PID 4242, "
+                            "as root) in fleet's SSH login session on pts/0 holds a shutdown "
+                            "lock",
+                            ["Let it finish, or close fleet's session on the Ship"],
+                            {"waited": False, "forced": False,
+                             "refused": {"said": "denied", "blockers": []}})]
+
+    monkeypatch.setattr(ops, "reboot", fake_reboot)
+    web.sign_in()
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
+    wait_for(lambda: calls and web.app_ui.jobs.recent()[0].done)
+    assert calls[0]["force"] is False
+    page = web.client.get("/partials/fleet").text
+    assert "fleet&#39;s SSH login session on pts/0" in page
+    form = _force_form(page, "ship-01")
+    assert 'data-confirm-title="Force reboot ship-01?"' in form
+    assert "data-confirm-danger" in form and 'name="confirm"' in form
+    assert "sudo dpkg --configure -a" in form and "herdr saves every agent first" in form
+    # Its dialog first; then a forced reboot of that one Ship.
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "force": "yes"})
+    assert len(calls) == 1
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "force": "yes",
+                             "confirm": "yes"})
+    wait_for(lambda: len(calls) == 2 and web.app_ui.jobs.recent()[0].done)
+    assert calls[1]["force"] is True
+    job = web.app_ui.jobs.recent()[0]
+    assert job.title == "Force reboot" and job.ok is True
+    assert not _force_form(web.client.get("/partials/fleet").text.split("</article>")[0],
+                           "ship-01")  # done: nothing to force on its card
+
+
+def test_force_reboot_returns_to_the_page_it_was_sent_from(web, monkeypatch):
+    """From the Fleet page's Activity the form says from=fleet and comes back there;
+    on the Ship's own page (and its card refreshed by htmx there) it stays."""
+    calls = []
+
+    def fake_reboot(fleet, ships, **kw):
+        calls.append(kw)
+        return [ops.Outcome(ships[0].name, False, "reboot refused: apt holds a shutdown lock",
+                            ["Wait for it to finish, then reboot again."],
+                            {"waited": False, "refused": {"said": "denied", "blockers": []}})]
+
+    monkeypatch.setattr(ops, "reboot", fake_reboot)
+    web.sign_in()
+    web.post("/operations", {"operation": "reboot", "ship": "ship-01", "confirm": "yes"})
+    wait_for(lambda: calls and web.app_ui.jobs.recent()[0].done)
+    job = web.app_ui.jobs.recent()[0]
+    from_fleet = 'name="from" value="fleet"'
+    assert from_fleet in _force_form(web.client.get("/partials/fleet").text, "ship-01")
+    on_ship = web.client.get("/ships/ship-01").text
+    card = on_ship[on_ship.index('<section class="ship-jobs"'):]
+    assert _force_form(card, "ship-01") and from_fleet not in _force_form(card, "ship-01")
+    for page, sent in (("/ships/ship-01", False), ("/", True)):
+        polled = web.client.get(f"/jobs/{job.id}",
+                                headers={"HX-Current-URL": f"http://127.0.0.1{page}"}).text
+        assert (from_fleet in _force_form(polled, "ship-01")) is sent
+    response = web.post("/operations", {"operation": "reboot", "ship": "ship-01",
+                                        "force": "yes", "confirm": "yes", "from": "fleet"})
+    assert response.headers["location"].split("?")[0] == "/"
+    wait_for(lambda: len(calls) == 2 and web.app_ui.jobs.recent()[0].done)
+    assert calls[1]["force"] is True
+
+
+def test_an_update_whose_reboot_was_refused_offers_force_reboot(web, monkeypatch):
+    """The update is done; its card says why the reboot was not, and offers Force reboot."""
+    def fake_update(fleet, ships, **kw):
+        return [ops.Outcome(ships[0].name, False,
+                            "updated to 0.2.0; reboot refused: apt (PID 4242, as root) in "
+                            "sam's SSH login session on pts/0 holds a shutdown lock",
+                            ["Let it finish, or close sam's session on the Ship"],
+                            {"rebooted": False, "reboot": {
+                                "waited": False, "refused": {"said": "denied",
+                                                             "blockers": []}}})]
+
+    monkeypatch.setattr(ops, "update", fake_update)
+    web.sign_in()
+    web.post("/operations", {"operation": "update", "ship": "ship-01", "confirm": "yes"})
+    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
+    page = web.client.get("/partials/fleet").text
+    assert "updated to 0.2.0; reboot refused: apt (PID 4242" in page
+    assert "<li>Let it finish, or close sam&#39;s session on the Ship</li>" in page
+    assert _force_form(page, "ship-01")
+
+
+def test_only_a_reboot_job_can_be_forced(web):
+    with pytest.raises(FleetError, match="Only a reboot can be forced"):
+        actions.start_operation(web.app_ui.jobs, web.app_ui.app, "update", ["ship-01"],
+                                force=True)
+    assert web.app_ui.jobs.recent() == []
+
+
+def test_only_one_ships_reboot_can_be_forced(web, monkeypatch):
+    calls = []
+    monkeypatch.setattr(actions, "start_operation", lambda *a, **kw: calls.append((a, kw)))
+    web.sign_in()
+    for fields in ({"operation": "update", "ship": "ship-01"},
+                   {"operation": "reboot", "tag": "work"},
+                   {"operation": "reboot"}):
+        web.post("/operations", {**fields, "force": "yes", "confirm": "yes"})
+        assert "reboot can be forced" in web.client.get("/").text
+    assert not calls
+
+
+def test_the_ship_page_offers_force_reboot_under_more(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    more = page[page.index('<details class="menu">'):]
+    assert _force_form(more, "ship-01")
 
 
 def test_free_text_settings_are_checked_by_ops(web):

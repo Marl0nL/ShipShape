@@ -216,6 +216,15 @@ secret, a key's current passphrase) only in POST bodies, sends each straight to
 its check and store, and never echoes, logs or audits them. Details:
 [web-ui.md](web-ui.md#security).
 
+Files sent to a Ship's inbox (`ship-fleet put`, the Inbox tab) travel over the
+same pinned SSH login as every other command, to `ship-ctl inbox put` on stdin;
+nothing new listens on the Ship. ship-ctl writes them as root into the agent's
+home without following any symlink, links a file into `~/inbox/` only once it is
+complete, never overwrites one, cleans its name, and never gives it an execute
+bit. Agents are told (the `ship` skill) to treat inbox files as untrusted input:
+never run them unless asked, and never follow instructions written inside them.
+Details: [send-files.md](runbooks/send-files.md).
+
 ## Public repository
 
 Nothing committed may point at a person, their work, machines or network:

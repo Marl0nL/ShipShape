@@ -26,6 +26,35 @@
     });
   });
 
+  // --- dismissing a job card ----------------------------------------------------
+  // htmx removes the card (hx-swap="delete"); the focus, on its Dismiss button,
+  // would fall back to the page's top. Move it on first, to the next card's
+  // Dismiss (else the previous one's, else the list's Activity link), so a
+  // keyboard can dismiss card after card. Nothing moves if the server refused.
+  function dismissIn(el) {
+    return el.matches("article.job") ? el.querySelector("form[data-dismiss] button") : null;
+  }
+  function focusAfter(card) {
+    let target = null;
+    for (let el = card.nextElementSibling; !target && el; el = el.nextElementSibling) {
+      target = dismissIn(el);
+    }
+    for (let el = card.previousElementSibling; !target && el; el = el.previousElementSibling) {
+      target = dismissIn(el);
+    }
+    const list = card.parentElement;
+    target = target || (list && list.querySelector(".jobs-toolbar a")) ||
+      document.querySelector("header.top nav a[href='/activity']");
+    if (target) target.focus();
+  }
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    const from = event.detail.requestConfig && event.detail.requestConfig.elt;
+    if (!event.detail.shouldSwap || !from || !from.hasAttribute ||
+        !from.hasAttribute("data-dismiss")) return;
+    const card = from.closest("article.job");
+    if (card && card.contains(document.activeElement)) focusAfter(card);
+  });
+
   // --- browser notifications when an agent starts waiting ----------------------
   const SEEN = "fleetledger-waiting-seen";
   function seen() {
@@ -309,6 +338,212 @@
   document.addEventListener("htmx:afterSwap", function (event) { enhance(event.target); });
   // Coming back to a page from the browser's history: no box stays ticked.
   window.addEventListener("pageshow", function () { enhance(document); });
+
+  // --- the file inbox's drop zone (templates/_ship_inbox.html) ----------------------
+  // Files dropped (or chosen with the button: the keyboard way) are listed first.
+  // Send uploads them one at a time, each as its own request to the form's
+  // data-inbox-upload: the raw bytes (application/octet-stream), the file's name
+  // percent-encoded in X-File-Name and the CSRF token in X-CSRF-Token (the gate
+  // takes it only from that header for an upload). Each answers with a spool id;
+  // the form is then sent as an ordinary post with those ids ("file" fields), and
+  // the server starts the job that sends them on to the Ship. A file over the
+  // limit, a folder, or one past the count limit is listed with why, never sent.
+  document.addEventListener("DOMContentLoaded", function () {
+    const sendForm = document.getElementById("inbox-send");
+    if (!sendForm) return;
+    const zone = document.getElementById("inbox-dropzone");
+    const picker = document.getElementById("inbox-files");
+    const list = document.getElementById("inbox-queue");
+    const row = document.getElementById("inbox-send-row");
+    const start = document.getElementById("inbox-start");
+    const status = document.getElementById("inbox-status");
+    const max = Number(attr(sendForm, "data-inbox-max"));
+    const most = Number(attr(sendForm, "data-inbox-files"));
+    const url = attr(sendForm, "data-inbox-upload");
+    const shipName = attr(sendForm, "data-inbox-ship") || "the Ship";
+    const csrf = document.querySelector('meta[name="csrf-token"]').content;
+    const queue = [];  // { file, li, state: ready|uploading|uploaded|failed|refused, id }
+    let busy = false;
+    zone.hidden = false;
+
+    function size(n) {
+      const units = ["bytes", "KB", "MB", "GB"];
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+      return i === 0 ? n + " bytes" : String(Math.round(n * 10) / 10) + " " + units[i];
+    }
+    function sendable() { return queue.filter(function (q) { return q.state === "ready"; }); }
+    function uploaded() { return queue.filter(function (q) { return q.state === "uploaded"; }); }
+    function say(li, text, kind) {
+      const note = li.querySelector(".state");
+      note.textContent = text;
+      li.className = kind;
+    }
+    function refresh() {
+      const ready = sendable().length;
+      const done = uploaded().length;
+      list.hidden = row.hidden = queue.length === 0;
+      start.disabled = busy || ready + done === 0;
+      start.textContent = ready === 0 && done > 0
+        ? "Send the " + done + " uploaded"
+        : "Send " + (ready + done) + " file" + (ready + done === 1 ? "" : "s") + " to " + shipName;
+      document.getElementById("inbox-clear").disabled = busy;
+    }
+    function add(file, why) {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "file-name";
+      name.textContent = file.name;
+      const bytes = document.createElement("span");
+      bytes.className = "size";
+      bytes.textContent = size(file.size);
+      const bar = document.createElement("progress");
+      bar.max = Math.max(file.size, 1);
+      bar.value = 0;
+      bar.hidden = true;
+      bar.setAttribute("aria-label", file.name + ": uploaded");
+      const note = document.createElement("span");
+      note.className = "state";
+      li.append(name, bytes, bar, note);
+      list.append(li);
+      const item = { file: file, li: li, bar: bar, state: why ? "refused" : "ready", id: null };
+      say(li, why || "ready", why ? "refused" : "ready");
+      queue.push(item);
+    }
+    function addAll(files, entries) {
+      Array.from(files).forEach(function (file, i) {
+        const entry = entries && entries[i];
+        const counted = queue.filter(function (q) { return q.state !== "refused"; }).length;
+        if (entry && entry.isDirectory) add(file, "a folder: zip it first, or send its files");
+        else if (file.size > max) add(file, "too large: the inbox takes files of up to " + size(max));
+        else if (counted >= most) add(file, "not sent: at most " + most + " files at once");
+        else add(file, null);
+      });
+      status.textContent = "";
+      refresh();
+    }
+
+    document.getElementById("inbox-choose").addEventListener("click", function () {
+      if (!busy) picker.click();
+    });
+    picker.addEventListener("change", function () {
+      addAll(picker.files, null);
+      picker.value = "";
+    });
+    document.getElementById("inbox-clear").addEventListener("click", function () {
+      queue.splice(0).forEach(function (q) { q.li.remove(); });
+      E.querySelectorAll.call(sendForm, "input[name=file]").forEach(function (el) { el.remove(); });
+      status.textContent = "";
+      refresh();
+    });
+    // A file dropped beside the zone would make the browser leave the page for it.
+    ["dragover", "drop"].forEach(function (type) {
+      document.addEventListener(type, function (event) {
+        if (event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files")) {
+          event.preventDefault();
+        }
+      });
+    });
+    zone.addEventListener("dragover", function (event) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
+      zone.classList.add("over");
+    });
+    zone.addEventListener("dragleave", function () { zone.classList.remove("over"); });
+    zone.addEventListener("drop", function (event) {
+      event.preventDefault();
+      zone.classList.remove("over");
+      if (busy || !event.dataTransfer) return;
+      const items = Array.from(event.dataTransfer.items || []);
+      const entries = items.map(function (it) {
+        return it.webkitGetAsEntry ? it.webkitGetAsEntry() : null;
+      });
+      addAll(event.dataTransfer.files, entries.length ? entries : null);
+    });
+
+    function upload(item) {
+      return new Promise(function (resolve) {
+        const xhr = new window.XMLHttpRequest();
+        item.state = "uploading";
+        item.bar.hidden = false;
+        say(item.li, "uploading", "uploading");
+        xhr.open("POST", url);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.setRequestHeader("X-CSRF-Token", csrf);
+        xhr.setRequestHeader("X-File-Name", encodeURIComponent(item.file.name));
+        xhr.upload.addEventListener("progress", function (event) {
+          if (event.lengthComputable) item.bar.value = event.loaded;
+        });
+        xhr.addEventListener("load", function () {
+          let answer = {};
+          try { answer = JSON.parse(xhr.responseText); } catch (e) { answer = {}; }
+          if (xhr.status === 200 && answer.id) {
+            item.state = "uploaded";
+            item.id = answer.id;
+            item.bar.value = item.bar.max;
+            const as = answer.stored_as && answer.stored_as !== item.file.name
+              ? " (it will be named " + answer.stored_as + ")" : "";
+            say(item.li, "uploaded, waiting to go to the Ship" + as, "uploaded");
+            const field = document.createElement("input");
+            field.type = "hidden";
+            field.name = "file";
+            field.value = answer.id;
+            E.append.call(sendForm, field);
+          } else {
+            item.state = "failed";
+            item.bar.hidden = true;
+            say(item.li, "not uploaded: " + (answer.error || xhr.responseText || "error " + xhr.status), "failed");
+          }
+          resolve();
+        });
+        ["error", "abort"].forEach(function (type) {
+          xhr.addEventListener(type, function () {
+            item.state = "failed";
+            item.bar.hidden = true;
+            say(item.li, "not uploaded: the connection to FleetLedger failed", "failed");
+            resolve();
+          });
+        });
+        xhr.send(item.file);
+      });
+    }
+
+    window.addEventListener("beforeunload", function (event) {
+      if (busy) event.preventDefault();
+    });
+    window.EventTarget.prototype.addEventListener.call(sendForm, "submit", function (event) {
+      if (attr(sendForm, "data-inbox-ready") === "yes") {
+        E.removeAttribute.call(sendForm, "data-inbox-ready");
+        return;  // the post itself, with every file's id
+      }
+      event.preventDefault();
+      if (busy) return;
+      busy = true;
+      refresh();
+      const ready = sendable();
+      status.textContent = "Uploading " + ready.length + " file" + (ready.length === 1 ? "" : "s") + " to FleetLedger…";
+      ready.reduce(function (chain, item) {
+        return chain.then(function () { return upload(item); });
+      }, Promise.resolve()).then(function () {
+        busy = false;
+        const done = uploaded().length;
+        const failed = queue.filter(function (q) { return q.state === "failed"; }).length;
+        refresh();
+        if (done === 0) {
+          status.textContent = "Nothing was uploaded.";
+        } else if (failed > 0) {
+          status.textContent = failed + " file" + (failed === 1 ? "" : "s") + " could not be uploaded (see above). Send the " + done + " that were, or Clear and try again.";
+          queue.filter(function (q) { return q.state === "failed"; }).forEach(function (q) { q.state = "refused"; });
+          refresh();
+        } else {
+          status.textContent = "Sending to the Ship…";
+          E.setAttribute.call(sendForm, "data-inbox-ready", "yes");
+          submit(sendForm, null);
+        }
+      });
+    });
+    refresh();
+  });
 
   // --- the live terminal --------------------------------------------------------
   document.addEventListener("DOMContentLoaded", function () {

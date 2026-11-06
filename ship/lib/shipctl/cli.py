@@ -21,6 +21,7 @@ from . import (
     apply,
     autostart,
     converge,
+    inbox,
     languard,
     logs,
     net,
@@ -138,6 +139,12 @@ def build_parser() -> Parser:
     o.add_argument("--hostname", help="join: the Ship's name on the overlay")
     o.add_argument("--tag", action="append", default=[], help="join: overlay tag (repeatable)")
     o.add_argument("--login-server", help="join: Headscale (or other) coordination server")
+    ib = cmd("inbox", "List, receive (stdin), remove or announce files in the agent's ~/inbox.")
+    ib.add_argument("action", choices=["list", "put", "remove", "notify"])
+    ib.add_argument("names", nargs="*", metavar="NAME", help="remove: file names in the inbox")
+    ib.add_argument("--name", help="put: the file's name (cleaned up; never overwrites)")
+    ib.add_argument("--size", type=int, help="put: its exact size in bytes")
+    ib.add_argument("--count", type=int, help="notify: how many files arrived")
     r = sub.add_parser("refresh", help="(internal) refresh the status cache and react to sign-ins")
     r.add_argument("--json", action="store_true")
     g = sub.add_parser("lan-guard", help="(internal) reload the LAN guard rules (boot unit)")
@@ -293,6 +300,28 @@ def cmd_overlay(ctx: Context, args) -> dict:
     left, notes = overlay.leave(ctx, ship)
     return result("overlay", changed=changed + left, messages=notes + messages,
                   data={"overlay": overlay.status(ctx, ship)})
+
+
+def cmd_inbox(ctx: Context, args) -> dict:
+    """The file inbox (inbox.py): FleetLedger streams a file to `put` on stdin."""
+    if args.action != "remove" and args.names:
+        raise CtlError("usage", f"inbox {args.action} takes no file names")
+    if args.action == "list":
+        return result("inbox", data=inbox.listing(ctx))
+    if args.action == "put":
+        if not args.name or args.size is None:
+            raise CtlError("usage", "inbox put needs --name and --size (the bytes come on stdin)")
+        data, changed, messages = inbox.put(ctx, args.name, args.size, sys.stdin.buffer)
+        return result("inbox", changed=changed, messages=messages, data=data)
+    if args.action == "remove":
+        if not args.names:
+            raise CtlError("usage", "inbox remove needs at least one file name")
+        data, changed, messages = inbox.remove(ctx, args.names)
+        return result("inbox", changed=changed, messages=messages, data=data)
+    if args.count is None:
+        raise CtlError("usage", "inbox notify needs --count")
+    data, messages = inbox.notify(ctx, shiptoml.load(ctx.paths), args.count)
+    return result("inbox", messages=messages, data=data)
 
 
 def cmd_status(ctx: Context, args) -> dict:
@@ -493,6 +522,7 @@ def cmd_grow_root(ctx: Context, args) -> dict:
 COMMANDS = {
     "grow-root": cmd_grow_root,
     "overlay": cmd_overlay,
+    "inbox": cmd_inbox,
     "status": cmd_status,
     "apply": cmd_apply,
     "set": cmd_set,
@@ -543,7 +573,12 @@ def _print_human(doc: dict) -> None:
         for d in data["destinations"][:30]:
             progs = ",".join(p["name"] for p in d["programs"][:3])
             print(f"  {d['connections_24h']:>6} {d['connections_7d']:>7}  {d['name']}  ({progs})")
-    elif doc["command"] in ("tools", "autostart", "ssh-trust", "agent") and data:
+    elif doc["command"] == "inbox" and "files" in data:
+        for f in data["files"]:
+            print(f"  {f['size']:>12}  {f['modified']}  {f['name']}")
+        if not data["files"]:
+            print(f"{data['path']} is empty.")
+    elif doc["command"] in ("tools", "autostart", "ssh-trust", "agent", "inbox") and data:
         print(json.dumps(data, indent=2))
     if doc["error"]:
         print(f"ship-ctl: {doc['error']['message']}", file=sys.stderr)

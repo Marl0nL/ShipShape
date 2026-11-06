@@ -1002,8 +1002,9 @@ def cmd_update(args, app) -> int:
 def cmd_reboot(args, app) -> int:
     fleet = _fleet(app)
     ships = ops.select(fleet.inventory, args.names, args.tag)
-    _confirm_many(app, ships, "reboot", args.yes)
-    outcomes = ops.reboot(fleet, ships, wait=not args.no_wait, on_event=_progress(app))
+    _confirm_many(app, ships, "force-reboot" if args.force else "reboot", args.yes)
+    outcomes = ops.reboot(fleet, ships, wait=not args.no_wait, on_event=_progress(app),
+                          force=args.force)
     return _report(app, outcomes, args.json)
 
 

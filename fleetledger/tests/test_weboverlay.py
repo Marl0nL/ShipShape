@@ -173,7 +173,7 @@ def test_the_overlay_down_alert_links_to_check():
 def test_join_every_ship_not_on_it(ov, monkeypatch):
     started = []
     monkeypatch.setattr(actions, "start_operation",
-                        lambda jobs, app, op, names: started.append((op, names)))
+                        lambda jobs, app, op, names, **kw: started.append((op, names)))
     page = ov.client.get("/").text
     assert "not on the overlay (1)" in page  # ship-02 only
     ov.post("/operations", {"operation": "join", "confirm": "yes"})

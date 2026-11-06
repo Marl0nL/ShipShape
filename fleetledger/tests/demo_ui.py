@@ -7,7 +7,8 @@ writes an inventory of six made-up Ships, and serves `ship-fleet ui` against
 Ships that are simulated in this process: nothing is reached over the network,
 and your real ~/.config/fleetledger, ~/.ssh and keyring are never read. The
 history store is seeded with a week of made-up samples so the dashboard's charts
-have something to draw. Use it for screenshots and for working on the UI.
+have something to draw, and with a few finished operations for the Activity page.
+Use it for screenshots and for working on the UI.
 """
 
 from __future__ import annotations
@@ -51,9 +52,22 @@ SHIPS = {
     "ship-06": (["work"], False),
 }
 DOWN = {"ship-05"}
+# Refuses a plain reboot: apt still running in someone's SSH login. Force reboot gets
+# past it, then waits for a fresh boot the demo never makes, like any demo reboot.
+LOCKED = {"ship-04": {
+    "who": "APT", "why": "APT is installing or removing packages", "mode": "block",
+    "user": "root", "pid": 4242,
+    "process": {"pid": 4242, "comm": "apt", "user": "root", "tty": "pts/0",
+                "session": {"id": "7", "user": "sam", "service": "sshd", "tty": None,
+                            "state": "active"}},
+    "still_running": []}}
 LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
 MODES_NOW: dict[tuple[str, str], str] = {}  # (Ship, agent) -> mode after a demo restart
 CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo run
+INBOX: dict[str, dict[str, tuple[int, float]]] = {  # Ship -> file name -> (size, when)
+    "ship-01": {"design-notes.md": (18_342, time.time() - 3 * 3600),
+                "sample-data.csv": (2_411_520, time.time() - 26 * 3600)},
+}
 DEMO_CA: dict[str, str] = {}  # the demo CA's fingerprints, once home() has made it
 
 INVENTORY = """\
@@ -414,6 +428,13 @@ def make_ssh(inventory):
         def run(self, ship, command, *, input=None, timeout=60):
             if ship.name in DOWN or ship.name not in SHIPS:  # a new one: no VM in the demo
                 raise Unreachable(f"Cannot reach {ship.name} (demo: switched off).")
+            if command[:4] == ["sudo", "-n", "systemctl", "reboot"] and ship.name in LOCKED \
+                    and "--check-inhibitors=no" not in command:
+                return Result(1, b"", "Call to Reboot failed: Operation denied due to active "
+                              "block inhibitor\n", ship.names[0])
+            if command == ["python3", "-I", "-"]:  # fleetledger.inhibitors.PROBE
+                found = [LOCKED[ship.name]] if ship.name in LOCKED else []
+                return Result(0, json.dumps({"blockers": found}).encode(), "", ship.names[0])
             verb = command[3] if command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"] else ""
             if verb == "status":
                 tags, _joined = SHIPS[ship.name]
@@ -445,9 +466,39 @@ def make_ssh(inventory):
                 answer["changed"] = ["/etc/shipshape/ship.toml"]
                 answer["messages"] = ["Saved and applied."]
                 return Result(0, json.dumps(answer).encode(), "", ship.names[0])
+            if verb == "inbox":  # list and remove, as ship-ctl inbox answers them
+                return Result(0, json.dumps(demo_inbox(ship.name, command[4:-1])).encode(),
+                              "", ship.names[0])
             if verb in ("version", "ssh-trust"):  # so certificate jobs succeed
                 return Result(0, json.dumps(ctl_result(verb)).encode(), "", ship.names[0])
             return Result(0, b"{}", "", ship.names[0])
+
+        def send(self, ship, command, source, *, on_progress=None, timeout=600):
+            """`ship-ctl inbox put`: read the file in pieces, slowly, so the card
+            shows its progress; keep only its name and size."""
+            if ship.name in DOWN or ship.name not in SHIPS:
+                raise Unreachable(f"Cannot reach {ship.name} (demo: switched off).")
+            argv = command[4:-1]
+            name = argv[argv.index("--name") + 1]
+            size = int(argv[argv.index("--size") + 1])
+            sent = 0
+            while chunk := source.read(max(size // 20, 64 * 1024)):
+                sent += len(chunk)
+                time.sleep(0.15)
+                if on_progress:
+                    on_progress(sent)
+            from fleetledger.inbox import numbered
+
+            box = INBOX.setdefault(ship.name, {})
+            stored, n = name, 1
+            while stored in box:
+                n += 1
+                stored = numbered(name, n)
+            box[stored] = (size, time.time())
+            answer = ctl_result("inbox")
+            answer["data"] = {"name": stored, "given": name, "size": size,
+                              "path": f"/home/agent/inbox/{stored}", "renamed": stored != name}
+            return Result(0, json.dumps(answer).encode(), "", ship.names[0])
 
         def probe_certificate(self, ship, known_hosts, timeout=30):
             return None  # as if the Ship presented its new certificate
@@ -496,11 +547,33 @@ def demo_restart(name: str, argv: list[str]) -> tuple[int, bytes, str]:
     return 0, json.dumps(answer).encode(), ""
 
 
+def demo_inbox(name: str, argv: list[str]) -> dict:
+    """`ship-ctl inbox list|remove|notify` on a demo Ship."""
+    box = INBOX.setdefault(name, {})
+    answer = ctl_result("inbox")
+    if argv[:1] == ["remove"]:
+        gone = [n for n in argv[1:] if box.pop(n, None) is not None]
+        answer["data"] = {"removed": gone, "missing": [n for n in argv[1:] if n not in gone],
+                          "refused": []}
+    elif argv[:1] == ["notify"]:
+        answer["data"] = {"count": int(argv[-1]), "sent": ["main"], "skipped": []}
+    else:
+        files = sorted(box.items(), key=lambda kv: -kv[1][1])
+        answer["data"] = {
+            "path": "/home/agent/inbox", "exists": True, "others": 0, "truncated": False,
+            "max_bytes": 256 * 1024 * 1024, "free_bytes": 41_200_000_000,
+            "files": [{"name": n, "size": size,
+                       "modified": datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                      for n, (size, at) in files]}
+    return answer
+
+
 def ctl_result(verb: str) -> dict:
     """ship-ctl's answer (the ship-ctl-result contract) to version and ssh-trust."""
     data = {"tooling": "0.1.0", "commit": "0123456789ab",
             "contracts": {"ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1,
-                          "bundle": 1, "seed": 1, "runtime": 1, "ssh-trust": 1}}
+                          "bundle": 1, "seed": 1, "runtime": 1, "ssh-trust": 1,
+                          "inbox": 1}}
     return {"schema": "shipshape.ship-ctl-result/1", "command": verb, "ok": True,
             "changed": ["/etc/ssh/sshd_config.d/shipshape.conf"] if verb == "ssh-trust" else [],
             "messages": [], "data": data if verb == "version" else {}, "error": None}
@@ -560,6 +633,33 @@ def seed_history() -> None:
     store.add(rows)
 
 
+def seed_operations() -> None:
+    """A few days of finished operations for the Activity page (one dismissed, one
+    failed, one by hand)."""
+    try:
+        from fleetledger.history import Operation, Operations
+    except ImportError:  # a checkout from before the operations history
+        return
+    now = time.time()
+    store = Operations()
+    made = [
+        ("update", "Update", ["ship-01", "ship-02"], 3 * 86400, 140, "ok", None,
+         ["ship-01: converged, no reboot needed", "ship-02: converged, no reboot needed"], True),
+        ("reboot", "Reboot", ["ship-03"], 2 * 86400 + 4000, 75, "ok", None,
+         ["Rebooting ship-03.", "ship-03 is back: 2 agents in their modes."], False),
+        ("snapshot", "Take snapshot before-upgrade", ["ship-04"], 2 * 86400, 12, "by-hand",
+         None, ["The manual driver cannot snapshot: take it on your hypervisor."], False),
+        ("update", "Update", ["ship-05"], 86400 + 600, 31, "failed",
+         "ship-05 did not answer over SSH.", ["Connecting to ship-05...", "timed out"], False),
+        ("tools", "Add tools", ["ship-02"], 7200, 48, "ok", None,
+         ["Installing ripgrep.", "ship-02: tools changed"], True),
+    ]
+    for i, (kind, title, ships, ago, took, outcome, error, log, dismissed) in enumerate(made, 1):
+        store.save(Operation(id=i, kind=kind, title=title, ships=tuple(ships),
+                             started=now - ago, ended=now - ago + took, outcome=outcome,
+                             error=error, log=tuple(log), dismissed=dismissed))
+
+
 def demo_spawner(argv: list[str]):
     """The concierge's terminal in the demo: a recorded sign-in session played back
     (tests/fake_cli.py), instead of ssh to a Ship. A paste-back sign-in waits for its
@@ -596,6 +696,7 @@ def main() -> int:
     store = TomlFileStore(base / "config" / "ships.toml")
     seed_net()
     seed_history()
+    seed_operations()
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
                   ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
                   stdin_isatty=lambda: False, browse=demo_browse, keyscan=demo_keyscan,

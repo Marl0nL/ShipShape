@@ -29,17 +29,19 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import attempts, commands, net, ops, signinlist, signins
+from fleetledger import attempts, commands, inbox, net, ops, signinlist, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
 from fleetledger.web import (
     actions,
+    activity,
     adopt,
     dashboard,
     destroy,
     fleetactions,
     images,
+    inboxweb,
     network,
     overlayweb,
     settings,
@@ -62,7 +64,7 @@ SERVICES = ("claude", "gcloud", "gcloud-adc", "github", "all")
 AUTH_ORDER = ("claude", "gcloud", "gcloud_adc", "github")
 NO_SUCH_SHIP = "No such Ship in the inventory."
 LOG_LINES = ("100", "300", "1000", "3000")  # the Logs tab's "last N lines" choices
-TABS = ("overview", "access", "settings", "snapshots", "logs", "network")
+TABS = ("overview", "access", "settings", "inbox", "snapshots", "logs", "network")
 
 
 @dataclasses.dataclass
@@ -77,6 +79,7 @@ class UI:
     env: Environment
     setups: Any = None  # web.setup.Setups: each session's progress through /setup
     health: Any = None  # web.settings.Health: the last "Check now" on Settings
+    spool: Any = None  # web.inboxweb.Spool: files dropped for a Ship, waiting to be sent
     start_page: str | None = None  # where a new session lands first (ship-fleet setup: /setup)
     started: set[str] = dataclasses.field(default_factory=set)
     destroyed: dict[str, tuple[float, bool]] = dataclasses.field(  # name -> (when, forgot)
@@ -123,6 +126,7 @@ def make_env() -> Environment:
         clock=_clock,
         clock_dated=_clock_dated,
         attempt_saved_at=attempts.saved_at,
+        took=activity.took,
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
@@ -137,6 +141,7 @@ def make_env() -> Environment:
         restartable=shipsettings.restartable,
         restartable_by_name=lambda view: {r["name"]: r for r in shipsettings.restartable(view)},
         human_bytes=net.human_bytes,
+        inbox_size=inbox.human,
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
         op_confirm=dashboard.op_confirm,
@@ -203,6 +208,7 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         signins_due=signinlist.needing_action(snap.views, snap.inventory,
                                               ui.concierge.flows()),
         fleet_exists=ui.app.store_factory().exists(),  # the nav: Settings, else Setup
+        here=activity.here(request),  # where a card's Dismiss comes back to
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
@@ -210,7 +216,8 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
 
 def partial(request: Request, template: str, **context: Any) -> Response:
     ui = ui_of(request)
-    html = ui.env.get_template(template).render(csrf=session_of(request).csrf, **context)
+    html = ui.env.get_template(template).render(csrf=session_of(request).csrf,
+                                                here=activity.here(request), **context)
     return HTMLResponse(html)
 
 
@@ -254,7 +261,9 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
         "alerts": alerts,
         "summary": dashboard.summary(views, alerts, snap.inventory),
         "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
-        "jobs": jobs,
+        "jobs": [j for j in jobs if not j.dismissed],
+        # All jobs, dismissed ones too: a dismissed failed-create card does not come
+        # back as its saved attempt's card (the New Ship page still lists it).
         "saved_attempts": _saved_attempts(snap.inventory, jobs),
         "version": _fleet_version(ui),
         "snap": snap,
@@ -372,7 +381,7 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "items": attention_items([view]),
         "expected": expected,
         "flows": flows,
-        "jobs": ui.jobs.for_ship(name),
+        "jobs": ui.jobs.for_ship(name, shown=True),
         "workspaces": workspaces,
         "snap": snap,
         **_attach_context(inv, view.ship),
@@ -429,6 +438,8 @@ async def ship_page(request: Request) -> Response:
                                                    context["view"])
     if tab == "snapshots":
         context.update(await snapshots.tab_context(ui.app, name))
+    if tab == "inbox":
+        context.update(await inboxweb.tab_context(ui.app, name))
     if tab == "access":
         context.update(overlayweb.tab_context(context["snap"].inventory, context["ship"],
                                               context["doc"]))
@@ -711,11 +722,13 @@ async def ship_power(request: Request) -> Response:
 
 async def fleet_operation(request: Request) -> Response:
     """Update, reboot or join one Ship, every Ship with a tag, or the whole fleet
-    (fleetledger.ops)."""
+    (fleetledger.ops). force=yes forces a reboot past a shutdown lock (one Ship,
+    from its Force reboot dialog)."""
     ui = ui_of(request)
     session = session_of(request)
     fields = await form(request)
     operation = one(fields, "operation")
+    force = one(fields, "force") == "yes"
     name, tag = one(fields, "ship"), one(fields, "tag")
     # Back where it was started: a Ship's page, or the Fleet page (from its batch
     # menu, or from an alert's button there, which says from=fleet).
@@ -730,6 +743,9 @@ async def fleet_operation(request: Request) -> Response:
     if (name and not NAME_RE.match(name)) or (tag and not TAG_RE.match(tag)):
         ui.flash(session, "bad", "Not a valid Ship name or tag.")
         return back(where)
+    if force and (operation != "reboot" or not name):
+        ui.flash(session, "bad", "Only one Ship's reboot can be forced.")
+        return back(where)
     try:
         inv = ui.app.store_factory().load()
         chosen = ops.select(inv, [name] if name else [], tag or None, everything=not (name or tag))
@@ -737,11 +753,13 @@ async def fleet_operation(request: Request) -> Response:
             chosen = [s for s in chosen if s.overlay_node is None]
             if not chosen:
                 raise FleetError("Every one of those Ships is on the overlay already.")
-        actions.start_operation(ui.jobs, ui.app, operation, [s.name for s in chosen])
+        actions.start_operation(ui.jobs, ui.app, operation, [s.name for s in chosen],
+                                force=force)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(where)
-    label = {"join": "Joining the overlay"}.get(operation, operation.capitalize())
+    label = "Force reboot" if force else \
+        {"join": "Joining the overlay"}.get(operation, operation.capitalize())
     if on_ship:  # started from the Ship's page: back there, where its job shows
         ui.flash(session, "ok", f"{label} started; its progress is below.")
         return back(where)
@@ -861,8 +879,9 @@ async def job_card(request: Request) -> Response:
         return Response(status_code=286)
     if request.query_params.get("v") == str(job.version):
         return Response(status_code=204)
-    response = partial(request, "_job.html", job=job)
-    if job.done and job.result.get("gone") and _on_ship_page(request, job.ships):
+    on_ship_page = _on_ship_page(request, job.ships)
+    response = partial(request, "_job.html", job=job, on_ship_page=on_ship_page)
+    if job.done and job.result.get("gone") and on_ship_page:
         response.headers["HX-Redirect"] = "/"  # destroyed: the page it was on is gone too
     if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
         response.headers["HX-Refresh"] = "true"
@@ -872,6 +891,8 @@ async def job_card(request: Request) -> Response:
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
         response.headers["HX-Refresh"] = "true"
+    if job.done and job.kind == "inbox" and _on_ship_page(request, job.ships):
+        response.headers["HX-Refresh"] = "true"  # the Inbox tab lists the new files
     return response
 
 
@@ -1276,8 +1297,10 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/new", new_ship_start, methods=["POST"]),
         Route("/new/attempts/{name}/discard", discard_attempt, methods=["POST"]),
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
+        *activity.routes(),
         *setup.routes(),
         *snapshots.routes(),
+        *inboxweb.routes(),
         *adopt.routes(),
         *destroy.routes(),
         *settings.routes(),

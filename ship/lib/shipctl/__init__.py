@@ -13,6 +13,7 @@ CONTRACTS = {
     "runtime": 1,
     "ssh-trust": 1,
     "net-summary": 1,
+    "inbox": 1,
 }
 
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")

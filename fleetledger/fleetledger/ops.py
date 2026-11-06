@@ -11,7 +11,8 @@ same wherever it starts. Each one:
   such as an unknown setting or tool, are raised before any Ship is touched).
 
 Everything a Ship does goes through ship-ctl or the reboot command in
-contracts/ship-runtime.md; nothing here runs anything else as root.
+contracts/ship-runtime.md; nothing here runs anything else as root (why a reboot
+was refused is read as fleet, without sudo: fleetledger.inhibitors).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from fleetledger import inhibitors
 from fleetledger import status as status_mod
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
@@ -286,21 +288,42 @@ class RebootTimes:
     poll: float = 10
 
 
-def _issue_reboot(fleet: Fleet, inventory: Inventory, ship: Ship, host: str | None) -> None:
+REBOOT = ["sudo", "-n", "systemctl", "reboot"]
+# Skips logind's block locks only: services still stop, and delay locks (herdr's)
+# still get their InhibitDelayMaxSec before the Ship goes down.
+FORCE_REBOOT = [*REBOOT, "--check-inhibitors=no"]
+
+
+def _issue_reboot(fleet: Fleet, inventory: Inventory, ship: Ship, host: str | None,
+                  force: bool = False) -> None:
     """`sudo -n systemctl reboot` (contracts/ship-runtime.md), over one name only,
-    so a dropped connection is never retried on another name."""
+    so a dropped connection is never retried on another name.
+
+    When logind refuses it because something holds a shutdown block lock, raises
+    inhibitors.RebootRefused naming what holds it (tried once more if the lock has
+    gone by the time it is looked up). force overrides the block locks.
+    """
     target = dataclasses.replace(ship, names=(host,)) if host else ship
     ssh = fleet.ssh(inventory)
     try:
-        result = ssh.run(target, ["sudo", "-n", "systemctl", "reboot"], timeout=60)
-    except Unreachable:
-        return  # the Ship closed the connection while going down: expected
+        for attempt in (1, 2):
+            try:
+                result = ssh.run(target, FORCE_REBOOT if force else REBOOT, timeout=60)
+            except Unreachable:
+                return  # the Ship closed the connection while going down: expected
+            if result.returncode in (0, 255):
+                return
+            said = _last_line(result.stderr)
+            if force or "inhibit" not in said.lower():
+                raise FleetError(f"{ship.name}: the reboot command failed: {said}")
+            blockers = inhibitors.probe(ssh, target)
+            if blockers == [] and attempt == 1:
+                continue  # released while we looked: try again
+            raise inhibitors.RebootRefused(ship.name, said, blockers)
     finally:
         forget = getattr(ssh, "forget", None)
         if forget is not None:
             forget(ship)
-    if result.returncode not in (0, 255):
-        raise FleetError(f"{ship.name}: the reboot command failed: {_last_line(result.stderr)}")
 
 
 def reboot_one(
@@ -312,8 +335,13 @@ def reboot_one(
     times: RebootTimes | None = None,
     before: dict[str, Any] | None = None,
     host: str | None = None,
+    force: bool = False,
 ) -> Outcome:
-    """Reboot one Ship cleanly and, with wait, check its agents came back in their modes."""
+    """Reboot one Ship cleanly and, with wait, check its agents came back in their modes.
+
+    A reboot refused by a shutdown lock is a failed Outcome that says what holds the
+    lock and what to do (data["refused"]); force overrides such locks.
+    """
     times = times or RebootTimes()
     inventory = fleet.inventory
     if before is None:
@@ -321,11 +349,17 @@ def reboot_one(
         before = _require_status(view)
         host = view.host
     expected = agent_modes(before)
-    on_event(ship.name, "rebooting")
+    on_event(ship.name, "rebooting, overriding any shutdown lock" if force else "rebooting")
     started = fleet.clock()
-    _issue_reboot(fleet, inventory, ship, host)
+    try:
+        _issue_reboot(fleet, inventory, ship, host, force=force)
+    except inhibitors.RebootRefused as exc:
+        on_event(ship.name, "reboot refused: something holds a shutdown lock")
+        return Outcome(ship.name, False, exc.message, list(exc.steps),
+                       {"waited": False, "forced": False, "refused": exc.data()})
     if not wait:
-        return Outcome(ship.name, True, "reboot started", data={"waited": False})
+        return Outcome(ship.name, True, "reboot started", data={"waited": False,
+                                                                "forced": force})
 
     doc = _wait_back(fleet, inventory, ship, started, times, on_event)
     back_after = round(fleet.clock() - started)
@@ -336,8 +370,8 @@ def reboot_one(
     changed = sorted(n for n in expected if n in after and after[n] != expected[n])
     details = [f"agent {n} did not come back" for n in missing]
     details += [f"agent {n} came back in {after[n]}, was {expected[n]}" for n in changed]
-    data = {"waited": True, "back_after_s": back_after, "agents_before": expected,
-            "agents_after": after, "state": doc["state"]}
+    data = {"waited": True, "forced": force, "back_after_s": back_after,
+            "agents_before": expected, "agents_after": after, "state": doc["state"]}
     if not expected:
         summary = f"back after {back_after} s (no agents were running)"
     else:
@@ -397,9 +431,12 @@ def reboot(
     wait: bool = True,
     on_event: Event | None = None,
     times: RebootTimes | None = None,
+    force: bool = False,
 ) -> list[Outcome]:
+    """Reboot each Ship (force: even past a shutdown lock, see reboot_one)."""
     return for_each(fleet, ships,
-                    lambda s, ev: reboot_one(fleet, s, ev, wait=wait, times=times), on_event)
+                    lambda s, ev: reboot_one(fleet, s, ev, wait=wait, times=times, force=force),
+                    on_event)
 
 
 # --- update -------------------------------------------------------------------
@@ -527,7 +564,7 @@ def update_one(
 def _reboot_after(fleet, ship, on_event, outcome, wait, times, before=None, host=None):
     rebooted = reboot_one(fleet, ship, on_event, wait=wait, times=times, before=before,
                           host=host)
-    outcome.data["rebooted"] = True
+    outcome.data["rebooted"] = "refused" not in rebooted.data
     outcome.data["reboot"] = rebooted.data
     outcome.ok = outcome.ok and rebooted.ok
     outcome.summary = f"{outcome.summary}; {rebooted.summary}"

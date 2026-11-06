@@ -31,7 +31,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/github.py` | | an autostart agent's GitHub repo: the name check, and whether it is public |
 | `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins SHIP`) |
 | `fleetledger/signinlist.py` | | every sign-in on every Ship, most urgent first: the Sign-ins page and `ship-fleet signins` with no Ship |
-| `fleetledger/history.py` | | the dashboard's bounded status history (`history.sqlite3`) |
+| `fleetledger/history.py` | | the bounded history (`history.sqlite3`): Ship status for the dashboard's charts, and the web UI's finished operations for its Activity page |
 | `fleetledger/overlay/`, `access.py`, `overlay_setup.py` | phase 5 | the overlay network: providers, one-off keys (pasted, or minted with a Tailscale OAuth client whose secret is in the OS keyring or a 0600 file), `ship-fleet overlay setup|check|join|leave|status|policy` |
 | `fleetledger/firstrun.py`, `setupcmd.py` | first run | `ship-fleet setup` (the guided first run: each step checks first and skips what is done) and `ship-fleet doctor` (read-only: what is set up, what is missing, the next command); both use the checks in `firstrun.py` |
 | `fleetledger/keys.py` | first run | keys FleetLedger makes and looks after: random passphrases in the OS keyring (or 0600 files), typed into `ssh-keygen`/`ssh-add` through a terminal, loaded into ssh-agent when needed; taking an existing key over |
@@ -46,6 +46,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/pins.py` | phase 2 | `ship-fleet pins`: check and move the `versions.toml` pins with their checksums and signatures |
 | `fleetledger/ops.py` | phase 2 | day-2 operations on one Ship or many (update, reboot, settings, tags, tools, logs, Needs attention), shared by the CLI and the web UI |
 | `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |
+| `fleetledger/inbox.py`, `web/inboxweb.py` | | the file inbox: `ship-fleet put`, `ship-fleet inbox ls\|rm`, and the web UI's Inbox tab (drop zone, upload spool, the send job) ([send-files.md](../docs/runbooks/send-files.md)) |
 | `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
@@ -65,7 +66,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
-| `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts (0600) |
+| `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts, and the operations history behind the Activity page (redacted; 30 days, at most 200) (0600) |
 | `~/.local/share/fleetledger/attempts.json` | the last 20 failed `ship-fleet new` attempts: their options (no secrets), error and what each left, for Edit and retry (0600) |
 | `~/.local/share/fleetledger/net/` | the last network summary per Ship and the first-seen ledger (0600) |
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
@@ -303,7 +304,8 @@ covers the core ones; the rest are documented with their feature: `setup`,
 `ca`, `trust`, `untrust` ([trust-machines.md](../docs/runbooks/trust-machines.md));
 `overlay` ([remote-access.md](../docs/runbooks/remote-access.md)); `destroy`,
 `resize`, `snapshot` ([create-ship.md](../docs/runbooks/create-ship.md));
-`image` ([images.md](../docs/runbooks/images.md)); `signins`
+`image` ([images.md](../docs/runbooks/images.md)); `put`, `inbox`
+([send-files.md](../docs/runbooks/send-files.md)); `signins`
 ([sign-in.md](../docs/runbooks/sign-in.md)); `owner` (its `--help`).
 
 | Command | What it does |
@@ -321,6 +323,7 @@ covers the core ones; the rest are documented with their feature: `setup`,
 | `tools ls`, `tools add/remove NAME ID...` | the catalogue, and `ship-ctl tools add/remove` |
 | `ssh NAME [--as agent\|owner\|fleet] [-- CMD]` | a shell as agent with your own keys (default), as your own login with sudo (`owner`), or as fleet with the admin key; pinned host key either way |
 | `logs NAME SOURCE` | `ship-ctl logs` (provision, herdr, resume, tools, status, system) |
+| `put NAME FILE...` | sends files into the Ship's `~/inbox` for its agents, each streamed to `ship-ctl inbox put` over SSH (whole files only, names cleaned, never overwriting; 20 files of 256 MB at most); `--tell` tells its autostart agents how many arrived. `inbox ls\|rm NAME` lists or removes what is there |
 
 Every command is tested in `tests/test_cli.py` against a fake Ship behind a real
 `SSH` object, so the command lines are real but nothing leaves the machine.
@@ -346,7 +349,7 @@ for every Ship (an unknown setting or tool) is refused before any Ship is touche
 | Command | Function | What it does |
 |---|---|---|
 | `ship-fleet update SHIP...\|--tag T\|all` | `ops.update` | packs `ship/` and `versions.toml` from this checkout, copies the bundle and its `.sha256` into `/home/fleet/incoming/` (mode 0600), runs `ship-ctl converge`, then checks the Ship reports the new bundle. `--reboot auto` (default) reboots only Ships whose herdr binary changed (`herdr-restart-pending`); `always` and `never` do what they say. A Ship already on a clean bundle is skipped unless `--force`. |
-| `ship-fleet reboot SHIP...\|--tag T\|all` | `ops.reboot` | records each agent's name and mode, runs `sudo -n systemctl reboot` over the one name that answered, waits until the Ship answers from a new boot (its uptime is shorter than the wait), then until herdr has resumed. Fails the Ship if any agent is missing or came back in another mode. |
+| `ship-fleet reboot SHIP...\|--tag T\|all` | `ops.reboot` | records each agent's name and mode, runs `sudo -n systemctl reboot` over the one name that answered, waits until the Ship answers from a new boot (its uptime is shorter than the wait), then until herdr has resumed. Fails the Ship if any agent is missing or came back in another mode. If a shutdown lock refuses the reboot (apt running in an open login, say), fails at once and says what holds it and where (`fleetledger/inhibitors.py`, read as fleet without sudo); `--force` reboots past the lock with `systemctl reboot --check-inhibitors=no` (herdr still saves first). |
 | `ship-fleet set SHIP...\|--tag T\|all KEY=VALUE...` | `ops.set_settings` | `ship-ctl set`; new keys `lan_guard_allow`, `ssh_listen` (`any`\|`overlay`), `auto_reboot`, `reboot_time` (the Ship's local time), `timezone`, and `autostart.add=NAME:FOLDER[:MODE]` / `autostart.remove=NAME`. `ship-fleet new` gives each Ship this computer's zone (`--timezone` to choose). |
 | `ship-fleet agent restart SHIP AGENT...\|--all [--mode M] [--fresh] [--force]` | `ops.restart_agents` | `ship-ctl agent restart`: swaps running Claude agents for ones in another mode, in their own herdr panes with the same names and folders, continuing their conversations (`--fresh`: new ones). Without `--mode`, each takes the mode it starts in now (its autostart mode, else `default_mode`). The Ship leaves a working agent alone unless `--force`, refuses `bypassPermissions` without `allow_bypass`, and records the new mode, so a reboot keeps it and `ship-fleet reboot` expects it. `set default_mode=...` says running agents keep theirs and points here. See "Change a running agent's mode" in [update-fleet.md](../docs/runbooks/update-fleet.md). |
 | `ship-fleet tag SHIP +T -T` | `ops.set_tags` | inventory first, then the Ship (`--local`: inventory only). |

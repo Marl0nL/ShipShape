@@ -25,12 +25,13 @@ COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
-    "image", "overlay",
+    "image", "overlay", "put", "inbox",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
-EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd")
+EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
+                         "fleetledger.inbox")
 
 
 @dataclass
@@ -362,11 +363,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="print the results as JSON")
 
     p = _add(sub, "reboot", "reboot Ships cleanly and check their agents come back",
-             "Reboot with systemctl reboot (never forced), so herdr saves its state;\n"
-             "then wait for each Ship and check every agent resumed in its mode.\n\n"
-             "  ship-fleet reboot ship-01\n  ship-fleet reboot --tag work --yes")
+             "Reboot with systemctl reboot (a clean reboot, never a hard reset), so herdr\n"
+             "saves its state; then wait for each Ship and check every agent resumed in\n"
+             "its mode.\n\n"
+             "A program holding a shutdown lock (apt installing packages, say, in an\n"
+             "open login session) makes the Ship refuse: FleetLedger says what holds it\n"
+             "and where. Let it finish or close that session, or reboot anyway with\n"
+             "--force (systemctl reboot --check-inhibitors=no): still a clean reboot in\n"
+             "which herdr saves every agent, but what holds the lock is cut off.\n\n"
+             "  ship-fleet reboot ship-01\n  ship-fleet reboot --tag work --yes\n"
+             "  ship-fleet reboot ship-01 --force")
     p.add_argument("names", nargs="*", metavar="SHIP|all")
     p.add_argument("--tag", help="every Ship with this tag")
+    p.add_argument("--force", action="store_true",
+                   help="reboot even if something holds a shutdown lock (it is cut off)")
     p.add_argument("--no-wait", action="store_true", help="do not wait for the Ships")
     p.add_argument("--yes", action="store_true", help="do not ask before acting on many Ships")
     p.add_argument("--json", action="store_true", help="print the results as JSON")

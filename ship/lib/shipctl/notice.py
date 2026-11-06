@@ -40,11 +40,11 @@ READY_STATES = ("idle", "working", "done")
 _UNSAFE = re.compile(r"[^A-Za-z0-9@._+-]")
 
 
-def record(ctx: Context, message: str) -> None:
+def record(ctx: Context, message: str, what: str = "notify-signin") -> None:
     """Into the Ship's journal (`ship-ctl logs system`), however ship-ctl was run:
     over SSH its stderr goes back to FleetLedger, not to the journal."""
     ctx.log(message)
-    ctx.runner.run(["logger", "-t", "ship-ctl", "--", f"notify-signin: {message}"], timeout=10)
+    ctx.runner.run(["logger", "-t", "ship-ctl", "--", f"{what}: {message}"], timeout=10)
 
 
 def text(service: str, account: str | None) -> str:
@@ -73,16 +73,25 @@ def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]
     data["account"] = account
     line = text(service, account)
 
+    note = send_to_cores(ctx, ship, line, data)
+    if note:
+        record(ctx, f"{service}: {note}")
+        return data, [note]
+    messages = [f"{label} notice sent to: {', '.join(data['sent']) or 'none'}."]
+    messages += [f"{s['name']}: not sent ({s['reason']})." for s in data["skipped"]]
+    record(ctx, f"{service} as {account or 'unknown'}: " + " ".join(messages))
+    return data, messages
+
+
+def send_to_cores(ctx: Context, ship: ShipToml, line: str, data: dict) -> str | None:
+    """Type one line into each live core agent that is safe to type into, filling
+    data["sent"] and data["skipped"]. Returns why nothing was tried, if so."""
     cores = [a["name"] for a in ship.autostart]
     if not cores:
-        msg = "This Ship has no [[autostart]] agents; no notice sent."
-        record(ctx, f"{service}: {msg}")
-        return data, [msg]
+        return "This Ship has no [[autostart]] agents; no notice sent."
     if autostart.resume_pending(ctx):
         data["skipped"] = [{"name": name, "reason": "resume-pending"} for name in cores]
-        msg = "This boot's resume is not done yet; no notice sent."
-        record(ctx, f"{service}: {msg}")
-        return data, [msg]
+        return "This boot's resume is not done yet; no notice sent."
     _, live, _ = status.herdr_agents(ctx)
     started = read_json(ctx.paths.state / "autostart.json", {})
     started = started if isinstance(started, dict) else {}
@@ -105,8 +114,4 @@ def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]
             data["sent"].append(name)
         else:
             data["skipped"].append({"name": name, "reason": "send-failed"})
-
-    messages = [f"{label} notice sent to: {', '.join(data['sent']) or 'none'}."]
-    messages += [f"{s['name']}: not sent ({s['reason']})." for s in data["skipped"]]
-    record(ctx, f"{service} as {account or 'unknown'}: " + " ".join(messages))
-    return data, messages
+    return None

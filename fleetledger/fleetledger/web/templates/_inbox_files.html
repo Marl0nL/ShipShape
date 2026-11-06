@@ -1,0 +1,21 @@
+{# An inbox job's files (web/inboxweb.py, job.result.files): each one's progress
+   while it is sent, then where it went or why it did not. #}
+<ul class="inbox-files">
+  {% for f in job.result.files %}
+  <li class="{{ f.state }}">
+    <span class="file-name">{{ f.name }}</span>
+    <span class="size">{{ inbox_size(f.size) }}</span>
+    {% if f.state == "sending" %}
+    <progress max="{{ f.size or 1 }}" value="{{ f.sent if f.size else 1 }}" aria-label="{{ f.name }}: sent">{{ (100 * f.sent // (f.size or 1)) }}%</progress>
+    <span class="when">{{ (100 * f.sent // (f.size or 1)) }}%</span>
+    {% elif f.state == "stored" %}
+    <span class="pill good">✓ in ~/inbox</span>{% if f.stored != f.name %} <span class="hint">as {{ f.stored }}</span>{% endif %}
+    {% elif f.state == "failed" %}
+    <span class="pill bad">✗ not sent</span> <span class="error">{{ f.error }}</span>
+    {% else %}
+    <span class="pill muted">waiting</span>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% if job.result.told %}<p class="hint">Autostart agents: {{ job.result.told }}.</p>{% endif %}

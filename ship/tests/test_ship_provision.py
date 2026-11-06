@@ -68,6 +68,8 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
         assert not list(root.glob(f"etc/systemd/system/*.wants/{name}"))
     assert mode(root / "home/agent/.claude") == "0o700"
     assert mode(root / "home/agent/.local/state/shipshape") == "0o700"
+    assert mode(root / "home/agent/inbox") == "0o700"  # the file inbox
+    assert mode(root / "home/agent/.local/state/shipshape/incoming") == "0o700"
     assert (root / "home/agent/.npmrc").read_text() == "prefix=/home/agent/.local\n"
     record = json.loads((root / "var/lib/shipshape/provision.json").read_text())
     assert record["result"] == "ok" and record["mode"] == "first-boot"

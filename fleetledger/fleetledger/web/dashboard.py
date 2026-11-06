@@ -57,8 +57,8 @@ class Confirm:
 
 
 def op_confirm(op: str, ship: str) -> Confirm:
-    """The dialog for updating, rebooting, joining or stopping one Ship: the same
-    words on the Ship's action bar and on an alert's button."""
+    """The dialog for updating, rebooting (or force-rebooting), joining or stopping
+    one Ship: the same words on the Ship's action bar and on an alert's button."""
     texts = {
         "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
                    "agents keep running. If its herdr changed it reboots, and its agents "
@@ -73,9 +73,16 @@ def op_confirm(op: str, ship: str) -> Confirm:
     texts["stop"] = (f"{ship}'s VM shuts down cleanly (never a power-off), so herdr saves "
                      "every agent first. Its agents stop until you start it again, then "
                      "resume in their modes. Progress shows on this page.", True)
+    texts["force-reboot"] = (
+        f"{ship} reboots even if a program holds a shutdown lock, such as apt installing "
+        "packages in an open login session: that program is cut off, and open sessions are "
+        "disconnected. It is still a clean reboot: herdr saves every agent first and resumes "
+        "it in its mode afterwards. If apt was cut off, run sudo dpkg --configure -a on the "
+        "Ship afterwards. Progress shows on this page.", True)
     text, danger = texts[op]
     label = {"join": f"Join {ship} to the overlay",
-             "stop": f"Stop {ship}'s VM"}.get(op, f"{op.capitalize()} {ship}")
+             "stop": f"Stop {ship}'s VM",
+             "force-reboot": f"Force reboot {ship}"}.get(op, f"{op.capitalize()} {ship}")
     return Confirm(f"{label}?", text, label, danger)
 
 
