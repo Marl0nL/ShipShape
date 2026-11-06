@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Activity{% if ship %} · {{ ship }}{% endif %} · FleetLedger{% endblock %}
+{% block body %}
+{# Every operation that ended (web/activity.py), newest first, dismissed ones too.
+   Context: ops (fleetledger.history.Operation, without logs), ship, outcome, ships,
+   before, older, newest, running, problem, kept. #}
+<h1>Activity{% if ship %} <span class="quiet">· {{ ship }}</span>{% endif %}</h1>
+<p class="hint">Every operation FleetLedger finished{% if ship %} on {{ ship }}{% endif %}, newest first, including cards you dismissed. Kept for 30 days, at most 200, through restarts. Saved logs are redacted: long token-like strings, email addresses and link queries are replaced.</p>
+{% if running %}
+<p class="notice">{{ running|length }} running now: {% for j in running %}{{ j.title }}{% if j.ships %} ({{ j.ships|join(", ") }}){% endif %}{{ ", " if not loop.last }}{% endfor %}. It shows here once it ends; follow it on {% if ship %}<a href="/ships/{{ ship }}">{{ ship }}'s page</a>{% else %}the <a href="/">Fleet</a> page{% endif %}.</p>
+{% endif %}
+
+<form class="inline activity-filter" method="get" action="/activity">
+  <label class="field-inline">Ship
+    <select name="ship">
+      <option value="">every Ship</option>
+      {% for s in ships %}<option value="{{ s }}"{% if s == ship %} selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select></label>
+  <label class="field-inline">Outcome
+    <select name="outcome">
+      <option value="">any</option>
+      {% for o in OUTCOMES %}<option value="{{ o }}"{% if o == outcome %} selected{% endif %}>{{ OUTCOME_LABELS[o] }}</option>{% endfor %}
+    </select></label>
+  <button type="submit" class="ghost small">Show</button>
+  {% if ship or outcome %}<a href="/activity">clear</a>{% endif %}
+  {% if ship %}<a href="/ships/{{ ship }}">back to {{ ship }}</a>{% endif %}
+</form>
+
+{% if problem %}<p class="flash bad">{{ problem }}</p>
+{% elif not kept %}<p class="quiet">This FleetLedger keeps no operations history.</p>
+{% elif not ops %}<p class="quiet">{% if before %}Nothing older.{% elif ship or outcome %}No past operations match.{% else %}No past operations yet. Updates, reboots, making a Ship and the rest show here once they end.{% endif %}</p>
+{% else %}
+<section class="operations history" aria-label="Past operations">
+  {% for op in ops %}{% include "_operation.html" %}{% endfor %}
+</section>
+{% endif %}
+{% if before or older %}
+<nav class="pager" aria-label="More operations">
+  {% if before %}<a href="{{ newest }}">Newest</a>{% endif %}
+  {% if older %}<a href="{{ older }}">Older</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

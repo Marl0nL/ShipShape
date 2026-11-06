@@ -35,6 +35,7 @@ from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
 from fleetledger.web import (
     actions,
+    activity,
     adopt,
     dashboard,
     destroy,
@@ -123,6 +124,7 @@ def make_env() -> Environment:
         clock=_clock,
         clock_dated=_clock_dated,
         attempt_saved_at=attempts.saved_at,
+        took=activity.took,
         AUTH_ORDER=AUTH_ORDER,
         SERVICE_PROVIDER=SERVICE_PROVIDER,
         SERVICES=SERVICES,
@@ -194,6 +196,7 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         csrf=session.csrf,
         waiting_count=sum(1 for f in ui.concierge.active() if f.needs_you),
         fleet_exists=ui.app.store_factory().exists(),  # the nav: Settings, else Setup
+        here=activity.here(request),  # where a card's Dismiss comes back to
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
@@ -201,7 +204,8 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
 
 def partial(request: Request, template: str, **context: Any) -> Response:
     ui = ui_of(request)
-    html = ui.env.get_template(template).render(csrf=session_of(request).csrf, **context)
+    html = ui.env.get_template(template).render(csrf=session_of(request).csrf,
+                                                here=activity.here(request), **context)
     return HTMLResponse(html)
 
 
@@ -245,7 +249,9 @@ def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
         "alerts": alerts,
         "summary": dashboard.summary(views, alerts, snap.inventory),
         "sparks": _quietly(dashboard.sparklines, ui.fleet.history, views, time.time()) or {},
-        "jobs": jobs,
+        "jobs": [j for j in jobs if not j.dismissed],
+        # All jobs, dismissed ones too: a dismissed failed-create card does not come
+        # back as its saved attempt's card (the New Ship page still lists it).
         "saved_attempts": _saved_attempts(snap.inventory, jobs),
         "version": _fleet_version(ui),
         "snap": snap,
@@ -363,7 +369,7 @@ def _ship_context(ui: UI, name: str) -> dict[str, Any] | None:
         "items": attention_items([view]),
         "expected": expected,
         "flows": flows,
-        "jobs": ui.jobs.for_ship(name),
+        "jobs": ui.jobs.for_ship(name, shown=True),
         "workspaces": workspaces,
         "snap": snap,
         **_attach_context(inv, view.ship),
@@ -1147,6 +1153,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/new", new_ship_start, methods=["POST"]),
         Route("/new/attempts/{name}/discard", discard_attempt, methods=["POST"]),
         Route("/ships/{name}/enrol", finish_enrolling, methods=["POST"]),
+        *activity.routes(),
         *setup.routes(),
         *snapshots.routes(),
         *adopt.routes(),

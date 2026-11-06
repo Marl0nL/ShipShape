@@ -30,7 +30,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `resize`, `snapshot` and `image` |
 | `fleetledger/github.py` | | an autostart agent's GitHub repo: the name check, and whether it is public |
 | `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins`) |
-| `fleetledger/history.py` | | the dashboard's bounded status history (`history.sqlite3`) |
+| `fleetledger/history.py` | | the bounded history (`history.sqlite3`): Ship status for the dashboard's charts, and the web UI's finished operations for its Activity page |
 | `fleetledger/overlay/`, `access.py`, `overlay_setup.py` | phase 5 | the overlay network: providers, one-off keys (pasted, or minted with a Tailscale OAuth client whose secret is in the OS keyring or a 0600 file), `ship-fleet overlay setup|check|join|leave|status|policy` |
 | `fleetledger/firstrun.py`, `setupcmd.py` | first run | `ship-fleet setup` (the guided first run: each step checks first and skips what is done) and `ship-fleet doctor` (read-only: what is set up, what is missing, the next command); both use the checks in `firstrun.py` |
 | `fleetledger/keys.py` | first run | keys FleetLedger makes and looks after: random passphrases in the OS keyring (or 0600 files), typed into `ssh-keygen`/`ssh-add` through a terminal, loaded into ssh-agent when needed; taking an existing key over |
@@ -64,7 +64,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
-| `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts (0600) |
+| `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts, and the operations history behind the Activity page (redacted; 30 days, at most 200) (0600) |
 | `~/.local/share/fleetledger/attempts.json` | the last 20 failed `ship-fleet new` attempts: their options (no secrets), error and what each left, for Edit and retry (0600) |
 | `~/.local/share/fleetledger/net/` | the last network summary per Ship and the first-seen ledger (0600) |
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |

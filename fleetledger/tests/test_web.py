@@ -1112,7 +1112,7 @@ def test_force_reboot_returns_to_the_page_it_was_sent_from(web, monkeypatch):
     from_fleet = 'name="from" value="fleet"'
     assert from_fleet in _force_form(web.client.get("/partials/fleet").text, "ship-01")
     on_ship = web.client.get("/ships/ship-01").text
-    card = on_ship[on_ship.index('<section class="ship-jobs">'):]
+    card = on_ship[on_ship.index('<section class="ship-jobs"'):]
     assert _force_form(card, "ship-01") and from_fleet not in _force_form(card, "ship-01")
     for page, sent in (("/ships/ship-01", False), ("/", True)):
         polled = web.client.get(f"/jobs/{job.id}",
