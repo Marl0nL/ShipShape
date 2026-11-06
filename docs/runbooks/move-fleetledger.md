@@ -78,7 +78,8 @@ stays with the reason. In short:
 |---|---|
 | A key of your own that FleetLedger made (`~/.ssh/shipshape_ed25519`) | its private half and passphrase stay on your machines; the new computer never attaches as you. Its `.pub` moves |
 | `this-computer.json` | which machine entry is the old computer: a fact about that computer. The old computer stays a trusted machine like any other |
-| `remote-ui.json` | the remote web UI setting ([remote-ui.md](remote-ui.md)): this computer's own name on the tailnet. Turn it on again on the new computer if you want it there |
+| `remote-ui.json` | the remote web UI setting ([remote-ui.md](remote-ui.md)): the old computer's own name on the tailnet and its Serve port. Opening the UI to your other devices is yours to turn on, on each computer, so the move never does it: `receive` prints the exact command for the new computer, with the same logins (the allow-list) |
+| The remote web UI's paired browsers and pairing links (`~/.local/share/fleetledger/web/`) | bound to the old computer's address: pair each device again with the new one (`ship-fleet ui link`) |
 | `known_hosts` | rebuilt from the pins in `ships.toml` |
 | A part-finished Proxmox setup, the inbox upload spool, Ubuntu's cached cloud image, locks | nothing the fleet needs |
 | Baked image files | unless `--with-images` (they are large); a published image still serves new Ships. `check` says which images would then be unpublishable |
@@ -136,7 +137,12 @@ until then keep using the old copy); anything else when nothing was written ther
 
 - **A move cut short** (the network dropped, Ctrl-C): nothing was written on the
   new computer; run it again. A receive that fails while writing takes back what
-  it wrote, keyring items included.
+  it wrote, keyring items included. One killed outright while writing (a power
+  cut) cannot: if the next run says "already has a FleetLedger", move
+  `~/.config/fleetledger` and `~/.local/share/fleetledger` aside there and run it
+  again.
+- **Nothing else starts on the old computer during a push**, the web UI included,
+  until the new computer has checked every Ship; a large fleet takes a while.
 - **"already has a FleetLedger"**: that computer has one. Move its files aside (or
   point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders).
 - **"Not writing over files already here"**: a key of that name is already in the
