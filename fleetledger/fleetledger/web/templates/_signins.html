@@ -1,0 +1,73 @@
+{# Every sign-in on every Ship (fleetledger.signinlist), grouped, what needs you first;
+   polled and redrawn when the fleet or a sign-in changes. Severity is an icon and a
+   word as well as a colour. Each row's action is the same form the Ship page uses. #}
+{% from "_macros.html" import sev %}
+{# A group filter's page may lack a card (it was drawn before the sign-in reached the
+   group): Continue and Show then open the view without the group, which has it. #}
+{% set card_href = signin_url(filters, group="") if filters.group else "" %}
+<div id="signin-list" hx-get="/partials/signins?{% for k, v in filters|dictsort %}{{ k }}={{ v|urlencode }}&amp;{% endfor %}v={{ version }}" hx-trigger="every 5s" hx-swap="outerHTML">
+{% if stale %}<p class="hint">Not checked yet: showing each Ship's last known status.</p>{% endif %}
+{% if rows %}
+<table class="signins">
+  <thead><tr><th scope="col">Severity</th><th scope="col">Ship</th><th scope="col">Service</th><th scope="col">State</th><th scope="col">Since</th><th scope="col">Detail</th><th scope="col"><span class="sr-only">Action</span></th></tr></thead>
+  {% for group, members in grouped %}
+  <tbody class="group-{{ group }}">
+    <tr class="group-head"><th colspan="7" scope="rowgroup">{{ SIGNIN_GROUP_LABELS[group] }} <span class="n">{{ members|length }}</span></th></tr>
+    {% for r in members %}
+    <tr class="{% if r.level %}lvl-{{ r.level }}{% endif %}" data-ship="{{ r.ship }}" data-service="{{ r.service }}">
+      <td class="sev-cell">{% if r.level %}{{ sev(r.level) }}{% elif r.group == "healthy" %}<span class="pill good">OK</span>{% elif r.group == "off" %}<span class="pill muted">Off</span>{% else %}<span class="pill muted">In progress</span>{% endif %}</td>
+      <td class="ship"><a href="/ships/{{ r.ship }}">{{ r.ship }}</a></td>
+      <td class="service">{{ r.label }}</td>
+      <td><span class="pill {{ r.state|pill }}">{{ r.state }}</span></td>
+      <td class="when">{% if r.since %}<time datetime="{{ r.since }}" title="{{ r.since }}">{{ ago(r.since) }}</time>{% else %}-{% endif %}</td>
+      <td class="detail">{{ r.message }}{% if r.account and r.group != "healthy" %} <span class="quiet">({{ r.account }})</span>{% endif %}{% if r.deadline %} <span class="quiet">Link valid for <span data-deadline="{{ r.deadline|int }}">…</span>.</span>{% endif %}{% if r.note %} <span class="quiet note">{{ r.note }}</span>{% endif %}</td>
+      <td class="row-actions">
+        {% if r.state == "waiting" %}
+          <a class="button" href="{{ card_href }}#flow-{{ r.flow }}">Continue</a>
+        {% elif r.group == "underway" %}
+          <a class="button ghost" href="{{ card_href }}#flow-{{ r.flow }}">Show</a>
+        {% elif r.group == "off" %}
+          <a class="button ghost" href="/ships/{{ r.ship }}/settings" title="ship-fleet signins {{ r.ship }} --on">Turn on (Settings)</a>
+        {% elif not r.answers %}
+          <form method="post" action="/ships/{{ r.ship }}/refresh" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="from" value="signin">
+            {% for k, v in filters.items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}
+            <button type="submit" class="ghost" title="ship-fleet status {{ r.ship }}">Check now</button>
+          </form>
+        {% else %}
+          <form method="post" action="/signin" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="ship" value="{{ r.ship }}">
+            <input type="hidden" name="service" value="{{ r.provider }}">
+            <input type="hidden" name="from" value="signin">
+            {% for k, v in filters.items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}
+            <button type="submit"{% if r.group == "healthy" or r.state == "wrong account" %} class="ghost"{% endif %} title="ship-fleet login {{ r.ship }} {{ r.provider }}">{% if r.state == "failed" or r.note %}Try again{% elif r.signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
+          </form>
+          {% if r.signed_in %}
+          <form method="post" action="/ships/{{ r.ship }}/logout" class="inline"
+            data-confirm-title="Sign {{ r.ship }} out of {{ r.label }}?"
+            data-confirm="{{ r.ship }} forgets this sign-in. Agents and tools that use it stop working there until you sign in again."
+            data-confirm-action="Sign out of {{ r.label }}" data-confirm-danger>
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="service" value="{{ r.provider }}">
+            <input type="hidden" name="from" value="signin">
+            {% for k, v in filters.items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}
+            <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+            <button type="submit" class="{% if r.state == 'wrong account' %}danger{% else %}ghost danger small{% endif %}" title="ship-fleet logout {{ r.ship }} {{ r.provider }}">Sign out</button>
+          </form>
+          {% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+{% elif total %}
+<p class="quiet">Nothing in this group. <a href="{{ signin_url(filters, group='') }}">Show all {{ total }}</a>.</p>
+{% else %}
+<p class="quiet">No sign-ins to show{% if filters %}: nothing matches. <a href="/signin">Show every sign-in</a>{% else %}: no Ships yet{% endif %}.</p>
+{% endif %}
+</div>
+{% if oob %}{% include "_signin_groups.html" %}{% endif %}

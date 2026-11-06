@@ -1294,14 +1294,21 @@ def test_all_queues_one_flow_per_service_in_order(web):
     wait_for(lambda: all(f.done for f in web.concierge.flows()))
 
 
+def _badge(web):
+    found = re.search(r'<a href="/signin"[^>]*>Sign-ins(?: <span class="badge warn"[^>]*>(\d+)<)?',
+                      web.client.get("/").text)
+    return int(found.group(1) or 0)
+
+
 def test_waiting_sign_in_shows_in_needs_attention(web):
     web.sign_in()
+    before = _badge(web)
     web.post("/signin", {"ship": "ship-01", "service": "claude"})
     flow = flow_of(web)
     wait_for(lambda: flow.state in (flows.LINK, flows.CODE))
     page = web.client.get("/partials/fleet").text
     assert "Claude Code sign-in is waiting for you." in page
-    assert 'class="badge warn">1<' in web.client.get("/").text
+    assert _badge(web) == before + 1  # its row (signed in until now) needs you
 
 
 def test_live_terminal_when_the_patterns_miss(web, tmp_path):
@@ -1904,3 +1911,193 @@ def test_interrupt_it_while_it_works_passes_force(web):
     wait_for(lambda: job.done)
     assert _agent_calls(web)[-1][3:] == ["agent", "restart", "builder", "--mode",
                                          "acceptEdits", "--force", "--json"]
+
+
+# --- every sign-in (/signin) --------------------------------------------------------------
+
+
+def _rows(page):
+    """(ship, service) of each sign-in row on the page, in order."""
+    return re.findall(r'data-ship="([^"]+)" data-service="([^"]+)"', page)
+
+
+def _groups(page):
+    return re.findall(r'<tbody class="group-([a-z]+)">', page)
+
+
+def test_the_sign_ins_page_lists_every_sign_in_what_needs_you_first(web):
+    web.ship.down.add("ship-02")
+    expired = copy.deepcopy(RUNNING)
+    expired["auth"]["github"].update(state="expired")
+    web.ship.status_override["ship-01"] = expired
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/signin").text
+    rows = _rows(page)
+    assert len(rows) == 8  # two Ships, four services each, no filter
+    assert rows[0] == ("ship-01", "github")
+    assert _groups(page) == ["action", "degraded", "healthy"]
+    assert "sev-icon lvl-critical" in page and ">critical<" in page.lower()  # shape and word
+    # the row's fix is the existing sign-in form, for its Ship and provider
+    first = page[page.index('data-ship="ship-01" data-service="github"'):]
+    first = first[:first.index("</tr>")]
+    assert 'action="/signin"' in first and 'name="service" value="github"' in first
+    # a Ship that does not answer: checked again from here, back to this page
+    down = page[page.index('data-ship="ship-02" data-service="claude"'):]
+    down = down[:down.index("</tr>")]
+    assert 'action="/ships/ship-02/refresh"' in down and 'name="from" value="signin"' in down
+    response = web.post("/ships/ship-02/refresh", {"from": "signin", "f_group": "degraded"})
+    assert response.headers["location"] == "/signin?group=degraded"
+    # the nav's badge counts the sign-ins that need you, and links here
+    assert re.search(r'<a href="/signin"[^>]*>Sign-ins <span class="badge warn"[^>]*>1<', page)
+
+
+def test_sign_in_filters_live_in_the_url_with_a_count_per_group(web):
+    web.sign_in()
+    page = web.client.get("/signin?service=claude").text
+    assert _rows(page) == [("ship-02", "claude"), ("ship-01", "claude")]  # wrong account first
+    assert 'href="/signin?service=claude&amp;group=action"' in page
+    assert re.search(r'group=action"[^>]*>Needs you <span class="n">1<', page)
+    assert re.search(r'class="chip on" aria-current="true">All <span class="n">2<', page)
+    page = web.client.get("/signin?service=claude&group=healthy").text
+    assert _rows(page) == [("ship-01", "claude")]
+    page = web.client.get("/signin?tag=personal").text
+    assert {s for s, _ in _rows(page)} == {"ship-02"}
+    page = web.client.get("/signin?ship=ship-01&service=gcloud_adc").text
+    assert _rows(page) == [("ship-01", "gcloud_adc")]
+    assert '<option value="ship-01" selected>' in page
+    # anything not a known Ship name, service, tag or group is ignored, never echoed
+    page = web.client.get('/signin?ship=<b>&service=rm+-rf&group=x"y&tag=a/b').text
+    assert len(_rows(page)) == 8 and "<b>" not in page and 'x"y' not in page
+
+
+def test_the_sign_in_list_redraws_only_when_something_changed(web):
+    web.sign_in()
+    page = web.client.get("/signin?group=action").text
+    url = re.search(r'hx-get="(/partials/signins\?[^"]+)"', page).group(1).replace("&amp;", "&")
+    assert "group=action" in url
+    assert web.client.get(url).status_code == 204
+    web.fleet.bump()
+    fresh = web.client.get(url)
+    assert fresh.status_code == 200 and 'id="signin-list"' in fresh.text
+    assert 'id="signin-groups" aria-label="Sign-ins by group" hx-swap-oob="true"' in fresh.text
+
+
+def test_a_waiting_sign_in_is_first_with_its_card_and_continue(web):
+    web.sign_in()
+    web.post("/signin", {"ship": "ship-01", "service": "claude"})
+    flow = flow_of(web)
+    wait_for(lambda: flow.state in (flows.LINK, flows.CODE))
+    page = web.client.get("/signin").text
+    assert _rows(page)[0] == ("ship-01", "claude")
+    assert f'href="#flow-{flow.id}">Continue<' in page
+    card = page[page.index(f'id="flow-{flow.id}"'):]  # its card, on this page
+    card = card[:card.index("</article>")]
+    assert "&amp;from=signin" in card and 'name="from" value="signin"' in card
+    # a card goes with its row's group
+    assert f'id="flow-{flow.id}"' in web.client.get("/signin?group=action").text
+    for group in ("underway", "healthy"):
+        assert f'id="flow-{flow.id}"' not in web.client.get(f"/signin?group={group}").text
+    # its buttons come back here, not to the batch
+    response = web.post(f"/flows/{flow.id}/cancel", {"from": "signin", "f_service": "claude"})
+    assert response.headers["location"] == "/signin?service=claude"
+    wait_for(lambda: flow.done)
+    assert "Finished sign-ins (1)" in web.client.get("/signin").text
+
+
+def test_sign_out_from_the_sign_ins_page_returns_to_it(web, monkeypatch):
+    seen = []
+    monkeypatch.setattr(webapp.actions, "logout", lambda app, name, service: seen.append(
+        (name, service)) or webapp.actions.Outcome(name, True, "Signed out."))
+    web.sign_in()
+    page = web.client.get("/signin?ship=ship-01").text
+    row = page[page.index('data-ship="ship-01" data-service="gcloud"'):]
+    row = row[:row.index("</tr>")]
+    assert 'action="/ships/ship-01/logout"' in row and "data-confirm-danger" in row
+    assert 'name="f_ship" value="ship-01"' in row
+    response = web.post("/ships/ship-01/logout", {"service": "gcloud", "confirm": "yes",
+                                                   "from": "signin", "f_ship": "ship-01",
+                                                   "f_group": "<script>"})
+    assert seen == [("ship-01", "gcloud")]
+    assert response.headers["location"] == "/signin?ship=ship-01"
+    # without the tick box nothing is signed out
+    web.post("/ships/ship-01/logout", {"service": "gcloud", "from": "signin"})
+    assert len(seen) == 1
+
+
+def test_a_batch_still_shows_only_its_own_cards(web):
+    web.sign_in()
+    response = web.post("/signin", {"ship": "ship-01", "service": "claude"})
+    page = web.client.get(response.headers["location"]).text
+    assert "Show every sign-in" in page and _rows(page) == []
+    assert page.count('<article class="flow') == 1
+
+
+def test_counts_per_group_stay_the_scopes_whichever_group_is_shown(web):
+    web.sign_in()
+    every = web.client.get("/signin").text
+    healthy = web.client.get("/signin?group=healthy").text
+    chips = r'group=([a-z]+)"[^>]*>[^<]+<span class="n">(\d+)<'
+    assert re.findall(chips, every) == re.findall(chips, healthy)
+    assert int(dict(re.findall(chips, healthy))["action"]) > 0
+    assert set(g for g in _groups(healthy)) == {"healthy"}
+
+
+def test_a_rows_sign_in_comes_back_to_the_same_view_at_its_card(web):
+    web.sign_in()
+    page = web.client.get("/signin?service=claude&group=action").text
+    row = page[page.index('data-ship="ship-02" data-service="claude"'):]
+    row = row[:row.index("</tr>")]
+    sign_in = row[row.index('action="/signin"'):]  # the Sign in form, not Sign out's
+    sign_in = sign_in[:sign_in.index("</form>")]
+    assert 'name="from" value="signin"' in sign_in
+    assert 'name="f_service" value="claude"' in sign_in
+    assert 'name="f_group" value="action"' in sign_in
+    response = web.post("/signin", {"ship": "ship-01", "service": "claude", "from": "signin",
+                                    "f_service": "claude", "f_group": "action"})
+    flow = flow_of(web)
+    # the group is dropped: a sign-in just started is in no group's cards yet
+    assert response.headers["location"] == f"/signin?service=claude#flow-{flow.id}"
+    landing = web.client.get(response.headers["location"].split("#")[0]).text
+    assert f'id="flow-{flow.id}"' in landing
+    # refused (already under way): the same view, with why
+    response = web.post("/signin", {"ship": "ship-01", "service": "claude", "from": "signin",
+                                    "f_service": "claude"})
+    assert response.headers["location"] == "/signin?service=claude"
+    assert "already under way" in web.client.get("/signin?service=claude").text
+    web.concierge.cancel_all()
+
+
+def test_continue_under_a_group_filter_opens_the_view_with_the_card(web):
+    web.sign_in()
+    flow = WebFlow("1-00000000", "ab" * 6, "ship-01", "claude", "Claude Code", "paste-back",
+                   state=flows.CODE, url="https://example.com/oauth")
+    with web.concierge._lock:
+        web.concierge._flows[flow.id] = flow
+        web.concierge._order.append(flow.id)
+    page = web.client.get("/signin?service=claude&group=action").text
+    assert f'href="/signin?service=claude#flow-{flow.id}">Continue<' in page
+    assert f'id="flow-{flow.id}"' in web.client.get("/signin?service=claude").text
+    page = web.client.get("/signin?service=claude").text  # no group: the card is here
+    assert f'href="#flow-{flow.id}">Continue<' in page
+
+
+def test_a_timed_out_sign_in_says_so_and_offers_try_again(web):
+    web.sign_in()
+    flow = WebFlow("1-00000000", "ab" * 6, "ship-01", "gcloud-adc", "gcloud ADC", "paste-back",
+                   state=flows.DONE, outcome="timeout", detail="Timed out.")
+    with web.concierge._lock:
+        web.concierge._flows[flow.id] = flow
+        web.concierge._order.append(flow.id)
+    page = web.client.get("/signin").text
+    row = page[page.index('data-ship="ship-01" data-service="gcloud_adc"'):]
+    row = row[:row.index("</tr>")]
+    assert "The last sign-in attempt timed out." in row and ">Try again<" in row
+    tr = re.search(r'<tr class="([^"]*)" data-ship="ship-01" data-service="gcloud_adc"', page)
+    assert tr.group(1) == "lvl-notice" and "sev-tag lvl-notice" in row  # missing, unused
+
+
+def test_a_ship_the_fleet_does_not_have_is_dropped_from_the_filters(web):
+    web.sign_in()
+    page = web.client.get("/signin?ship=ship-99&group=healthy").text
+    assert "ship-99" not in page and "group=healthy" in page and _rows(page)

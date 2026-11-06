@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import attempts, commands, inbox, net, ops, signins
+from fleetledger import attempts, commands, inbox, net, ops, signinlist, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -145,6 +145,12 @@ def make_env() -> Environment:
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
         op_confirm=dashboard.op_confirm,
+        ago=signinlist.ago,
+        signin_url=_signin_url,
+        SIGNIN_GROUPS=signinlist.GROUPS,
+        SIGNIN_GROUP_LABELS=signinlist.GROUP_LABELS,
+        SIGNIN_SERVICES=signinlist.SERVICES,
+        SIGNIN_SERVICE_LABELS=signinlist.SERVICE_LABELS,
     )
     env.filters["pill"] = _pill
     return env
@@ -195,9 +201,12 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
     ui = ui_of(request)
     session = session_of(request)
     context.setdefault("flashes", ui.take_flashes(session))
+    snap = ui.fleet.snapshot
     html = ui.env.get_template(template).render(
         csrf=session.csrf,
-        waiting_count=sum(1 for f in ui.concierge.active() if f.needs_you),
+        # the nav's badge: every sign-in that needs you (the Sign-ins page's first group)
+        signins_due=signinlist.needing_action(snap.views, snap.inventory,
+                                              ui.concierge.flows()),
         fleet_exists=ui.app.store_factory().exists(),  # the nav: Settings, else Setup
         here=activity.here(request),  # where a card's Dismiss comes back to
         **context,
@@ -456,6 +465,8 @@ async def ship_refresh(request: Request) -> Response:
     fields = await form(request)
     await run_in_threadpool(ui.fleet.poll, [name])
     ui.flash(session_of(request), "ok", f"Checked {name}.")
+    if one(fields, "from") == "signin":
+        return _signin_back(fields)
     return back("/" if one(fields, "from") == "fleet" else f"/ships/{name}")
 
 
@@ -668,13 +679,14 @@ async def ship_logout(request: Request) -> Response:
     fields = await form(request)
     service = one(fields, "service")
     session = session_of(request)
+    done = _signin_back(fields) if one(fields, "from") == "signin" else back(f"/ships/{name}")
     if service not in SERVICES or one(fields, "confirm") != "yes":
         ui.flash(session, "bad", "Choose a service and tick the box to confirm.")
-        return back(f"/ships/{name}")
+        return done
     outcome = await run_in_threadpool(actions.logout, ui.app, name, service)
     _flash_outcome(ui, session, outcome)
     await run_in_threadpool(ui.fleet.poll, [name])
-    return back(f"/ships/{name}")
+    return done
 
 
 async def ship_power(request: Request) -> Response:
@@ -942,14 +954,117 @@ async def network_refresh(request: Request) -> Response:
 # --- sign-ins (the concierge) ---------------------------------------------------------
 
 
+SIGNIN_FILTERS = ("ship", "service", "tag", "group")
+
+
+def _signin_filters(params: Any) -> dict[str, str]:
+    """The Sign-ins page's filters from a query (or form), checked: anything that is
+    not a plain Ship name, known service, tag or group is dropped."""
+    found = {}
+    ship, service = params.get("ship") or "", params.get("service") or ""
+    tag, group = params.get("tag") or "", params.get("group") or ""
+    if ship and NAME_RE.match(ship):
+        found["ship"] = ship
+    if service in signinlist.SERVICES:
+        found["service"] = service
+    if tag and TAG_RE.match(tag):
+        found["tag"] = tag
+    if group in signinlist.GROUPS:
+        found["group"] = group
+    return found
+
+
+def _signin_url(filters: dict[str, str], **changes: str) -> str:
+    """/signin with these filters, some changed ("" drops one)."""
+    query = {k: v for k, v in {**filters, **changes}.items() if v and k in SIGNIN_FILTERS}
+    return "/signin" + (f"?{urlencode(query)}" if query else "")
+
+
+def _signin_back(fields: dict[str, list[str]]) -> RedirectResponse:
+    """Back to the Sign-ins page as it was: its filters ride along as form fields."""
+    return RedirectResponse(_signin_url(_signin_filters(
+        {k: one(fields, f"f_{k}") for k in SIGNIN_FILTERS})), status_code=303)
+
+
+def _signin_version(ui: UI) -> str:
+    return f"{ui.fleet.version}.{ui.concierge.version}"
+
+
+def _signin_context(ui: UI, filters: dict[str, str]) -> dict[str, Any]:
+    """Every sign-in on every Ship (fleetledger.signinlist), narrowed by the filters;
+    the counts per group are of the Ship, service and tag chosen."""
+    snap = ui.fleet.snapshot
+    flows = ui.concierge.flows()
+    every = signinlist.rows(snap.views, snap.inventory, flows)
+    scoped = signinlist.narrow(every, ship=filters.get("ship"), service=filters.get("service"),
+                               tag=filters.get("tag"))
+    shown = signinlist.narrow(scoped, group=filters.get("group"))
+    by_name = snap.by_name
+
+    def flow_in_scope(flow: WebFlow) -> bool:
+        view = by_name.get(flow.ship)
+        service = signinlist.SERVICE_OF_PROVIDER.get(flow.provider, flow.provider)
+        return ((not filters.get("ship") or flow.ship == filters["ship"])
+                and (not filters.get("service") or service == filters["service"])
+                and (not filters.get("tag") or (view is not None and filters["tag"]
+                                                in snap.effective_tags(view))))
+
+    group = filters.get("group")
+
+    def card_in_group(flow: WebFlow) -> bool:  # a card goes with its row's group
+        return group is None or (group == "action") == flow.needs_you and group in (
+            "action", "underway")
+
+    return {
+        "rows": shown,
+        "grouped": [(g, [r for r in shown if r.group == g]) for g in signinlist.GROUPS
+                    if any(r.group == g for r in shown)],
+        "counts": signinlist.counts(scoped),
+        "total": len(scoped),
+        "filters": filters,
+        # waiting for you first, the link that runs out first; then the rest, oldest first
+        "open_flows": sorted((f for f in flows if not f.done and flow_in_scope(f)
+                              and card_in_group(f)),
+                             key=lambda f: (not f.needs_you, f.deadline or float("inf"),
+                                            f.started_at)),
+        "done_flows": [f for f in flows if f.done and flow_in_scope(f)],
+        "ships": [v.ship.name for v in snap.views],
+        "tags": snap.tags(),
+        "stale": snap.polled_at is None,
+        "version": _signin_version(ui),
+    }
+
+
+def _signin_filters_known(ui: UI, params: Any) -> dict[str, str]:
+    """The filters, with a Ship the fleet does not have dropped (as a bad value is)."""
+    filters = _signin_filters(params)
+    if filters.get("ship") not in (None, *ui.fleet.snapshot.by_name):
+        del filters["ship"]
+    return filters
+
+
 async def signin_page(request: Request) -> Response:
     ui = ui_of(request)
+    ui.fleet.touch()
     batch = request.query_params.get("batch")
     batch = batch if batch and BATCH_RE.match(batch) else None
-    flows = ui.concierge.batch(batch) if batch else ui.concierge.flows()
-    return render(request, "signin.html", flows=flows, batch=batch,
-                  tags=ui.fleet.snapshot.tags(),
-                  ships=[v.ship.name for v in ui.fleet.snapshot.views])
+    snap = ui.fleet.snapshot
+    common = {"tags": snap.tags(), "ships": [v.ship.name for v in snap.views]}
+    if batch:  # the sign-ins just started together: only their cards
+        return render(request, "signin.html", flows=ui.concierge.batch(batch), batch=batch,
+                      filters={}, **common)
+    return render(request, "signin.html", batch=None,
+                  **{**common, **_signin_context(ui, _signin_filters_known(
+                      ui, request.query_params))})
+
+
+async def signins_partial(request: Request) -> Response:
+    ui = ui_of(request)
+    ui.fleet.touch()
+    if request.query_params.get("v") == _signin_version(ui):
+        return Response(status_code=204)
+    return partial(request, "_signins.html", oob=True,
+                   **_signin_context(ui, _signin_filters_known(ui, request.query_params)))
 
 
 async def signin_start(request: Request) -> Response:
@@ -959,20 +1074,39 @@ async def signin_start(request: Request) -> Response:
     service = one(fields, "service")
     tag = one(fields, "tag")
     names = [n.strip() for n in fields.get("ship", []) if n.strip()]
+    on_list = one(fields, "from") == "signin"  # a row of every sign-in: back to it
+
+    def failed() -> RedirectResponse:
+        return _signin_back(fields) if on_list else back("/signin")
+
     if service not in SERVICES:
         ui.flash(session, "bad", "Choose a service.")
-        return back("/signin")
+        return failed()
     if any(not NAME_RE.match(n) for n in names) or (tag and not TAG_RE.match(tag)):
         ui.flash(session, "bad", "Not a valid Ship name or tag.")
-        return back("/signin")
+        return failed()
     try:
         inv = ui.app.store_factory().load()
         ships = [s.name for s in inv.select(names, tag or None)]
         batch = ui.concierge.start(ships, service)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
-        return back("/signin")
+        return failed()
+    if on_list:  # the same view, at the new sign-in's card
+        # without the group filter: the cards are drawn with the page, and a sign-in
+        # just started is in no group's cards yet (nor its row in the group it left)
+        filters = _signin_filters({k: one(fields, f"f_{k}") for k in SIGNIN_FILTERS})
+        started = ui.concierge.batch(batch)
+        anchor = f"#flow-{started[0].id}" if started else ""
+        return RedirectResponse(_signin_url(filters, group="") + anchor, status_code=303)
     return back("/signin", batch=batch)
+
+
+def _flow_back(fields: dict[str, list[str]], flow: WebFlow) -> RedirectResponse:
+    """After a card's button: the page it was on (every sign-in, or its batch)."""
+    if one(fields, "from") == "signin":
+        return _signin_back(fields)
+    return back("/signin", batch=flow.batch)
 
 
 def _flow(request: Request) -> WebFlow | None:
@@ -988,7 +1122,9 @@ async def flow_card(request: Request) -> Response:
         return Response(status_code=286)  # htmx: stop polling
     if request.query_params.get("v") == str(flow.version):
         return Response(status_code=204)
-    return partial(request, "_flow.html", flow=flow)
+    on_list = request.query_params.get("from") == "signin"
+    return partial(request, "_flow.html", flow=flow, card_from="signin" if on_list else None,
+                   filters=_signin_filters(request.query_params) if on_list else {})
 
 
 async def flow_code(request: Request) -> Response:
@@ -999,10 +1135,11 @@ async def flow_code(request: Request) -> Response:
     fields = await form(request)
     values = fields.get("code", [])
     refused = flow.submit_code(values[0] if len(values) == 1 else "")
+    done = _flow_back(fields, flow)
     del fields, values  # the code goes to the engine only
     if refused:
         ui.flash(session_of(request), "bad", refused)
-    return back("/signin", batch=flow.batch)
+    return done
 
 
 async def flow_cancel(request: Request) -> Response:
@@ -1010,7 +1147,7 @@ async def flow_cancel(request: Request) -> Response:
     if flow is None:
         return not_found(request, "That sign-in has gone.")
     flow.cancel()
-    return back("/signin", batch=flow.batch)
+    return _flow_back(await form(request), flow)
 
 
 async def flow_live(request: Request) -> Response:
@@ -1026,7 +1163,7 @@ async def flow_live(request: Request) -> Response:
                 break
             await asyncio.sleep(0.05)
         return back(f"/flows/{flow.id}/terminal")
-    return back("/signin", batch=flow.batch)
+    return _flow_back(fields, flow)
 
 
 async def flow_terminal(request: Request) -> Response:
@@ -1128,6 +1265,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
     routes = [
         Route("/", home),
         Route("/partials/fleet", fleet_partial),
+        Route("/partials/signins", signins_partial),
         Route("/partials/charts", charts_partial),
         Route("/ships/{name}", ship_page),
         Route("/ships/{name}/{tab}", ship_page),

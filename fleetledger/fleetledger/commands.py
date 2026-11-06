@@ -728,6 +728,15 @@ def _report_login(app, result: concierge.LoginResult) -> int:
 def cmd_signins(args, app) -> int:
     store = app.store_factory()
     inv = store.load()
+    listing = any((args.tag, args.service, args.group, args.json, args.offline))
+    changing = args.only is not None or args.on or args.off
+    if args.name is None or (listing and not changing):
+        if changing:
+            raise FleetError("Name the Ship whose sign-ins to change.")
+        return _list_signins(args, app, inv)
+    if listing:
+        raise FleetError("--tag, --service, --group, --json and --offline list sign-ins; "
+                         "give them without --on, --off or --only.")
     ship = inv.ship(args.name)
     if args.only is not None:
         if args.on or args.off:
@@ -742,6 +751,47 @@ def cmd_signins(args, app) -> int:
             app.say(f"{choice:8} {state}")
         return 0
     return 0 if set_signins(app, store, ship.name, wanted, app.say) else 1
+
+
+def _list_signins(args, app, inv: Inventory) -> int:
+    """Every sign-in on every Ship (or those asked for), most urgent first: the same
+    rows, in the same order, as the web UI's Sign-ins page (fleetledger.signinlist)."""
+    from fleetledger import signinlist
+
+    service = (args.service or "").replace("-", "_") or None
+    if service is not None and service not in signinlist.SERVICES:
+        raise FleetError(f"Unknown service {args.service} (choose from "
+                         f"{', '.join(signinlist.SERVICES)}).")
+    ships = inv.ships(args.tag)
+    if args.name is not None:
+        ships = [s for s in ships if s.name == inv.ship(args.name).name]
+    if not ships:
+        app.say("No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
+        return 0
+    found = signinlist.rows(_views(app, inv, ships, args.offline), inv)
+    found = signinlist.narrow(found, service=service, group=args.group)
+    if args.json:
+        app.say(json.dumps([{**r.as_dict(), "fix": signinlist.fix_command(r)} for r in found],
+                           indent=2))
+        return 0
+    if not found:
+        app.say("No sign-ins match.")
+        return 0
+    counts = signinlist.counts(found)
+    app.say(" · ".join(f"{signinlist.GROUP_LABELS[g]}: {n}" for g, n in counts.items() if n))
+    rows = [[r.level or "", r.ship, r.service, r.state, signinlist.ago(r.since), r.message,
+             signinlist.fix_command(r)] for r in found]
+    lines = table(rows, ["LEVEL", "SHIP", "SERVICE", "STATE", "SINCE", "DETAIL", "FIX"]
+                  ).split("\n")
+    app.say("")
+    app.say("  " + lines[0])
+    group = None
+    for row, line in zip(found, lines[1:], strict=True):
+        if row.group != group:
+            group = row.group
+            app.say(f"{signinlist.GROUP_LABELS[group]} ({counts[group]})")
+        app.say("  " + line)
+    return 0
 
 
 def set_signins(app, store, name: str, wanted: list[str], say) -> bool:

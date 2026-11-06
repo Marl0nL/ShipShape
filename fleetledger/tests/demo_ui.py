@@ -265,6 +265,8 @@ def home(base: Path) -> None:
         host_key = " ".join((base / "keys" / f"host-{name}.pub").read_text().split()[:2])
         text += SHIP_ENTRY.format(name=name, id=ship_id(i), tags=json.dumps(tags),
                                   host_key=host_key, overlay=overlay, driver=driver)
+        if name == "ship-06":  # it never uses Google Cloud: shown as off
+            text += 'signins = ["claude", "github"]\n'
     text += demo_images(base)
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
@@ -347,6 +349,10 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         for a in agents:
             a["state"] = "idle"
     if name == "ship-04":
+        soon = datetime.fromtimestamp(now, UTC) + timedelta(days=2)
+        doc["auth"]["gcloud"].update(state="expiring", expires_at=_stamp(soon))
+        doc["attention"].append({"code": "signin-expiring", "subject": "gcloud",
+                                 "message": "The Google Cloud sign-in expires soon."})
         doc["herdr"]["agents"] = agents[:1]
         agents[0]["state"] = "idle"
         doc["attention"] += [
@@ -654,6 +660,26 @@ def seed_operations() -> None:
                              error=error, log=tuple(log), dismissed=dismissed))
 
 
+def demo_spawner(argv: list[str]):
+    """The concierge's terminal in the demo: a recorded sign-in session played back
+    (tests/fake_cli.py), instead of ssh to a Ship. A paste-back sign-in waits for its
+    code, so the Sign-ins page has something waiting for you; any code is refused."""
+    from fleetledger.concierge import engine
+
+    command = " ".join(argv)
+    fixture = ("gcloud" if "gcloud" in command else
+               "claude" if "claude" in command else None)
+    if fixture is None:  # GitHub's device flow would finish at once: wait instead
+        script = Path(tempfile.mkdtemp(prefix="fleetledger-demo-")) / "wait.txt"
+        script.write_text("> Open this URL to continue in your web browser: "
+                          "https://github.com/login/device\n"
+                          "> ! First copy your one-time code: ABCD-1234\n~ 900\n! 1\n")
+        path = script
+    else:
+        path = HERE / "fixtures" / "concierge" / f"{fixture}.txt"
+    return engine.spawn([sys.executable, str(HERE / "fake_cli.py"), str(path)])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8790)
@@ -673,7 +699,8 @@ def main() -> int:
     seed_operations()
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
                   ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
-                  stdin_isatty=lambda: False, browse=demo_browse, keyscan=demo_keyscan)
+                  stdin_isatty=lambda: False, browse=demo_browse, keyscan=demo_keyscan,
+                  spawner=demo_spawner)
     from fleetledger import ca
 
     app.signer = ca.Signer(agent_keys=lambda: set())  # the demo CA's keys; never ssh-agent

@@ -119,6 +119,7 @@
   // without ticking anything), e.g. "Keep it" next to "Remove it".
   const canDialog = typeof document.createElement("dialog").showModal === "function";
   let dialog = null;
+  let asking = null;  // the form the open dialog asks about
 
   // A form's fields shadow its own properties in browsers: a field named
   // "matches" hides form.matches, one named "elements" hides form.elements. So
@@ -228,16 +229,62 @@
     // Escape closes without touching returnValue: clear the last "ok" first, or
     // Escape on this dialog would send the form (tested in confirm.test.js).
     dialog.el.returnValue = "";
+    asking = form;
     dialog.el.onclose = function () {
+      asking = null;
       if (dialog.el.returnValue !== "ok" || none) return;
       if (want && dialog.typedInput.value !== want) return;
-      confirmFields(form).forEach(function (box) { box.checked = true; });
-      typedFields(form).forEach(function (field) { field.value = dialog.typedInput.value; });
-      E.setAttribute.call(form, "data-confirmed", "yes");
-      submit(form, submitter && submitter.form === form ? submitter : null);
+      // Redrawn under the dialog all the same (see "redraws" below): send its twin,
+      // as a form no longer in the page is never sent.
+      const target = inPage(form) ? form : twin(form);
+      if (!target) return;
+      confirmFields(target).forEach(function (box) { box.checked = true; });
+      typedFields(target).forEach(function (field) { field.value = dialog.typedInput.value; });
+      E.setAttribute.call(target, "data-confirmed", "yes");
+      submit(target, target === form ? (submitter && submitter.form === form ? submitter : null)
+        : sameButton(form, target, submitter));
     };
     dialog.el.showModal();
     (want ? dialog.typedInput : danger || none ? dialog.cancel : dialog.ok).focus();
+  }
+
+  // --- redraws while the dialog asks ------------------------------------------------
+  // A polled list (the Sign-ins page's) may hold a form the dialog is asking about.
+  // Redrawing it would leave the dialog holding a form no longer in the page, which
+  // a browser never sends: so while the dialog is open, a poll or swap that would
+  // replace that form waits (the next one after the dialog closes goes ahead).
+  function inPage(form) {
+    return E.contains.call(document.documentElement, form);
+  }
+  function holds(el) {
+    return Boolean(asking && el && (el === asking || E.contains.call(el, asking)));
+  }
+  document.addEventListener("htmx:beforeRequest", function (event) {
+    if (holds(event.detail && event.detail.elt)) event.preventDefault();
+  });
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    if (holds(event.detail && event.detail.target)) event.detail.shouldSwap = false;
+  });
+  // The same form in the page now: same action and the same hidden fields.
+  function twin(form) {
+    function key(f) {
+      return attr(f, "action") + "\n" + all(f, "input[type=hidden]").map(function (i) {
+        return i.name + "=" + i.value;
+      }).join("&");
+    }
+    const want = key(form);
+    return Array.from(document.querySelectorAll("form[data-confirm]")).find(function (f) {
+      return key(f) === want;
+    }) || null;
+  }
+
+  // The twin's button in the place of the one pressed, so its name and value go too.
+  function sameButton(form, target, submitter) {
+    function buttons(f) {
+      return all(f, "button:not([type]), button[type=submit], input[type=submit]");
+    }
+    const i = submitter ? buttons(form).indexOf(submitter) : -1;
+    return i >= 0 ? buttons(target)[i] || null : null;
   }
 
   function enhance(root) {

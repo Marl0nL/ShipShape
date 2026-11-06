@@ -3,11 +3,79 @@
 {% block body %}
 <h1>Sign-ins</h1>
 <p class="hint">
-  Each sign-in runs the tool's own no-browser sign-in on the Ship. Open the link, approve,
-  and paste the code back here: it is typed into the Ship's terminal and kept nowhere else.
-  Tokens stay on the Ship. The account is checked against the Ship's tags.
+  Every sign-in on every Ship, what needs you first. Each sign-in runs the tool's own
+  no-browser sign-in on the Ship: open the link, approve, and paste the code back here; it is
+  typed into the Ship's terminal and kept nowhere else. Tokens stay on the Ship. The account is
+  checked against the Ship's tags. The same list: <code>ship-fleet signins</code>.
 </p>
+
+{% if batch %}
+<p><a href="/signin">Show every sign-in</a></p>
+<section class="flows" aria-label="These sign-ins">
+  {% for flow in flows %}
+    {% include "_flow.html" %}
+  {% else %}
+    <p class="quiet">These sign-ins have gone.</p>
+  {% endfor %}
+</section>
+{% else %}
+<section class="toolbar signin-filters" aria-label="Narrow the list">
+  <div class="filter" role="group" aria-label="Service">
+    <span>Service</span>
+    <a href="{{ signin_url(filters, service='') }}" class="chip{% if not filters.service %} on{% endif %}"{% if not filters.service %} aria-current="true"{% endif %}>All</a>
+    {% for s in SIGNIN_SERVICES %}
+    <a href="{{ signin_url(filters, service=s) }}" class="chip{% if filters.service == s %} on{% endif %}"{% if filters.service == s %} aria-current="true"{% endif %}>{{ SIGNIN_SERVICE_LABELS[s] }}</a>
+    {% endfor %}
+  </div>
+  {% if tags %}
+  <div class="filter" role="group" aria-label="Tag">
+    <span>Tag</span>
+    <a href="{{ signin_url(filters, tag='') }}" class="chip{% if not filters.tag %} on{% endif %}"{% if not filters.tag %} aria-current="true"{% endif %}>All</a>
+    {% for t in tags %}
+    <a href="{{ signin_url(filters, tag=t) }}" class="chip{% if filters.tag == t %} on{% endif %}"{% if filters.tag == t %} aria-current="true"{% endif %}>{{ t }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <form method="get" action="/signin" class="inline filter">
+    {% for k, v in filters.items() if k != "ship" %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <label>Ship
+      <select name="ship">
+        <option value="">All Ships</option>
+        {% for s in ships %}<option value="{{ s }}"{% if filters.ship == s %} selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="ghost small">Show</button>
+  </form>
+</section>
+
+{% include "_signin_groups.html" %}
+{% include "_signins.html" %}
+
+{% if open_flows %}
+<section class="flows signin-cards" aria-labelledby="cards-heading">
+  <h2 id="cards-heading">In progress</h2>
+  {% with card_from = "signin" %}
+  {% for flow in open_flows %}
+    {% include "_flow.html" %}
+  {% endfor %}
+  {% endwith %}
+</section>
+{% endif %}
+
+{% if done_flows %}
+<details class="signin-done">
+  <summary>Finished sign-ins ({{ done_flows|length }})</summary>
+  <section class="flows">
+    {% for flow in done_flows %}
+      {% include "_flow.html" %}
+    {% endfor %}
+  </section>
+</details>
+{% endif %}
+{% endif %}
+
 <section class="batch">
+  <h2>Start sign-ins</h2>
   <form method="post" action="/signin" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Ship
@@ -30,14 +98,5 @@
     <button type="submit">Sign them all in</button>
   </form>
   {% endif %}
-</section>
-
-{% if batch %}<p><a href="/signin">Show every sign-in</a></p>{% endif %}
-<section class="flows">
-  {% for flow in flows %}
-    {% include "_flow.html" %}
-  {% else %}
-    <p class="quiet">No sign-ins yet.</p>
-  {% endfor %}
 </section>
 {% endblock %}
