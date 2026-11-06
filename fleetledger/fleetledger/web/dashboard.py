@@ -134,10 +134,12 @@ CERT_CODES = {
 
 
 def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
-               attach_here: bool = False) -> Action:
-    """The one action that fixes an attention code on a Ship. attach_here: this
-    computer can reach the Ship with plain herdr --remote (trustcmd.attaches_here),
-    so that is the command offered for a waiting agent; else ship-fleet ssh."""
+               attach_here: bool = False, *, remote: bool = False) -> Action:
+    """The one action that fixes an attention code on a Ship. attach_here: the machine
+    the browser is on reaches the Ship with plain herdr --remote, so that is the
+    command offered for a waiting agent; else ship-fleet ssh, which, from a paired
+    device (remote), is said to run on the FleetLedger computer."""
+    on_fleetledger = " (on the FleetLedger computer)" if remote else ""
     if signin:
         return Action("signin", "Sign in", signin)
     if code.startswith("signin-"):
@@ -157,9 +159,9 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
                       hint="Switched on and on the network? Then:",
                       title=f"ship-fleet status {ship}")
     commands = {
-        "agent-waiting": ("Attach to answer it:",
+        "agent-waiting": (f"Attach to answer it{'' if attach_here else on_fleetledger}:",
                           f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
-        "disk-nearly-full": ("See what fills it:",
+        "disk-nearly-full": (f"See what fills it{on_fleetledger}:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),
     }
     if code in commands:
@@ -204,17 +206,22 @@ def derived(views: Iterable[ShipView], inventory: Inventory | None,
 
 
 def alerts(views: Sequence[ShipView], items: Sequence[Item], flows_waiting: Sequence[Any],
-           inventory: Inventory | None) -> list[Alert]:
+           inventory: Inventory | None, *, attaches: Any = None,
+           remote: bool = False) -> list[Alert]:
     """Every alert, most severe first; within a level, sign-ins in progress first,
-    then in the order of ops.attention."""
+    then in the order of ops.attention. attaches(ship) -> whether plain ssh / herdr
+    --remote reach it from the machine the browser is on (default: this computer's
+    trust); remote: the browser is a paired device, so `ship-fleet ssh` runs on the
+    FleetLedger computer, not where the browser is."""
     by_name = {v.ship.name: v for v in views}
+    reach = attaches or (lambda ship: trustcmd.attaches_here(inventory, ship))
 
-    def attaches(name: str) -> bool:
+    def attaches_(name: str) -> bool:
         view = by_name.get(name)
         if inventory is None or view is None:
             return False
         try:
-            return trustcmd.attaches_here(inventory, view.ship)
+            return reach(view.ship)
         except (FleetError, OSError, ValueError):
             return False
 
@@ -227,7 +234,7 @@ def alerts(views: Sequence[ShipView], items: Sequence[Item], flows_waiting: Sequ
         found.append(Alert(
             LEVEL_OF.get(item.level, "warning"), item.ship, item.code, item.message,
             action_for(item.code, item.ship, by_name.get(item.ship), item.signin,
-                       item.code == "agent-waiting" and attaches(item.ship)),
+                       item.code == "agent-waiting" and attaches_(item.ship), remote=remote),
             item.key, waiting=item.code == "agent-waiting",
         ))
     order = {level: i for i, level in enumerate(LEVELS)}

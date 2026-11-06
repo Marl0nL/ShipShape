@@ -276,12 +276,26 @@ def _fleet_version(ui: UI) -> str:
     return f"{ui.fleet.version}.{ui.concierge.version}.{ui.jobs.version}"
 
 
-def _fleet_context(ui: UI, tag: str | None) -> dict[str, Any]:
+def _attaches(session: Session | None, inv: Any) -> dict[str, Any]:
+    """How the alerts' attach commands are worked out for this browser (dashboard.alerts):
+    from a paired device, its own machine's (and a fallback that says it runs on the
+    FleetLedger computer); else this computer's, as ever."""
+    from fleetledger.web import devicesweb
+
+    if session is None or session.device is None:
+        return {}
+    device = session.device
+    return {"attaches": lambda ship: devicesweb.logins_on(device, inv, ship)[0],
+            "remote": True}
+
+
+def _fleet_context(ui: UI, tag: str | None, session: Session | None = None) -> dict[str, Any]:
     snap = ui.fleet.snapshot
     views = snap.views_for(tag)
     items = attention_items(views)
     flows_waiting = [f for f in ui.concierge.active() if f.needs_you]
-    alerts = dashboard.alerts(views, items, flows_waiting, snap.inventory)
+    alerts = dashboard.alerts(views, items, flows_waiting, snap.inventory,
+                              **_attaches(session, snap.inventory))
     jobs = ui.jobs.recent()
     return {
         "tag": tag,
@@ -363,7 +377,8 @@ async def home(request: Request) -> Response:
     charts = _charts_context(ui, tag, range_)
     return render(request, "fleet.html", tags=ui.fleet.snapshot.tags(),
                   range=charts["range"], ranges=charts["ranges"], charts=charts["charts"],
-                  charts_version=charts["charts_version"], **_fleet_context(ui, tag))
+                  charts_version=charts["charts_version"],
+                  **_fleet_context(ui, tag, session_of(request)))
 
 
 async def fleet_partial(request: Request) -> Response:
@@ -371,7 +386,8 @@ async def fleet_partial(request: Request) -> Response:
     ui.fleet.touch()
     if request.query_params.get("v") == _fleet_version(ui):
         return Response(status_code=204)
-    return partial(request, "_fleet.html", **_fleet_context(ui, _tag_param(request)))
+    return partial(request, "_fleet.html",
+                   **_fleet_context(ui, _tag_param(request), session_of(request)))
 
 
 async def charts_partial(request: Request) -> Response:
@@ -435,9 +451,7 @@ def _attach_context(inv, ship, session: Session | None = None) -> dict[str, Any]
                 "here_label": "this computer",
                 "attach_cmd": ("herdr --remote " if here else "ship-fleet ssh ") + ship.name}
     m = devicesweb.machine_of(device, inv)
-    reaches = bool(m and m.reaches(inv, ship) and trustcmd.has_cert(ship))
-    agent = reaches and "agent" in m.logins
-    owner = reaches and "owner" in m.logins
+    agent, owner = devicesweb.logins_on(device, inv, ship)
     return {**common, "attach_here": agent, "attach_owner": owner,
             "attach_until": m.last_valid_before if m else None,
             "here_machine": m.name if m else None, "here_label": m.name if m else device.name,
@@ -492,7 +506,9 @@ async def ship_page(request: Request) -> Response:
         context["week"] = request.query_params.get("week") == "1"
     if tab == "overview":
         context["alerts"] = dashboard.alerts([context["view"]], context["items"], [],
-                                             context["snap"].inventory)
+                                             context["snap"].inventory,
+                                             **_attaches(session_of(request),
+                                                         context["snap"].inventory))
         range_ = dashboard.range_key(request.query_params.get("range"))
         context["history"] = _quietly(dashboard.ship_charts, ui.fleet.history,
                                       context["view"], range_, time.time())
@@ -861,7 +877,7 @@ async def new_ship_start(request: Request) -> Response:
         # form too, when its name is a failed attempt's that left something.
         cleared = newship.check_confirmed(fields, clearing)
         newship.start(ui, name, argv, retry_of=retry.name if retry else None,
-                      cleared=cleared)
+                      cleared=cleared, from_device=session_of(request).device is not None)
     except FleetError as exc:  # back to the form as it was posted, with the reason
         try:
             nf = await run_in_threadpool(newship.choices, ui.app, inv)

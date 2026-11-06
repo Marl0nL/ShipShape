@@ -22,13 +22,15 @@ import tarfile
 import time
 
 import pytest
+from fleetledger.concierge import audit
+from fleetledger.web import app as webapp
 from fleetledger.web import devices as devices_mod
 from fleetledger.web import devicesweb, remote, trust
 from fleetledger.web.devices import Devices
 from starlette.testclient import TestClient
 from test_ca import cakeys  # noqa: F401 - fixture
 from test_web import ORIGIN, web  # noqa: F401 - the web UI fixture
-from test_webremote import ON, REMOTE, REMOTE_ORIGIN, SERVE
+from test_webremote import LOGIN, ON, REMOTE, REMOTE_ORIGIN, SERVE
 from test_webtrust import _finished, _key, caweb  # noqa: F401 - fixture
 
 from fleetledger import ca, cli, trustcmd
@@ -67,6 +69,9 @@ def here(caweb, monkeypatch):  # noqa: F811
         ed.set_field("ship-01", "overlay_node", "n0000001")
         ed.set_field("ship-01", "names", [OVERLAY_NAME, *env.store.load().ship("ship-01").names])
     env.fleet.poll()
+    # On the FleetLedger computer every name resolves but the overlay one, so only
+    # --hostnames overlay writes the overlay name into a bundle.
+    env.app.resolves = lambda name: name != OVERLAY_NAME
 
     def rpost(path, data=None, **kw):
         return env.remote.post(path, data={"csrf": env.rcsrf, **(data or {})},
@@ -218,6 +223,7 @@ def test_settings_devices_says_and_changes_what_each_runs_on(here):
 
 
 def test_download_bundle_renews_the_certificate_and_answers_with_the_bundle(here, tmp_path):
+    here.on("lap")
     before = ca.machine(here.store.load(), "lap").last_valid_before
     response = here.rpost("/settings/machines/bundle", {"machine": "lap"})
     assert response.status_code == 200, response.text
@@ -251,7 +257,6 @@ def test_download_bundle_renews_the_certificate_and_answers_with_the_bundle(here
 
 
 def test_from_this_computer_the_hostnames_are_what_resolves_here(here):
-    here.app.resolves = lambda name: name != OVERLAY_NAME
     response = here.post("/settings/machines/bundle", {"machine": "lap"})
     assert response.status_code == 200
     config = bundle_files(response)[1]["shipshape-lap/config"]
@@ -265,12 +270,14 @@ def test_a_renewal_keeps_the_identity_its_last_bundle_named(here):
     app.signer = here.app.signer
     assert cli.main(["trust", "lap", "--identity", "~/.ssh/work_ed25519"], app) == 0, \
         out.getvalue()
+    here.on("lap")
     config = bundle_files(here.rpost("/settings/machines/bundle", {"machine": "lap"}))[1][
         "shipshape-lap/config"]
     assert "IdentityFile ~/.ssh/work_ed25519" in config
 
 
 def test_a_device_paired_hours_ago_may_still_renew_its_machine(here):
+    here.on("lap")
     here.wall.now += devices_mod.FRESH + 60  # destroy and the like need a fresh pairing;
     assert here.rpost("/settings/machines/bundle", {"machine": "lap"}).status_code == 200
 
@@ -307,10 +314,103 @@ def test_a_failed_renewal_says_why_and_sends_no_file(here, monkeypatch):
         raise FleetError("the CA key is locked")
 
     monkeypatch.setattr(trustcmd, "_sign_machine", fail)
+    here.on("lap")
     response = here.rpost("/settings/machines/bundle", {"machine": "lap"})
     assert response.status_code == 303
     assert "not renewed: ship-fleet: the CA key is locked" in here.remote.get(
         response.headers["location"]).text
+
+
+def test_a_device_gets_only_its_own_machines_bundle(here):
+    with here.store.edit() as ed:
+        ed.set_machine("desk", {"public_key": _key(here, "desk"), "added": "2026-01-01T00:00:00Z",
+                                "scope": ["all"], "logins": ["agent", "owner"]})
+    here.fleet.poll()
+    # No machine said: none.
+    response = here.rpost("/settings/machines/bundle", {"machine": "lap"})
+    assert response.status_code == 303
+    assert "only the bundle of the machine it runs on" in here.remote.get(
+        response.headers["location"]).text
+    # Its own: yes; another trusted machine: no, from the device.
+    here.on("lap")
+    assert here.rpost("/settings/machines/bundle", {"machine": "lap"}).status_code == 200
+    response = here.rpost("/settings/machines/bundle", {"machine": "desk"})
+    assert response.status_code == 303
+    assert "desk is not it" in here.remote.get(response.headers["location"]).text
+    # The desktop's own browser: any of them, as ever.
+    assert here.post("/settings/machines/bundle", {"machine": "desk"}).status_code == 200
+    # And the device's Trusted machines offer the button in its own machine's row only.
+    page = here.remote.get("/settings").text
+    machines = page[page.index('id="machines"'):page.index('id="devices"')]
+    offered = re.findall(r'action="/settings/machines/bundle"[^>]*>\s*<input[^>]*>\s*'
+                         r'<input type="hidden" name="machine" value="([a-z0-9-]+)"', machines)
+    assert offered == ["lap"]
+    # Each renewal is in the audit log, with the device's login when from one.
+    renewals = [e for e in audit.read() if e["action"] == "ui-bundle"]
+    assert [(e["service"], e["account"]) for e in renewals] == [("lap", LOGIN), ("desk", None)]
+
+
+def test_a_renewal_never_widens_what_the_machine_may_do(here, tmp_path):
+    with here.store.edit() as ed:
+        ed.set_machine_field("lap", "scope", ["tag:work"])
+        ed.set_machine_field("lap", "logins", ["agent"])
+    here.fleet.poll()
+    here.on("lap")
+    response = here.rpost("/settings/machines/bundle", {"machine": "lap"})
+    assert response.status_code == 200
+    lap = ca.machine(here.store.load(), "lap")
+    assert (list(lap.scope), list(lap.logins)) == (["tag:work"], ["agent"])
+    cert = tmp_path / "lap-cert.pub"
+    cert.write_text(bundle_files(response)[1]["shipshape-lap/lap-cert.pub"])
+    listing = subprocess.run(["ssh-keygen", "-L", "-f", str(cert)], capture_output=True,
+                             text=True, check=True).stdout
+    block = listing[listing.index("Principals:"):listing.index("Critical Options:")]
+    assert sorted(block.split()[1:]) == sorted(lap.principals)
+
+
+def test_a_ship_without_a_host_certificate_gets_no_plain_ssh(here, monkeypatch):
+    here.on("lap")
+    monkeypatch.setattr(trustcmd, "has_cert", lambda ship: ship.name != "ship-01")
+    page = access(here.remote)
+    assert "It does not reach ship-01 yet" in page
+    assert "<code>herdr --remote ship-01</code>" not in page
+
+
+def test_a_machine_untrusted_after_it_was_said_is_asked_again(here):
+    here.on("lap")
+    with here.store.edit() as ed:
+        ed.set_machine_field("lap", "revoked", "2026-01-02T00:00:00Z")
+    here.fleet.poll()
+    assert "Which trusted machine is browser on?" in access(here.remote)
+    response = here.rpost("/settings/machines/bundle", {"machine": "lap"})
+    assert response.status_code == 303
+
+
+def test_the_attention_cards_follow_the_devices_machine(here, monkeypatch):
+    seen = []
+    real = webapp.dashboard.alerts
+
+    def alerts(*args, **kwargs):
+        seen.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(webapp.dashboard, "alerts", alerts)
+    here.client.get("/")
+    assert seen[-1] == {}  # this computer's browser: this computer's trust, as ever
+    ship = here.store.load().ship("ship-01")
+    for path in ("/", "/ships/ship-01"):
+        here.remote.get(path)
+        assert seen[-1]["remote"] is True and seen[-1]["attaches"](ship) is False, path
+    here.on("lap")
+    here.remote.get("/ships/ship-01")
+    assert seen[-1]["attaches"](ship) is True
+
+
+def test_trusting_from_a_device_without_the_tick_says_nothing_about_it(here):
+    here.rpost("/settings/machines/trust", {"machine": "work", "key": _key(here, "w2"),
+                                            "scope": "all", "logins": "both"})
+    assert _finished(here).ok
+    assert here.devices.all()[0].machine is None
 
 
 def test_trusted_machines_offer_a_bundle_for_each_but_this_computer(here, monkeypatch):
@@ -433,3 +533,30 @@ def test_bundle_archive_holds_only_the_bundles_files(here):
 def test_the_gate_module_lists_bundle_download_as_an_everyday_action():
     assert not devices_mod.needs_fresh("/settings/machines/bundle")
     assert not devices_mod.needs_fresh("/settings/devices/machine")
+
+
+@pytest.mark.parametrize("from_device, create", [(True, False), (False, True)])
+def test_making_a_ship_from_a_device_never_sets_up_this_computer_anew(here, monkeypatch,
+                                                                     from_device, create):
+    from fleetledger.web import jobs, newship
+
+    asked = []
+    monkeypatch.setattr(jobs, "run_cli", lambda app, argv, job: 0)
+    monkeypatch.setattr(trustcmd, "trust_this_computer",
+                        lambda app, store, say, create=True: asked.append(create) or False)
+
+    class Job:
+        result: dict = {}
+        ok = False
+
+        def say(self, text=""):
+            pass
+
+        def write(self, text):
+            return len(text)
+
+    job = Job()
+    job.result = {}
+    newship.make_ship(here.app, "ship-01", ["new", "ship-01"], from_device=from_device)(job)
+    assert asked == [create] and job.result["from_device"] is from_device
+

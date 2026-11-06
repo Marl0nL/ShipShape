@@ -60,6 +60,18 @@ def machine_of(device: Any, inv: Any) -> Any:
     return m
 
 
+def logins_on(device: Any, inv: Any, ship: Any) -> tuple[bool, bool]:
+    """From the machine a device runs on: may plain ssh / herdr --remote reach this Ship
+    (as the agent, as you)? Its machine must be said and trusted, its Ships must
+    include this one, and the Ship must have a host certificate."""
+    from fleetledger import trustcmd
+
+    m = machine_of(device, inv)
+    if m is None or not m.reaches(inv, ship) or not trustcmd.has_cert(ship):
+        return False, False
+    return "agent" in m.logins, "owner" in m.logins
+
+
 def machine_choices(inv: Any) -> list[str]:
     """The machines a device may say it runs on: trusted ones, but not this computer."""
     from fleetledger import ca, trustcmd

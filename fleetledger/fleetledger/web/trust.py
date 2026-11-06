@@ -12,14 +12,16 @@
   (`untrust NAME`, behind the dialog) and renewing this computer's certificate
   (`trust --this-computer`) are jobs too. What a machine may log in as stays the
   /setup/machine form.
-- **Download bundle** (a machine's row, and a paired device's own machine on a
-  Ship's Access tab or in the banner when its certificate is due) renews the
+- **Download bundle** (a machine's row; from a paired device only its own machine's,
+  in its row, on a Ship's Access tab and in the banner when its certificate is due;
+  every other machine's stays with this computer's browser and the CLI) renews the
   machine's certificate with `ship-fleet trust NAME` (with `--hostnames overlay` from
   a paired device: what resolves on this computer may not there) and answers with
   the bundle as shipshape-NAME.tar.gz. It holds no secret: a certificate for a key
   whose private half stays on that machine, the CA's public line, SSH config and
   install.sh. Run in the request (it signs here and contacts no Ship), so the
   download is the answer; never for this computer's own entry, which renews itself.
+  Each is in the audit log (ui-bundle, with the device's login).
 - Every action is the CLI's own command (jobs.run_cli), so its checks, messages and
   audit entries are the CLI's.
 """
@@ -357,6 +359,10 @@ async def renew_here(request: Request) -> Response:
     return _to_machines()
 
 
+NOT_ITS_MACHINE = ("From {device}, only the bundle of the machine it runs on: {machine} is "
+                   "not it. Say which machine it is on a Ship's Access tab. Any machine's "
+                   "bundle comes from the FleetLedger computer's own browser, or ship-fleet "
+                   "trust NAME there.")
 BUNDLE_FILES = ("config", "known_hosts", "install.sh", "bundle.json")  # and NAME-cert.pub
 IDENTITY_LINE = re.compile(r"^\s*IdentityFile\s+(\S+)\s*$", re.M)
 
@@ -400,7 +406,8 @@ async def download_bundle(request: Request) -> Response:
     bundle to download. from=access&ship=S returns to that Ship's Access tab on a
     refusal; else Trusted machines."""
     from fleetledger import trustcmd
-    from fleetledger.web import jobs
+    from fleetledger.concierge import audit
+    from fleetledger.web import devicesweb, jobs
     from fleetledger.web.app import NAME_RE, form, one, session_of
 
     fields = await form(request)
@@ -416,9 +423,15 @@ async def download_bundle(request: Request) -> Response:
         _flash(request, "bad", f"{m.name} is this computer: FleetLedger renews its certificate "
                                "itself (Renew now).")
         return RedirectResponse(where, status_code=303)
+    device = session_of(request).device
+    if device is not None:  # a paired device gets its own machine's bundle, no other
+        own = devicesweb.machine_of(device, inv)
+        if own is None or own.name != m.name:
+            _flash(request, "bad", NOT_ITS_MACHINE.format(device=device.name, machine=m.name))
+            return RedirectResponse(where, status_code=303)
     identity = _identity_before(m.name)
     argv = ["trust", m.name, *([f"--identity={identity}"] if identity else []),
-            *(["--hostnames=overlay"] if session_of(request).device is not None else [])]
+            *(["--hostnames=overlay"] if device is not None else [])]
     said = io.StringIO()
     code = await run_in_threadpool(jobs.run_cli, _ui(request).app, argv, said)
     if code != 0:
@@ -426,8 +439,9 @@ async def download_bundle(request: Request) -> Response:
         _flash(request, "bad", f"{m.name}'s bundle was not renewed: "
                                + (lines[-1] if lines else "the command failed."))
         return RedirectResponse(where, status_code=303)
+    audit.record("-", "ui-bundle", m.name, "ok", account=device.login if device else None)
     # The pages read the poller's inventory: take the new certificate's date in now
-    # (no Ship is asked), so a "certificate due" banner goes at once.
+    # (no Ship is asked), so a "certificate due" banner goes at the next page.
     await run_in_threadpool(_ui(request).fleet.poll, [])
     try:
         data = await run_in_threadpool(bundle_archive, m.name)

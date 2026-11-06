@@ -152,7 +152,8 @@ ship-fleet trust laptop --print-cert | ssh laptop 'cat > ~/.ssh/shipshape/laptop
 Or, from the web UI (on this computer, or on the laptop itself through the remote web
 UI, [remote-ui.md](remote-ui.md)): **Download bundle** in the machine's row under
 Settings ▸ Trusted machines. It runs `ship-fleet trust laptop` and hands you the bundle
-as `shipshape-laptop.tar.gz`; on the laptop,
+as `shipshape-laptop.tar.gz` (from a paired device, only for the machine it runs on); on
+the laptop,
 `tar xzf shipshape-laptop.tar.gz && sh shipshape-laptop/install.sh`. The bundle holds
 no secret (a certificate for the laptop's key, the CA's public line, SSH config and
 `install.sh`), and a renewal keeps the private key path the last bundle named.

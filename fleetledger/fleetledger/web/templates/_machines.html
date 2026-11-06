@@ -76,7 +76,7 @@
     </td>
     <td>{{ until(m.last_valid_before) }}</td>
     <td class="row-actions">
-      {% if not here %}
+      {% if not here and (not this_device or browsers) %}
       <form method="post" action="/settings/machines/bundle" class="inline">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="machine" value="{{ m.name }}">
@@ -105,7 +105,7 @@
 <h4>Trust a machine</h4>
 <p class="hint">On that machine, make a key (<code>ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519</code>)
   and paste the one line of its <code>.pub</code> file here. FleetLedger writes the machine's
-  bundle (its certificate, SSH config and the CA line): <strong>Download bundle</strong> in its row
+  bundle (its certificate, SSH config and the CA line): <strong>Download bundle</strong> in its row{% if this_device %} (from {{ this_device.name }}, only for the machine it runs on){% endif %}
   (on that machine: <code>tar xzf shipshape-NAME.tar.gz &amp;&amp; sh shipshape-NAME/install.sh</code>),
   or copy its folder over and run <code>sh install.sh</code> there. Download it again to renew
   the certificate.</p>

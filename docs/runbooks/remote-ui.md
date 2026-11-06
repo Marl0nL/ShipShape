@@ -163,7 +163,8 @@ which would trust the desktop rather than the laptop.
 Once, on the laptop:
 
 1. Make it a key: `ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519`.
-2. In the remote web UI, Settings ▸ Trusted machines ▸ **Trust a machine**: name it
+2. In the remote web UI, Settings ▸ Trusted machines ▸ **Trust a machine** (trusting a
+   machine needs the laptop paired in the last 4 hours; pair it again if not): name it
    (`laptop`), paste the one line of `~/.ssh/shipshape/id_ed25519.pub`, choose its Ships
    and logins, and tick **this browser runs on it**. (Already trusted? Choose it on a
    Ship's Access tab, in Settings ▸ Devices ▸ Runs on, or
@@ -185,7 +186,10 @@ show those commands.
 fleet's certificate lifetime, 7 days by default. In its last day, every page on the
 laptop shows a banner with **Renew and download its bundle**; run the same two commands.
 Downloading a bundle does not need a fresh pairing: a certificate is no use without the
-laptop's private key, which never leaves it. If the laptop is lost, untrust it
+laptop's private key, which never leaves it. From a paired device you get only the bundle
+of the machine it runs on; any other machine's comes from the desktop's own browser
+(Settings ▸ Trusted machines) or `ship-fleet trust NAME` there. Each download is in the
+activity log (`ui-bundle`, with the device's login). If the laptop is lost, untrust it
 (Settings ▸ Trusted machines) as well as revoking its device.
 
 A phone has no ssh: leave its machine unsaid.
