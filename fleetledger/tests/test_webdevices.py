@@ -155,8 +155,65 @@ def test_taking_a_login_off_the_list_locks_its_devices_out_at_once(web):
     response = web.client(LOGIN).get("/", headers=cookie)  # the same run
     assert response.status_code == 403 and "may not use" in response.text
     assert web.client(OTHER).get("/static/app.css").status_code == 200  # added at once too
+    # And its devices are revoked, not only refused: putting the login back does not
+    # let them in again.
+    assert "Signed out 1 device(s)" in out.getvalue() and web.devices.all() == []
     assert cli.main(["ui", "remote", "--login", LOGIN], cli.App(out=out, err=out)) == 0
-    assert web.client(LOGIN).get("/", headers=cookie).status_code == 200
+    assert web.client(LOGIN).get("/", headers=cookie).status_code == 401
+    assert [e["outcome"] for e in audit.read() if e["action"] == "ui-revoke"] == ["1 device(s)"]
+
+
+def test_turning_it_on_again_with_other_logins_revokes_the_old_ones_devices(web):
+    web.pair()
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, tailscale=FakeTailscale())
+    assert cli.main(["ui", "remote", REMOTE, "--port", str(PORT), "--login", OTHER], app) == 0
+    assert "Signed out 1 device(s)" in out.getvalue() and web.devices.all() == []
+
+
+def test_a_request_from_another_login_does_not_keep_a_device_alive(web):
+    web.start(Remote(REMOTE, PORT, (LOGIN, OTHER)))
+    web.pair()
+    cookie = {"Cookie": f"{COOKIE}={web.remote.cookies[COOKIE]}"}
+    web.wall.now += devices_mod.IDLE - 60
+    assert web.client(OTHER).get("/", headers=cookie).status_code == 401
+    web.wall.now += devices_mod.IDLE - 60  # its own last use: nearly 24 hours ago
+    assert web.client(LOGIN).get("/", headers=cookie).status_code == 401
+
+
+def test_another_logins_old_cookie_is_neither_replaced_nor_lends_its_name(web):
+    web.start(Remote(REMOTE, PORT, (LOGIN, OTHER)))
+    web.pair(name="laptop")
+    cookie = {"Cookie": f"{COOKIE}={web.remote.cookies[COOKIE]}"}
+    other = web.client(OTHER)
+    assert other.get(web.link().removeprefix(REMOTE), headers=cookie).status_code == 200
+    devices = {d.login: d for d in web.devices.all()}
+    assert devices[LOGIN].name == "laptop" and devices[OTHER].name != "laptop"
+    assert web.client(LOGIN).get("/", headers=cookie).status_code == 200  # still there
+
+
+def test_a_wrong_token_never_opens_a_waiting_link(web):
+    link = web.link().removeprefix(REMOTE)
+    for wrong in ("x" * 43, link.split("token=")[1][:-1] + "A", ""):
+        assert web.client().get(f"/login?token={wrong}").status_code == 403
+    assert web.devices.all() == []
+    assert web.remote.get(link).status_code == 200  # the right one still works, once
+
+
+def test_the_csrf_token_is_not_the_session_id_and_no_page_shows_the_id(web):
+    csrf = web.pair()
+    session_id = web.remote.cookies[COOKIE]
+    assert csrf != session_id and session_id not in csrf
+    for path in ("/", "/settings", "/ships/ship-01"):
+        assert session_id not in web.remote.get(path).text, path
+
+
+def test_device_times_say_their_zone(web):
+    web.pair(name="laptop")
+    section = web.remote.get("/settings").text
+    section = section[section.index('id="devices"'):section.index('id="images"')]
+    assert re.search(r"\d{4}-\d\d-\d\d \d\d:\d\d UTC", section)
+    assert re.search(r"paired \d{4}-\d\d-\d\d \d\d:\d\d UTC", run(["ui", "devices"])[1])
 
 
 @pytest.mark.parametrize("change", [

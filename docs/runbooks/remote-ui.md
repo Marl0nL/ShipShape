@@ -164,7 +164,8 @@ needs the laptop to have been paired in the last 4 hours (below).
   The desktop's own browser is never held to this.
 - A device works only with the Tailscale login that paired it, and only while that
   login is on the list. Taking a login off (`ship-fleet ui remote --login ...` without
-  it) locks its devices out at once, in a running UI too.
+  it) revokes the devices it paired, at once, in a running UI too: putting the login
+  back later does not let them in again; each needs a new pairing link.
 
 On the remote address, besides:
 
@@ -198,7 +199,9 @@ ship-fleet ui revoke --all            # every device
 Or **Settings ▸ Devices ▸ Revoke** (or **Sign out every other device**). The running UI
 refuses the device at its next request; it needs a new pairing link to get back in.
 If the device itself may be compromised, also consider whether its Tailscale login was
-(sign it out in the admin console, and take it off with `ship-fleet ui remote --login`).
+(sign it out in the admin console, and take it off the list with `ship-fleet ui remote
+--login`, giving only the logins that stay; that revokes every device the removed login
+paired).
 Sessions on the desktop's own browser are not devices: stopping `ship-fleet ui` ends
 them, as before.
 

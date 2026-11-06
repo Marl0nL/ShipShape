@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from starlette.requests import Request
@@ -51,7 +50,7 @@ def section_context(ui: Any, session: Any) -> dict[str, Any]:
         setting, broken = remote.load(), None
     except FleetError as exc:
         setting, broken = None, exc.message
-    now = time.time()
+    now = _store(ui).wall()
     mine = session.device.key if session.device is not None else None
     rows = [{
         "key": d.key, "short": d.short, "name": d.name, "login": d.login,

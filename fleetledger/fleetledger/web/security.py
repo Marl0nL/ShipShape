@@ -235,9 +235,9 @@ class Gate:
             name, how = None, devices_mod.FROM_TERMINAL
         else:
             return None
-        old = self.devices.get(replaces) if replaces else None
-        if old is not None and old.login != login:
-            old = None
+        # The device this browser held before, if the same login paired it (another
+        # login's device is neither replaced nor lends its name).
+        old = self.devices.get(replaces, login) if replaces else None
         session_id = secrets.token_urlsafe(32)
         device = self.devices.add(
             session_id, name=name or (old.name if old else devices_mod.guess_name(user_agent)),
@@ -272,8 +272,8 @@ class Gate:
         paired it, not lapsed and not revoked (the file is re-read when it changes)."""
         if self.devices is None or self.remote is None or where != self.remote.origin:
             return None
-        device = self.devices.get(cookie_value)
-        if device is None or device.origin != where or not login or device.login != login:
+        device = self.devices.get(cookie_value, login or "")
+        if device is None or device.origin != where:
             return None
         return Session(cookie_value, devices_mod.csrf_for(cookie_value), self.clock(),
                        where=where, device=device)

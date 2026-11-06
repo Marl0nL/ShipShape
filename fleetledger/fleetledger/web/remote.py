@@ -366,7 +366,8 @@ def cmd_remote(args, app) -> int:
         save(Remote(current.origin, current.port, logins))
         audit.record("-", "ui-remote", "web", "logins")
         app.say(f"Only {', '.join(logins)} may now use {current.origin}, in a running "
-                "ship-fleet ui too. Devices paired by another login no longer get in.")
+                "ship-fleet ui too.")
+        _revoke_unlisted(logins, app)
         return 0
     origin = parse_origin(args.origin)
     if args.port is None:
@@ -381,6 +382,7 @@ def cmd_remote(args, app) -> int:
     check_serve(remote, runner(app))
     save(remote)
     audit.record("-", "ui-remote", "web", "on")
+    _revoke_unlisted(logins, app)
     app.say(f"Remote web UI is on: {remote.origin}, through Tailscale Serve to "
             f"127.0.0.1:{remote.port}, for {', '.join(logins)}. Run ship-fleet ui (it now "
             f"uses port {remote.port}); each start checks Serve again. Pair each device "
@@ -388,6 +390,19 @@ def cmd_remote(args, app) -> int:
     app.say(f"Before using it, read the risks in {RUNBOOK}: anyone with a session there "
             "controls the whole fleet.")
     return 0
+
+
+def _revoke_unlisted(logins: tuple[str, ...], app) -> None:
+    """Taking a login off the list revokes the devices it paired (devices.revoke, as
+    ship-fleet ui revoke), so putting it back later does not let them in again."""
+    from fleetledger.web import devices
+
+    store = devices.Devices()
+    gone = [d for d in store.all() if d.login not in logins]
+    if gone and devices.revoke(store, gone):
+        app.say(f"Signed out {len(gone)} device(s) paired by a login no longer on the list "
+                f"({', '.join(d.name for d in gone)}): each needs a new pairing link, even "
+                "if its login is put back.")
 
 
 class Allowed:

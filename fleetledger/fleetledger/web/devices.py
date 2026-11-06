@@ -281,13 +281,14 @@ class Devices:
             self._stamp = stamp
         return self._cache
 
-    def get(self, session_id: str) -> Device | None:
-        """The device this session id belongs to, if it is paired and has not lapsed.
-        Counts as a request: its last-seen time moves on."""
+    def get(self, session_id: str, login: str) -> Device | None:
+        """The device this session id belongs to, if it is paired, has not lapsed and was
+        paired by this login. Counts as its request (its last-seen time moves on) only
+        then: a request from any other login is not one of its own."""
         key = digest(session_id)
         device = next((d for k, d in self._current().items() if hmac.compare_digest(k, key)),
                       None)
-        if device is None:
+        if device is None or not login or device.login != login:
             return None
         now = self.wall()
         if device.lapsed(now, self._seen.get(key)):
@@ -379,10 +380,10 @@ def qr_terminal(text: str, out: Any) -> bool:
 
 
 def when(wall: float) -> str:
-    """A wall-clock time as this computer's local date and time."""
+    """A wall-clock time in UTC, as the rest of Settings shows times (certificates)."""
     from datetime import UTC, datetime
 
-    return datetime.fromtimestamp(wall, UTC).astimezone().strftime("%Y-%m-%d %H:%M")
+    return datetime.fromtimestamp(wall, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def pair_link(name_text: str | None, how: str, store: Devices | None = None) -> tuple[str, Any]:
