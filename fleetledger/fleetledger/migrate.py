@@ -349,6 +349,8 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
             continue
         if rel == "ships.toml.lock":
             plan.leave(f, "a lock")
+        elif rel in (handover.STANDBY, handover.RETIRED):
+            continue  # this copy's own marker: it stops the move ("this copy", above)
         elif rel == "known_hosts":
             plan.leave(f, "FleetLedger's known_hosts: rebuilt from the inventory's pins")
         elif rel == trustcmd.THIS_COMPUTER:
@@ -739,8 +741,8 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
     argv = ssh_argv(host, remote_command(ship_fleet, ["migrate", "activate", "--yes"]), options)
     try:
         code, _ = _session(app, host, argv)
-    except FleetError as exc:
-        app.note(exc.message)
+    except Exception as exc:  # noqa: BLE001 - this copy has retired: say what to do, always
+        app.note(exc.message if isinstance(exc, FleetError) else type(exc).__name__)
         code = REFUSED
     if code == 0:
         app.say(f"\n{host} is now the active FleetLedger (epoch {handed}), and nothing on any "
@@ -1204,6 +1206,8 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
     than the one it handed on."""
     store = app.store_factory()
     here = handover.marker(store)
+    if here is not None and here.role == "unreadable":
+        raise handover.banner(here)
     if here is not None and here.role == "retired" and not here.wiped:
         raise FleetError(
             f"This computer has a retired FleetLedger (it handed the fleet to "
@@ -1584,6 +1588,8 @@ def _activate(args, app) -> int:
     store = app.store_factory()
     with inuse.exclusive(store):
         m = handover.marker(store)
+        if m is not None and m.role == "unreadable":
+            raise handover.banner(m)
         if m is None or m.role != "standby":
             raise FleetError("This FleetLedger is not on standby: there is nothing to activate.")
         handover.confirm(app, f"Make this copy the active FleetLedger (epoch {m.epoch})? Only "
@@ -1624,6 +1630,8 @@ def _unretire(args, app) -> int:
     store = app.store_factory()
     with inuse.exclusive(store):
         m = handover.marker(store)
+        if m is not None and m.role == "unreadable":
+            raise handover.banner(m)
         if m is None or m.role != "retired":
             raise FleetError("This FleetLedger is not retired.")
         if m.wiped:
@@ -1647,6 +1655,8 @@ def _wipe(args, app) -> int:
     store = app.store_factory()
     with inuse.exclusive(store):
         m = handover.marker(store)
+        if m is not None and m.role == "unreadable":
+            raise handover.banner(m)
         if m is None:
             raise FleetError("This FleetLedger is the active one: wipe deletes only a retired "
                              "copy (or one on standby).",

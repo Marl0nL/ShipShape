@@ -15,6 +15,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 import tomllib
@@ -32,7 +33,7 @@ from test_migrate import (  # noqa: F401  (fixtures)
     short,
 )
 
-from fleetledger import cli, handover, migrate, schemas
+from fleetledger import cli, handover, inuse, keys, migrate, schemas
 
 pytestmark = [
     pytest.mark.skipif(
@@ -270,9 +271,7 @@ def test_wipe_waits_two_weeks_then_says_what_goes_and_what_stays(computers, monk
     code, out, err = a.run("migrate", "wipe")
     assert code == 1 and "kept two weeks for a rollback (14 more day(s))" in err
 
-    m = role(a)
-    old = (handover._parse(m.when) - timedelta(days=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    handover.write(a.store, dataclasses.replace(m, when=old))
+    _retired_long_ago(a)
     code, out, err = a.run("migrate", "wipe")
     assert code == 1 and "add --yes" in err and a.store.path.exists()  # asks first
     a.app.stdin_isatty = lambda: True
@@ -302,6 +301,76 @@ def test_wipe_waits_two_weeks_then_says_what_goes_and_what_stays(computers, monk
     assert a.run("doctor", "--offline")[0] == 0
 
 
+def _retired_long_ago(a):
+    m = role(a)
+    old = (handover._parse(m.when) - timedelta(days=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    handover.write(a.store, dataclasses.replace(m, when=old))
+
+
+def test_a_locked_keyring_stops_the_wipe_before_anything_goes(computers, monkeypatch):
+    from test_secret_store import fake_backend
+
+    a, b, world = computers
+    assert a.run("migrate", "retire", "--yes")[0] == 0
+    before = a.files()
+    a.ring = fake_backend(locked=True)
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 1 and "Cannot reach the keyring" in err and "nothing was deleted" in err
+    assert a.files() == before
+    assert (a.home / ".ssh" / "shipshape_fleet_ed25519").exists()
+
+
+def test_a_key_you_look_after_yourself_is_kept_and_said(computers, monkeypatch):
+    a, b, world = computers
+    admin = a.home / ".ssh" / "shipshape_fleet_ed25519"
+    with a.store.edit() as ed:  # the admin key is yours, not FleetLedger's
+        keys_list = ed.doc["fleet"]["managed_keys"]["keys"]
+        keys_list.remove("~/.ssh/shipshape_fleet_ed25519")
+    assert a.run("migrate", "retire", "--yes")[0] == 0
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, err
+    goes, stays = out.split("Keeps:")
+    assert "shipshape_fleet_ed25519" not in goes
+    assert "the fleet admin key, which you look after yourself" in stays
+    assert admin.exists() and admin.with_name(admin.name + ".pub").exists()
+    assert not (a.home / ".ssh" / "shipshape_host_ca_ed25519").exists()  # FleetLedger's: gone
+
+
+def test_a_file_store_wipe_keeps_your_own_keys_passphrase_file(computers, monkeypatch, tmp_path,
+                                                               short):
+    from fleetledger.web import setup
+
+    a, b, world = computers
+    c = Computer("laptop", tmp_path / "c", short, a.checkout, world)
+    try:
+        c.use(monkeypatch)
+        setup._new_fleet(c.app, {"store": ["file"], "your_key": ["new"]})
+        own = c.home / ".ssh" / "shipshape_ed25519"
+        own_passphrase = keys.passphrase_file(own)
+        admin_passphrase = keys.passphrase_file(c.home / ".ssh" / "shipshape_fleet_ed25519")
+        assert own_passphrase.exists() and admin_passphrase.exists()
+        assert c.run("migrate", "retire", "--yes")[0] == 0
+        code, out, err = c.run("migrate", "wipe", "--now", "--yes")
+        assert code == 0, err
+        assert "the fleet admin key's passphrase" in out.split("Keeps:")[0]
+        assert own.exists() and own_passphrase.exists()  # this computer still attaches with it
+        assert keys.public_of(own, own_passphrase.read_text().strip()) == keys.public_line(own)
+        assert not admin_passphrase.exists()
+        assert not (c.home / ".ssh" / "shipshape_fleet_ed25519").exists()
+    finally:
+        os.kill(c.agent_pid, signal.SIGTERM)
+
+
+def test_handing_over_waits_for_every_other_ship_fleet(computers, monkeypatch):
+    a, b, world = computers
+    with inuse.using(a.store):  # the web UI, say: its jobs could act under a retired copy
+        for argv in (("migrate", "retire", "--yes"), ("migrate", "unretire", "--yes"),
+                     ("migrate", "wipe", "--now", "--yes")):
+            code, out, err = a.run(*argv)
+            assert code == 1 and "Another ship-fleet is running" in err, argv
+    assert role(a) is None
+
+
 def test_an_active_copy_is_never_wiped(computers, monkeypatch):
     a, b, world = computers
     code, out, err = a.run("migrate", "wipe", "--now", "--yes")
@@ -322,13 +391,29 @@ def test_a_copy_on_standby_can_be_dropped_at_once(computers, monkeypatch):
 # --- the markers -----------------------------------------------------------------------------
 
 
-def test_a_marker_that_cannot_be_read_counts_as_retired(computers, monkeypatch):
+@pytest.mark.parametrize("name,text", [
+    ("standby.json", "{not json"),
+    ("retired.json", json.dumps({"schema": handover.SCHEMA, "role": "retired",
+                                 "when": "2026-11-06 10:00", "other": None, "epoch": 1})),
+    ("retired.json", json.dumps({"schema": handover.SCHEMA, "role": "retired",
+                                 "when": "2026-11-06T10:00:00Z", "other": None,
+                                 "epoch": 1 << 62}))])
+def test_a_marker_that_cannot_be_read_stops_everything_and_says_which(computers, monkeypatch,
+                                                                     name, text):
     a, b, world = computers
-    (a.root / "config" / "standby.json").write_text("{not json")
-    code, out, err = a.run("ls")
-    assert code == 1 and "retired" in err
-    with pytest.raises(FleetError, match="has a retired FleetLedger"):
+    marker = a.root / "config" / name
+    marker.write_text(text)
+    doc = a.store.path.read_text()
+    for argv in (("ls",), ("migrate", "unretire", "--yes"), ("migrate", "wipe", "--now", "--yes"),
+                 ("migrate", "activate", "--yes"), ("migrate", "retire", "--yes")):
+        code, out, err = a.run(*argv)
+        assert code == 1 and f"{name} cannot be read" in err and "Traceback" not in err, argv
+    code, out, err = a.run("migrate", "check")
+    assert code == 1 and f"{name} cannot be read" in out
+    with pytest.raises(FleetError, match="cannot be read"):
         receive(a, monkeypatch, b"")
+    assert a.store.path.read_text() == doc and marker.read_text() == text  # nothing acted on
+    assert "cannot be read" in a.run("doctor", "--offline")[1]
 
 
 def test_the_epoch_is_part_of_the_inventory_contract(store):
