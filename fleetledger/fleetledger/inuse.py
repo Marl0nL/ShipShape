@@ -30,14 +30,20 @@ def lock_path(store) -> Path:
 @contextmanager
 def _held(store, mode: int, busy: FleetError) -> Iterator[None]:
     path = lock_path(store)
-    if not path.is_dir():
-        paths.private_dir(path)
-    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        if not path.is_dir():
+            paths.private_dir(path)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        raise FleetError(f"Cannot open {path} to lock it: {exc.strerror}.") from None
     try:
         try:
             fcntl.flock(fd, mode | fcntl.LOCK_NB)
         except BlockingIOError:
             raise busy from None
+        except OSError as exc:  # a folder that cannot be locked (some network file systems)
+            raise FleetError(f"Cannot lock {path} ({exc.strerror}): FleetLedger's folders "
+                             "must be on a local disk.") from None
         yield
     finally:
         os.close(fd)

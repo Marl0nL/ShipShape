@@ -386,7 +386,12 @@ def make_fleet(a: Computer, monkeypatch) -> None:
     (data / "images" / "base").mkdir(parents=True)
     (data / "images" / "base" / "noble.img").write_bytes(b"ubuntu")
     (a.root / "config" / "proxmox-setup-progress.json").write_text("{}\n")
-    (a.root / "config" / "remote-ui.json").write_text("{}\n")
+    (a.root / "config" / "remote-ui.json").write_text(json.dumps(
+        {"origin": "https://desktop.example-tailnet.ts.net", "port": 8765}))
+    web = data / "web"  # the remote web UI's paired browsers and pairing links
+    web.mkdir()
+    for name in ("devices.json", "pairings.json", ".lock"):
+        (web / name).write_text("{}\n")
     assert a.run("ls")[0] == 0  # the status cache, and FleetLedger's known_hosts
 
 
@@ -434,6 +439,9 @@ def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed
     assert "FAIL" not in out and "WARN" not in out
     for name, *_ in SHIPS:
         assert f"{name} certificate" in out and "signed by this CA; same revocation list" in out
+    for label in ("fleet admin key", "host CA key", "user CA key"):
+        assert re.search(rf"ok +{label} +opens with its passphrase from your OS keyring", out)
+    assert "ship-fleet ui remote https://<this computer's name> --port 8765 (" in out
 
     # The whole inventory came: every Ship and pin, machine, issued certificate, revocation.
     b_doc = tomllib.loads(b.store.path.read_text())
@@ -468,14 +476,16 @@ def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed
     # What never moves; known_hosts is written afresh from the pins.
     assert not (b.root / "config" / "this-computer.json").exists()
     for gone in ("config/proxmox-setup-progress.json", "config/remote-ui.json",
-                 "data/inbox-spool", "data/images/base"):
+                 "data/inbox-spool", "data/images/base", "data/web"):
         assert not (b.root / gone).exists(), gone
     assert "known_hosts" not in b_doc["fleet"]
     assert (b.root / "config" / "known_hosts").read_text() == \
         (a.root / "config" / "known_hosts").read_text()
     # What does: history and caches.
     for kept in ("audit.log", "attempts.json", "net/ship-01.json", "status/ship-01.json",
-                 "trust/laptop", "trust/phone"):
+                 "history.sqlite3"):
+        assert stat.S_IMODE((b.root / "data" / kept).stat().st_mode) == 0o600, kept
+    for kept in ("trust/laptop", "trust/phone"):
         assert (b.root / "data" / kept).exists(), kept
     rows = sqlite3.connect(b.root / "data" / "history.sqlite3").execute(
         "select * from samples").fetchall()
@@ -536,7 +546,8 @@ def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
                         "api": {"tailnet": "-", "oauth_client_id": "k123EXAMPLE",
                                 "secret_store": "keyring", "keyring_item": oauth_item}})
     stream = send_bytes(a, monkeypatch)
-    assert b"11111111-2222" not in stream.split(b"secrets.json")[0]  # only in the secrets
+    holding = [i.name for i, data in _members(stream) if b"11111111-2222" in data]
+    assert holding == ["secrets.json"]  # in no other member, the manifest included
 
     seen = {}
 
@@ -599,7 +610,10 @@ def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
     for path, why in (("this-computer.json", "a fact about this computer"),
                       ("known_hosts", "rebuilt from the inventory"),
                       ("proxmox-setup-progress.json", "part-finished Proxmox setup"),
-                      ("remote-ui.json", "the remote web UI setting: a fact about this computer"),
+                      ("remote-ui.json", "the remote web UI setting: this computer's own name"),
+                      ("web/devices.json", "paired browsers and pairing links"),
+                      ("web/pairings.json", "pair each device again"),
+                      ("web/.lock", "bound to this computer's address"),
                       ("inbox-spool/half-sent", "half-way to a Ship"),
                       ("images/base/noble.img", "Ubuntu's cloud image"),
                       ("shipshape_ed25519", "stay on your machines")):
@@ -657,6 +671,30 @@ def test_a_locked_keyring_stops_the_move_before_anything_is_sent(computers, monk
     assert code == 1 and "the fleet admin key's passphrase" in out and "locked" in out
     with pytest.raises(FleetError):
         send_bytes(a, monkeypatch)
+
+
+def test_no_secret_is_ever_printed(computers, monkeypatch):
+    a, b, world = computers
+    plan = migrate.check(a.app)
+    secrets = list(plan.secrets["passphrases"].values())
+    assert len(secrets) == 3 and all(len(x) > 20 for x in secrets)
+    said = "".join(a.run("migrate", "check")[1:])
+    a.app.popen = lambda argv, **kw: pytest.fail("ssh ran")
+    with inuse.using(a.store):  # a blocker: push prints the plan, never runs ssh
+        said += "".join(a.run("migrate", "push", "vm.example")[1:])
+    assert receive(b, monkeypatch, send_bytes(a, monkeypatch)) == migrate.VERIFIED
+    said += b.out.getvalue() + b.err.getvalue() + "".join(b.run("migrate", "verify")[1:])
+    for secret in secrets:
+        assert secret not in said
+
+
+def test_other_commands_run_beside_each_other(computers, monkeypatch):
+    a, b, world = computers
+    with inuse.using(a.store), inuse.using(a.store):  # the web UI, and a sign-in, say
+        code, out, err = a.run("ls")
+        assert code == 0, err
+        code, out, err = a.run("doctor", "--offline")
+        assert "being moved" not in err
 
 
 def test_uncommitted_changes_in_the_checkout_stop_the_move(computers, monkeypatch):
@@ -723,6 +761,24 @@ def test_receive_wants_the_same_commit(computers, monkeypatch, tmp_path):
     assert not b.store.path.exists()
 
 
+def test_receive_wants_a_clean_checkout_too(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    (a.checkout.root / "versions.toml").write_text("# changed here\n")  # B's checkout too
+    with pytest.raises(FleetError, match="uncommitted changes"):
+        receive(b, monkeypatch, stream)
+    assert not b.store.path.exists()
+
+
+def test_receive_refuses_while_another_ship_fleet_runs_there(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    with inuse.using(b.store), pytest.raises(FleetError, match="Another ship-fleet is running"):
+        receive(b, monkeypatch, stream)
+    assert not b.store.path.exists()
+
+
 def _members(stream: bytes) -> list[tuple[tarfile.TarInfo, bytes]]:
     with tarfile.open(fileobj=io.BytesIO(stream), mode="r|") as tar:
         return [(m, tar.extractfile(m).read()) for m in tar]
@@ -768,13 +824,19 @@ def _tamper(stream: bytes, how: str) -> bytes:
         entry.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
         members[0] = (members[0][0], json.dumps(manifest).encode())
         members[-1] = (members[-1][0], data)
+    elif how in ("..", "config"):
+        manifest = json.loads(members[0][1])
+        key = next(k for k in manifest["keys"] if k["role"] == ("agent" if how == ".." else
+                                                               "host-ca"))
+        key["name"] = how
+        members[0] = (members[0][0], json.dumps(manifest).encode())
     elif how == "truncated":
         return stream[: len(stream) // 2]
     return _pack(members)
 
 
 @pytest.mark.parametrize("how", ["flipped", "cut short", "extra", "manifest", "secrets",
-                                 "control character", "truncated"])
+                                 "control character", "..", "config", "truncated"])
 def test_a_stream_that_is_not_what_was_sent_writes_nothing(computers, monkeypatch, how):
     a, b, world = computers
     bad = _tamper(send_bytes(a, monkeypatch), how)
@@ -856,6 +918,30 @@ def test_a_ship_the_new_computer_cannot_reach_leaves_it_unverified(computers, mo
     world.down.clear()
     code, out, err = b.run("migrate", "verify")
     assert code == 0 and "FAIL" not in out, out + err
+
+
+def test_a_ship_behind_on_the_revocation_list_is_a_warning_not_ok(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    ship = world.ships["ship-02"]
+    ship.trust = copy.deepcopy(ship.trust)
+    ship.trust["revoked_keys"] = base64.b64encode(b"some other list").decode()
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED  # a warning, not a failure
+    out = b.out.getvalue()
+    assert re.search(r"WARN +ship-02 SSH trust +its user CA keys or revocation list differ", out)
+    assert "ship-fleet ca sign ship-02" in out
+    assert re.search(r"ok +ship-01 certificate +signed by this CA; same revocation list", out)
+
+
+def test_the_remote_web_ui_logins_are_said_not_turned_on(computers, monkeypatch):
+    a, b, world = computers
+    (a.root / "config" / "remote-ui.json").write_text(json.dumps({
+        "origin": "https://desktop.example-tailnet.ts.net", "port": 8765,
+        "logins": ["you@example.com"]}))
+    assert receive(b, monkeypatch, send_bytes(a, monkeypatch)) == migrate.VERIFIED
+    assert "--port 8765 --login you@example.com (docs/runbooks/remote-ui.md)" in \
+        b.out.getvalue()
+    assert not (b.root / "config" / "remote-ui.json").exists()  # off until you turn it on
 
 
 def test_a_different_time_zone_is_said(computers, monkeypatch):

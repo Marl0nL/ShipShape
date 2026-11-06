@@ -77,7 +77,11 @@ STAGING = ".migrate-"  # the receiving side's own folder in the data dir, while 
 VERIFIED, REFUSED, UNVERIFIED = 0, 1, 5
 
 SEGMENT = re.compile(r"^[A-Za-z0-9_.@:+=,-]{1,200}$")
-FILE_NAME = re.compile(r"^[A-Za-z0-9_.@+-]{1,200}$")
+FILE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@+-]{0,199}$")  # never . or ..
+# Files in ~/.ssh that OpenSSH itself reads: a key never lands on one of these names.
+SSH_OWN = ("authorized_keys", "authorized_keys2", "config", "environment", "known_hosts",
+           "known_hosts2", "rc")
+LOGIN_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}$")
 MEMBER = re.compile(r"^(manifest\.json|secrets\.json|config/ships\.toml|"
                     r"keys/(admin|host-ca|user-ca)(\.pub)?|keys/agent-[0-9]{1,3}\.pub|"
                     r"data/[^\x00]{1,1000}|images/[^/\x00]{1,200})$")
@@ -105,6 +109,7 @@ class Plan:
     keys: list[dict[str, Any]] = field(default_factory=list)
     secrets: dict[str, Any] = field(default_factory=dict)  # the values: never printed
     secret_names: list[str] = field(default_factory=list)
+    remote_ui: dict[str, Any] | None = None  # the remote web UI's port and allow-list
     left_out: list[tuple[str, str]] = field(default_factory=list)  # (path, why)
     blockers: list[tuple[str, str]] = field(default_factory=list)  # (what, why)
     notes: list[str] = field(default_factory=list)  # said on both computers
@@ -339,9 +344,10 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
             plan.leave(f, "which machine entry is this computer: a fact about this computer, "
                        "not the fleet")
         elif rel == remote.REMOTE_FILE:
-            plan.leave(f, "the remote web UI setting: a fact about this computer (its own "
-                       "name on the tailnet); turn it on there if you want it: ship-fleet ui "
-                       "remote")
+            plan.remote_ui = _remote_ui(f)
+            plan.leave(f, "the remote web UI setting: this computer's own name on the tailnet. "
+                       "Turning it on is yours to do on the new computer: it is told the "
+                       "command, with the same logins")
         elif rel == proxmox_setup.PROGRESS_FILE:
             plan.leave(f, "a part-finished Proxmox setup (run setup again there if needed)")
         elif rel.startswith(keys.PASSPHRASE_DIR + "/"):
@@ -378,6 +384,10 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
                        "(--with-images moves the inventory's images)")
         elif top == "inbox-spool":
             plan.leave(f, "a file half-way to a Ship's inbox")
+        elif top == "web":
+            plan.leave(f, "the remote web UI's paired browsers and pairing links: bound to "
+                       "this computer's address; pair each device again with the new computer "
+                       "(ship-fleet ui link)")
         elif top.startswith(STAGING):
             plan.leave(f, "a leftover of a migrate that was cut short")
         elif rel.startswith("history.sqlite3-"):
@@ -393,6 +403,23 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
         else:
             kind = "sqlite" if rel == "history.sqlite3" else "file"
             plan.moves.append(Move(f"data/{rel}", f, _data_label(rel), kind))
+
+
+def _remote_ui(path: Path) -> dict[str, Any] | None:
+    """The remote web UI's port and allow-list (web/remote.py), to tell the new computer
+    how to turn it on again; None when the file is not one FleetLedger wrote."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    port, logins = doc.get("port"), doc.get("logins", [])
+    if not (isinstance(port, int) and not isinstance(port, bool) and 1024 <= port <= 65535) \
+            or not isinstance(logins, list) or len(logins) > 20 \
+            or not all(isinstance(x, str) and LOGIN_RE.match(x) for x in logins):
+        return None
+    return {"port": port, "logins": logins}
 
 
 def _data_label(rel: str) -> str:
@@ -476,6 +503,7 @@ def manifest_of(plan: Plan, files: list[dict[str, Any]], with_images: bool) -> d
         "left_out": [list(r) for r in plan.left_out],
         "notes": plan.notes,
         "krl_sha256": plan.krl_sha256,
+        "remote_ui": plan.remote_ui,
         "with_images": with_images,
     }
 
@@ -754,8 +782,17 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
     for k in manifest["keys"]:
         if not isinstance(k, dict) or k.get("role") not in (*KEY_ROLES, "agent") or \
                 not FILE_NAME.match(str(k.get("name", ""))) or \
+                str(k.get("name")).removesuffix(".pub") in SSH_OWN or \
                 not str(k.get("source", "")).startswith("/"):
             raise bad("key entry")
+    remote_ui = manifest.get("remote_ui")
+    if remote_ui is not None and (
+            not isinstance(remote_ui, dict) or set(remote_ui) != {"port", "logins"}
+            or not isinstance(remote_ui["port"], int) or isinstance(remote_ui["port"], bool)
+            or not 1024 <= remote_ui["port"] <= 65535
+            or not isinstance(remote_ui["logins"], list) or len(remote_ui["logins"]) > 20
+            or not all(isinstance(x, str) and LOGIN_RE.match(x) for x in remote_ui["logins"])):
+        raise bad("remote_ui")
         member = k.get("member") if k["role"] == "agent" else f"keys/{k['role']}"
         if member not in seen:
             raise bad(f"key {member} is not in the stream")
@@ -1175,6 +1212,14 @@ def _say_received(app, manifest: dict[str, Any], where: dict[str, Path], kind: s
             app.say(f"  {path}: {why}")
     for note in manifest.get("notes") or []:
         app.say(f"Note: {note}")
+    remote_ui = manifest.get("remote_ui")
+    if remote_ui:
+        logins = "".join(f" --login {shlex.quote(x)}" for x in remote_ui["logins"])
+        app.say("Note: the web UI was open to your other devices there (Tailscale Serve). It "
+                "stays off here until you turn it on: tailscale serve --bg "
+                f"127.0.0.1:{remote_ui['port']}, then ship-fleet ui remote https://<this "
+                f"computer's name> --port {remote_ui['port']}{logins} (docs/runbooks/"
+                "remote-ui.md). Each device pairs again.")
 
 
 # --- verify (the new computer) -----------------------------------------------------------
