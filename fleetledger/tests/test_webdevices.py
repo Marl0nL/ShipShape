@@ -194,7 +194,10 @@ def test_another_logins_old_cookie_is_neither_replaced_nor_lends_its_name(web):
 
 def test_a_wrong_token_never_opens_a_waiting_link(web):
     link = web.link().removeprefix(REMOTE)
-    for wrong in ("x" * 43, link.split("token=")[1][:-1] + "A", ""):
+    right = link.split("token=")[1]
+    near = right[:-1] + ("B" if right[-1] == "A" else "A")  # one character off, never equal
+    assert near != right
+    for wrong in ("x" * 43, near, ""):
         assert web.client().get(f"/login?token={wrong}").status_code == 403
     assert web.devices.all() == []
     assert web.remote.get(link).status_code == 200  # the right one still works, once
