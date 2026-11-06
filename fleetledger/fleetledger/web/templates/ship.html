@@ -18,7 +18,7 @@
 {% from "_macros.html" import jobs_toolbar with context %}
 <section class="ship-jobs" aria-label="Operations on {{ ship.name }}">
   {{ jobs_toolbar(None, jobs, "/activity?ship=" ~ ship.name, ship=ship.name) }}
-  {% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}
+  {% with on_ship_page=True %}{% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}{% endwith %}
 </section>
 {% endif %}
 <nav class="tabs">
