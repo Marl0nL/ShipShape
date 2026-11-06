@@ -5,7 +5,9 @@
     leave this page; it carries on.
     {% elif job.enrolled %}<strong>{{ job.name }}</strong> is ready. Next, sign it in to
     Claude: its agent then starts and shows in the Claude app.
-    {% if job.attach_here %}Attach from here with <code>herdr --remote {{ job.name }}</code>
+    {% if job.from_device %}How to attach from your machine is on its
+    <a href="/ships/{{ job.name }}/access">Access</a> tab.
+    {% elif job.attach_here %}Attach from here with <code>herdr --remote {{ job.name }}</code>
     or <code>ssh {{ job.name }}</code>.{% else %}Attach with
     <code>ship-fleet ssh {{ job.name }}</code>.{% endif %}
     {% elif job.ok and job.manual %}<strong>{{ job.name }}</strong>'s seed ISO is written.

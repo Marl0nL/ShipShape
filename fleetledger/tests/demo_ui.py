@@ -113,7 +113,7 @@ SHIP_ENTRY = """
 id = "{id}"
 tags = {tags}
 driver = "{driver}"
-names = ["{name}.example.invalid"]
+names = [{names}]
 host_key = "{host_key}"
 enrolled = "2026-01-01T00:00:00Z"
 {overlay}"""
@@ -263,8 +263,12 @@ def home(base: Path) -> None:
         overlay = f'overlay_node = "nDemo{i}"\n' if joined else ""
         driver = "proxmox" if name in ON_DEMO_DRIVER else "manual"
         host_key = " ".join((base / "keys" / f"host-{name}.pub").read_text().split()[:2])
+        # A joined Ship's overlay name comes first, as `overlay join` records it.
+        names = ([f"{name}.example-tailnet.ts.net"] if joined else []) + [
+            f"{name}.example.invalid"]
         text += SHIP_ENTRY.format(name=name, id=ship_id(i), tags=json.dumps(tags),
-                                  host_key=host_key, overlay=overlay, driver=driver)
+                                  host_key=host_key, overlay=overlay, driver=driver,
+                                  names=", ".join(json.dumps(n) for n in names))
         if name == "ship-06":  # it never uses Google Cloud: shown as off
             text += 'signins = ["claude", "github"]\n'
     text += demo_images(base)
@@ -682,8 +686,9 @@ def demo_spawner(argv: list[str]):
 
 def seed_remote(port: int):
     """--remote: the remote web UI as on, at a made-up address, with two paired devices
-    (one paired 6 hours ago, so it needs pairing again for danger actions). Nothing is
-    served through a real Tailscale: the Serve check is skipped."""
+    (one paired 6 hours ago, so it needs pairing again for danger actions; the other on
+    the trusted machine "laptop"). Nothing is served through a real Tailscale: the Serve
+    check is skipped."""
     import secrets
 
     from fleetledger.web import devices, remote
@@ -692,11 +697,11 @@ def seed_remote(port: int):
                             ("you@example.com",))
     remote.save(setting)
     now = time.time()
-    for name, how, ago in (("phone", "laptop", 6 * 3600),
-                           ("laptop", devices.FROM_LINK, 1800)):
+    for name, how, ago, machine in (("phone", "laptop", 6 * 3600, None),
+                                    ("laptop", devices.FROM_LINK, 1800, "laptop")):
         devices.Devices(wall=lambda ago=ago: now - ago).add(
             secrets.token_urlsafe(32), name=name, login="you@example.com",
-            origin=setting.origin, how=how)
+            origin=setting.origin, how=how, machine=machine)
     return setting
 
 

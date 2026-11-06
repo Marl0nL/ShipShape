@@ -131,6 +131,7 @@ class Pairing:
     expires: float  # wall clock
     name: str | None  # the device's name, if the link was made for one
     how: str
+    machine: str | None = None  # the trusted machine the device runs on, if said
 
 
 TIMES = ("paired", "seen", "expires")
@@ -216,7 +217,7 @@ class Devices:
         self._stamp = None
 
     # --- pairing links -------------------------------------------------------------
-    def add_pairing(self, name: str | None, how: str) -> str:
+    def add_pairing(self, name: str | None, how: str, machine: str | None = None) -> str:
         """A fresh one-time pairing token; only its hash is written down."""
         token = secrets.token_urlsafe(32)
         with self._locked():
@@ -225,7 +226,7 @@ class Devices:
             if len(waiting) >= MAX_PAIRINGS:
                 raise FleetError(f"{len(waiting)} pairing links are already waiting to be "
                                  "opened; let some expire (15 minutes) first.")
-            waiting.append(Pairing(digest(token), now + PAIR_TTL, name, how))
+            waiting.append(Pairing(digest(token), now + PAIR_TTL, name, how, machine))
             self._write(self.pairings_file, waiting)
         return token
 
@@ -245,7 +246,7 @@ class Devices:
 
     # --- devices -------------------------------------------------------------------
     def add(self, session_id: str, *, name: str, login: str, origin: str, how: str,
-            replaces: str | None = None) -> Device:
+            replaces: str | None = None, machine: str | None = None) -> Device:
         """Pair a device. replaces: the key of the device this browser held before (it
         is removed; its name and machine carry over when the link named none)."""
         with self._locked():
@@ -257,7 +258,7 @@ class Devices:
                                  "first (Settings, Devices).")
             device = Device(key=digest(session_id), name=name, login=login, origin=origin,
                             paired=now, seen=now, how=how,
-                            machine=old.machine if old else None)
+                            machine=machine or (old.machine if old else None))
             devices[device.key] = device
             self._save(devices)
         return device
@@ -386,9 +387,51 @@ def when(wall: float) -> str:
     return datetime.fromtimestamp(wall, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def pair_link(name_text: str | None, how: str, store: Devices | None = None) -> tuple[str, Any]:
+def trusted_machine(inv: Any, name: str) -> str:
+    """name, if it is a machine the fleet trusts (and has not untrusted); else FleetError.
+    What a device runs on, so the UI shows that machine's attach commands."""
+    from fleetledger import ca
+
+    m = ca.machine(inv, name) if inv is not None and ca.config(inv) is not None else None
+    if m is None or m.revoked:
+        raise FleetError(f"No trusted machine called {name!r}.",
+                         hint="Trust it first (Settings, Trusted machines, or ship-fleet "
+                              "trust NAME --key KEY.pub).")
+    return m.name
+
+
+KEEP = object()  # change(): leave this field as it is
+
+
+def change(store: Devices, inv: Any, device: Device, *, name: str | None = None,
+           machine: Any = KEEP) -> Device:
+    """Rename a device, or say which trusted machine it runs on (None: none). Settings,
+    Devices and `ship-fleet ui devices DEVICE --name/--machine` both come here."""
+    changes: dict[str, Any] = {}
+    if name is not None:
+        clean = clean_name(name)
+        if clean is None:
+            raise FleetError(NAME_RULE)
+        changes["name"] = clean
+    if machine is not KEEP:
+        changes["machine"] = None if machine is None else trusted_machine(inv, machine)
+    if not changes:
+        return device
+    changed = store._update(device.key, **changes)
+    if changed is None:
+        raise FleetError("That device is no longer paired.")
+    return changed
+
+
+NAME_RULE = ("A device name is up to 40 letters, digits, spaces and . _ ' ( ) -, starting "
+             "with a letter or digit.")
+
+
+def pair_link(name_text: str | None, how: str, store: Devices | None = None,
+              machine: str | None = None, inv: Any = None) -> tuple[str, Any]:
     """Make a one-time pairing link for one of your devices: (link, the remote setting).
-    ship-fleet ui link and Settings, Devices, Pair a device both come here."""
+    ship-fleet ui link and Settings, Devices, Pair a device both come here. machine: the
+    trusted machine it runs on (checked against inv)."""
     from fleetledger.concierge import audit
     from fleetledger.web import remote
 
@@ -405,9 +448,10 @@ def pair_link(name_text: str | None, how: str, store: Devices | None = None) -> 
     if name_text is not None and name_text.strip():
         name = clean_name(name_text)
         if name is None:
-            raise FleetError("A device name is up to 40 letters, digits, spaces and . _ ' ( ) -, "
-                             "starting with a letter or digit.")
-    token = (store or Devices()).add_pairing(name, how)
+            raise FleetError(NAME_RULE)
+    if machine:
+        machine = trusted_machine(inv, machine)
+    token = (store or Devices()).add_pairing(name, how, machine or None)
     audit.record("-", "ui-link", "web", "ok")
     return f"{found.origin}/login?token={token}", found
 
@@ -422,8 +466,14 @@ def revoke(store: Devices, devices: list[Device]) -> int:
     return count
 
 
+def _inventory(app) -> Any:
+    store = app.store_factory()
+    return store.load() if store.exists() else None
+
+
 def cmd_link(args, app) -> int:
-    link, found = pair_link(args.name, FROM_LINK)
+    link, found = pair_link(args.name, FROM_LINK, machine=args.machine,
+                            inv=_inventory(app) if args.machine else None)
     name = clean_name(args.name) if args.name else None
     app.say(f"Pairing link for {name or 'a new device'} (works once, for 15 minutes, on "
             f"{found.origin} only, while ship-fleet ui runs):\n  {link}")
@@ -434,8 +484,30 @@ def cmd_link(args, app) -> int:
     return 0
 
 
+def _one(store: Devices, what: str) -> Device:
+    matches = store.find(what)
+    if not matches:
+        raise FleetError(f"No paired device named or with id {what!r}.",
+                         hint="ship-fleet ui devices lists them.")
+    if len(matches) > 1:
+        raise FleetError(f"{len(matches)} devices are called {what!r}: name one by "
+                         f"its id ({', '.join(d.short for d in matches)}).")
+    return matches[0]
+
+
 def cmd_devices(args, app) -> int:
     store = Devices()
+    if args.device:
+        if args.machine and args.no_machine:
+            raise FleetError("--machine or --no-machine, not both.")
+        machine = None if args.no_machine else (args.machine or KEEP)
+        device = change(store, _inventory(app) if args.machine else None,
+                        _one(store, args.device), name=args.name, machine=machine)
+        app.say(f"{device.short}  {device.name}"
+                + (f", on {device.machine}" if device.machine else ", on no machine said"))
+        return 0
+    if args.name or args.machine or args.no_machine:
+        raise FleetError("Name the device to change: ship-fleet ui devices DEVICE --name ...")
     devices = store.all()
     if not devices:
         app.say("No device is paired with the remote web UI.")
@@ -443,7 +515,8 @@ def cmd_devices(args, app) -> int:
     now = store.wall()
     for d in devices:
         fresh = "" if d.fresh(now) else ", needs pairing again for destroy and the like"
-        app.say(f"{d.short}  {d.name}  ({d.login}; paired {when(d.paired)} from {d.how}; "
+        on = f"; on {d.machine}" if d.machine else ""
+        app.say(f"{d.short}  {d.name}  ({d.login}{on}; paired {when(d.paired)} from {d.how}; "
                 f"last used {when(d.seen)}{fresh})")
     return 0
 
@@ -459,14 +532,8 @@ def cmd_revoke(args, app) -> int:
     if not args.device:
         raise FleetError("Name the device to revoke (ship-fleet ui devices lists them), or "
                          "--all.")
-    matches = store.find(args.device)
-    if not matches:
-        raise FleetError(f"No paired device named or with id {args.device!r}.",
-                         hint="ship-fleet ui devices lists them.")
-    if len(matches) > 1:
-        raise FleetError(f"{len(matches)} devices are called {args.device!r}: name one by "
-                         f"its id ({', '.join(d.short for d in matches)}).")
-    revoke(store, matches)
-    app.say(f"Signed out {matches[0].name} ({matches[0].short}). It needs a new pairing link "
+    device = _one(store, args.device)
+    revoke(store, [device])
+    app.say(f"Signed out {device.name} ({device.short}). It needs a new pairing link "
             "to sign in again.")
     return 0

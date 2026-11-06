@@ -328,11 +328,14 @@ def _advanced(fields, app, inv, host_re, timezone_re, known_timezone) -> list[st
     return out
 
 
-def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None):
+def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None,
+              from_device: bool = False):
     """The job that makes a Ship: `ship-fleet new` itself, then this computer trusted
     so `ssh <ship>` and `herdr --remote <ship>` work at once. retry_of: the saved
     attempt this one tries again (attempts.py); what it left is removed first, and
-    it goes once this one works. A failure is saved by `new` itself."""
+    it goes once this one works. A failure is saved by `new` itself. from_device:
+    started from a paired device, so this computer's trust is only refreshed if it
+    is trusted already, never set up anew (that is the FleetLedger computer's)."""
     from fleetledger import attempts, trustcmd
     from fleetledger.enrol import StillStarting
     from fleetledger.web.jobs import BrowserApp, run_cli
@@ -365,9 +368,10 @@ def make_ship(app, name: str, argv_: list[str], retry_of: str | None = None):
         except FleetError:
             ship = None
         job.result["enrolled"] = bool(ship is not None and ship.enrolled)
+        job.result["from_device"] = from_device
         if job.result["enrolled"]:
             job.result["attach_here"] = trustcmd.trust_this_computer(
-                BrowserApp(app, job), app.store_factory(), job.say)
+                BrowserApp(app, job), app.store_factory(), job.say, create=not from_device)
         job.ok = code == 0
 
     return run
@@ -384,14 +388,16 @@ def _offer(job, name: str) -> None:
 
 
 def start(ui: Any, name: str, argv_: list[str], retry_of: str | None = None,
-          cleared: list[str] = ()):
+          cleared: list[str] = (), from_device: bool = False):
     """Start making it (refused while something runs on that name, or on the
     attempt it retries). cleared: the attempts whose leftovers the person confirmed
-    removing (check_confirmed); for the one at name, `new` gets --yes."""
+    removing (check_confirmed); for the one at name, `new` gets --yes. from_device:
+    a paired device asked (make_ship)."""
     if name in cleared:
         argv_ = [*argv_, "--yes"]
     ships = [name] + ([retry_of] if retry_of and retry_of != name else [])
-    return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_, retry_of),
+    return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_, retry_of,
+                                                     from_device),
                          f"Make {name}", locks=[f"attempt {s}" for s in ships])
 
 

@@ -190,8 +190,9 @@
 {% endmacro %}
 
 {# The Ship page's action bar, on every tab above the tabs (sticky, so it stays in
-   reach). Import it "with context": it reads ship, view, doc, csrf, attach_here,
-   overlay_set, on_overlay and can_trust_here (the fleet has a CA) from the page.
+   reach). Import it "with context": it reads ship, view, doc, csrf, attach_cmd and
+   here_label (how to attach from the machine this browser is on, or none known: app
+   _attach_context), overlay_set, on_overlay and can_trust_here (the fleet has a CA).
    Rules: Check now always; Update and Reboot only while the Ship answers; More holds the rest, one item per action,
    each a one-click form with its confirm dialog (later PRs append theirs here). #}
 {# Finish enrolling: `ship-fleet status N --wait`, as a job (POST /ships/N/enrol). #}
@@ -204,9 +205,12 @@
 
 {% macro ship_action_bar() %}
 <section class="action-bar">
-  {% set attach = ("herdr --remote " if attach_here else "ship-fleet ssh ") ~ ship.name %}
-  <p class="attach">Attach: <code>{{ attach }}</code>
-    <button type="button" class="ghost small" data-copy="{{ attach }}">Copy</button></p>
+  {% if attach_cmd %}
+  <p class="attach">Attach{% if remote_session %} from {{ here_label }}{% endif %}: <code>{{ attach_cmd }}</code>
+    <button type="button" class="ghost small" data-copy="{{ attach_cmd }}">Copy</button></p>
+  {% else %}
+  <p class="attach">Attach from {{ here_label }}: <a href="/ships/{{ ship.name }}/access">set it up</a></p>
+  {% endif %}
   <div class="actions">
     <form method="post" action="/ships/{{ ship.name }}/refresh" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">

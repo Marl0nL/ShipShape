@@ -178,6 +178,25 @@ def test_a_waiting_agent_gets_herdr_remote_only_when_it_works_from_here(store, m
     assert waiting.action.value == "herdr --remote ship-01"
 
 
+def test_a_paired_devices_waiting_agent_card_follows_its_own_machine(store, monkeypatch):
+    from fleetledger import trustcmd
+
+    views = [view(store)]
+    monkeypatch.setattr(trustcmd, "attaches_here", lambda inv, ship: True)  # the desktop's
+    # Its machine does not reach the Ship: ship-fleet ssh, said to run elsewhere.
+    found = dashboard.alerts(views, attention_items(views), [], store.load(),
+                             attaches=lambda ship: False, remote=True)
+    waiting = next(a for a in found if a.code == "agent-waiting")
+    assert waiting.action.value == "ship-fleet ssh ship-01"
+    assert "on the FleetLedger computer" in waiting.action.hint
+    # Its machine reaches it: herdr --remote, from there.
+    found = dashboard.alerts(views, attention_items(views), [], store.load(),
+                             attaches=lambda ship: True, remote=True)
+    waiting = next(a for a in found if a.code == "agent-waiting")
+    assert waiting.action.value == "herdr --remote ship-01"
+    assert "FleetLedger computer" not in waiting.action.hint
+
+
 @pytest.mark.parametrize("disk, level", [
     (79.9, None), (80.0, "medium"), (85.0, "medium"), (89.9, "medium"), (90.0, "high"),
 ])

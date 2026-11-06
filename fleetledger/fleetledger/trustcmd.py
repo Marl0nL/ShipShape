@@ -317,12 +317,13 @@ def cmd_trust(args, app) -> int:
     folder = paths.expand(args.out) if args.out else ca.bundle_dir(name)
     bundle = ca.write_bundle(folder, ca=cfg, machine_name=name, cert=cert, ships=ships,
                              identity=args.identity, valid_before=until,
-                             hostnames=_hostnames(app, ships), user=bundle_user(inv, m))
+                             hostnames=_hostnames(app, ships, args.hostnames),
+                             user=bundle_user(inv, m))
     app.say(f"Certified {name} for {', '.join(m.scope)} until {ca.stamp(until)}, to log in "
             f"as {ca.logins_said(m.logins)} ({len(ships)} Ship(s): "
             f"{', '.join(bundle.ships) or 'none yet'}).")
     app.say(f"Bundle: {bundle.folder}")
-    unsigned = [s.name for s in ships if not _has_cert(s)]
+    unsigned = [s.name for s in ships if not has_cert(s)]
     if unsigned:
         app.say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign` first.")
     if args.install:
@@ -411,9 +412,12 @@ def _sign_machine(app, store, inv: Inventory, m: ca.Machine, *, hours=None):
     return cert, until
 
 
-def _hostnames(app, ships) -> dict[str, str]:
-    """Each Ship's HostName in a bundle: the first of its names that resolves here."""
-    return {s.name: ca.dial_name(s, app.resolves) for s in ships}
+def _hostnames(app, ships, how: str = "here") -> dict[str, str]:
+    """Each Ship's HostName in a bundle: the first of its names that resolves here; or,
+    how="overlay" (a machine elsewhere), its overlay name when it is on the overlay
+    (listed first then, overlay.names_with), since what resolves here may not there."""
+    return {s.name: s.names[0] if how == "overlay" and s.overlay_node is not None
+            else ca.dial_name(s, app.resolves) for s in ships}
 
 
 # --- this computer ------------------------------------------------------------------
@@ -442,7 +446,7 @@ def attaches_here(inv: Inventory, ship: Ship) -> bool:
     here = this_computer()
     m = ca.machine(inv, here["machine"]) if here else None
     return bool(m and not m.revoked and "agent" in m.logins and m.reaches(inv, ship)
-                and _has_cert(ship))
+                and has_cert(ship))
 
 
 def _local_name(inv: Inventory) -> str:
@@ -555,7 +559,7 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
                             (json.dumps(here, indent=2) + "\n").encode("utf-8"))
     ships = [s for s in inv.ships() if m.reaches(inv, s)]
     for ship in ships:
-        if not _has_cert(ship):
+        if not has_cert(ship):
             try:
                 certify(app, inv, ship)
             except FleetError:
@@ -578,12 +582,12 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
     works, note = _plain_ssh(inv, paths.expand(here["identity"]))
     if note:
         say(note)
-    ready = [s.name for s in ships if _has_cert(s)] if works else []
+    ready = [s.name for s in ships if has_cert(s)] if works else []
     if ready:
         say(f"This computer ({m.name}) can attach: ssh {ready[0]}, herdr --remote "
             f"{ready[0]} (certificate until {ca.stamp(until)}; FleetLedger renews it in its "
             "last day whenever it runs: the web UI, or ship-fleet status).")
-    unsigned = [s.name for s in ships if not _has_cert(s)]
+    unsigned = [s.name for s in ships if not has_cert(s)]
     if unsigned:
         say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign`.")
     return bool(ready)
@@ -662,9 +666,12 @@ def _push_to_ships(app, inv: Inventory, say=None) -> list[str]:
     return failed
 
 
-def _has_cert(ship: Ship) -> bool:
+def has_cert(ship: Ship) -> bool:
+    """Has the Ship a host certificate (from its last status)? Plain ssh needs one."""
     doc = status.read_cache(ship.name)
     return bool(doc and (doc.get("ssh") or {}).get("host_certificate"))
+
+
 
 
 def cmd_untrust(args, app) -> int:

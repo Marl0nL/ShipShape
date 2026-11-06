@@ -54,7 +54,7 @@ class SetupShipView:
         self.name = job.ships[0]
         self.done = job.done
         self.ok = bool(job.ok)
-        for key in ("enrolled", "manual", "still_starting", "attach_here"):
+        for key in ("enrolled", "manual", "still_starting", "attach_here", "from_device"):
             setattr(self, key, bool(job.result.get(key)))
 
     def snapshot(self) -> list[str]:
@@ -1040,7 +1040,8 @@ async def ship_start(request: Request) -> Response:
             state.ship_form = {k: v for k, v in fields.items()
                                if k not in ("csrf", "confirm", "clear_left")}
             raise
-        job = newship.start(ui, name, argv, cleared=cleared)
+        job = newship.start(ui, name, argv, cleared=cleared,
+                            from_device=request.scope["state"]["session"].device is not None)
     except FleetError as exc:
         _flash(request, "bad", exc.message)
         return _back("ship")
