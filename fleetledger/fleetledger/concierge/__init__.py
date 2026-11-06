@@ -109,10 +109,11 @@ def login(
 ) -> LoginResult:
     # Checks the pinned host key and opens the shared connection the terminal reuses.
     reached = ssh.run(ship, ["true"], timeout=60)
+    provider, said = with_chosen_scopes(ssh, inventory, ship, provider)
     argv = ssh.argv(ship, reached.host, as_agent(provider.run), tty=True)
     flow: FlowResult = Flow(provider, spawner(argv), prompter, **(flow_options or {})).run()
 
-    result = LoginResult(ship.name, provider.id, flow.outcome, flow.detail)
+    result = LoginResult(ship.name, provider.id, flow.outcome, flow.detail, notes=said)
     if flow.outcome in ("completed", "manual"):
         for command in provider.after:
             done = ssh.run(ship, as_agent(command), timeout=120)
@@ -126,6 +127,32 @@ def login(
     if result.outcome == "ok":
         result.notes += notify_core_agents(ssh, ship, provider)
     return result
+
+
+def with_chosen_scopes(ssh: SSH, inventory: Inventory, ship: Ship,
+                       provider: Provider) -> tuple[Provider, list[str]]:
+    """The sign-in that gets the Ship's token the extra scopes it chose (ghscopes).
+
+    From the Ship's status as it is now: signed in with other scopes, the token is
+    refreshed in place (only the chosen extras added or dropped, the account kept);
+    otherwise a plain sign-in asks for them. A provider without scopes is as it is."""
+    if not provider.takes_scopes:
+        return provider, []
+    from fleetledger import ghscopes, status
+
+    doc = status.fetch(ssh, inventory, ship).status
+    wanted = ghscopes.chosen(ship, doc)
+    differ = ghscopes.difference(wanted, ghscopes.granted(doc))
+    if differ:
+        changes = ([f"add {', '.join(differ.missing)}"] if differ.missing else []) + (
+            [f"drop {', '.join(differ.extra)}"] if differ.extra else [])
+        return (provider.refreshing(differ.missing, differ.extra),
+                [f"This sign-in refreshes the token's scopes, to {' and '.join(changes)} "
+                 "(gh auth refresh)."])
+    if wanted:
+        return (provider.with_scopes(wanted),
+                [f"This sign-in asks for the extra scopes {', '.join(wanted)}."])
+    return provider, []
 
 
 # Providers `ship-ctl notify-signin` knows (contracts/ship-ctl.md).

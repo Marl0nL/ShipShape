@@ -121,6 +121,9 @@ def build(
             network["lan_guard_allow"] = list(options.lan_guard_allow)
         doc["network"] = network
 
+    if ship.github_scopes:
+        doc["github"] = {"scopes": list(ship.github_scopes)}
+
     tools = tools_for(inventory, ship, catalogue)
     profiles = profiles_for(inventory, ship)
     catalogue.check_tools(tools)
@@ -164,7 +167,7 @@ def render(doc: Mapping[str, Any]) -> str:
     out.add(tomlkit.comment("ShipShape Ship settings (contracts/ship.toml.schema.json)."))
     out.add(tomlkit.comment("Written by FleetLedger; change it with `ship-fleet set`."))
     out["schema"] = doc["schema"]
-    for section in ("ship", "claude", "agent", "network", "tools"):
+    for section in ("ship", "claude", "agent", "network", "github", "tools"):
         if section in doc:
             table = tomlkit.table()
             for key, value in doc[section].items():

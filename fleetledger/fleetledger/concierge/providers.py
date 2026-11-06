@@ -13,8 +13,10 @@ Modes:
 from __future__ import annotations
 
 import re
+import shlex
 import tomllib
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -28,6 +30,7 @@ ALL = ("claude", "gcloud", "github")
 
 SERVICE = {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}
 COMMAND = {"type": "string", "minLength": 1}
+FLAG = {"type": "string", "pattern": "^--[a-z][a-z-]{0,31}$"}
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -73,6 +76,15 @@ SCHEMA = {
             "required": ["run"],
             "properties": {"run": COMMAND},
         },
+        # Extra scopes (ghscopes): `add` is the flag run takes them with; `refresh`
+        # changes a signed-in token's scopes in the same kind of flow, with `add` for
+        # the ones to add and `remove` for the ones to drop.
+        "scopes": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["add", "refresh", "remove"],
+            "properties": {"add": FLAG, "refresh": COMMAND, "remove": FLAG},
+        },
     },
     "allOf": [
         {
@@ -111,10 +123,39 @@ class Provider:
     failure: re.Pattern[str] | None = None
     send: tuple[tuple[re.Pattern[str], str], ...] = ()
     after: tuple[str, ...] = field(default_factory=tuple)
+    scopes_add: str | None = None  # the [scopes] table: this provider takes extra scopes
+    scopes_refresh: str | None = None
+    scopes_remove: str | None = None
 
     @property
     def services(self) -> list[str]:
         return [c.service for c in self.checks]
+
+    @property
+    def takes_scopes(self) -> bool:
+        return self.scopes_add is not None
+
+    def with_scopes(self, scopes: Sequence[str]) -> Provider:
+        """The sign-in, asking for these extra scopes too (none: as it is)."""
+        if not scopes or not self.takes_scopes:
+            return self
+        return replace(self, run=f"{self.run} {self.scopes_add} {_scope_list(scopes)}")
+
+    def refreshing(self, add: Sequence[str], remove: Sequence[str]) -> Provider:
+        """The signed-in token's scopes changed in place: these added, those dropped."""
+        if not self.takes_scopes:
+            raise ValueError(f"{self.id} takes no scopes")
+        run = self.scopes_refresh or ""
+        if add:
+            run += f" {self.scopes_add} {_scope_list(add)}"
+        if remove:
+            run += f" {self.scopes_remove} {_scope_list(remove)}"
+        return replace(self, run=run)
+
+
+def _scope_list(scopes: Sequence[str]) -> str:
+    # Scopes come from the catalogue (ghscopes.check), never free text; quoted anyway.
+    return shlex.quote(",".join(scopes))
 
 
 def _compile(path: Path, key: str, pattern: str) -> re.Pattern[str]:
@@ -148,6 +189,9 @@ def parse(path: Path) -> Provider:
         checks=tuple(Check(**c) for c in doc["check"]),
         logout=doc["logout"]["run"],
         after=tuple(doc.get("after", ())),
+        scopes_add=doc.get("scopes", {}).get("add"),
+        scopes_refresh=doc.get("scopes", {}).get("refresh"),
+        scopes_remove=doc.get("scopes", {}).get("remove"),
     )
 
 

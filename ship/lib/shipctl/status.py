@@ -23,7 +23,7 @@ from .context import Context, utc_now
 from .fsutil import read_json, write_atomic
 from .net import status_section as net_section
 from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
-from .shiptoml import ShipToml
+from .shiptoml import GITHUB_SCOPES, ShipToml
 from .sshtrust import attention as ssh_attention
 from .sshtrust import state as ssh_state
 
@@ -342,6 +342,23 @@ def probe_adc(ctx: Context) -> tuple[dict, list[str]]:
 
 
 _GH_ACCOUNT = re.compile(r"\b(?:account|as)\s+([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\b")
+# "- Token scopes: 'gist', 'read:org', 'repo'" (older gh: "✓ Token scopes: gist, repo").
+_GH_SCOPES = re.compile(r"Token scopes:[ \t]*([^\r\n]*)")
+_GH_SCOPE = re.compile(r"^[a-z][a-z0-9_:]{0,39}$")
+
+
+def github_scopes(text: str) -> list[str] | None:
+    """The scopes gh auth status lists for the first (active) account, or None if it
+    lists none (a token without scopes, or gh too old to say)."""
+    m = _GH_SCOPES.search(text)
+    if not m:
+        return None
+    listed = m.group(1).strip()
+    if listed in ("", "none"):
+        return []
+    found = [s.strip().strip("'\"") for s in listed.split(",")]
+    scopes = sorted({s for s in found if _GH_SCOPE.match(s)})
+    return scopes[:64] if scopes else None
 
 
 def probe_github_auth(ctx: Context) -> tuple[dict, list[str]]:
@@ -352,8 +369,11 @@ def probe_github_auth(ctx: Context) -> tuple[dict, list[str]]:
         return _auth("unknown"), [_fail("gh auth status", r)]
     if not r.ok:
         return _auth("missing"), []
-    m = _GH_ACCOUNT.search(r.out + "\n" + r.err)
-    return _auth("ok", m.group(1) if m else None), []
+    text = r.out + "\n" + r.err
+    m = _GH_ACCOUNT.search(text)
+    entry = _auth("ok", m.group(1) if m else None)
+    entry["scopes"] = github_scopes(text)
+    return entry, []
 
 
 AUTH_PROBES = {
@@ -465,6 +485,9 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             add("signin-expiring", f"The {label} sign-in expires soon.", svc)
         elif entry["state"] == "expired":
             add("signin-expired", f"The {label} sign-in has expired.", svc)
+    differ = scopes_differ(doc)
+    if differ:
+        add("signin-scopes-differ", differ, "github")
     for unit in failed_units:
         add("unit-failed", f"{unit} has failed.", unit)
     if (doc.get("net") or {}).get("collector") == "stopped":
@@ -497,6 +520,29 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
     return items
 
 
+def scopes_differ(doc: dict) -> str | None:
+    """What is wrong with the GitHub token's scopes, against ship.toml github.scopes,
+    or None. Only the extra scopes a Ship may choose count (shiptoml.GITHUB_SCOPES):
+    gh's own minimum, and anything outside the choice, are left alone. Nothing is said
+    while GitHub is not signed in, or the token's scopes are not known."""
+    entry = doc["auth"].get("github") or {}
+    granted = entry.get("scopes")
+    if entry.get("state") not in ("ok", "expiring") or granted is None:
+        return None
+    wanted = set((doc.get("settings") or {}).get("github", {}).get("scopes", []))
+    missing = sorted(wanted - set(granted))
+    extra = sorted(set(granted) & set(GITHUB_SCOPES) - wanted)
+    if not missing and not extra:
+        return None
+    parts = []
+    if missing:
+        parts.append(f"lacks {', '.join(missing)}, chosen for this Ship")
+    if extra:
+        parts.append(f"has {', '.join(extra)}, not chosen")
+    return (f"The GitHub sign-in {' and '.join(parts)}: sign in to GitHub again with the "
+            "chosen scopes.")
+
+
 def settings_section(ship: ShipToml) -> dict:
     """What ship.toml says now, defaults filled in: the values `ship-ctl set` manages
     (contracts/ship-status.schema.json, settings), so FleetLedger shows a Ship's
@@ -514,6 +560,7 @@ def settings_section(ship: ShipToml) -> dict:
                     "ssh_listen": overlay.ssh_listen(ship)},
         "updates": {"auto_reboot": bool(ship.updates["auto_reboot"]),
                     "reboot_time": ship.updates["reboot_time"]},
+        "github": {"scopes": ship.github_scopes},
         "owner": (ship.owner or {}).get("name"),
         "autostart": [{k: e[k] for k in keep if e.get(k)} for e in ship.autostart],
     }

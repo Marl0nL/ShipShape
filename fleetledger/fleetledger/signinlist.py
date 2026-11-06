@@ -7,7 +7,9 @@ document's auth keys: claude, gcloud, gcloud_adc, github), in groups:
 - action: needs you. A sign-in waiting for you to finish it (the web UI's
   concierge), expired, signed in as the wrong account, a sign-in that just
   failed and is still not done (one that timed out keeps its row's own state,
-  with a note), or missing while something on the Ship needs it
+  with a note), a GitHub token whose scopes differ from the ones chosen for the
+  Ship (ghscopes: signing in again fixes it), or missing while something on the
+  Ship needs it
   (Claude, a tool waiting for it, an agent's repository waiting for GitHub);
 - underway: a sign-in the concierge is running that does not need you now;
 - degraded: expiring soon, the tool's check failed, not known (the Ship does not
@@ -31,7 +33,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
-from fleetledger import signins
+from fleetledger import ghscopes, signins
 from fleetledger.inventory import Inventory
 from fleetledger.status import SIGNED_IN, ShipView
 
@@ -89,7 +91,7 @@ class Row:
 
     @property
     def signed_in(self) -> bool:
-        return self.state in ("ok", "expiring", "wrong account")
+        return self.state in ("ok", "expiring", "wrong account", "scopes differ")
 
     @property
     def needs_action(self) -> bool:
@@ -179,6 +181,13 @@ def _status_row(view: ShipView, service: str, tags: tuple[str, ...]) -> Row:
     if wrong is not None:
         return Row(**base, group="action", state="wrong account", level="critical", rank=1,
                    message=wrong["message"])
+    scopes = next((a for a in view.attention if a.get("code") == "signin-scopes-differ"
+                   and a.get("subject") == service), None)
+    if scopes is not None and state in SIGNED_IN:
+        # Its token lacks a scope chosen for the Ship, or has one no longer chosen:
+        # nothing changes it but signing in again, which you choose (ghscopes).
+        return Row(**base, group="action", state="scopes differ", level="warning", rank=2,
+                   message=scopes["message"])
     if state == "expired":
         if entry.get("expires_at"):
             base["since"] = entry["expires_at"]
@@ -201,8 +210,10 @@ def _status_row(view: ShipView, service: str, tags: tuple[str, ...]) -> Row:
         return Row(**base, group="degraded", state="error", level="warning", rank=1,
                    message=f"The check failed: {detail}." if detail else "The check failed.")
     if state in SIGNED_IN:
+        extra = ghscopes.extras(entry.get("scopes")) if service == "github" else []
         return Row(**base, group="healthy", state="ok", level=None,
-                   message=f"Signed in as {account}." if account else "Signed in.")
+                   message=(f"Signed in as {account}." if account else "Signed in.")
+                   + (f" Extra scopes: {', '.join(extra)}." if extra else ""))
     return Row(**base, group="degraded", state=state or "unknown", level="notice", rank=3,
                message="The Ship cannot tell.")
 

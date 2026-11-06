@@ -1,0 +1,9 @@
+# delete_repo is not in the catalogue of extra GitHub scopes.
+schema = 1
+
+[ship]
+name = "ship-02"
+id = "9b2f4c1e-3d5a-4e6b-8c7d-0a1b2c3d4e5f"
+
+[github]
+scopes = ["workflow", "delete_repo"]

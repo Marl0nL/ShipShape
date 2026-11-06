@@ -38,7 +38,8 @@ from fleetledger.errors import FleetError
 KEEP = 20
 STAGES = ("checks", "create", "enrol")
 # The `ship-fleet new` options an attempt keeps (all of them: none is a secret).
-OPTIONS = ("name", "tag", "cores", "memory_mb", "disk_gb", "signins", "autostart",
+OPTIONS = ("name", "tag", "cores", "memory_mb", "disk_gb", "signins", "github_scopes",
+           "autostart",
            "autostart_prompt", "repo", "no_overlay", "driver", "image", "vmid", "host",
            "mode", "allow_bypass", "agent_sudo", "timezone", "tools", "no_default_tools",
            "profile", "no_wait")

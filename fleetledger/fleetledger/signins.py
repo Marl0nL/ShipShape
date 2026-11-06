@@ -23,7 +23,8 @@ STATUS_KEYS = {"claude": ("claude",), "gcloud": ("gcloud", "gcloud_adc"),
 # Concierge provider ids, for each choice.
 PROVIDERS = {"claude": ("claude",), "gcloud": ("gcloud", "gcloud-adc"),
              "github": ("github",)}
-SIGNIN_CODES = ("signin-missing", "signin-expiring", "signin-expired", "signin-wrong-account")
+SIGNIN_CODES = ("signin-missing", "signin-expiring", "signin-expired", "signin-wrong-account",
+                "signin-scopes-differ")
 
 
 def used(ship: Ship) -> tuple[str, ...]:

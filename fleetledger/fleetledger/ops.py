@@ -62,6 +62,7 @@ SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "reboot_time": ("updates.reboot_time", None),
     "tags": ("ship.tags", None),
     "timezone": ("ship.timezone", None),
+    "github_scopes": ("github.scopes", None),
 }
 
 # Severity of each attention code, for sorting the Needs attention list.
@@ -79,6 +80,7 @@ SEVERITY = {
     "agent-waiting": "medium",
     "signin-missing": "medium",
     "signin-expiring": "medium",
+    "signin-scopes-differ": "medium",  # GitHub's token lacks a chosen scope, or has one more
     "tool-failed": "medium",
     "reboot-required": "medium",
     "herdr-restart-pending": "medium",
@@ -655,6 +657,10 @@ def parse_assignments(values: Iterable[str]) -> list[str]:
             raise FleetError(f"timezone is an IANA zone name such as Europe/Berlin, not '{val}'.")
         if full == "claude.session_prefix" and not PREFIX_RE.match(val):
             raise FleetError(f"Invalid session_prefix '{val}'.")
+        if full == "github.scopes":
+            from fleetledger import ghscopes
+
+            val = ",".join(ghscopes.parse(val))  # catalogue scopes only; "none" is none
         out[full] = val
     if out.get("claude.default_mode") == "bypassPermissions":
         out.setdefault("claude.allow_bypass", "true")
@@ -678,6 +684,9 @@ def _record_settings(fleet: Fleet, ship: Ship, pairs: Sequence[str]) -> None:
                 ed.set_nested(ship.name, "claude", field_name, parsed)
             elif key == "ship.tags":
                 ed.set_tags(ship.name, [t for t in value.split(",") if t])
+            elif key == "github.scopes":
+                ed.set_field(ship.name, "github_scopes", [s for s in value.split(",") if s]
+                             or None)
 
 
 def set_settings(

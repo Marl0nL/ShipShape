@@ -22,7 +22,8 @@
       <tr>
         <td>{{ service }}</td>
         <td><span class="pill {{ cell|pill }}">{{ cell }}</span></td>
-        <td>{{ (entry.account if entry else None) or "-" }}{% if entry and entry.detail %} <span class="quiet">({{ entry.detail }})</span>{% endif %}</td>
+        <td>{{ (entry.account if entry else None) or "-" }}{% if entry and entry.detail %} <span class="quiet">({{ entry.detail }})</span>{% endif %}
+          {% if service == "github" and cell != "off" and (gh.chosen or gh.token_extras) %}<div class="quiet scopes-line"><a href="/ships/{{ ship.name }}/settings#github-scopes">Extra scopes</a>: chosen {{ gh.chosen|join(", ") or "none" }}{% if gh.token is not none %}; the token has {{ gh.token_extras|join(", ") or "none" }}{% endif %}</div>{% endif %}</td>
         <td>{{ expected[service]|join(" or ") or "-" }}</td>
         <td class="quiet">{{ entry.checked_at if entry else "-" }}{% if entry and entry.expires_at %}; expires {{ entry.expires_at }}{% endif %}</td>
         <td class="row-actions">
@@ -33,7 +34,7 @@
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="ship" value="{{ ship.name }}">
             <input type="hidden" name="service" value="{{ SERVICE_PROVIDER[service] }}">
-            <button type="submit">{% if signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
+            <button type="submit">{% if service == "github" and signed_in and gh.differ %}Sign in again with these scopes{% elif signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
           </form>
           {% if signed_in %}
           <form method="post" action="/ships/{{ ship.name }}/logout" class="inline"

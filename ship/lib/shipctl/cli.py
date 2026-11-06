@@ -54,6 +54,7 @@ SET_KEYS = {
     "network.ssh_listen": "str",
     "owner.name": "str",
     "owner.keys": "list",
+    "github.scopes": "list",
 }
 RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart: "

@@ -80,6 +80,7 @@ Useful options (`ship-fleet new --help` lists them all):
 | `--autostart main:~/work/main:auto` | an agent started at boot and resumed after reboots, each in its mode (repeatable); each starts with a first prompt, "Get oriented and ready to work." unless you choose one with `--autostart-prompt`. Add one later with `ship-fleet set ship-01 autostart.add=main:~/work` (started at once, once Claude is signed in), or on the Ship's page; `autostart.remove=main` stops starting it |
 | `--repo someone/agent-setup` | the first agent works in this GitHub repo: the Ship clones it into `~/work/agent-setup` first (as the agent; a private repo once the Ship is signed in to GitHub, which its page then asks for), so the repo's own CLAUDE.md or AGENTS.md, skills and settings apply. Later: `ship-fleet set SHIP autostart.add=NAME:github:OWNER/REPO` |
 | `--signins claude,github` | the sign-ins it uses (default: all); `ship-fleet signins SHIP --on/--off NAME` later, which signs one out when turned off |
+| `--github-scopes workflow` | extra GitHub scopes its GitHub sign-in asks for, beyond gh's minimum (default: none): `workflow`, `project`, `write:packages` ([sign-in.md](sign-in.md#extra-github-scopes)); later `ship-fleet set SHIP github_scopes=...` |
 | `--no-overlay` | with `[overlay]` set up, do not join it after enrolling (it joins by default) |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |

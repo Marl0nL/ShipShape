@@ -141,7 +141,8 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     device (remote), is said to run on the FleetLedger computer."""
     on_fleetledger = " (on the FleetLedger computer)" if remote else ""
     if signin:
-        return Action("signin", "Sign in", signin)
+        return Action("signin", "Sign in again with these scopes"
+                      if code == "signin-scopes-differ" else "Sign in", signin)
     if code.startswith("signin-"):
         return Action("link", "Sign-ins", "/signin")
     # Fixes the UI can do itself are buttons; the CLI command is the tooltip.

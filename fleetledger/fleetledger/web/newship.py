@@ -72,6 +72,7 @@ class FormChoices:
     memory_gb: str = ""
     disk_gb: str = ""
     signins_on: tuple[str, ...] = field(default_factory=tuple)
+    github_scopes_on: tuple[str, ...] = ()  # extra GitHub scopes ticked (none by default)
     agent_on: bool = True
     agent: str = "main"
     cwd: str = "~/work"
@@ -155,6 +156,7 @@ def refill(nf: FormChoices, fields: dict[str, list[str]]) -> FormChoices:
         disk_gb=text("disk_gb", nf.disk_gb),
         signins_on=(tuple(fields.get("signin", [])) if _one(fields, "signins_shown")
                     else nf.signins_on),
+        github_scopes_on=tuple(fields.get("github_scope", [])),
         agent_on=_one(fields, "agent_on") == "yes",
         agent=text("agent", nf.agent), cwd=text("cwd", nf.cwd), repo=text("repo", ""),
         overlay_on=_one(fields, "overlay") == "yes",
@@ -187,6 +189,8 @@ def fields_from(options: dict[str, Any], nf: FormChoices) -> dict[str, list[str]
         out["memory_gb"] = [str(max(1, round(o["memory_mb"] / 1024)))]
     if o.get("signins") is not None:
         out["signins_shown"], out["signin"] = ["yes"], o["signins"].split(",")
+    if o.get("github_scopes"):
+        out["github_scope"] = o["github_scopes"].split(",")
     first = (o.get("autostart") or [""])[0].split(":")
     if len(first) >= 2 or o.get("repo"):
         out["agent_on"] = ["yes"]
@@ -223,7 +227,7 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
          ) -> tuple[str, list[str]]:
     """(name, the `ship-fleet new` argv) from the form, checked: raises FleetError with
     a plain message on anything `new` would refuse."""
-    from fleetledger import attempts, github, ops, signins
+    from fleetledger import attempts, ghscopes, github, ops, signins
     from fleetledger.overlay import HOST_RE
     from fleetledger.seed.shiptoml import TIMEZONE_RE, known_timezone
     from fleetledger.web import setup
@@ -252,6 +256,9 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
                            else list(signins.CHOICES))
     if chosen != list(signins.CHOICES):
         out += ["--signins", ",".join(chosen)]
+    scopes = ghscopes.check(fields.get("github_scope", []))
+    if scopes:
+        out += ["--github-scopes", ",".join(scopes)]
 
     if _one(fields, "agent_on") == "yes":
         agent, cwd = _one(fields, "agent") or "main", _one(fields, "cwd") or "~/work"
