@@ -30,7 +30,35 @@
     has not answered yet{% endif %}: a field shows "(unchanged)" and changes only what you choose.</p>
   {% endif %}
   {% set groups = dict(SETTING_GROUPS) %}
-  {{ setting_group("Claude Code", groups["Claude Code"]) }}
+  {% set running_agents = restartable(view) %}
+  {% set mode_form %}{% if running_agents and doc and not view.problem %}
+    {% set drifted = running_agents|selectattr("drifted")|list %}
+    {% set busy = drifted|selectattr("state", "in", ["working", "unknown"])|list %}
+    <div class="running-modes">
+      <h3>Running agents</h3>
+      <p class="hint">A running agent keeps the mode it is in: the default mode applies to
+        agents started from now on. Running:
+        {% for r in running_agents %}{{ r.name }} ({{ r.mode or "mode not known" }}{% if r.drifted %}; starts in {{ r.start_mode }}{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
+      {% if drifted %}
+      <form method="post" action="/ships/{{ ship.name }}/agents/restart" class="inline"
+        data-confirm-title="Restart {{ drifted|map(attribute='name')|join(', ') }} in the mode {{ 'each' if drifted|length != 1 else 'it' }} starts in?"
+        data-confirm="{% for r in drifted %}{{ r.name }} goes from {{ r.mode or 'an unknown mode' }} to {{ r.start_mode }}. {% endfor %}{{ "Each" if drifted|length != 1 else "It" }} exits and starts again in the same pane and folder, with the same name, and continues its conversation; Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if busy %} {{ busy|map(attribute='name')|join(', ') }} {{ 'are' if busy|length != 1 else 'is' }} working now and {{ 'are' if busy|length != 1 else 'is' }} left alone unless you ticked Interrupt.{% endif %}"
+        data-confirm-action="Restart {{ drifted|length }} agent{{ 's' if drifted|length != 1 }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="from" value="settings">
+        {% for r in drifted %}<input type="hidden" name="agent" value="{{ r.name }}">{% endfor %}
+        {% if busy %}<label><input type="checkbox" name="force" value="yes"> Interrupt an agent that is working</label>{% endif %}
+        <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+        <button type="submit" class="ghost" title="ship-fleet agent restart {{ ship.name }} {{ drifted|map(attribute='name')|join(' ') }}">Apply the default mode to running agents</button>
+      </form>
+      <p class="hint">Restarts only the agents not in the mode they start in: an agent with a
+        mode of its own (autostart) keeps that one.</p>
+      {% else %}
+      <p class="hint">Every running agent is in the mode it starts in.</p>
+      {% endif %}
+    </div>
+  {% endif %}{% endset %}
+  {{ setting_group("Claude Code", groups["Claude Code"], mode_form) }}
   {{ setting_group("Agent", groups["Agent"]) }}
   <section>
     <h2>Sign-ins it uses</h2>

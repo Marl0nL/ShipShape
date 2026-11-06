@@ -16,6 +16,8 @@ from pathlib import Path
 
 from . import (
     CONTRACTS,
+    PERMISSION_MODES,
+    agents,
     apply,
     autostart,
     converge,
@@ -53,11 +55,14 @@ SET_KEYS = {
     "owner.keys": "list",
 }
 RC_CHANGE_NOTE = (
-    "Remote Control changes reach running Claude sessions only when they restart "
-    "(a reboot restarts them); the Claude app can take a few minutes to show or drop them."
+    "Remote Control changes reach running Claude sessions only when they restart: "
+    "`ship-fleet agent restart {ship} --all` restarts them, continuing their conversations "
+    "(on the Ship: `ship-ctl agent restart --all`; a reboot restarts them too). The Claude "
+    "app can take a few minutes to show or drop them."
 )
 PREFIX_CHANGE_NOTE = (
-    "Running sessions keep their names; send /rename <name> or restart them. "
+    "Running sessions keep their names, even across a restart; send /rename <name>, or "
+    "start them in a new conversation (`ship-fleet agent restart {ship} --all --fresh`). "
     "New autostart sessions use the new prefix."
 )
 
@@ -102,6 +107,17 @@ def build_parser() -> Parser:
     st.add_argument("pairs", nargs="*", metavar="KEY=VALUE")
     st.add_argument("--file", metavar="-", help="read a complete replacement ship.toml from stdin")
     cmd("autostart", "Start the [[autostart]] agents that are not running.")
+    ag = cmd("agent", "Restart running Claude agents in place, in a new permission mode.")
+    ag.add_argument("action", choices=["restart"])
+    ag.add_argument("names", nargs="*", metavar="NAME", help="herdr agent names")
+    ag.add_argument("--all", dest="everyone", action="store_true",
+                    help="every named Claude agent")
+    ag.add_argument("--mode", choices=PERMISSION_MODES,
+                    help="default: its [[autostart]] mode, else claude.default_mode")
+    ag.add_argument("--fresh", action="store_true",
+                    help="start a new conversation instead of continuing it")
+    ag.add_argument("--force", action="store_true",
+                    help="also restart an agent that is working (interrupts its turn)")
     ns = cmd("notify-signin", "Tell the [[autostart]] agents that a sign-in has completed.")
     ns.add_argument("service", choices=sorted(notice.SERVICES))
     c = cmd("converge", "Apply a tooling bundle.")
@@ -173,8 +189,6 @@ AUTOSTART_KEYS = ("autostart.add", "autostart.remove")
 def _autostart_change(doc: dict, key: str, raw: str) -> None:
     """autostart.add=NAME:CWD[:MODE] adds an [[autostart]] agent (ship-ctl autostart then
     starts it); autostart.remove=NAME drops one (a running agent keeps running)."""
-    from . import PERMISSION_MODES
-
     entries = doc.setdefault("autostart", [])
     if key == "autostart.remove":
         kept = [e for e in entries if e.get("name") != raw]
@@ -235,9 +249,9 @@ def cmd_set(ctx: Context, args) -> dict:
     applied, messages = apply.apply(ctx, new_ship)
     messages = messages or ["Saved and applied."]
     if (current.claude["remote_control"] == "on") != (new_ship.claude["remote_control"] == "on"):
-        messages.append(RC_CHANGE_NOTE)
+        messages.append(RC_CHANGE_NOTE.format(ship=new_ship.name))
     if current.claude["session_prefix"] != new_ship.claude["session_prefix"]:
-        messages.append(PREFIX_CHANGE_NOTE)
+        messages.append(PREFIX_CHANGE_NOTE.format(ship=new_ship.name))
     return result("set", changed=changed + applied, messages=messages)
 
 
@@ -294,6 +308,14 @@ def cmd_autostart(ctx: Context, args) -> dict:
     state = status.build(ctx, ship)["state"]
     data, changed, messages = autostart.run(ctx, ship, state)
     return result("autostart", changed=changed, messages=messages, data=data)
+
+
+def cmd_agent(ctx: Context, args) -> dict:
+    ship = shiptoml.load(ctx.paths)
+    data, changed, messages = agents.restart(ctx, ship, args.names, everyone=args.everyone,
+                                             mode=args.mode, fresh=args.fresh,
+                                             force=args.force)
+    return result("agent", changed=changed, messages=messages, data=data)
 
 
 def cmd_notify_signin(ctx: Context, args) -> dict:
@@ -475,6 +497,7 @@ COMMANDS = {
     "apply": cmd_apply,
     "set": cmd_set,
     "autostart": cmd_autostart,
+    "agent": cmd_agent,
     "notify-signin": cmd_notify_signin,
     "converge": cmd_converge,
     "tools": cmd_tools,
@@ -520,7 +543,7 @@ def _print_human(doc: dict) -> None:
         for d in data["destinations"][:30]:
             progs = ",".join(p["name"] for p in d["programs"][:3])
             print(f"  {d['connections_24h']:>6} {d['connections_7d']:>7}  {d['name']}  ({progs})")
-    elif doc["command"] in ("tools", "autostart", "ssh-trust") and data:
+    elif doc["command"] in ("tools", "autostart", "ssh-trust", "agent") and data:
         print(json.dumps(data, indent=2))
     if doc["error"]:
         print(f"ship-ctl: {doc['error']['message']}", file=sys.stderr)

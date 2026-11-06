@@ -624,6 +624,12 @@ def parse_assignments(values: Iterable[str]) -> list[str]:
     return [f"{k}={v}" for k, v in out.items()] + agents
 
 
+DEFAULT_MODE_NOTE = (
+    "Running agents keep the mode they are in; the new default applies to agents started "
+    "from now on. To switch them now, each continuing its conversation: "
+    "ship-fleet agent restart {ship} --all")
+
+
 def _record_settings(fleet: Fleet, ship: Ship, pairs: Sequence[str]) -> None:
     """Keep the inventory in step, so a later seed for this Ship matches."""
     with fleet.store.edit() as ed:
@@ -651,6 +657,8 @@ def set_settings(
         _record_settings(fleet, ship, pairs)
         summary = ", ".join(result.changed) or "no change"
         messages = list(result.messages)
+        if any(p.startswith("claude.default_mode=") for p in pairs):
+            messages.append(DEFAULT_MODE_NOTE.format(ship=ship.name))
         if any(p.startswith("autostart.add=") for p in pairs):
             # Start it now (it starts once Claude is signed in, and on every boot).
             try:
@@ -661,6 +669,64 @@ def set_settings(
         return Outcome(ship.name, True, summary, messages, {"changed": result.changed})
 
     return for_each(fleet, ships, one, on_event)
+
+
+# --- agents ---------------------------------------------------------------------
+
+AGENT_RESTART_TIMEOUT = 360  # per agent: stop, then start again (the Ship's own limits)
+
+
+def restart_agents(
+    fleet: Fleet,
+    ship: Ship,
+    agents: Sequence[str] = (),
+    *,
+    everyone: bool = False,
+    mode: str | None = None,
+    fresh: bool = False,
+    force: bool = False,
+    on_event: Event | None = None,
+) -> Outcome:
+    """Restart running agents on one Ship in place (ship-ctl agent restart): the same
+    pane and name, the conversation continued unless fresh, in mode or the mode each
+    would start in now. The Ship refuses bypassPermissions where it is not allowed, and
+    leaves a working agent alone unless force. Its mode ledger then says the new mode,
+    so a later reboot (and `ship-fleet reboot`'s check) expects it."""
+    on_event = on_event or _quiet
+    agents = list(dict.fromkeys(agents))
+    if bool(agents) == everyone:
+        raise FleetError("Which agents? Give their names, or --all.")
+    bad = [a for a in agents if not AGENT_NAME_RE.match(a)]
+    if bad:
+        raise FleetError(f"'{bad[0]}' is not an agent name.")
+    if mode is not None and mode not in MODES:
+        raise FleetError(f"Unknown mode '{mode}' (modes: {', '.join(MODES)}).")
+    argv = ["restart", *(["--all"] if everyone else agents)]
+    argv += [*(["--mode", mode] if mode else []), *(["--fresh"] if fresh else []),
+             *(["--force"] if force else [])]
+    who = "every agent" if everyone else ", ".join(agents)
+    on_event(ship.name, f"restarting {who}" + (f" in {mode}" if mode else ""))
+    ctl = ShipCtl(fleet.ssh(), ship)
+    try:
+        result = ctl.call("agent", *argv, partial=True,
+                          timeout=AGENT_RESTART_TIMEOUT * (8 if everyone else len(agents)))
+    except ShipCtlError as exc:
+        if exc.code == "usage" and "invalid choice" in exc.message:
+            raise FleetError(f"{ship.name}'s tooling cannot restart agents yet.",
+                             hint=f"Update it first: ship-fleet update {ship.name}") from exc
+        raise
+    data = result.data or {}
+    done = data.get("restarted") or []
+    if result.ok and not done and not data.get("skipped"):
+        return Outcome(ship.name, True, "no Claude agent is running", data=data)
+    summary = ", ".join(f"{r['name']} in {r['mode']}" for r in done)
+    summary = f"restarted {summary}" if done else "nothing restarted"
+    if not result.ok:
+        summary += f"; {(result.error or {}).get('message', 'failed')}"
+    details = list(result.messages)
+    details += [f"{s['name']}: {s['reason']}" for s in data.get("skipped") or []
+                if not any(d.startswith(f"{s['name']} ") for d in details)]
+    return Outcome(ship.name, result.ok, summary, details, data)
 
 
 def apply_tag_changes(current: Iterable[str], changes: Iterable[str]) -> list[str]:

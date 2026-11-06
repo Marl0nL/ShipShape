@@ -51,6 +51,8 @@ Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [access from outside the LAN](docs/runbooks/remote-access.md),
 [sign it in](docs/runbooks/sign-in.md),
 [attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, herdr --remote),
+[update the fleet](docs/runbooks/update-fleet.md) (and switch running agents to a new
+permission mode: `ship-fleet agent restart`),
 [the web UI](docs/web-ui.md),
 [retire the old stack](docs/runbooks/retire-old-stack.md).
 

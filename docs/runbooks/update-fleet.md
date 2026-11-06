@@ -45,8 +45,9 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   it had. Add `--reboot never` to postpone that; the Ship then shows
   `herdr-restart-pending` until you run `ship-fleet reboot ship-01`.
 - `FAILED` with `agent X came back in auto, was bypassPermissions` means the
-  resume shim did not restore bypass: look at `ship-fleet logs ship-01 resume`
-  and `herdr` before going further.
+  resume shim did not restore the mode: look at `ship-fleet logs ship-01 resume`
+  and `herdr` before going further. A reboot keeps each agent in the mode it was
+  in, never the new default: to change it, see "Change a running agent's mode".
 - A failed converge rolls the Ship back to its previous tooling by itself; read
   `ship-fleet logs ship-01 provision`.
 
@@ -94,6 +95,53 @@ ship-fleet set all timezone=Europe/Berlin
 
 Automatic reboots are clean too, so agents resume in their modes as after any
 reboot.
+
+## Change a running agent's mode
+
+`default_mode` (and an autostart agent's own mode) applies to agents started
+afterwards. A running agent keeps its mode, and so does every reboot and update:
+herdr resumes each session, and the Ship puts back the mode it was in. To switch
+running agents, swap them for new ones in the mode you want:
+
+```sh
+ship-fleet set ship-01 default_mode=bypassPermissions   # says running agents keep theirs
+ship-fleet agent restart ship-01 --all                  # each in the mode it starts in now
+ship-fleet agent restart ship-01 main --mode plan       # or one agent, in a chosen mode
+```
+
+Each agent exits and starts again in its own herdr pane, with the same name and
+folder, and continues its conversation (`claude --resume`); `--fresh` starts a new
+one instead. Remote Control and the session name come back as before, and the
+Ship records the new mode, so the next reboot or `ship-fleet update` resumes it in
+that mode and `ship-fleet reboot` checks for it.
+
+- An agent in the middle of a turn is left alone and the command says so; run it
+  again once the agent is idle, or add `--force` to interrupt the turn. An agent
+  waiting at a question has that question dismissed.
+- `bypassPermissions` needs `allow_bypass=true` on the Ship; without it the Ship
+  refuses and nothing is restarted. (`default_mode=bypassPermissions` turns
+  `allow_bypass` on with it.)
+- Without `--mode`, an agent with a mode of its own in autostart keeps that mode;
+  give `--mode` to override it.
+- A Ship whose tooling predates the command says so: `ship-fleet update` it first.
+
+In the web UI: the Ship's Overview lists each agent with **Restart in mode…**,
+and after you change the default mode on its Settings tab, **Apply the default
+mode to running agents** restarts the agents not in the mode they start in. Both
+run as jobs behind the confirm dialog.
+
+By hand, if the Ship cannot run the command: attach (`herdr --remote ship-01` or
+`ship-fleet ssh ship-01`, then `herdr`), go to the agent's pane, type `/exit`,
+and in the same pane start it again with the mode's flag and `--continue`:
+
+```sh
+claude --permission-mode acceptEdits --continue     # or plan, auto, default, dontAsk
+claude --dangerously-skip-permissions --continue    # bypassPermissions (allow_bypass)
+```
+
+`--continue` picks the folder's most recent conversation; with several agents in
+one folder, use `--resume <session id>` instead. The Ship records the mode from
+the launch flags, so a reboot keeps it.
 
 ## A new Ubuntu image
 
