@@ -10,14 +10,23 @@ Ship, and later destroy, snapshots ...) runs here, in one registry.
   `ship-fleet ui`: BrowserApp wraps the app (a copy would drop the hooks code reads
   with getattr) and points out, err, say and note at the job.
 - A job's thread catches everything (argparse's SystemExit included), so a job always
-  ends and frees its Ships. Jobs live in memory only: the inventory, not a job, says
-  what state a Ship is in after a restart.
+  ends and frees its Ships. Running jobs live in memory only: the inventory, not a
+  job, says what state a Ship is in after a restart.
+- A job that ends is saved (best effort) to the operations history
+  (fleetledger.history.Operations, redacted and bounded there), which the Activity
+  page lists; one cut short by FleetLedger stopping is saved as "stopped". Job ids
+  carry on from the history's, so an id names one operation across restarts.
+- A finished job's card can be dismissed: it leaves every page's list of cards, for
+  every browser session (the job store is shared, like Activity), and the history
+  record says so. A running job cannot be dismissed, so a live operation is never
+  out of sight. Nothing is deleted.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import itertools
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -25,6 +34,7 @@ from collections.abc import Callable
 from typing import Any
 
 from fleetledger.errors import FleetError
+from fleetledger.history import Operation, Operations
 
 KEEP_FINISHED = 20
 MAX_LINES = 400
@@ -41,7 +51,9 @@ class Job:
     locks: list[str] = dataclasses.field(default_factory=list)
     started: float = dataclasses.field(default_factory=time.time)
     lines: deque[str] = dataclasses.field(default_factory=lambda: deque(maxlen=MAX_LINES))
+    ended: float | None = None
     done: bool = False
+    dismissed: bool = False
     ok: bool | None = None
     error: str | None = None
     outcomes: list[Any] = dataclasses.field(default_factory=list)  # actions.Outcome
@@ -113,16 +125,81 @@ def run_cli(app: Any, argv: list[str], job: Any) -> int:
         return int(exc.code) if isinstance(exc.code, int) and exc.code else 2
 
 
-class Jobs:
-    """Every job the web UI started, newest first; at most KEEP_FINISHED finished ones."""
+def outcome_of(job: Job, ended: bool | None = None) -> str:
+    """What a job's card says it came to: ok, failed, by-hand, or stopped (cut short).
+    ended: whether it ended (default job.done)."""
+    if not (job.done if ended is None else ended):
+        return "stopped"
+    if job.result.get("by_hand") and not job.error:
+        return "by-hand"
+    return "ok" if job.ok else "failed"
 
-    def __init__(self, app: Any, on_finished: Callable[[list[str]], None] | None = None):
+
+def log_of(job: Job) -> list[str]:
+    """Everything a job's card says, as lines: what the command printed, each Ship's
+    log, then (under "--- result ---") the outcome's own lines not printed already."""
+    out = list(job.snapshot())
+    for ship, lines in job.result.get("logs") or []:
+        out.append(f"--- {ship} ---")
+        out += [str(line) for line in lines]
+    said = {line.strip() for line in out}
+    summary: list[str] = []
+    outcome = job.result.get("outcome")
+    if outcome is not None:
+        summary += [str(m) for m in getattr(outcome, "messages", [])]
+        summary += [str(i) for i in getattr(outcome, "instructions", [])]
+    for check in job.result.get("checks") or []:
+        detail = getattr(check, "detail", "")
+        summary.append(f"{getattr(check, 'name', '?')}: {getattr(check, 'state', '?')}"
+                       + (f" ({detail})" if detail else ""))
+    for o in job.outcomes:
+        summary.append(f"{o.ship}: {o.summary}" + "".join(f"; {d}" for d in o.details))
+    summary = [line for line in summary if line.strip() not in said]
+    return out + (["--- result ---"] if out and summary else []) + summary
+
+
+def record_of(job: Job, ended: bool | None = None) -> Operation:
+    """The history record of job. ended: whether it ended (default job.done); one
+    that did not was cut short by FleetLedger stopping."""
+    ended = job.done if ended is None else ended
+    return Operation(id=job.id, kind=job.kind, title=job.title, ships=tuple(job.ships),
+                     started=job.started, ended=job.ended or time.time(),
+                     outcome=outcome_of(job, ended),
+                     error=job.error or (None if ended else "FleetLedger stopped while "
+                                         "this was running."),
+                     log=tuple(log_of(job)), dismissed=job.dismissed)
+
+
+class Jobs:
+    """Every job the web UI started, newest first; at most KEEP_FINISHED finished ones.
+    With a store (fleetledger.history.Operations), each one that ends is saved there."""
+
+    def __init__(self, app: Any, on_finished: Callable[[list[str]], None] | None = None,
+                 store: Operations | None = None):
         self.app = app
         self.on_finished = on_finished or (lambda ships: None)
+        self.store = store
         self._lock = threading.Lock()
         self._jobs: list[Job] = []
-        self._ids = itertools.count(1)
+        self._ids = itertools.count(self._first_id())
         self._stopping = False
+
+    def _first_id(self) -> int:
+        if self.store is None:
+            return 1
+        try:
+            return self.store.last_id() + 1
+        except (OSError, sqlite3.Error):
+            return 1
+
+    def _save(self, job: Job, ended: bool) -> None:
+        """Save job to the history: best effort, as a broken file must not stop a job."""
+        if self.store is None:
+            return
+        try:
+            self.store.save(record_of(job, ended))
+        except Exception:  # noqa: BLE001 - history is a convenience, never the outcome
+            pass
 
     @property
     def version(self) -> int:
@@ -137,8 +214,28 @@ class Jobs:
         with self._lock:
             return next((j for j in self._jobs if j.id == job_id), None)
 
-    def for_ship(self, name: str) -> list[Job]:
-        return [j for j in self.recent() if name in j.ships]
+    def shown(self) -> list[Job]:
+        """recent(), less the dismissed: the cards a page lists."""
+        return [j for j in self.recent() if not j.dismissed]
+
+    def for_ship(self, name: str, *, shown: bool = False) -> list[Job]:
+        return [j for j in (self.shown() if shown else self.recent()) if name in j.ships]
+
+    def dismiss(self, ids: list[int]) -> list[Job]:
+        """Dismiss these jobs' cards, for everyone; only finished jobs (a running job
+        stays in sight). Returns those dismissed now."""
+        wanted = set(ids)
+        with self._lock:
+            gone = [j for j in self._jobs if j.id in wanted and j.done and not j.dismissed]
+            for job in gone:
+                job.dismissed = True
+                job.version += 1
+        if gone and self.store is not None:
+            try:
+                self.store.dismiss([j.id for j in gone])
+            except Exception:  # noqa: BLE001 - the card is gone either way
+                pass
+        return gone
 
     def _busy_locked(self, ships: list[str]) -> bool:
         return any(j.running and set(j.ships) & set(ships) for j in self._jobs)
@@ -194,6 +291,10 @@ class Jobs:
         except BaseException as exc:  # noqa: BLE001 - shown on the page, never raised here
             job.ok, job.error = False, f"Internal error ({type(exc).__name__})."
         finally:
+            job.ended = time.time()
+            # Saved before it is done, so whoever sees it done finds its record (and a
+            # Dismiss, possible only once it is done, always has a record to mark).
+            self._save(job, ended=True)
             job.done = True
             job.version += 1
             try:
@@ -203,10 +304,14 @@ class Jobs:
 
     def stop(self) -> list[Job]:
         """At shutdown: refuse new jobs, and return those cut short (their threads die
-        with the process)."""
+        with the process). Each is saved to the history as stopped."""
         with self._lock:
             self._stopping = True
-            return [j for j in self._jobs if j.running]
+            cut = [j for j in self._jobs if j.running]
+        for job in cut:
+            if job.ended is None:  # it may have ended (and been saved) since
+                self._save(job, ended=False)
+        return cut
 
 
 class _RecordingDriver:

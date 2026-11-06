@@ -331,3 +331,24 @@
   <button type="submit" class="{{ '' if primary else 'ghost' }}{{ ' danger' if verb == 'stop' }}" title="ship-fleet {{ verb }} {{ ship.name }}">{{ verb|capitalize }} the VM</button>
 </form>
 {% endmacro %}
+
+{# The bar above a list of job cards: a heading (or none), a link to the Activity page
+   (all of it, or one Ship's) and, when two or more cards are finished, Dismiss all
+   finished (web/activity.py). Import it "with context": it reads csrf and here. #}
+{% macro jobs_toolbar(heading, jobs, history, ship=None) %}
+{% set finished = jobs|selectattr("done")|list %}
+<div class="toolbar jobs-toolbar">
+  {% if heading %}<h2>{{ heading }}</h2>{% endif %}
+  <div class="toolbar-actions">
+    <a href="{{ history }}">{{ "Past operations" if ship else "All past operations" }}</a>
+    {% if finished|length > 1 %}
+    <form class="inline" method="post" action="/jobs/dismiss">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% if ship %}<input type="hidden" name="ship" value="{{ ship }}">{% endif %}
+      <button type="submit" class="ghost small" title="Hide every finished card{{ " of " ~ ship if ship }}; running ones stay. They all stay in Activity.">Dismiss all finished</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}

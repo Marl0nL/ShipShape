@@ -101,7 +101,7 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
     except FleetError:
         rules = None
     return {"overlay_rules": rules, "POLICY_BYTES": POLICY_BYTES, "TOO_BIG": TOO_BIG,
-            "overlay_jobs": [j for j in ui.jobs.recent() if j.kind == "overlay-check"][:2]}
+            "overlay_jobs": [j for j in ui.jobs.shown() if j.kind == "overlay-check"][:2]}
 
 
 async def check(request: Request) -> Response:

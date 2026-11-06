@@ -332,6 +332,21 @@ article.flow header { display: flex; gap: 8px; align-items: center; flex-wrap: w
 .attempt-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0 2px; }
 .retry-of { margin: 10px 0 4px; }
 .retry-of > h2 { margin: 8px 0; }
+/* A finished card's Dismiss sits at the header's far end (it wraps below on a phone);
+   the bar above a list of cards holds the Activity link and Dismiss all finished. */
+article.flow header form.dismiss { margin: 0 0 0 auto; }
+.jobs-toolbar h2 { margin: 6px 0 0; }
+section.ship-jobs .jobs-toolbar { justify-content: flex-end; }
+/* The Activity page: past operations, a filter, and Newest / Older. */
+.activity-filter { margin: 4px 0 14px; }
+.activity-filter label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+article.record .record-times { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 0 6px; }
+article.record.failed { border-left: 5px solid var(--bad); }
+article.record.stopped { border-left: 5px solid var(--warn-mark); }
+article.record details.ship-log { margin-top: 6px; }
+section.history { display: flex; flex-direction: column; gap: 10px; }
+nav.pager { display: flex; gap: 16px; margin: 14px 0; }
+p.crumbs { margin: 8px 0 0; font-size: 13px; }
 code.device-code { font-size: 20px; letter-spacing: 2px; padding: 2px 8px; background: var(--warn-bg);
   color: var(--ink); border: 1px dashed var(--warn-mark); }
 .code-form input { min-width: 22em; max-width: 100%; }

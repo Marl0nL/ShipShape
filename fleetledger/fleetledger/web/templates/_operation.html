@@ -1,0 +1,21 @@
+{# One finished operation (fleetledger.history.Operation) on the Activity page. Its log
+   loads when opened (/activity/{id}/log); without script, the link opens it whole.
+   `whole` (operation.html): show the log here instead. #}
+<article class="flow job record {{ op.outcome }}" id="op-{{ op.id }}">
+  <header><strong>{{ op.title }}</strong>{% if op.ships %} · {% for s in op.ships %}<a href="/activity?ship={{ s }}">{{ s }}</a>{{ ", " if not loop.last }}{% endfor %}{% endif %}
+    <span class="pill {{ OUTCOME_PILLS[op.outcome] }}">{{ OUTCOME_LABELS[op.outcome] }}</span>
+    {% if op.dismissed %}<span class="pill muted" title="Its card was dismissed">dismissed</span>{% endif %}
+  </header>
+  <p class="when record-times"><span>{{ op.kind }}</span> · <span>started {{ clock_dated(op.started) }}</span> · <span>ended {{ clock_dated(op.ended) }}</span> · <span>took {{ took(op.took) }}</span></p>
+  {% if op.error %}<p class="flash bad">{{ op.error }}</p>{% endif %}
+  {% if whole %}
+  {% include "_operation_log.html" %}
+  {% elif op.lines %}
+  <details class="ship-log" hx-get="/activity/{{ op.id }}/log" hx-trigger="toggle once" hx-target="find .log-slot" hx-swap="innerHTML">
+    <summary>Log: {{ op.lines }} line{{ "s" if op.lines != 1 }}</summary>
+    <div class="log-slot"><a href="/activity/{{ op.id }}">Open the log</a></div>
+  </details>
+  {% else %}
+  <p class="quiet">No log.</p>
+  {% endif %}
+</article>

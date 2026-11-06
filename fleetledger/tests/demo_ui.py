@@ -7,7 +7,8 @@ writes an inventory of six made-up Ships, and serves `ship-fleet ui` against
 Ships that are simulated in this process: nothing is reached over the network,
 and your real ~/.config/fleetledger, ~/.ssh and keyring are never read. The
 history store is seeded with a week of made-up samples so the dashboard's charts
-have something to draw. Use it for screenshots and for working on the UI.
+have something to draw, and with a few finished operations for the Activity page.
+Use it for screenshots and for working on the UI.
 """
 
 from __future__ import annotations
@@ -493,6 +494,33 @@ def seed_history() -> None:
     store.add(rows)
 
 
+def seed_operations() -> None:
+    """A few days of finished operations for the Activity page (one dismissed, one
+    failed, one by hand)."""
+    try:
+        from fleetledger.history import Operation, Operations
+    except ImportError:  # a checkout from before the operations history
+        return
+    now = time.time()
+    store = Operations()
+    made = [
+        ("update", "Update", ["ship-01", "ship-02"], 3 * 86400, 140, "ok", None,
+         ["ship-01: converged, no reboot needed", "ship-02: converged, no reboot needed"], True),
+        ("reboot", "Reboot", ["ship-03"], 2 * 86400 + 4000, 75, "ok", None,
+         ["Rebooting ship-03.", "ship-03 is back: 2 agents in their modes."], False),
+        ("snapshot", "Take snapshot before-upgrade", ["ship-04"], 2 * 86400, 12, "by-hand",
+         None, ["The manual driver cannot snapshot: take it on your hypervisor."], False),
+        ("update", "Update", ["ship-05"], 86400 + 600, 31, "failed",
+         "ship-05 did not answer over SSH.", ["Connecting to ship-05...", "timed out"], False),
+        ("tools", "Add tools", ["ship-02"], 7200, 48, "ok", None,
+         ["Installing ripgrep.", "ship-02: tools changed"], True),
+    ]
+    for i, (kind, title, ships, ago, took, outcome, error, log, dismissed) in enumerate(made, 1):
+        store.save(Operation(id=i, kind=kind, title=title, ships=tuple(ships),
+                             started=now - ago, ended=now - ago + took, outcome=outcome,
+                             error=error, log=tuple(log), dismissed=dismissed))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=8790)
@@ -509,6 +537,7 @@ def main() -> int:
     store = TomlFileStore(base / "config" / "ships.toml")
     seed_net()
     seed_history()
+    seed_operations()
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: Repo(ROOT),
                   ssh_factory=make_ssh, sleep=time.sleep, driver_factory=make_driver(),
                   stdin_isatty=lambda: False, browse=demo_browse, keyscan=demo_keyscan)
