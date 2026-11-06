@@ -616,6 +616,18 @@ def _in_use(args, app):
     return inuse.using(store)
 
 
+def _handed_over(args, app) -> None:
+    """A copy on standby or retired (ship-fleet migrate) does not act on the fleet:
+    every command but migrate's own and doctor refuses, the web UI included."""
+    from fleetledger import handover
+
+    if args.command in handover.ALLOWED:
+        return
+    store = app.store_factory()
+    if getattr(store, "path", None) is not None:
+        handover.gate(args.command, store)
+
+
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     from fleetledger import commands
 
@@ -639,6 +651,7 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     for module in EXTRA_COMMAND_MODULES:
         handler = handler or getattr(importlib.import_module(module), name, None)
     try:
+        _handed_over(args, app)
         with _in_use(args, app):
             return handler(args, app) or 0
     except FleetError as exc:

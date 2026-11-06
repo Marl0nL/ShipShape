@@ -211,8 +211,14 @@ secret, the inventory) to another computer, so:
 - a key of your own that FleetLedger made stays on your machines (only its `.pub`
   moves), so the new computer never attaches as you.
 
-The old computer keeps its copy, so until it is wiped it is as sensitive as before.
-Details: [move-fleetledger.md](runbooks/move-fleetledger.md).
+Only one copy acts on the fleet: the new one waits on standby until it has checked
+every Ship, then the old one retires (it refuses every command but `migrate` and
+`doctor`, the web UI included) before the new one activates, so a hand-over cut
+short leaves no copy acting, never two. An epoch in `ships.toml` goes up at every
+hand-over, and a computer that handed the fleet on refuses an older state (an old
+backup). The retired copy keeps its keys for a two-week rollback window, so until
+`ship-fleet migrate wipe` it is as sensitive as before. Details:
+[move-fleetledger.md](runbooks/move-fleetledger.md).
 
 ## The login concierge
 
@@ -276,6 +282,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | Someone with a paired browser session (a stolen unlocked laptop, a compromised phone) | everything the UI does, so the whole fleet and the Proxmox pool | the session works only with the login that paired it; lapses after 12 hours unused and 30 days after pairing; destroy, rollback, trusting machines, setup's keys and pairing another device need a pairing younger than 4 hours; **Revoke** (Settings ▸ Devices, `ship-fleet ui revoke`) takes effect at the next request; typed confirmations for destroy and rollback |
 | A local program on the FleetLedger computer | forge Serve's identity headers to `127.0.0.1` | headers are a filter, never a sign-in: a device's random session id is still needed, and `devices.json` holds only its hash |
 | Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal |
+| Two FleetLedgers acting on one fleet (an old copy opened out of habit, a restored backup) | an older checkout rolls Ships back; a stale inventory's revocation list un-revokes machines; each undoes the other's changes | a retired or standby copy refuses to act, the web UI included; the hand-over retires the old copy before the new one activates; the epoch makes a computer refuse an older state; `migrate wipe` removes the old copy's keys |
 | A move of FleetLedger intercepted or redirected | every key and secret above | one stream inside SSH to a host key you checked first; never a file at rest; each member checked by SHA-256 before anything is written; your own key never moves |
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr pinned by checksum; recipes pin versions; verified Ubuntu images |

@@ -34,7 +34,9 @@ one choice:
   The keys themselves stay the same either way. This starts an empty inventory,
   so each Ship must be adopted again; to bring a whole fleet from another
   computer (its Ships, trusted machines and secrets too), use `ship-fleet
-  migrate` instead ([move-fleetledger.md](runbooks/move-fleetledger.md)).
+  migrate` instead ([move-fleetledger.md](runbooks/move-fleetledger.md)). On a
+  copy that handed its fleet on (retired) or has not taken it over yet (on
+  standby), `ship-fleet ui` and `setup` refuse to start and say where the fleet is.
 
 Anything already on this computer is offered rather than asked again: a Proxmox
 token secret already in the keyring or in `~/.config/fleetledger/proxmox-token`
