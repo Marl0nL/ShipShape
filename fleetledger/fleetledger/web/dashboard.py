@@ -139,7 +139,8 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     computer can reach the Ship with plain herdr --remote (trustcmd.attaches_here),
     so that is the command offered for a waiting agent; else ship-fleet ssh."""
     if signin:
-        return Action("signin", "Sign in", signin)
+        return Action("signin", "Sign in again with these scopes"
+                      if code == "signin-scopes-differ" else "Sign in", signin)
     if code.startswith("signin-"):
         return Action("link", "Sign-ins", "/signin")
     # Fixes the UI can do itself are buttons; the CLI command is the tooltip.

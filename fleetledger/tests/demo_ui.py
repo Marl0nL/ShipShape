@@ -64,6 +64,11 @@ LOCKED = {"ship-04": {
 LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
 MODES_NOW: dict[tuple[str, str], str] = {}  # (Ship, agent) -> mode after a demo restart
 CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo run
+# Extra GitHub scopes: chosen in ship.toml, and on each Ship's token (ghscopes). ship-02
+# chose write:packages after it signed in, so its token lacks it: scopes differ.
+GITHUB_CHOSEN: dict[str, list[str]] = {"ship-01": ["workflow"],
+                                       "ship-02": ["workflow", "write:packages"]}
+GITHUB_TOKEN: dict[str, list[str]] = {"ship-01": ["workflow"], "ship-02": ["workflow"]}
 INBOX: dict[str, dict[str, tuple[int, float]]] = {  # Ship -> file name -> (size, when)
     "ship-01": {"design-notes.md": (18_342, time.time() - 3 * 3600),
                 "sample-data.csv": (2_411_520, time.time() - 26 * 3600)},
@@ -391,6 +396,20 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         settings["network"]["ssh_listen"] = doc["overlay"]["ssh_listen"] if doc.get(
             "overlay") else "any"
         doc["settings"] = settings
+    github = doc["auth"]["github"]
+    if github["state"] == "ok":
+        github["scopes"] = sorted(["gist", "read:org", "repo", *GITHUB_TOKEN.get(name, [])])
+    if doc.get("settings"):
+        doc["settings"]["github"] = {"scopes": list(GITHUB_CHOSEN.get(name, []))}
+        missing = [s for s in GITHUB_CHOSEN.get(name, []) if s not in github.get("scopes", [])]
+        extra = [s for s in GITHUB_TOKEN.get(name, []) if s not in GITHUB_CHOSEN.get(name, [])]
+        if github["state"] == "ok" and (missing or extra):  # as the Ship says it
+            parts = ([f"lacks {', '.join(missing)}, chosen for this Ship"] if missing else []
+                     ) + ([f"has {', '.join(extra)}, not chosen"] if extra else [])
+            doc["attention"].append({
+                "code": "signin-scopes-differ", "subject": "github",
+                "message": f"The GitHub sign-in {' and '.join(parts)}: sign in to GitHub "
+                           "again with the chosen scopes."})
     if doc.get("settings") and CLAUDE_SET.get(name):  # set in this demo run
         doc["settings"]["claude"].update(CLAUDE_SET[name])
         doc["claude"].update(CLAUDE_SET[name])
@@ -462,6 +481,8 @@ def make_ssh(inventory):
                     if key in ("claude.default_mode", "claude.allow_bypass"):
                         field = key.split(".")[1]
                         changed[field] = value == "true" if field == "allow_bypass" else value
+                    if key == "github.scopes":
+                        GITHUB_CHOSEN[ship.name] = [s for s in value.split(",") if s]
                 answer = ctl_result("set")
                 answer["changed"] = ["/etc/shipshape/ship.toml"]
                 answer["messages"] = ["Saved and applied."]
@@ -666,7 +687,7 @@ def demo_spawner(argv: list[str]):
     code, so the Sign-ins page has something waiting for you; any code is refused."""
     from fleetledger.concierge import engine
 
-    command = " ".join(argv)
+    command = argv[-1]  # the command run on the Ship (not the paths in ssh's options)
     fixture = ("gcloud" if "gcloud" in command else
                "claude" if "claude" in command else None)
     if fixture is None:  # GitHub's device flow would finish at once: wait instead

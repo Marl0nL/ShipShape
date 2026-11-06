@@ -36,7 +36,8 @@ SERVICE_PROVIDER = {
     "gcloud_adc": "gcloud-adc",
     "github": "github",
 }
-SIGNIN_CODES = ("signin-missing", "signin-expired", "signin-expiring", "signin-wrong-account")
+SIGNIN_CODES = ("signin-missing", "signin-expired", "signin-expiring", "signin-wrong-account",
+                "signin-scopes-differ")
 
 
 @dataclass(frozen=True)

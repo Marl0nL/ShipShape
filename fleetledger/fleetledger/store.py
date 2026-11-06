@@ -338,4 +338,6 @@ def ship_entry(ship: Ship) -> dict[str, Any]:
         value = getattr(ship, key)
         if value is not None:
             entry[key] = list(value)
+    if ship.github_scopes:
+        entry["github_scopes"] = list(ship.github_scopes)
     return entry

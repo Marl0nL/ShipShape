@@ -1,6 +1,6 @@
 {# The New Ship form (web/newship.py maps it to `ship-fleet new`). Shared by /new and
    setup's first Ship, which leaves out Advanced. Expects: nf (newship.FormChoices),
-   form_action, advanced, csrf, SIZE, SIGNIN_CHOICES, SIGNIN_LABELS; and retry (a saved
+   form_action, advanced, csrf, SIZE, SIGNIN_CHOICES, SIGNIN_LABELS, GITHUB_SCOPES; and retry (a saved
    attempts.Attempt this form tries again), if any, and clearing (the attempts whose
    leftovers on the hypervisor making it removes first): the dialog names them before
    anything is removed, and the server removes only what it named (clear_left). #}
@@ -35,6 +35,16 @@
     {% endfor %}
     <p class="hint">Untick what this Ship never needs: it then gets no sign-in for it
       (and no credentials). Change it later in the Ship's Settings.</p>
+  </fieldset>
+  <fieldset class="ship-github-scopes">
+    <legend>Extra GitHub scopes</legend>
+    {% for s in GITHUB_SCOPES %}
+    <label class="scope"><input type="checkbox" name="github_scope" value="{{ s.id }}"{% if s.id in nf.github_scopes_on %} checked{% endif %}>
+      <span><code>{{ s.id }}</code> {{ s.label }}<span class="hint">{{ s.explain }}</span></span></label>
+    {% endfor %}
+    <p class="hint">Its GitHub sign-in always gets gh's own scopes (repo, read:org, gist);
+      tick what its agents need on top. None is ticked by default. Change it later in the
+      Ship's Settings.</p>
   </fieldset>
   <fieldset class="ship-agent">
     <legend>First agent</legend>
