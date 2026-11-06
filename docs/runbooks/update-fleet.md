@@ -50,6 +50,9 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   in, never the new default: to change it, see "Change a running agent's mode".
 - A failed converge rolls the Ship back to its previous tooling by itself; read
   `ship-fleet logs ship-01 provision`.
+- `reboot refused` after `updated to ...`: the update is done, but something on
+  the Ship held a shutdown lock, so it did not reboot; see
+  [A reboot is refused](#a-reboot-is-refused) below.
 
 ## 3. Roll out
 
@@ -95,6 +98,34 @@ ship-fleet set all timezone=Europe/Berlin
 
 Automatic reboots are clean too, so agents resume in their modes as after any
 reboot.
+
+### A reboot is refused
+
+A program holding a shutdown lock makes the Ship refuse to reboot. On a Ship that
+is APT while it installs or removes packages, for example a `sudo apt upgrade`
+still going in an SSH session you have open on the Ship. FleetLedger says what
+holds the lock and where:
+
+```
+ship-01: FAILED: reboot refused: a login session is blocking it: apt (PID 4242, as root)
+  in sam's SSH login session on pts/0 holds a shutdown lock: "APT is installing or
+  removing packages".
+  Let it finish, or close sam's session on the Ship (log out of it), then reboot again.
+  To reboot anyway: ship-fleet reboot ship-01 --force (in the web UI, Force reboot). ...
+```
+
+Let it finish, or close that session, and reboot again. To reboot anyway:
+
+```sh
+ship-fleet reboot ship-01 --force
+```
+
+It is still a clean reboot (services stop, herdr saves every agent first and
+they resume in their modes), but what holds the lock is cut off. If that was
+APT, run `sudo dpkg --configure -a` on the Ship afterwards. In the web UI a
+refused reboot's card has **Force reboot…**, and so has the Ship's **More**
+menu, each behind its own confirm dialog. Nothing needs updating on the Ships for
+this: FleetLedger reads the locks with what every Ship already has.
 
 ## Change a running agent's mode
 

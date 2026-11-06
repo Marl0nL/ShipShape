@@ -699,11 +699,13 @@ async def ship_power(request: Request) -> Response:
 
 async def fleet_operation(request: Request) -> Response:
     """Update, reboot or join one Ship, every Ship with a tag, or the whole fleet
-    (fleetledger.ops)."""
+    (fleetledger.ops). force=yes forces a reboot past a shutdown lock (one Ship,
+    from its Force reboot dialog)."""
     ui = ui_of(request)
     session = session_of(request)
     fields = await form(request)
     operation = one(fields, "operation")
+    force = one(fields, "force") == "yes"
     name, tag = one(fields, "ship"), one(fields, "tag")
     # Back where it was started: a Ship's page, or the Fleet page (from its batch
     # menu, or from an alert's button there, which says from=fleet).
@@ -718,6 +720,9 @@ async def fleet_operation(request: Request) -> Response:
     if (name and not NAME_RE.match(name)) or (tag and not TAG_RE.match(tag)):
         ui.flash(session, "bad", "Not a valid Ship name or tag.")
         return back(where)
+    if force and (operation != "reboot" or not name):
+        ui.flash(session, "bad", "Only one Ship's reboot can be forced.")
+        return back(where)
     try:
         inv = ui.app.store_factory().load()
         chosen = ops.select(inv, [name] if name else [], tag or None, everything=not (name or tag))
@@ -725,11 +730,13 @@ async def fleet_operation(request: Request) -> Response:
             chosen = [s for s in chosen if s.overlay_node is None]
             if not chosen:
                 raise FleetError("Every one of those Ships is on the overlay already.")
-        actions.start_operation(ui.jobs, ui.app, operation, [s.name for s in chosen])
+        actions.start_operation(ui.jobs, ui.app, operation, [s.name for s in chosen],
+                                force=force)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back(where)
-    label = {"join": "Joining the overlay"}.get(operation, operation.capitalize())
+    label = "Force reboot" if force else \
+        {"join": "Joining the overlay"}.get(operation, operation.capitalize())
     if on_ship:  # started from the Ship's page: back there, where its job shows
         ui.flash(session, "ok", f"{label} started; its progress is below.")
         return back(where)

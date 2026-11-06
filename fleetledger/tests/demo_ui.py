@@ -51,6 +51,14 @@ SHIPS = {
     "ship-06": (["work"], False),
 }
 DOWN = {"ship-05"}
+# Refuses a plain reboot: apt still running in someone's SSH login (Force reboot works).
+LOCKED = {"ship-04": {
+    "who": "APT", "why": "APT is installing or removing packages", "mode": "block",
+    "user": "root", "pid": 4242,
+    "process": {"pid": 4242, "comm": "apt", "user": "root", "tty": "pts/0",
+                "session": {"id": "7", "user": "sam", "service": "sshd", "tty": None,
+                            "state": "active"}},
+    "still_running": []}}
 LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
 MODES_NOW: dict[tuple[str, str], str] = {}  # (Ship, agent) -> mode after a demo restart
 CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo run
@@ -408,6 +416,13 @@ def make_ssh(inventory):
         def run(self, ship, command, *, input=None, timeout=60):
             if ship.name in DOWN or ship.name not in SHIPS:  # a new one: no VM in the demo
                 raise Unreachable(f"Cannot reach {ship.name} (demo: switched off).")
+            if command[:4] == ["sudo", "-n", "systemctl", "reboot"] and ship.name in LOCKED \
+                    and "--check-inhibitors=no" not in command:
+                return Result(1, b"", "Call to Reboot failed: Operation denied due to active "
+                              "block inhibitor\n", ship.names[0])
+            if command == ["python3", "-I", "-"]:  # fleetledger.inhibitors.PROBE
+                found = [LOCKED[ship.name]] if ship.name in LOCKED else []
+                return Result(0, json.dumps({"blockers": found}).encode(), "", ship.names[0])
             verb = command[3] if command[:3] == ["sudo", "-n", "/usr/local/bin/ship-ctl"] else ""
             if verb == "status":
                 tags, _joined = SHIPS[ship.name]
