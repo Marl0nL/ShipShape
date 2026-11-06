@@ -1,0 +1,89 @@
+{# Settings ▸ Devices (web.devicesweb): the browsers paired with the remote web UI;
+   Rename, Revoke, Sign out every other device; Pair a device. Context: csrf and
+   devicesweb.section_context(). #}
+<section id="devices" class="setup-step settings-group">
+  <h2>Devices</h2>
+  {% if flash_at == "devices" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
+  {% if remote_broken %}
+  <p class="flash bad">{{ remote_broken }}</p>
+  {% elif remote_ui %}
+  <p>Your other devices open this FleetLedger at <code>{{ remote_ui.origin }}</code>, through
+    Tailscale Serve{% if not remote_served %} <span class="pill warn">not in this run</span>
+    (this <code>ship-fleet ui</code> started without it: start it again){% endif %}.
+    {% if remote_ui.logins %}Only {{ remote_ui.logins|join(", ") }} may, and each browser pairs once.
+    {% else %}Nobody may yet: <code>ship-fleet ui remote --login you@example.com</code>.{% endif %}</p>
+  <p class="hint">A paired device stays signed in across restarts, until it is unused for 12 hours,
+    30 days after pairing, or you revoke it. Destroy, rollback, trusting machines, setup's keys and
+    pairing another device need one paired in the last {{ fresh_hours }} hours: pair it again for
+    those. Anyone with a paired device controls the whole fleet; see
+    <code>docs/runbooks/remote-ui.md</code>.</p>
+  {% else %}
+  <p>The web UI is for this computer only. To use it from your laptop or phone through
+    Tailscale Serve, read <code>docs/runbooks/remote-ui.md</code> first, then
+    <code>ship-fleet ui remote https://NAME --port 8765 --login you@example.com</code>.</p>
+  {% endif %}
+
+  {% if devices %}
+  <table class="devices">
+    <thead><tr><th>Device</th><th>Tailscale login</th><th>Paired</th><th>Last used</th><th>Danger actions</th><th></th></tr></thead>
+    <tbody>
+    {% for d in devices %}
+    <tr>
+      <td>
+        <details class="rename">
+          <summary>{{ d.name }}{% if d.mine %} <span class="quiet">(this browser)</span>{% endif %}</summary>
+          <form method="post" action="/settings/devices/rename" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="device" value="{{ d.key }}">
+            <label>Name <input name="name" value="{{ d.name }}" maxlength="40" required size="14"></label>
+            <button type="submit" class="ghost small">Rename</button>
+          </form>
+        </details>
+        <code class="fp" title="its id, for ship-fleet ui revoke">{{ d.short }}</code>
+      </td>
+      <td data-label="Tailscale login">{{ d.login }}</td>
+      <td data-label="Paired">{{ d.paired }}<br><span class="hint">from {{ d.how }}</span></td>
+      <td data-label="Last used">{{ d.seen }}</td>
+      <td data-label="Danger actions">{% if d.fresh_until %}until {{ d.fresh_until }}{% else %}<span class="pill muted">pair again</span>{% endif %}</td>
+      <td class="row-actions">
+        <form method="post" action="/settings/devices/revoke" class="inline"
+          data-confirm-title="Sign out {{ d.name }}?"
+          data-confirm="{{ d.name }} is signed out of FleetLedger at once{% if d.mine %}: this is this browser{% endif %}. It needs a new pairing link to sign in again."
+          data-confirm-action="Sign out {{ d.name }}" data-confirm-danger>
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="device" value="{{ d.key }}">
+          <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+          <button type="submit" class="ghost danger small" title="ship-fleet ui revoke {{ d.short }}">Revoke</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% set others = devices|rejectattr("mine")|list %}
+  {% if others %}
+  <form method="post" action="/settings/devices/revoke-others" class="inline"
+    data-confirm-title="Sign out {{ 'every other device' if on_remote else 'every device' }}?"
+    data-confirm="{{ others|length }} device(s) are signed out of FleetLedger at once{% if on_remote %}; this browser stays signed in{% endif %}. Each needs a new pairing link to sign in again."
+    data-confirm-action="Sign them out" data-confirm-danger>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" class="ghost danger" title="ship-fleet ui revoke --all">Sign out {{ "every other device" if on_remote else "every device" }}</button>
+  </form>
+  {% endif %}
+  {% elif remote_ui %}
+  <p class="quiet">No device is paired yet.</p>
+  {% endif %}
+
+  {% if remote_ui and remote_ui.logins %}
+  <h3>Pair a device</h3>
+  <p class="hint">A one-time link (and a QR code for a phone) to open on the device, signed in to
+    Tailscale as {{ remote_ui.logins|join(" or ") }}. It works once, within {{ pair_minutes }} minutes.
+    The same as <code>ship-fleet ui link</code>, which works over ssh too.</p>
+  <form method="post" action="/settings/devices/pair" class="inline" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Name <input name="name" maxlength="40" size="14" placeholder="phone"></label>
+    <button type="submit" title="ship-fleet ui link --name NAME">Pair a device</button>
+  </form>
+  {% endif %}
+</section>

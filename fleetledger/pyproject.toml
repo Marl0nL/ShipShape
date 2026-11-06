@@ -12,6 +12,7 @@ dependencies = [
   "pexpect>=4.9,<5",
   "pycdlib>=1.22,<2",
   "PyYAML>=6.0.3,<7",
+  "segno>=1.6.6,<2",
   "starlette>=1.10,<2",
   "tomlkit>=0.15.2,<1",
   "uvicorn>=0.54,<1",

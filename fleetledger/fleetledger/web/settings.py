@@ -5,6 +5,7 @@ first-run wizard and links here.
 - Health is `ship-fleet doctor` (firstrun.everything). Checking runs commands and
   may ask the hypervisor's API, so it happens only on a POST ("Check now"), in a
   worker thread; the page shows the last result, kept in memory.
+- Devices lists the browsers paired with the remote web UI (web.devicesweb).
 - Access holds the forms that used to sit in setup's first step (your login,
   what a machine may log in as, the certificate authority, key care). Their routes
   are still /setup/...; a form posted from here says back=settings and returns here.
@@ -66,8 +67,8 @@ def _ui(request: Request):
 
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
-    from fleetledger.web import images, overlayweb, setup, trust
-    from fleetledger.web.app import render
+    from fleetledger.web import devicesweb, images, overlayweb, setup, trust
+    from fleetledger.web.app import render, session_of
 
     ui = _ui(request)
     store = ui.app.store_factory()
@@ -85,8 +86,9 @@ async def page(request: Request) -> Response:
     context.update(await run_in_threadpool(images.section_context, ui, inv))
     context.update(await run_in_threadpool(trust.section_context, ui, inv))
     context.update(overlayweb.section_context(ui, inv))
+    context.update(devicesweb.section_context(ui, session_of(request)))
     context.update(trust.placed_flashes(request))
-    if (context.get("certs") is None and context.get("flash_at") != "overlay"
+    if (context.get("certs") is None and context.get("flash_at") not in ("overlay", "devices")
             and "placed" in context):  # no such block: the top
         context["flashes"] = context.pop("placed")
     return render(request, "settings.html", inv=inv, health=ui.health, STATES=STATES,

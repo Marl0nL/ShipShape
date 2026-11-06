@@ -137,7 +137,8 @@ TO_MACHINES = "/settings?said=machines#machines"
 TO_CERTIFICATES = "/settings?said=certificates#certificates"
 
 
-PLACED = ("certificates", "machines", "overlay")  # Settings blocks that show their flashes
+# Settings blocks that show their own flashes.
+PLACED = ("certificates", "machines", "overlay", "devices")
 
 
 def placed_flashes(request: Request) -> dict[str, Any]:

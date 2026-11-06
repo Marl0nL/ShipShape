@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{# Settings ▸ Devices ▸ Pair a device (web.devicesweb.pair): the one-time link, shown once,
+   in the POST's own response. Context: link, qr (inline SVG or None), name, origin,
+   logins, minutes, served. #}
+{% block title %}Pair a device · FleetLedger{% endblock %}
+{% block body %}
+<h1>Pair {{ name or "a device" }}</h1>
+<p>Open this link on {{ name or "the device" }}, signed in to Tailscale as
+  {{ logins|join(" or ") }}. It works once, within {{ minutes }} minutes, on
+  <code>{{ origin }}</code> only{% if not served %}, once <code>ship-fleet ui</code> runs with the
+  remote address on{% endif %}. This page is the only place it is shown.</p>
+<div class="pairing">
+  {% if qr %}
+  <figure class="qr">
+    <svg class="qr" viewBox="0 0 {{ qr.size }} {{ qr.size }}" role="img" aria-label="QR code of the pairing link"><rect width="{{ qr.size }}" height="{{ qr.size }}" fill="#fff"/><path fill="#000" d="{{ qr.path }}"/></svg>
+    <figcaption class="hint">Scan it with the phone's camera.</figcaption>
+  </figure>
+  {% else %}
+  <p class="hint">No QR code: rerun <code>fleetledger/install.sh</code> for the segno package.</p>
+  {% endif %}
+  <p class="pair-link"><code class="cmd">{{ link }}</code>
+    <button type="button" class="ghost small" data-copy="{{ link }}">Copy</button></p>
+</div>
+<p class="hint">Whoever opens it first, signed in as an allowed login, gets a device that
+  controls the whole fleet. Do not send it anywhere you would not send a key. Revoke a device
+  any time under Settings, Devices.</p>
+<p><a href="/settings#devices">Back to Devices</a></p>
+{% endblock %}
