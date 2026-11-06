@@ -114,6 +114,13 @@ class Repo:
             return False
         return True
 
+    def is_shallow(self) -> bool:
+        """A shallow clone (git clone --depth): it cannot see commits past its depth."""
+        try:
+            return _git(self.root, "rev-parse", "--is-shallow-repository").strip() == "true"
+        except (OSError, subprocess.CalledProcessError):
+            return False
+
     def is_ancestor(self, older: str, newer: str) -> bool | None:
         """Is older the same commit as newer, or one in its history? None when git
         cannot say (outside git, or a commit this checkout does not have)."""
