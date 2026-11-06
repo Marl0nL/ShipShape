@@ -5,7 +5,9 @@ Following Jupyter's model:
 - The server binds 127.0.0.1 only (server.py); there is no option to change it.
 - Every request must name this server in its Host header (127.0.0.1:PORT or
   localhost:PORT), so a page on another site cannot reach it through DNS
-  rebinding.
+  rebinding. One naming this computer must not carry a proxy's headers
+  (PROXY_HEADERS): Tailscale Serve keeps the client's Host, so a request through
+  it could otherwise pass as a browser on this computer.
 - One more origin only when you turn it on (web/remote.py): https://NAME, this
   computer's own name, which Tailscale Serve terminates and sends to the same
   loopback port. A request naming it must have come through Serve from a
@@ -65,6 +67,11 @@ LOGIN_PATH = "/login"
 LOCAL = "local"  # Session.where: a browser on this computer (else the remote origin)
 # Host-only, Secure and Path=/ by the browser's own rules; only on the HTTPS origin.
 REMOTE_COOKIE = "__Host-fleetledger"
+# Headers a proxy adds (Tailscale Serve sets the first three on every request it passes
+# on, and the identity ones for a person's device). Never sent by a browser itself.
+PROXY_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "forwarded",
+                 "tailscale-user-login", "tailscale-user-name", "tailscale-user-profile-pic",
+                 "tailscale-app-capabilities")
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -104,15 +111,6 @@ class Gate:
         return frozenset({f"127.0.0.1:{self.port}", f"localhost:{self.port}"})
 
     @property
-    def hosts(self) -> frozenset[str]:
-        return self.local_hosts | ({self.remote.host} if self.remote else frozenset())
-
-    @property
-    def origins(self) -> frozenset[str]:
-        return self.origins_for(LOCAL) | (
-            frozenset({self.remote.origin}) if self.remote else frozenset())
-
-    @property
     def cookie_name(self) -> str:
         # Cookies ignore ports, so another local server's cookie must not collide.
         return f"fleetledger-{self.port}"
@@ -140,6 +138,14 @@ class Gate:
 
     def cookie_name_for(self, where: str) -> str:
         return self.cookie_name if where == LOCAL else REMOTE_COOKIE
+
+    @staticmethod
+    def proxied(headers: dict[str, str]) -> bool:
+        """Did a proxy (Tailscale Serve, say) pass this request on? A browser on this
+        computer, or through an SSH tunnel, never sends these headers. Serve keeps the
+        client's Host, so a request through it can name 127.0.0.1: these headers are how
+        it is still told apart, and refused on this computer's address."""
+        return any(name in headers for name in PROXY_HEADERS)
 
     @staticmethod
     def through_serve(headers: dict[str, str]) -> bool:
@@ -308,6 +314,9 @@ class GateMiddleware:
         if where is None:
             await _plain(send_secured, 400, "Bad Host header.")
             return
+        if where == LOCAL and self.gate.proxied(headers):
+            await _plain(send_secured, 400, PROXIED)
+            return
         if where != LOCAL and not self.gate.through_serve(headers):
             await _plain(send_secured, 403, NOT_THROUGH_SERVE)
             return
@@ -453,6 +462,7 @@ class GateMiddleware:
             _cookie(headers, self.gate.cookie_name_for(where)), where)
         if (
             where is None
+            or (where == LOCAL and self.gate.proxied(headers))
             or (where != LOCAL and not self.gate.through_serve(headers))
             or not self.gate.origin_ok(headers.get("origin"), where)
             or session is None
@@ -467,6 +477,8 @@ class GateMiddleware:
 
 NOT_SIGNED_IN = ("Not signed in to this FleetLedger. Open a link `ship-fleet ui` printed "
                  "(press Enter in its terminal for a new one).")
+PROXIED = ("This computer's address (127.0.0.1 or localhost) takes no request a proxy passed "
+           "on. From your other devices, open the remote address FleetLedger printed.")
 NOT_THROUGH_SERVE = ("This address works only through Tailscale Serve, from a device signed in "
                      "to your tailnet as a person (not a tagged device, and never through "
                      "Funnel).")

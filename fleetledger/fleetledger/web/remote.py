@@ -11,8 +11,8 @@ only for requests that came through Serve from a signed-in person's device.
   this-computer.json) and never part of the fleet.
 - Every start of `ship-fleet ui` checks, through the local `tailscale` command,
   that Tailscale is running here, that NAME is this computer's own name (with an
-  HTTPS certificate on offer), that Serve sends NAME (and nothing else at it) to
-  this port, and that Funnel is off for it. Anything else and the UI refuses
+  HTTPS certificate on offer), that Serve sends NAME (and nothing else at it, on
+  any port) to this port, and that Funnel is off for it. Anything else and the UI refuses
   to start; `ship-fleet ui --local` starts it for this computer only.
 - A file that is not exactly what this module writes is refused too, never
   guessed at.
@@ -195,6 +195,15 @@ def _json(run: Run, args: list[str]) -> dict:
     return doc
 
 
+def _dict(config: dict, key: str) -> dict:
+    value = config.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _host_of(hostport: str) -> str:
+    return str(hostport).rsplit(":", 1)[0].rstrip(".").lower()
+
+
 def serve_command(remote: Remote) -> str:
     https = "" if remote.https_port == 443 else f" --https={remote.https_port}"
     return f"tailscale serve --bg{https} 127.0.0.1:{remote.port}"
@@ -227,12 +236,31 @@ def check_serve(remote: Remote, run: Run) -> None:
     fix = f"Run: {serve_command(remote)}"
     if not found:
         raise FleetError(f"Tailscale Serve is not serving {remote.origin} here.", hint=fix)
+    # Funnel on any port of the name, in any config (Tailscale funnels a port if the
+    # background config or any foreground one allows it).
+    funnels = sorted({key for c in configs for key, on in (_dict(c, "AllowFunnel")).items()
+                      if on and _host_of(key) == remote.hostname})
+    if funnels:
+        raise FleetError(f"Funnel is on for {', '.join(funnels)}: that puts it on the public "
+                         "internet. FleetLedger is never served through Funnel.",
+                         hint="Clear it (tailscale serve reset), then serve it on your "
+                              f"tailnet only: {serve_command(remote)}")
+    # Nothing else on any other port of the name either: a browser sends the name's
+    # cookies to every port of it, FleetLedger's session cookie included.
+    others = sorted({key for c in configs for key in _dict(c, "Web")
+                     if _host_of(key) == remote.hostname and key != remote.hostport}
+                    | {f"{remote.hostname}:{port}" for c in configs
+                       for port, tcp in _dict(c, "TCP").items()
+                       if str(port) != str(remote.https_port) and isinstance(tcp, dict)
+                       and str(tcp.get("TerminateTLS") or "").lower() == remote.hostname})
+    if others:
+        ports = ", ".join(k.rsplit(":", 1)[1] for k in others)
+        raise FleetError(f"Tailscale Serve also serves {remote.hostname} on port {ports}. "
+                         "FleetLedger must have the name to itself: your browser sends its "
+                         "session cookie to every port of the name.",
+                         hint="Stop that one (tailscale serve reset clears everything), then: "
+                              f"{serve_command(remote)}")
     for config in found:
-        if (config.get("AllowFunnel") or {}).get(remote.hostport):
-            raise FleetError(f"Funnel is on for {remote.origin}: that puts it on the public "
-                             "internet. FleetLedger is never served through Funnel.",
-                             hint="Clear it (tailscale serve reset), then serve it on your "
-                                  f"tailnet only: {serve_command(remote)}")
         handlers = (config["Web"][remote.hostport] or {}).get("Handlers") or {}
         if set(handlers) != {"/"}:
             others = sorted(p for p in handlers if p != "/")
@@ -287,7 +315,8 @@ def cmd_remote(args, app) -> int:
                     "A UI running now keeps the remote address until it stops.")
             if before is not None:
                 app.say(f"Tailscale Serve still forwards to the port; stop that with: "
-                        f"tailscale serve --https={before.https_port} off")
+                        f"tailscale serve --https={before.https_port} off (or tailscale serve "
+                        "reset, which clears every Serve setting)")
         else:
             app.say("Remote web UI was already off.")
         return 0

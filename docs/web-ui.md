@@ -271,8 +271,12 @@ Following Jupyter's model, adapted to "one person, one computer":
   (`ship-fleet ui remote`, [runbooks/remote-ui.md](runbooks/remote-ui.md)). Serve
   terminates HTTPS for this computer's own MagicDNS name and forwards to the same
   loopback port. Each start checks, through the local `tailscale` command, that the
-  name is this computer's, that Serve sends it (and nothing else at it) to this
-  port, and that Funnel is off; otherwise the UI refuses to start. The gate then
+  name is this computer's, that Serve sends it (and nothing else at it, on any
+  port: cookies ignore ports) to this port, and that Funnel is off for it;
+  otherwise the UI refuses to start. A request naming `127.0.0.1` or `localhost`
+  that carries a proxy's headers (`X-Forwarded-*`, `Forwarded`, `Tailscale-User-*`)
+  is refused, on or off: Serve keeps the browser's `Host`, so that is how a request
+  through it is told from a browser on this computer. The gate then
   accepts exactly one more origin, `https://NAME`, and only for requests that carry
   `X-Forwarded-Proto: https` and a `Tailscale-User-Login` (Serve sets both and
   strips client copies; it sets no identity for Funnel or tagged devices). There

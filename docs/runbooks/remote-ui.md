@@ -111,11 +111,10 @@ this computer only, without the check.
 
 ## 4. Sign in from the laptop or phone
 
-`ship-fleet ui` prints the sign-in link twice: once for this computer
-(`http://127.0.0.1:8765/login?...`) and once for your other devices
-(`https://fleetledger.example-tailnet.ts.net/login?...`). It is one link: it works
-once, for 15 minutes, on whichever address opens it first. Press Enter in that
-terminal for a new one.
+`ship-fleet ui` prints two sign-in links: one for this computer
+(`http://127.0.0.1:8765/login?...`, which it also opens in your browser here) and one
+for one of your other devices (`https://fleetledger.example-tailnet.ts.net/login?...`).
+Each works once, for 15 minutes. Press Enter in that terminal for a new pair.
 
 On the remote address:
 
@@ -126,7 +125,9 @@ On the remote address:
   name only;
 - every change needs the exact `Origin` `https://fleetledger.example-tailnet.ts.net`
   and the session's CSRF token, as on this computer;
-- a session made on one address never works on the other;
+- a session made on one address never works on the other, and a request through Serve
+  that names `127.0.0.1` or `localhost` as its `Host` is refused (Serve keeps the
+  browser's `Host`, so this is how FleetLedger tells it from a browser on this computer);
 - the live terminal (the concierge's fallback) uses `wss://` on the same name.
 
 Sessions live in memory: stopping `ship-fleet ui` signs every device out.
@@ -135,7 +136,7 @@ Sessions live in memory: stopping `ship-fleet ui` signs every device out.
 
 ```sh
 ship-fleet ui remote --off
-tailscale serve --https=443 off
+tailscale serve --https=443 off     # or: tailscale serve reset (clears every Serve setting)
 ```
 
 A `ship-fleet ui` already running keeps the remote address until you stop it.
@@ -150,6 +151,7 @@ A `ship-fleet ui` already running keeps the remote address until you stop it.
 | Tailscale Serve is not serving … | `tailscale serve --bg 127.0.0.1:8765` |
 | Funnel is on for … | `tailscale serve reset`, then serve it again on the tailnet only |
 | … somewhere besides this UI | give FleetLedger the name to itself: `tailscale serve reset`, then serve it again |
+| Tailscale Serve also serves … on port … | the same: FleetLedger needs every port of the name, since your browser sends its cookie to all of them |
 | … not to this UI on 127.0.0.1:8765 | serve the port FleetLedger uses, or `ship-fleet ui remote … --port` the one Serve uses |
 | The remote web UI is set up on port … | leave out `--port`, or add `--local` |
 | (in the browser) This address works only through Tailscale Serve … | open it from a device signed in to the tailnet as you, not a tagged device |

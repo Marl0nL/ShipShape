@@ -156,6 +156,59 @@ def test_a_repeated_identity_header_is_not_trusted(web):
     assert response.status_code == 403
 
 
+@pytest.mark.parametrize("host", [f"127.0.0.1:{PORT}", f"localhost:{PORT}",
+                                  f"LOCALHOST:{PORT}"])
+def test_a_request_through_serve_cannot_pass_as_one_from_this_computer(web, host):
+    """Serve keeps the browser's Host, so a client there can name 127.0.0.1; its proxy
+    headers still give it away (a Funnel or tagged-device request has no identity)."""
+    without_login = {k: v for k, v in SERVE.items() if k != "Tailscale-User-Login"}
+    for headers in (SERVE, without_login):
+        client = TestClient(web.asgi, base_url=REMOTE, headers={**headers, "Host": host},
+                            follow_redirects=False)
+        for path in ("/", "/static/app.css", f"/login?token={web.gate.new_token()}"):
+            response = client.get(path)
+            assert response.status_code == 400, path
+            assert "proxy" in response.text and "set-cookie" not in response.headers
+        csrf = web.sign_in(web.local)
+        cookie = f"fleetledger-{PORT}={web.local.cookies[f'fleetledger-{PORT}']}"
+        assert client.post("/ships/ship-01/refresh", data={"csrf": csrf},
+                           headers={**ORIGIN, "Cookie": cookie}).status_code == 400
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"ws://{host}/flows/1-00000000/ws",
+                                          headers={**ORIGIN, "Cookie": cookie}) as ws:
+                ws.send_text(json.dumps({"csrf": csrf}))
+                ws.receive_text()
+
+
+@pytest.mark.parametrize("header", ["X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
+                                    "Forwarded", "Tailscale-User-Login", "Tailscale-User-Name",
+                                    "Tailscale-App-Capabilities"])
+def test_this_computers_address_takes_no_proxied_request_even_when_off(store, fake_repo,
+                                                                       header):
+    gate = Gate(PORT)
+    asgi = webapp.create_app(cli.App(out=io.StringIO(), store_factory=lambda: store,
+                                     repo_factory=lambda: fake_repo), gate)
+    client = TestClient(asgi, base_url=BASE, follow_redirects=False)
+    assert client.get("/static/app.css").status_code == 200
+    response = client.get("/static/app.css", headers={header: "x"})
+    assert response.status_code == 400 and response.headers["content-security-policy"]
+    assert client.get(f"/login?token={gate.new_token()}",
+                      headers={header: "x"}).status_code == 400
+
+
+def test_the_header_says_where_the_browser_is(web, store, fake_repo):
+    web.sign_in(web.remote)
+    assert "remote, through Tailscale" in web.remote.get("/").text
+    web.sign_in(web.local)
+    assert "this computer, and your devices" in web.local.get("/").text
+    gate = Gate(PORT)
+    asgi = webapp.create_app(cli.App(out=io.StringIO(), store_factory=lambda: store,
+                                     repo_factory=lambda: fake_repo), gate)
+    client = TestClient(asgi, base_url=BASE, follow_redirects=False)
+    client.get(f"/login?token={gate.new_token()}")
+    assert "this computer only" in client.get("/").text
+
+
 @pytest.mark.parametrize("host", [f"{NAME}.evil.example", f"evil-{NAME}", f"x{NAME}",
                                   f"{NAME}:8443", f"{NAME}.", "example-tailnet.ts.net",
                                   f"ship-01.{NAME}"])
@@ -321,6 +374,11 @@ def test_the_serve_check_passes_for_exactly_this_setup():
     (lambda f: setattr(f, "serve", {}), "not serving"),
     (lambda f: setattr(f, "serve", None), "not serving"),
     (lambda f: f.serve.update(AllowFunnel={f"{NAME}:443": True}), "Funnel"),
+    (lambda f: f.serve.update(AllowFunnel={f"{NAME}:8443": True}), "Funnel"),
+    (lambda f: f.serve["Web"].update({f"{NAME}:8443": {
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}), "on port 8443"),
+    (lambda f: f.serve["TCP"].update({"10000": {"TCPForward": "127.0.0.1:3000",
+                                                "TerminateTLS": NAME}}), "on port 10000"),
     (lambda f: f.handlers.update({"/other": {"Proxy": "http://127.0.0.1:9000"}}),
      "to itself"),
     (lambda f: f.handlers.update({"/": {"Proxy": "http://127.0.0.1:9999"}}),
@@ -339,6 +397,26 @@ def test_the_serve_check_refuses_anything_else(breaks, says):
         check(fake)
     assert says in exc.value.message
     assert exc.value.hint  # always says what to do
+
+
+def test_the_serve_check_looks_at_every_config_for_funnel_and_other_ports():
+    # Funnel allowed in the background config, the handler in a foreground one.
+    fg = FakeTailscale()
+    fg.serve = {"Foreground": {"abc": fg.serve}, "AllowFunnel": {f"{NAME}:443": True}}
+    with pytest.raises(FleetError, match="Funnel"):
+        check(fg)
+    # Another port of the name served in the foreground.
+    fg = FakeTailscale()
+    fg.serve["Foreground"] = {"abc": {"Web": {f"{NAME}:8443": {
+        "Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}}}
+    with pytest.raises(FleetError, match="on port 8443") as exc:
+        check(fg)
+    assert "tailscale serve reset" in exc.value.hint
+    # A plain TCP forward on another port (no TLS ended for the name) is not a web site
+    # at it, and is left alone.
+    tcp = FakeTailscale()
+    tcp.serve["TCP"]["2222"] = {"TCPForward": "127.0.0.1:22"}
+    check(tcp)
 
 
 def test_the_serve_check_refuses_another_https_port_or_funnel_in_the_foreground():
@@ -460,7 +538,38 @@ def test_the_server_prints_a_link_for_each_address(store, monkeypatch, home):
     said = out.getvalue()
     local = re.search(rf"http://127\.0\.0\.1:{port}/login\?token=(\S+)", said).group(1)
     far = re.search(rf"{re.escape(REMOTE)}/login\?token=(\S+)", said).group(1)
-    assert local == far  # one token: it works once, on whichever address opens it
+    # Two tokens: the browser opened here uses up its own, never the remote one.
+    assert local != far
+
+
+def test_the_browser_opened_here_leaves_the_remote_link_working(store, monkeypatch, home):
+    import uvicorn
+
+    free = server.bind(0)
+    port = free.getsockname()[1]
+    free.close()
+    seen = {}
+
+    def run(self, sockets=None):
+        gate = self.config.app.gate
+        opened = seen["opened"].read_text()
+        token = re.search(r"token=([A-Za-z0-9_-]+)", opened).group(1)
+        seen["browser"] = gate.redeem(token)  # the browser here, at once
+        seen["gate"] = gate
+
+    monkeypatch.setattr(uvicorn.Server, "run", run)
+    real_open = server.open_file
+    monkeypatch.setattr(server, "open_file",
+                        lambda link, p: seen.setdefault("opened", real_open(link, p)))
+    monkeypatch.setattr(server.webbrowser, "open", lambda uri: True)
+    monkeypatch.setattr(server.sys.stdin, "isatty", lambda: False, raising=False)
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    assert server.serve(app, open_browser=True, interval=3600,
+                        remote=Remote(REMOTE, port)) == 0
+    assert seen["browser"] is not None
+    far = re.search(rf"{re.escape(REMOTE)}/login\?token=(\S+)", out.getvalue()).group(1)
+    assert seen["gate"].redeem(far, REMOTE) is not None
 
 
 def test_the_live_terminal_script_picks_wss_on_https():

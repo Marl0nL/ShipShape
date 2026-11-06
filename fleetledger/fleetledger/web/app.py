@@ -54,7 +54,7 @@ from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
 from fleetledger.web.jobs import Jobs
-from fleetledger.web.security import Gate, GateMiddleware, Session
+from fleetledger.web.security import LOCAL, Gate, GateMiddleware, Session
 
 HERE = Path(__file__).resolve().parent
 TAG_RE = NAME_RE
@@ -200,6 +200,8 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         waiting_count=sum(1 for f in ui.concierge.active() if f.needs_you),
         fleet_exists=ui.app.store_factory().exists(),  # the nav: Settings, else Setup
         here=activity.here(request),  # where a card's Dismiss comes back to
+        on_remote=session.where != LOCAL,  # reached through Tailscale Serve
+        remote_on=ui.gate.remote is not None,
         **context,
     )
     return HTMLResponse(html, status_code=status_code)

@@ -35,7 +35,9 @@ def bind(port: int) -> socket.socket:
     except OSError as exc:
         sock.close()
         raise FleetError(f"Cannot listen on {HOST}:{port} ({exc.strerror}).",
-                         hint="Pick another --port, or --port 0 for any free one.") from exc
+                         hint="Is another ship-fleet ui running there already? Else pick "
+                              "another --port (--port 0 for any free one; with the remote "
+                              "UI on, ship-fleet ui remote ... --port to move it).") from exc
     sock.listen(64)
     return sock
 
@@ -100,8 +102,7 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
                       jobs=jobs)
     server = uvicorn.Server(uvicorn_config(asgi))
 
-    token = gate.new_token()
-    link = gate.link(token)
+    link = gate.link(gate.new_token())
     opened = None
     # The link goes to this terminal only (your own screen, not a command line
     # or a log). The browser gets a private page that refreshes to it, so the
@@ -112,8 +113,10 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
     else:
         app.say(f"FleetLedger is running on {gate.base_url}, and on {remote.origin} for "
                 "your other devices, through Tailscale Serve.")
-        app.say("Sign-in link (works once, for 15 minutes, on whichever address opens it "
-                f"first):\n  {link}\n  {gate.link(token, remote.origin)}")
+        app.say(f"Sign-in link for this computer (works once, for 15 minutes):\n  {link}")
+        # Its own token: the browser opened here uses up the one above at once.
+        app.say("Sign-in link for one of your other devices (works once, for 15 minutes):"
+                f"\n  {gate.link(gate.new_token(), remote.origin)}")
     if open_browser:
         opened = open_file(link, port)
         if webbrowser.open(opened.as_uri()):
@@ -124,11 +127,10 @@ def serve(app: Any, *, port: int = 0, open_browser: bool = True,
         app.say("Press Enter for a new sign-in link; Ctrl-C to stop.")
 
         def links() -> None:
-            for _ in sys.stdin:
-                fresh = gate.new_token()
-                app.say(f"  {gate.link(fresh)}")
+            for _ in sys.stdin:  # one new link per address, each with its own token
+                app.say(f"  {gate.link(gate.new_token())}")
                 if remote is not None:
-                    app.say(f"  {gate.link(fresh, remote.origin)}")
+                    app.say(f"  {gate.link(gate.new_token(), remote.origin)}")
 
         threading.Thread(target=links, name="ui-links", daemon=True).start()
 
