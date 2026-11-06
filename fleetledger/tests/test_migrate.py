@@ -626,7 +626,7 @@ def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
 
 
 @pytest.mark.parametrize("where", ["config/notes.txt", "data/backup/ships.toml.bak",
-                                   "data/ca/old.krl"])
+                                   "data/ca/old.krl", "data/web/future-piece.json"])
 def test_a_file_fleetledger_does_not_know_stops_the_move(computers, monkeypatch, where):
     a, b, world = computers
     path = a.root / where
@@ -825,6 +825,23 @@ def _tamper(stream: bytes, how: str) -> bytes:
         entry.update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
         members[0] = (members[0][0], json.dumps(manifest).encode())
         members[-1] = (members[-1][0], data)
+    elif how == "missing key":  # listed under keys, carried by neither files nor the stream
+        manifest = json.loads(members[0][1])
+        gone = {"keys/host-ca", "keys/host-ca.pub"}
+        manifest["files"] = [f for f in manifest["files"] if f["member"] not in gone]
+        members = [(members[0][0], json.dumps(manifest).encode())] + \
+            [m for m in members[1:] if m[0].name not in gone]
+    elif how == "agent member":
+        manifest = json.loads(members[0][1])
+        next(k for k in manifest["keys"] if k["role"] == "agent")["member"] = "data/audit.log"
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+    elif how == "ssh source":  # a harmless name, but placed by its source: ~/.ssh/config
+        manifest = json.loads(members[0][1])
+        key = next(k for k in manifest["keys"] if k["role"] == "user-ca")
+        key["source"] = str(Path(key["source"]).with_name("config"))
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+    elif how == "cut in the manifest":
+        return stream[:700]
     elif how in ("..", "config"):
         manifest = json.loads(members[0][1])
         key = next(k for k in manifest["keys"] if k["role"] == ("agent" if how == ".." else
@@ -837,13 +854,17 @@ def _tamper(stream: bytes, how: str) -> bytes:
 
 
 @pytest.mark.parametrize("how", ["flipped", "cut short", "extra", "manifest", "secrets",
-                                 "control character", "..", "config", "truncated"])
+                                 "control character", "..", "config", "missing key",
+                                 "agent member", "ssh source", "cut in the manifest",
+                                 "truncated"])
 def test_a_stream_that_is_not_what_was_sent_writes_nothing(computers, monkeypatch, how):
     a, b, world = computers
     bad = _tamper(send_bytes(a, monkeypatch), how)
     b.use(monkeypatch)
-    with pytest.raises(FleetError, match="nothing was written|not a FleetLedger move"):
+    with pytest.raises(FleetError, match="nothing was written|not a FleetLedger move") as said:
         receive(b, monkeypatch, bad)
+    if how == "missing key":
+        assert "keys/host-ca is not in the stream" in said.value.message
     assert not b.store.path.exists() and not (b.home / ".ssh").exists()
     assert b.ring.sets == []
     assert not list((b.root / "data").glob(migrate.STAGING + "*"))

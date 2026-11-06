@@ -81,12 +81,16 @@ FILE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@+-]{0,199}$")  # never . or .
 # Files in ~/.ssh that OpenSSH itself reads: a key never lands on one of these names.
 SSH_OWN = ("authorized_keys", "authorized_keys2", "config", "environment", "known_hosts",
            "known_hosts2", "rc")
+SSH_FILES = {*SSH_OWN, *(f"{n}.pub" for n in SSH_OWN)}
+AGENT_MEMBER = re.compile(r"^keys/agent-[0-9]{1,3}\.pub$")
 LOGIN_RE = re.compile(r"^[^\s@]{1,64}@[^\s@]{1,190}$")
 MEMBER = re.compile(r"^(manifest\.json|secrets\.json|config/ships\.toml|"
                     r"keys/(admin|host-ca|user-ca)(\.pub)?|keys/agent-[0-9]{1,3}\.pub|"
                     r"data/[^\x00]{1,1000}|images/[^/\x00]{1,200})$")
 # What may sit in the receiving computer's data dir (data/<top>/...).
 DATA_TOPS = ("audit.log", "status", "history.sqlite3", "attempts.json", "net", "ca", "trust")
+# The remote web UI's paired browsers and pairing links (web/devices.py): they stay.
+WEB_FILES = ("web/devices.json", "web/pairings.json", "web/.lock")
 HOST_RE = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]{0,63}@)?[A-Za-z0-9_][A-Za-z0-9_.:-]{0,252}$")
 
 
@@ -346,8 +350,10 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
         elif rel == remote.REMOTE_FILE:
             plan.remote_ui = _remote_ui(f)
             plan.leave(f, "the remote web UI setting: this computer's own name on the tailnet. "
-                       "Turning it on is yours to do on the new computer: it is told the "
-                       "command, with the same logins")
+                       "Turning it on is yours to do on the new computer" + (
+                           ": it is told the command, with the same logins" if plan.remote_ui
+                           else " (this file is not one FleetLedger wrote, so it is told "
+                           "nothing)"))
         elif rel == proxmox_setup.PROGRESS_FILE:
             plan.leave(f, "a part-finished Proxmox setup (run setup again there if needed)")
         elif rel.startswith(keys.PASSPHRASE_DIR + "/"):
@@ -384,7 +390,7 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
                        "(--with-images moves the inventory's images)")
         elif top == "inbox-spool":
             plan.leave(f, "a file half-way to a Ship's inbox")
-        elif top == "web":
+        elif rel in WEB_FILES:
             plan.leave(f, "the remote web UI's paired browsers and pairing links: bound to "
                        "this computer's address; pair each device again with the new computer "
                        "(ship-fleet ui link)")
@@ -782,9 +788,17 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
     for k in manifest["keys"]:
         if not isinstance(k, dict) or k.get("role") not in (*KEY_ROLES, "agent") or \
                 not FILE_NAME.match(str(k.get("name", ""))) or \
-                str(k.get("name")).removesuffix(".pub") in SSH_OWN or \
-                not str(k.get("source", "")).startswith("/"):
-            raise bad("key entry")
+                not str(k.get("source", "")).startswith("/") or \
+                {str(k["name"]), Path(str(k["source"])).name} & SSH_FILES:
+            raise bad("key entry")  # placement uses the source's name: check both
+        if k["role"] == "agent":
+            member = k.get("member")
+            if not isinstance(member, str) or not AGENT_MEMBER.match(member):
+                raise bad("key entry")
+        else:
+            member = f"keys/{k['role']}"
+        if member not in seen or (k["role"] != "agent" and f"{member}.pub" not in seen):
+            raise bad(f"key {member} is not in the stream")
     remote_ui = manifest.get("remote_ui")
     if remote_ui is not None and (
             not isinstance(remote_ui, dict) or set(remote_ui) != {"port", "logins"}
@@ -793,9 +807,6 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
             or not isinstance(remote_ui["logins"], list) or len(remote_ui["logins"]) > 20
             or not all(isinstance(x, str) and LOGIN_RE.match(x) for x in remote_ui["logins"])):
         raise bad("remote_ui")
-        member = k.get("member") if k["role"] == "agent" else f"keys/{k['role']}"
-        if member not in seen:
-            raise bad(f"key {member} is not in the stream")
     return manifest
 
 
@@ -1148,7 +1159,11 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None) -> int:
         if first is None or first.name != "manifest.json":
             raise FleetError("The input is not a FleetLedger move (ship-fleet migrate send); "
                              "nothing was written.")
-        manifest = check_manifest(_read_json(tar, first, MAX_MANIFEST)[0])
+        try:
+            manifest = check_manifest(_read_json(tar, first, MAX_MANIFEST)[0])
+        except (tarfile.TarError, OSError) as exc:
+            raise FleetError(f"The stream broke off ({type(exc).__name__}); nothing was "
+                             "written.", hint="Run the move again.") from None
         _check_commit(app, manifest)
         where = placement(manifest, store)
         refused, same = clashes(manifest, where)
