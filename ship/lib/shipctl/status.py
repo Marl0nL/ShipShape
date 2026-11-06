@@ -534,13 +534,16 @@ def scopes_differ(doc: dict) -> str | None:
     extra = sorted(set(granted) & set(GITHUB_SCOPES) - wanted)
     if not missing and not extra:
         return None
-    parts = []
-    if missing:
-        parts.append(f"lacks {', '.join(missing)}, chosen for this Ship")
-    if extra:
-        parts.append(f"has {', '.join(extra)}, not chosen")
-    return (f"The GitHub sign-in {' and '.join(parts)}: sign in to GitHub again with the "
-            "chosen scopes.")
+    if not extra:
+        return (f"The GitHub sign-in lacks {', '.join(missing)}, chosen for this Ship: sign "
+                "in to GitHub again with the chosen scopes.")
+    # A scope the token has but the Ship does not choose was most likely given by hand
+    # and is wanted: keeping it (ticking it) comes first; signing in again drops it.
+    has = ", ".join(extra)
+    lacks = f"lacks {', '.join(missing)}, chosen for this Ship, and " if missing else ""
+    return (f"The GitHub sign-in {lacks}has {has}, not chosen for this Ship. To keep {has}, "
+            "tick it in the Ship's GitHub scopes (Settings); signing in to GitHub again "
+            f"with the chosen scopes drops it.")
 
 
 def settings_section(ship: ShipToml) -> dict:

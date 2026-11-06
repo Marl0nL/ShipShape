@@ -145,7 +145,8 @@ def with_chosen_scopes(ssh: SSH, inventory: Inventory, ship: Ship,
     differ = ghscopes.difference(wanted, ghscopes.granted(doc))
     if differ:
         changes = ([f"add {', '.join(differ.missing)}"] if differ.missing else []) + (
-            [f"drop {', '.join(differ.extra)}"] if differ.extra else [])
+            [f"drop {', '.join(differ.extra)}, which the Ship does not choose"]
+            if differ.extra else [])
         return (provider.refreshing(differ.missing, differ.extra),
                 [f"This sign-in refreshes the token's scopes, to {' and '.join(changes)} "
                  "(gh auth refresh)."])

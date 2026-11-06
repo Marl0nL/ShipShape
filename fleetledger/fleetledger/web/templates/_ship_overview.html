@@ -34,7 +34,9 @@
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="ship" value="{{ ship.name }}">
             <input type="hidden" name="service" value="{{ SERVICE_PROVIDER[service] }}">
-            <button type="submit">{% if service == "github" and signed_in and gh.differ %}Sign in again with these scopes{% elif signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
+            {% set drops = gh.differ.extra if service == "github" and signed_in else () %}
+            {% if drops %}<a class="button" href="/ships/{{ ship.name }}/settings#github-scopes">Keep {{ drops|join(", ") }}: tick it in Settings</a>{% endif %}
+            <button type="submit"{% if drops %} class="ghost"{% endif %}>{% if drops %}Sign in again and drop {{ drops|join(", ") }}{% elif service == "github" and signed_in and gh.differ %}Sign in again with these scopes{% elif signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
           </form>
           {% if signed_in %}
           <form method="post" action="/ships/{{ ship.name }}/logout" class="inline"

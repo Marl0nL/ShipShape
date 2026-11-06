@@ -18,6 +18,9 @@ from test_web import wait_for, web  # noqa: F401 - web is a fixture
 from fleetledger import ghscopes, ops, signinlist
 
 CONTRACTS = Path(__file__).resolve().parents[2] / "contracts"
+sys.path.insert(0, str(CONTRACTS.parent / "ship" / "lib"))
+from shipctl.status import scopes_differ as ship_scopes_differ  # noqa: E402 - the Ship's check
+
 MIN = ["gist", "read:org", "repo"]
 
 
@@ -29,11 +32,10 @@ def scopes_status(chosen, token, *, attention=None):
                           .read_text())["settings"]
     doc["settings"] = {**settings, "github": {"scopes": list(chosen)}}
     doc["auth"]["github"]["scopes"] = list(token)
-    differ = ghscopes.difference(chosen, token)
-    if differ if attention is None else attention:
+    message = ship_scopes_differ(doc)
+    if message if attention is None else attention:
         doc["attention"].append({"code": "signin-scopes-differ", "subject": "github",
-                                 "message": f"The GitHub sign-in {differ.describe()}: sign in "
-                                            "to GitHub again with the chosen scopes."})
+                                 "message": message or "m"})
     return doc
 
 
@@ -63,7 +65,8 @@ def test_only_catalogue_scopes_count_as_a_difference():
     assert not ghscopes.difference(["workflow"], None)  # not signed in: nothing to compare
     d = ghscopes.difference(["workflow"], [*MIN, "project"])
     assert (d.missing, d.extra) == (("workflow",), ("project",))
-    assert d.describe() == "lacks workflow and still has project"
+    assert d.describe() == "lacks workflow and has project, not chosen"
+    assert d.keep(["workflow"]) == ["workflow", "project"]
 
 
 def test_the_ships_own_choice_comes_first_then_the_inventory_copy():
@@ -226,7 +229,9 @@ def test_the_sign_ins_page_row_refreshes_the_scopes(web):  # noqa: F811
     web.ship.status_override["ship-01"] = scopes_status(["workflow"], [*MIN, "project"])
     web.fleet.poll()
     page = web.client.get("/signin").text
-    assert "scopes differ" in page and "Sign in again with these scopes" in page
+    assert "scopes differ" in page and "Sign in again and drop project" in page
+    assert "Keep project: tick it in Settings" in page  # keeping it is offered first
+    assert page.index("Keep project") < page.index("Sign in again and drop project")
     web.fixture["path"] = web.fixture["path"].parent / "github.txt"
     web.post("/signin", {"ship": "ship-01", "service": "github", "from": "signin"})
     wait_for(lambda: web.argvs)
@@ -260,3 +265,96 @@ def test_the_seed_ship_toml_validates(env, home):  # noqa: F811
 
     assert schemas.errors("ship.toml", doc) == []
     assert tomllib  # ship.toml is TOML; _seed_ship_toml parsed it
+
+
+# --- review fixes: what the Ship reports, a scope given by hand ------------------------
+
+
+def test_a_scope_this_fleetledger_does_not_know_never_breaks_a_page(web, env):  # noqa: F811
+    """A newer FleetLedger's catalogue, or a hand-edited ship.toml: shown apart, never
+    asked for, never an error."""
+    doc = scopes_status(["workflow", "codespace"], [*MIN, "workflow"], attention=False)
+    assert ghscopes.chosen(None, doc) == ["workflow"] and ghscopes.unknown(doc) == ["codespace"]
+    web.sign_in()
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    assert web.client.get("/ships/ship-01").status_code == 200
+    page = web.client.get("/ships/ship-01/settings").text
+    assert "also chooses codespace, which this\n      FleetLedger does not know" in page
+    env.ship.status_override["ship-01"] = doc
+    code, out, _ = env.run("status", "ship-01")
+    assert code == 0 and "GitHub scopes: chosen workflow" in out
+
+
+def test_a_scope_given_by_hand_is_kept_first_never_dropped_by_the_suggested_fix(web):  # noqa: F811
+    """workflow on the token, not ticked: keeping it (ticking it) is what is offered;
+    signing in again says it drops it."""
+    from fleetledger.web import dashboard
+    from fleetledger.web.fleet import attention_items
+
+    web.sign_in()
+    doc = scopes_status([], [*MIN, "workflow"])
+    message = doc["attention"][-1]["message"]
+    assert message.index("To keep workflow, tick it") < message.index("drops it")
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    row = next(r for r in signinlist.rows(web.fleet.snapshot.views, None)
+               if (r.ship, r.service) == ("ship-01", "github"))
+    assert row.drops == ("workflow",) and row.keep == ("workflow",)
+    assert signinlist.fix_command(row) == "ship-fleet set ship-01 github_scopes=workflow"
+    settings = web.client.get("/ships/ship-01/settings").text
+    assert "To keep workflow, tick it above and save." in settings
+    assert "Sign in again and drop workflow" in settings
+    assert "Sign in again with these scopes" not in settings
+    overview = web.client.get("/ships/ship-01").text
+    assert "Keep workflow: tick it in Settings" in overview
+    assert "Sign in again with these scopes" not in overview
+    view_ = web.fleet.snapshot.by_name["ship-01"]
+    item = next(i for i in attention_items([view_]) if i.code == "signin-scopes-differ")
+    action = dashboard.action_for(item.code, "ship-01", view_, item.signin)
+    assert (action.kind, action.value) == ("link", "/ships/ship-01/settings#github-scopes")
+    # Ticking it: nothing differs any more, nothing was signed in again
+    web.ship.status_override["ship-01"] = scopes_status(["workflow"], [*MIN, "workflow"])
+    web.fleet.poll()
+    assert "Sign in again" not in web.client.get("/ships/ship-01/settings").text
+
+
+def test_only_missing_scopes_offer_signing_in_again_from_needs_attention():
+    """A token that only lacks a chosen scope: Needs attention's one button signs in."""
+    from fleetledger.web import dashboard
+    from fleetledger.web.fleet import attention_items
+
+    v = view("ship-01")
+    v.status = scopes_status(["workflow"], MIN)
+    v.attention = [a for a in v.status["attention"] if a["code"] == "signin-scopes-differ"]
+    item = next(i for i in attention_items([v]) if i.code == "signin-scopes-differ")
+    assert item.signin == "github"
+    action = dashboard.action_for(item.code, "ship-01", v, item.signin)
+    assert (action.kind, action.label) == ("signin", "Sign in again with these scopes")
+
+
+def test_no_scopes_row_for_a_github_sign_in_that_is_not_there():
+    item = {"code": "signin-scopes-differ", "subject": "github", "message": "m"}
+    v = view("ship-01", auth={"github": ("missing", None)}, attention=[item])
+    row = next(r for r in signinlist.rows([v], None) if r.service == "github")
+    assert row.state == "missing"
+
+
+def test_login_never_signs_in_with_scopes_the_ship_refused(env, monkeypatch):  # noqa: F811
+    from test_cli import FakeShip, result
+
+    answer = FakeShip.__call__
+
+    def refuse_set(self, ship, command):
+        if command[3:4] == ["set"]:
+            self.calls.append((ship.name, command))
+            err = {"code": "invalid-ship-toml", "message": "github.scopes: not allowed"}
+            return 1, json.dumps(result("set", ok=False, error=err)), ""
+        return answer(self, ship, command)
+
+    monkeypatch.setattr(FakeShip, "__call__", refuse_set)
+    env.app.spawner = github_spawner(env)
+    code, out, _ = env.run("login", "ship-01", "github", "--scopes", "workflow")
+    assert code == 1 and "not allowed" in out
+    assert env.argvs == []  # no sign-in started
+    assert env.store.load().ship("ship-01").github_scopes == ()
