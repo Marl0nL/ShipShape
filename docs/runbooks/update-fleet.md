@@ -65,6 +65,28 @@ works on four at a time, and ends with `N of M Ships OK`. Ships already on this
 bundle are skipped. Run it again for any Ship that failed once you have fixed the
 cause.
 
+**It never rolls a Ship back.** `update` packs `ship/` from this checkout, so an
+older checkout (another computer's, or a branch you forgot) would take Ships back
+to older tooling. Before converging, it compares the Ship's ShipShape commit with
+this checkout's in git: a Ship on this commit or an older one is updated; one on a
+newer commit, on another branch, or on a commit this checkout does not have is
+left as it is, with `not updated: it runs ShipShape <commit>, newer than this
+checkout's ...` and what to do:
+
+- **This checkout is behind** (another computer's is ahead): bring it up to date
+  (`git pull`) and update again.
+- **The Ship ran a branch that was since merged or rebased** (a squash merge, say):
+  git cannot see that `main` now holds it, so updating from `main` is the move
+  forward. Add `--force`.
+- **A shallow clone** (`git clone --depth`) cannot see older commits either, and
+  says so: `git fetch --unshallow`, then update again.
+- **To roll a Ship back on purpose**, add `--force`: `ship-fleet update ship-01
+  --force`, or in the web UI **Fleet actions**, **Update** with the **converge even
+  ...** box ticked (for a tag or every Ship). A forced rollback says so in its
+  progress and its result (`rolled back to ...`, and `rolled_back` in `--json`).
+
+A checkout outside git cannot tell, and updates as before.
+
 ## 4. Check
 
 ```sh

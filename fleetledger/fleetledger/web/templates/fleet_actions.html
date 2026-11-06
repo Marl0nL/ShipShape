@@ -41,7 +41,7 @@
       <select name="reboot">
         {% for p, said in (("auto", "auto: only when herdr changed"), ("always", "always"), ("never", "never")) %}<option value="{{ p }}">{{ said }}</option>{% endfor %}
       </select></label>
-    <label class="inline-check"><input type="checkbox" name="force" value="yes"> converge even a Ship already on this tooling</label>
+    <label class="inline-check"><input type="checkbox" name="force" value="yes"> converge even a Ship already on this tooling, or roll back one on a newer commit</label>
     <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
     <button type="submit" title="ship-fleet update {% if value != 'all' %}--tag {{ value[4:] }} {% endif %}--reboot POLICY [--force]">Update {{ ships }}</button>
   </form>

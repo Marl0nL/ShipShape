@@ -1121,3 +1121,136 @@ def test_cli_attention_nothing(app, world):
 ])
 def test_tag_option_is_hoisted_for_batch_commands(argv, expected):
     assert cli._hoist_tag_option(argv) == expected
+
+
+# --- update never rolls a Ship back ------------------------------------------------------
+
+
+@pytest.fixture
+def history(fake_repo):
+    """This checkout in git: one, then two (HEAD); side branches off one."""
+    root = fake_repo.root
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(root), "-c", "user.name=Test", "-c",
+                               "user.email=test@example.com", *args],
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-qm", "one")
+    one = git("rev-parse", "HEAD")
+    git("checkout", "-qb", "side")
+    (root / "side.txt").write_text("side\n")
+    git("add", "-A")
+    git("commit", "-qm", "side")
+    side = git("rev-parse", "HEAD")
+    git("checkout", "-q", "-")
+    (root / "two.txt").write_text("two\n")
+    git("add", "-A")
+    git("commit", "-qm", "two")
+    return one, git("rev-parse", "HEAD"), side
+
+
+def test_update_never_rolls_a_ship_back_to_an_older_commit(world, history):
+    one, two, _ = history
+    sim = world.sims["ship-01"]
+    sim.bundle_commit = two[:12]  # another computer's newer checkout updated it
+    seen, on_event = events()
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=one),
+                           on_event=on_event)
+    assert not outcome.ok, outcome
+    assert outcome.summary == (f"not updated: it runs ShipShape {two[:12]}, newer than this "
+                               f"checkout's {one[:12]} (or on another branch)")
+    said = " ".join(outcome.details)
+    assert "git pull" in said and "ship-fleet update ship-01 --force" in said
+    assert "Fleet actions" in said  # the web UI's way too
+    assert sim.converged == [] and not list((world.incoming / "ship-01").glob("*"))
+    assert ("ship-01", "not updated: that would roll it back") in seen
+
+    seen, on_event = events()
+    [forced] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=one),
+                          force=True, on_event=on_event)
+    assert forced.ok and sim.converged == [one]  # on purpose, and said so
+    assert forced.summary == f"rolled back to 0.2.0-{one[:12]}"
+    assert forced.details[0].startswith("Rolled back on purpose (--force): it runs ShipShape")
+    assert forced.data["rolled_back"].startswith(f"it runs ShipShape {two[:12]}")
+    assert any(text.startswith("rolling back on purpose (--force)") for _, text in seen)
+
+
+def test_update_brings_a_ship_forward(world, history):
+    one, two, _ = history
+    sim = world.sims["ship-01"]
+    sim.bundle_commit = one[:12]
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
+    assert outcome.ok and sim.converged == [two]
+
+
+@pytest.mark.parametrize("where,says", [("side", "or on another branch"),
+                                        ("elsewhere", "a commit this checkout does not have")])
+def test_a_ship_on_another_branch_or_an_unknown_commit_is_left_alone(world, history, where,
+                                                                     says):
+    one, two, side = history
+    sim = world.sims["ship-01"]
+    sim.bundle_commit = side[:12] if where == "side" else "abcdef012345"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
+    assert not outcome.ok and says in outcome.summary and sim.converged == []
+
+
+def test_a_ship_on_a_commit_this_checkout_lacks_may_be_a_merged_branch(world, history):
+    one, two, _ = history
+    world.sims["ship-01"].bundle_commit = "abcdef012345"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
+    said = " ".join(outcome.details)
+    assert "since merged or rebased, this is the move forward" in said and "--force" in said
+
+
+def test_a_shallow_clone_says_it_cannot_tell(world, history, fake_repo, tmp_path):
+    from fleetledger.repo import Repo
+
+    one, two, _ = history
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{fake_repo.root}",
+                    str(shallow)], check=True, capture_output=True)
+    world.fleet.repo_factory = lambda: Repo(shallow)
+    sim = world.sims["ship-01"]
+    sim.bundle_commit = one[:12]  # older: but past the clone's depth
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(commit=two))
+    assert not outcome.ok and "this shallow clone cannot see" in outcome.summary
+    assert "git fetch --unshallow" in outcome.details[0] and sim.converged == []
+
+
+def test_commits_reach_git_only_as_hex(history, fake_repo):
+    for odd in ("--help", "-C/tmp", "HEAD", "main", "ABCDEF0123456", ""):
+        assert fake_repo.has_commit(odd) is False, odd
+        assert fake_repo.is_ancestor(odd, "HEAD") is None, odd
+    assert fake_repo.has_commit(history[0][:12])
+
+
+def test_a_ship_already_on_this_commit_is_not_a_roll_back(world, history):
+    one, two, _ = history
+    sim = world.sims["ship-01"]
+    sim.bundle_commit, sim.tooling = two[:12], "0.2.0"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")],
+                           bundle=make_bundle(commit=two, dirty=True))
+    assert outcome.ok and sim.converged == [two]  # a dirty bundle converges, as before
+
+
+def test_a_checkout_outside_git_cannot_tell_and_updates_as_before(world):
+    sim = world.sims["ship-01"]
+    sim.bundle_commit = "abcdef012345"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and sim.converged == [NEW_COMMIT]
+
+
+def test_cli_update_says_why_it_left_a_ship_and_force_rolls_it_back(app, world, history,
+                                                                   monkeypatch):
+    one, two, _ = history
+    world.sims["ship-01"].bundle_commit = two[:12]
+    monkeypatch.setattr(ops.bundle_mod, "pack", lambda repo: make_bundle(commit=one))
+    code, out, err = app.run("update", "ship-01")
+    assert code == 1 and f"newer than this checkout's {one[:12]}" in out + err
+    assert world.sims["ship-01"].converged == []
+    code, out, err = app.run("update", "ship-01", "--force")
+    assert code == 0, out + err
+    assert world.sims["ship-01"].converged == [one]
