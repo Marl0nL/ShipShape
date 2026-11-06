@@ -99,6 +99,9 @@ class SimShip:
         self.after_reboot_host_key = False  # ... or answers with a different host key
         self.impostor = False
         self.calls = []
+        self.allow_bypass = True
+        self.working = set()  # agents herdr reports as working
+        self.ctl_version = 1  # 0: tooling from before `ship-ctl agent`
         self.converged = []
         self.reboots = []
 
@@ -170,9 +173,43 @@ class SimShip:
             return 0, json.dumps(self.status(ship)), ""
         if verb == "converge":
             return self.converge(command[command.index("--bundle") + 1])
+        if verb == "agent":
+            return self.agent(command[4:-1])
         if verb == "logs":
             return 0, json.dumps(ctl_result("logs", data={"lines": [f"{ship.name} line"]})), ""
         return 0, json.dumps(ctl_result(verb, changed=["/etc/shipshape/ship.toml"])), ""
+
+    def agent(self, argv):
+        """`ship-ctl agent restart`, as the Ship does it: the ledger (and so status)
+        says the new mode afterwards."""
+        if not self.ctl_version:
+            return 2, json.dumps(ctl_result("status", ok=False, error={
+                "code": "usage", "message": "argument COMMAND: invalid choice: 'agent'"})), ""
+        assert argv[0] == "restart"
+        mode = argv[argv.index("--mode") + 1] if "--mode" in argv else None
+        names = [a for a in argv[1:] if not a.startswith("--") and a != mode]
+        names = list(self.agents) if "--all" in argv else names
+        if mode == "bypassPermissions" and not self.allow_bypass:
+            return 1, json.dumps(ctl_result("agent", ok=False, error={
+                "code": "invalid-input",
+                "message": "bypassPermissions is not allowed on this Ship"})), ""
+        restarted, skipped = [], []
+        for name in names:
+            if name in self.working and "--force" not in argv:
+                skipped.append({"name": name, "reason": "it is working; not interrupted"})
+                continue
+            new = mode or "auto"
+            restarted.append({"name": name, "mode": new, "previous_mode": self.agents[name],
+                              "conversation": "fresh" if "--fresh" in argv else "continued",
+                              "was": "idle"})
+            self.agents[name] = new
+        data = {"restarted": restarted, "skipped": skipped}
+        doc = ctl_result("agent", data=data, changed=[r["name"] for r in restarted])
+        doc["messages"] = [f"{r['name']} restarted in {r['mode']}." for r in restarted]
+        if skipped:
+            doc.update(ok=False, error={"code": "agent-busy", "message": "1 agent(s) are busy"})
+            return 1, json.dumps(doc), ""
+        return 0, json.dumps(doc), ""
 
     def converge(self, path):
         assert path.startswith(ops.INCOMING + "/")
@@ -611,6 +648,87 @@ def test_set_settings_on_many_ships_records_claude_keys(world):
         assert world.store.load().ship(name).claude["update_channel"] == "stable"
 
 
+def test_set_default_mode_says_running_agents_keep_theirs(world):
+    [outcome] = ops.set_settings(world.fleet, [world.ship("ship-01")],
+                                 ["default_mode=acceptEdits"])
+    assert outcome.ok
+    assert any("Running agents keep the mode they are in" in d
+               and "ship-fleet agent restart ship-01 --all" in d for d in outcome.details)
+    [outcome] = ops.set_settings(world.fleet, [world.ship("ship-01")], ["lan_guard=true"])
+    assert not any("Running agents" in d for d in outcome.details)
+
+
+# --- agent restart ----------------------------------------------------------------
+
+
+def test_restart_agent_then_reboot_expects_the_new_mode(world):
+    sim = world.sims["ship-01"]
+    outcome = ops.restart_agents(world.fleet, world.ship("ship-01"), ["main"],
+                                 mode="bypassPermissions")
+    assert outcome.ok, outcome
+    assert outcome.summary == "restarted main in bypassPermissions"
+    call = next(c for c in sim.calls if c[3:4] == ["agent"])
+    assert call[3:] == ["agent", "restart", "main", "--mode", "bypassPermissions", "--json"]
+    # The reboot check reads the modes from status, which now says bypass for main.
+    [rebooted] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert rebooted.ok, rebooted
+    assert rebooted.data["agents_before"] == {"main": "bypassPermissions",
+                                              "builder": "bypassPermissions"}
+    # Had it come back in its old mode, the check would say so.
+    sim.after_reboot = {"main": "auto", "builder": "bypassPermissions"}
+    [rebooted] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert not rebooted.ok
+    assert "agent main came back in auto, was bypassPermissions" in rebooted.details
+
+
+def test_restart_agent_passes_every_option(world):
+    sim = world.sims["ship-01"]
+    ops.restart_agents(world.fleet, world.ship("ship-01"), everyone=True, fresh=True,
+                       force=True)
+    call = next(c for c in sim.calls if c[3:4] == ["agent"])
+    assert call[3:] == ["agent", "restart", "--all", "--fresh", "--force", "--json"]
+
+
+def test_restart_agent_reports_the_bypass_refusal(world):
+    world.sims["ship-01"].allow_bypass = False
+    [outcome] = ops.for_each(world.fleet, [world.ship("ship-01")], lambda s, ev: (
+        ops.restart_agents(world.fleet, s, ["main"], mode="bypassPermissions")))
+    assert not outcome.ok
+    assert "bypassPermissions is not allowed on this Ship" in outcome.summary
+    assert world.sims["ship-01"].agents["main"] == "auto"
+
+
+def test_restart_agent_keeps_what_the_ship_did_when_one_is_busy(world):
+    world.sims["ship-01"].working = {"builder"}
+    outcome = ops.restart_agents(world.fleet, world.ship("ship-01"), everyone=True,
+                                 mode="plan")
+    assert not outcome.ok
+    assert outcome.summary.startswith("restarted main in plan; ")
+    assert "builder: it is working; not interrupted" in outcome.details
+    assert outcome.data["skipped"] == [{"name": "builder",
+                                        "reason": "it is working; not interrupted"}]
+
+
+@pytest.mark.parametrize("kwargs,why", [
+    ({}, "Which agents"),
+    ({"agents": ["main"], "everyone": True}, "Which agents"),
+    ({"agents": ["Main!"]}, "not an agent name"),
+    ({"agents": ["main"], "mode": "yolo"}, "Unknown mode"),
+])
+def test_restart_agent_checks_its_arguments_first(world, kwargs, why):
+    with pytest.raises(FleetError, match=why):
+        ops.restart_agents(world.fleet, world.ship("ship-01"), **kwargs)
+    assert not world.sims["ship-01"].calls
+
+
+def test_restart_agent_on_older_tooling_says_to_update(world):
+    world.sims["ship-01"].ctl_version = 0
+    with pytest.raises(FleetError) as exc:
+        ops.restart_agents(world.fleet, world.ship("ship-01"), ["main"])
+    assert "cannot restart agents yet" in exc.value.message
+    assert exc.value.hint == "Update it first: ship-fleet update ship-01"
+
+
 def test_set_tags_changes_inventory_and_ship(world):
     [outcome] = ops.set_tags(world.fleet, [world.ship("ship-01")], ["+lab", "-work"])
     assert outcome.ok and outcome.data["tags"] == ["lab"]
@@ -764,6 +882,19 @@ def test_cli_reboot_reports_lost_mode_with_exit_1(app, world):
 def test_cli_reboot_tag_with_yes(app, world):
     code, out, _ = app.run("reboot", "--tag", "personal", "--yes", "--no-wait")
     assert code == 0 and "ship-02: reboot started" in out
+
+
+def test_cli_agent_restart(app, world):
+    code, out, err = app.run("agent", "restart", "ship-01", "main", "--mode", "plan")
+    assert code == 0, err
+    assert "ship-01: restarted main in plan" in out
+    assert "restarting main in plan" in err
+    world.sims["ship-01"].working = {"main"}
+    code, out, _ = app.run("agent", "restart", "ship-01", "--all", "--json")
+    assert code == 1
+    assert json.loads(out)[0]["data"]["skipped"][0]["name"] == "main"
+    code, _, err = app.run("agent", "restart", "ship-01", "main", "--all")
+    assert code == 1 and "not both" in err
 
 
 def test_cli_set_by_tag_and_all(app, world):

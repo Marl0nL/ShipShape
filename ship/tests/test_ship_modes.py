@@ -148,11 +148,19 @@ def test_shim_restores_bypass_on_resume(files):
     assert "restored" in note
 
 
+def test_shim_restores_any_ledger_mode_on_resume(files):
+    # After `ship-ctl agent restart` the ledger may know a mode the transcript does not.
+    led, toml = files
+    args, note = shim.decide(["--resume", "aut"], led, str(toml))
+    assert args == ["--permission-mode", "auto", "--resume", "aut"]
+    assert "auto restored" in note
+
+
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--resume", "aut"],
         ["--resume", "unknown"],
+        ["--resume", "aut", "--permission-mode", "plan"],
         ["--resume", "byp", "--permission-mode", "plan"],
         ["--resume", "byp", "--dangerously-skip-permissions"],
         ["-p", "hello"],

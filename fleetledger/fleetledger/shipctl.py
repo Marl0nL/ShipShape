@@ -94,7 +94,10 @@ class ShipCtl:
         input: bytes | None = None,
         timeout: float = 120,
         check_version: bool = True,
+        partial: bool = False,
     ) -> CtlResult:
+        """Run one command. A failure raises ShipCtlError; with partial, a failure the
+        Ship reported is returned instead (ok false), with what it did do."""
         if check_version:
             self.ensure_compatible()
         result = self.ssh.run(
@@ -106,6 +109,8 @@ class ShipCtl:
                 code="not-installed",
             )
         parsed = parse_result(self.ship, result, command)
+        if not parsed.ok and partial and (parsed.error or {}).get("code") != "usage":
+            return parsed
         if not parsed.ok:
             err = parsed.error or {"code": "internal", "message": "unknown error"}
             raise ShipCtlError(

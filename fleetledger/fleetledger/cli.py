@@ -23,7 +23,7 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "signins", "owner", "set", "tag", "tools", "update", "reboot", "attention", "pins",
+    "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
     "image", "overlay",
 )  # fmt: skip
@@ -279,6 +279,34 @@ def build_parser() -> argparse.ArgumentParser:
              "  ship-fleet set all lan_guard=true")
     p.add_argument("args", nargs="+", metavar="[SHIP ...|all] KEY=VALUE")
     p.add_argument("--tag", help="every Ship with this tag")
+
+    p = _add(sub, "agent", "restart running agents in a new permission mode, in place",
+             "Swap running Claude agents for ones in another mode. Each restarts in its own\n"
+             "herdr pane, with the same name and folder, and continues its conversation\n"
+             "(claude --resume); Remote Control and its session name come back as before.\n"
+             "Without --mode, each takes the mode it would start in now: its own autostart\n"
+             "mode, else the Ship's default_mode. The Ship records the new mode, so a\n"
+             "reboot or update resumes it in that mode.\n\n"
+             "An agent that is working is left alone unless --force (which interrupts its\n"
+             "turn); one waiting for an answer has that question dismissed. bypassPermissions\n"
+             "needs allow_bypass=true on the Ship.\n\n"
+             "  ship-fleet agent restart ship-01 main --mode bypassPermissions\n"
+             "--all restarts every named agent, also one already in the mode it starts\n"
+             "in (so a restart in the same mode picks up other settings, such as Remote\n"
+             "Control); the web UI's Apply the default mode restarts only the others.\n\n"
+             "  ship-fleet agent restart ship-01 --all          after changing default_mode\n"
+             "  ship-fleet agent restart ship-01 main --fresh   a new conversation")
+    p.add_argument("action", choices=("restart",))
+    p.add_argument("ship", metavar="SHIP")
+    p.add_argument("agents", nargs="*", metavar="AGENT", help="herdr agent names")
+    p.add_argument("--all", action="store_true", help="every running Claude agent with a name")
+    p.add_argument("--mode", choices=MODES,
+                   help="default: its autostart mode, else the Ship's default_mode")
+    p.add_argument("--fresh", action="store_true",
+                   help="start a new conversation instead of continuing it")
+    p.add_argument("--force", action="store_true",
+                   help="also restart an agent that is working, interrupting its turn")
+    p.add_argument("--json", action="store_true", help="print the result as JSON")
 
     p = _add(sub, "tag", "show or change a Ship's tags",
              "  ship-fleet tag ship-01            show its tags\n"

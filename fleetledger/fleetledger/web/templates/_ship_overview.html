@@ -80,11 +80,16 @@
       Control is on){% endif %}.</p>
     {% endif %}
     {% if workspaces %}
-    <table>
-      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>Pane</th><th>Folder</th></tr></thead>
+    {% set reported = view.settings or {} %}
+    {% set bypass_ok = (reported.claude or doc.claude).allow_bypass %}
+    {% set can_restart = answers and doc.herdr.server == "running" %}
+    <table class="agents">
+      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>Pane</th><th>Folder</th><th></th></tr></thead>
       <tbody>
+      {% set restart_info = restartable_by_name(view) %}
       {% for ws, agents in workspaces.items() %}
       {% for a in agents %}
+      {% set r = restart_info.get(a.name) if a.kind == "claude" else none %}
       <tr>
         <td>{{ ws if loop.first else "" }}</td>
         <td>{{ a.name or "-" }}</td>
@@ -93,12 +98,38 @@
         <td>{{ a.mode or "-" }}{% if a.mode == "bypassPermissions" %} <span class="pill warn">bypass</span>{% endif %}</td>
         <td class="quiet">{{ a.pane or "" }}</td>
         <td class="quiet">{{ a.cwd or "" }}</td>
+        <td class="row-actions">
+          {% if r and can_restart %}
+          <details class="agent-restart">
+            <summary>Restart in mode&hellip;</summary>
+            <form method="post" action="/ships/{{ ship.name }}/agents/restart"
+              data-confirm-title="Restart {{ a.name }} on {{ ship.name }}?"
+              data-confirm="{{ a.name }} exits and starts again in the same pane and folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation. Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if a.state == 'working' %} It is working now: unless you ticked Interrupt it, it is left alone.{% elif a.state == 'blocked' %} It is waiting for an answer: that question is dismissed.{% endif %}"
+              data-confirm-action="Restart {{ a.name }}">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <input type="hidden" name="agent" value="{{ a.name }}">
+              <label>Mode <select name="mode">
+                <option value="">the mode it starts in{% if r.start_mode %} ({{ r.start_mode }}){% endif %}</option>
+                {% for m in MODES %}{% if m != "bypassPermissions" or bypass_ok %}<option value="{{ m }}">{{ m }}</option>{% endif %}{% endfor %}
+              </select></label>
+              <label><input type="checkbox" name="fresh" value="yes"> New conversation</label>
+              {% if a.state in ("working", "unknown") %}<label><input type="checkbox" name="force" value="yes"> Interrupt it while it works</label>{% endif %}
+              <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+              <button type="submit" class="ghost small" title="ship-fleet agent restart {{ ship.name }} {{ a.name }} --mode ...">Restart</button>
+            </form>
+          </details>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
       {% endfor %}
       </tbody>
     </table>
     {% endif %}
+    {% if workspaces %}<p class="hint">A running agent keeps its mode when the Ship's default
+      changes. Restart in mode&hellip; swaps it for one in another mode, continuing its
+      conversation (<code>ship-fleet agent restart</code>).{% if not bypass_ok %}
+      bypassPermissions is not allowed on {{ ship.name }} (Settings).{% endif %}</p>{% endif %}
     <p class="hint">
       herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
       {% if doc.herdr.last_resume %}Last resume {{ doc.herdr.last_resume.at }} ({{ doc.herdr.last_resume.method }}): {{ doc.herdr.last_resume.resumed }} resumed{% if doc.herdr.last_resume.failed %}, {{ doc.herdr.last_resume.failed }} failed{% endif %}.{% endif %}

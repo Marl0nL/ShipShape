@@ -3,10 +3,15 @@
 
 Every launch goes straight to the real launcher, ~/.local/bin/claude, which is
 never replaced, so Claude Code's self-updates keep working. The one exception
-(contracts/settings.md): `--resume <id>` for a session the mode ledger lists as
-bypassPermissions, on a Ship whose ship.toml has allow_bypass = true, and with no
-mode flag already given. Then it adds --dangerously-skip-permissions, because
-Claude Code does not restore bypass on resume by itself.
+(contracts/settings.md): `--resume <id>` with no mode flag already given, for a
+session the mode ledger knows. Then it adds that mode's flag, so the session
+comes back in the mode the ledger (and so the status document) says:
+
+- bypassPermissions: --dangerously-skip-permissions, and only on a Ship whose
+  ship.toml has allow_bypass = true (Claude Code drops bypass on resume by itself);
+- any other mode: --permission-mode <mode>. Claude Code restores a resumed
+  session's last mode on its own, but `ship-ctl agent restart` may have just put
+  the session in a new mode the transcript has not recorded yet.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ import time
 import tomllib
 
 MODE_FLAGS = ("--dangerously-skip-permissions", "--permission-mode")
+MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
 
 
 def resume_id(args: list[str]) -> str | None:
@@ -56,9 +62,13 @@ def decide(args: list[str], ledger: str, ship_toml: str) -> tuple[list[str], str
     if sid is None:
         return args, None
     mode = ledger_mode(ledger, sid)
-    if mode == "bypassPermissions" and not has_mode_flag(args) and bypass_allowed(ship_toml):
-        return ["--dangerously-skip-permissions", *args], f"resume {sid}: bypass restored"
-    return args, f"resume {sid}: ledger={mode or 'none'}, passed through"
+    if mode not in MODES or has_mode_flag(args):
+        return args, f"resume {sid}: ledger={mode or 'none'}, passed through"
+    if mode == "bypassPermissions":
+        if bypass_allowed(ship_toml):
+            return ["--dangerously-skip-permissions", *args], f"resume {sid}: bypass restored"
+        return args, f"resume {sid}: ledger=bypassPermissions, not allowed, passed through"
+    return ["--permission-mode", mode, *args], f"resume {sid}: {mode} restored"
 
 
 def main() -> None:

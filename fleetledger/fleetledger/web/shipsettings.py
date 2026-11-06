@@ -126,3 +126,30 @@ def assignments(fields: dict[str, list[str]], view: Any,
         out.append(f"{key}={value}")
     ops.parse_assignments(out)  # the CLI's own checks, before anything is sent
     return out
+
+
+def start_mode(view: Any, name: str) -> str | None:
+    """The mode an agent would start in now: its autostart mode, else the Ship's
+    default_mode (None while the Ship does not report it)."""
+    doc = view.status if view is not None else None
+    reported = (view.settings if view is not None else None) or {}
+    for entry in reported.get("autostart") or []:
+        if entry.get("name") == name and entry.get("mode"):
+            return entry["mode"]
+    default = (reported.get("claude") or {}).get("default_mode")
+    return default or ((doc or {}).get("claude") or {}).get("default_mode")
+
+
+def restartable(view: Any) -> list[dict[str, Any]]:
+    """The running Claude agents `ship-fleet agent restart` can name, each with the
+    mode it is in and the one it would start in now (`drifted` when they differ)."""
+    doc = view.status if view is not None else None
+    out = []
+    for a in ((doc or {}).get("herdr") or {}).get("agents") or []:
+        if a.get("kind") != "claude" or not a.get("name"):
+            continue
+        wanted = start_mode(view, a["name"])
+        out.append({"name": a["name"], "state": a.get("state"), "mode": a.get("mode"),
+                    "start_mode": wanted,
+                    "drifted": wanted is not None and a.get("mode") != wanted})
+    return out

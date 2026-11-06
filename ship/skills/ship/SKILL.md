@@ -18,6 +18,9 @@ agents may and may not change.
 - You run as the `agent` user inside **herdr**, a terminal multiplexer that keeps
   every agent in its own pane. herdr starts at boot; after a reboot it restores the
   panes and resumes each Claude conversation, in the permission mode it was in.
+  To change your mode, the person may restart you (`ship-fleet agent restart`): you
+  are asked to `/exit`, then started again in the same pane, continuing this
+  conversation in the new mode.
 - Settings come from `/etc/shipshape/ship.toml` (read-only for you). FleetLedger
   changes them with `ship-ctl`; Claude Code's managed settings are derived from it.
 - Sign-ins (Claude Code, gcloud, GitHub) belong to the Ship and are shared by every

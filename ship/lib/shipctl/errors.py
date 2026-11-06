@@ -12,6 +12,8 @@ EXIT_CODES = {
     "provision-failed": 1,
     "tool-failed": 1,
     "herdr-unavailable": 1,
+    "agent-busy": 1,
+    "agent-failed": 1,
     "overlay-failed": 1,
     "overlay-not-joined": 1,
     "invalid-input": 1,

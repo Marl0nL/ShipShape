@@ -885,6 +885,18 @@ def cmd_set(args, app) -> int:
     return _report(app, outcomes)
 
 
+def cmd_agent(args, app) -> int:
+    """`ship-fleet agent restart SHIP [AGENT ...|--all]`: swap running agents for ones in
+    a new mode, in place (ops.restart_agents)."""
+    if args.all and args.agents:
+        raise FleetError("Give agent names or --all, not both.")
+    fleet = _fleet(app)
+    ship = fleet.inventory.ship(args.ship)
+    outcome = ops.restart_agents(fleet, ship, args.agents, everyone=args.all, mode=args.mode,
+                                 fresh=args.fresh, force=args.force, on_event=_progress(app))
+    return _report(app, [outcome], args.json)
+
+
 def cmd_tag(args, app) -> int:
     fleet = _fleet(app)
     ship = fleet.inventory.ship(args.name)
