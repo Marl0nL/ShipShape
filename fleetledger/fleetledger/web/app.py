@@ -727,14 +727,6 @@ async def new_ship_page(request: Request) -> Response:
                   clearing=[retry] if retry is not None and retry.left else [])
 
 
-def _clearing(retry: Any, name: str) -> list[Any]:
-    """The saved attempts whose leftovers making name removes first: the one retried,
-    and the one saved at name itself (`new` clears that one whatever form posted)."""
-    at_name = attempts.get(name) if NAME_RE.match(name or "") else None
-    out = [a for a in (retry, at_name) if a is not None and a.left]
-    return [a for i, a in enumerate(out) if a.name not in {b.name for b in out[:i]}]
-
-
 async def new_ship_start(request: Request) -> Response:
     from fleetledger.web import newship
 
@@ -747,19 +739,14 @@ async def new_ship_start(request: Request) -> Response:
         ui.flash(session, "bad", exc.message)
         return back("/new")
     retry = await run_in_threadpool(newship.retry_of, fields)
-    clearing = await run_in_threadpool(_clearing, retry, one(fields, "name"))
+    clearing = await run_in_threadpool(newship.clearing, retry, one(fields, "name"))
     try:
         name, argv = await run_in_threadpool(newship.argv, fields, ui.app, inv)
         # Nothing on the hypervisor is removed unless the dialog named it: the plain
         # form too, when its name is a failed attempt's that left something.
-        confirmed = set(fields.get("clear_left", [])) if one(fields, "confirm") == "yes" else set()
-        unasked = [a for a in clearing if a.name not in confirmed]
-        if unasked:
-            raise FleetError(
-                "; ".join(f"The failed attempt at {a.name} left "
-                          f"{', '.join(a.describe_left())}" for a in unasked)
-                + ". Making the Ship removes that first: confirm it in the dialog.")
-        newship.start(ui, name, argv, retry_of=retry.name if retry else None)
+        cleared = newship.check_confirmed(fields, clearing)
+        newship.start(ui, name, argv, retry_of=retry.name if retry else None,
+                      cleared=cleared)
     except FleetError as exc:  # back to the form as it was posted, with the reason
         try:
             nf = await run_in_threadpool(newship.choices, ui.app, inv)
@@ -767,9 +754,8 @@ async def new_ship_start(request: Request) -> Response:
             ui.flash(session, "bad", exc.message)
             return back("/new")
         saved = await run_in_threadpool(attempts.current, inv)
-        shown = retry or next(iter(clearing), None)  # making that name retries its attempt
         return render(request, "new.html", status_code=400, flashes=[("bad", exc.message)],
-                      nf=newship.refill(nf, fields), retry=shown, saved=saved, blocker=None,
+                      nf=newship.refill(nf, fields), retry=retry, saved=saved, blocker=None,
                       clearing=clearing)
     ui.flash(session, "ok", f"Making {name}; its progress is under Activity. Once it is "
              "up, it has a page of its own.")

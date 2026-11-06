@@ -384,7 +384,13 @@
     provisioned and checked, and then you sign it in to Claude (and GitHub and Google Cloud
     if you use them).</p>
   {% if new_form %}
-  {% with nf=new_form, form_action="/setup/ship", advanced=False %}{% include "_new_ship_form.html" %}{% endwith %}
+  {% for a in new_clearing|default([]) %}
+  <p class="warning">The failed attempt at {{ a.name }} left {{ a.describe_left()|join(", ") }}
+    on the hypervisor, which FleetLedger could not remove. Making the Ship removes that
+    first (it asks, then checks it is still that attempt's), so there is never a second
+    VM of this name.</p>
+  {% endfor %}
+  {% with nf=new_form, form_action="/setup/ship", advanced=False, clearing=new_clearing|default([]) %}{% include "_new_ship_form.html" %}{% endwith %}
   {% else %}
   <p class="flash bad">{{ new_form_error }}</p>
   {% endif %}

@@ -209,6 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the sign-ins it uses (default: all); see ship-fleet signins")
     p.add_argument("--no-overlay", action="store_true",
                    help="do not join the overlay after it enrols (with [overlay] set up)")
+    p.add_argument("--yes", action="store_true",
+                   help="remove what a failed attempt at this name left on the hypervisor "
+                   "without asking (it is removed first, so there is never a second VM)")
 
     p = _add(sub, "adopt", "enrol a Ship FleetLedger did not create, after checking its key",
              "Pin the host key of a running Ship after you compare its fingerprint with\n"

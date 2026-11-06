@@ -15,12 +15,6 @@
     <p class="flash bad">It failed {{ clock_dated(retry.at) }}{% if retry.error %}: {{ retry.error }}{% endif %}</p>
     {% if blocker %}<p class="warning">{{ blocker }}
       <a href="/ships/{{ retry.name }}">Open {{ retry.name }}</a></p>{% endif %}
-    {% for a in clearing|default([]) %}
-    <p class="warning">The failed attempt at {{ a.name }} left {{ a.describe_left()|join(", ") }}
-      on the hypervisor, which FleetLedger could not remove. Making the Ship removes that
-      first (it asks, then checks it is still that attempt's), so there is never a second
-      VM of this name.</p>
-    {% endfor %}
     <p class="hint">The form holds everything that attempt was given: change what you
       need and make it again. Nothing secret was kept; sign-ins happen once the Ship is
       up, as always.{% if "autostart_prompt" in retry.dropped %} <strong>The first
@@ -28,6 +22,12 @@
       again under Advanced.{% endif %}</p>
   </div>
   {% endif %}
+  {% for a in clearing|default([]) %}
+  <p class="warning">The failed attempt at {{ a.name }} left {{ a.describe_left()|join(", ") }}
+    on the hypervisor, which FleetLedger could not remove. Making the Ship removes that
+    first (it asks, then checks it is still that attempt's), so there is never a second
+    VM of this name.</p>
+  {% endfor %}
   {% with form_action="/new", advanced=True %}{% include "_new_ship_form.html" %}{% endwith %}
 </section>
 {% set others = saved|default([])|rejectattr("name", "equalto", retry.name if retry else "")|list %}

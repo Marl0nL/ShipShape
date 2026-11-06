@@ -236,6 +236,19 @@ def _quietly_drop(name: str) -> None:
         pass
 
 
+def _confirm_clearing(app, attempt) -> None:
+    """Making attempt's Ship again removes what that attempt left on the hypervisor
+    first: ask for its name (as `destroy` does), or want --yes without a terminal."""
+    what = ", ".join(attempt.describe_left())
+    if not app.stdin_isatty():
+        raise FleetError(f"Making {attempt.name} first deletes {what}, left by its failed "
+                         "attempt; rerun with --yes.")
+    answer = app.confirm(f"Making {attempt.name} first deletes {what}, left by its failed "
+                         "attempt. Type its name to go on: ")
+    if answer.strip() != attempt.name:
+        raise FleetError("Nothing removed or made.")
+
+
 def _try_again(attempt) -> str:
     """What to run next, for a failed attempt: the exact command, ready to edit."""
     lines = []
@@ -245,7 +258,7 @@ def _try_again(attempt) -> str:
                      f"ship-fleet destroy {attempt.name} before trying again.")
     if attempt.left:
         lines.append(f"Trying again removes first what this attempt left: "
-                     f"{', '.join(attempt.describe_left())}.")
+                     f"{', '.join(attempt.describe_left())} (it asks; --yes does not).")
     lines.append(f"To try again (edit what you need): {attempt.command()}")
     if "autostart_prompt" in attempt.dropped:
         lines.append("(The first prompt is left out, as it may hold a secret: add "
@@ -265,6 +278,8 @@ def _new(args, app, progress: dict[str, Any]) -> int:
     if inv.has_ship(name):
         said = previous is not None and attempts.blocker(inv, previous)
         raise FleetError(said or f"{name} is already in the inventory.")
+    if previous is not None and previous.left and not getattr(args, "yes", False):
+        _confirm_clearing(app, previous)  # asks as destroy does; refused: nothing saved
     progress["stage"] = "checks"
     repo = app.repo_factory()
     catalogue = Catalogue.from_repo(repo)

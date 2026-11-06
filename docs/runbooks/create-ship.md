@@ -215,7 +215,7 @@ What blocks a retry, and what to do:
 | The attempt | What happens next |
 |---|---|
 | failed before the VM was made, or the driver removed what it made | nothing to clear: try again |
-| left a VM or seed volume the driver could not remove (it says which) | the next `new` of that name removes it first (after checking its name), so there is never a second VM of that Ship; the web form asks before that, whether you came from Edit and retry or typed the name. If it still cannot, it says what is left: delete it on the hypervisor and try again, or discard the attempt |
+| left a VM or seed volume the driver could not remove (it says which) | the next `new` of that name removes it first (after checking its name), so there is never a second VM of that Ship. It asks first: `ship-fleet new` wants the Ship's name typed, as `destroy` does, or `--yes` (without a terminal it refuses without `--yes`); the web forms (New Ship and setup's first Ship) ask in the dialog, whether you came from Edit and retry or typed the name, and remove only what the dialog named. If it still cannot, it says what is left: delete it on the hypervisor and try again, or discard the attempt |
 | made the VM, but the Ship did not finish enrolling | the Ship stays in the inventory: finish it (`ship-fleet status ship-03 --wait`, or **Finish enrolling** on its page) or remove it (`ship-fleet destroy ship-03`, or **Destroy…**) before trying again under that name, or give the retry another name |
 | a name that is taken now | the form says so, as for any new Ship: choose another name |
 

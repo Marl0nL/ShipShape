@@ -23,6 +23,9 @@ def _one(fields: dict[str, list[str]], key: str) -> str:
     return values[0].strip() if len(values) == 1 else ""
 
 
+one_field = _one
+
+
 def next_name(inv) -> str:
     """The first free ship-NN: not in the inventory, nor the name of a saved failed
     attempt (attempts.py), so a plain new Ship never takes over an attempt's name."""
@@ -380,12 +383,45 @@ def _offer(job, name: str) -> None:
     job.result["retry_at"] = at
 
 
-def start(ui: Any, name: str, argv_: list[str], retry_of: str | None = None):
+def start(ui: Any, name: str, argv_: list[str], retry_of: str | None = None,
+          cleared: list[str] = ()):
     """Start making it (refused while something runs on that name, or on the
-    attempt it retries)."""
+    attempt it retries). cleared: the attempts whose leftovers the person confirmed
+    removing (check_confirmed); for the one at name, `new` gets --yes."""
+    if name in cleared:
+        argv_ = [*argv_, "--yes"]
     ships = [name] + ([retry_of] if retry_of and retry_of != name else [])
     return ui.jobs.start("create", [name], make_ship(ui.app, name, argv_, retry_of),
                          f"Make {name}", locks=[f"attempt {s}" for s in ships])
+
+
+def clearing(retry, name: str) -> list:
+    """The saved attempts whose leftovers on the hypervisor making name removes first:
+    the one retried, and the one saved at name itself (`new` clears that one)."""
+    from fleetledger import attempts
+
+    at_name = attempts.get(name) if NAME_RE.match(name or "") else None
+    out = [a for a in (retry, at_name) if a is not None and a.left]
+    return [a for i, a in enumerate(out) if a.name not in {b.name for b in out[:i]}]
+
+
+def confirm_token(attempt) -> str:
+    """What the form's clear_left carries for an attempt: its name and when it was
+    made, so a confirmation never covers a later attempt at that name."""
+    return f"{attempt.name}@{attempt.at}"
+
+
+def check_confirmed(fields: dict[str, list[str]], clearing_: list) -> list[str]:
+    """Raise FleetError unless the confirmed dialog named every attempt in clearing_
+    (nothing on the hypervisor is removed that it did not name); returns their names."""
+    confirmed = set(fields.get("clear_left", [])) if _one(fields, "confirm") == "yes" else set()
+    unasked = [a for a in clearing_ if confirm_token(a) not in confirmed]
+    if unasked:
+        raise FleetError(
+            "; ".join(f"The failed attempt at {a.name} left {', '.join(a.describe_left())}"
+                      for a in unasked)
+            + ". Making the Ship removes that first: confirm it in the dialog.")
+    return [a.name for a in clearing_]
 
 
 def retry_of(fields: dict[str, list[str]]):

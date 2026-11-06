@@ -268,7 +268,9 @@ def blocker(inv: Any, attempt: Attempt, name: str | None = None) -> str | None:
     """Why a retry of attempt as name (default its own) cannot start yet, in words."""
     name = name or attempt.name
     if inv is not None and inv.has_ship(name):
-        if name == attempt.name and attempt.stage == "enrol":
+        # Made, but never enrolled: this attempt's half-made Ship (also when FleetLedger
+        # stopped while it was being made, so the attempt still says an earlier stage).
+        if name == attempt.name and inv.ship(name).enrolled is None:
             return (f"{name} is still in the inventory from the failed attempt: its VM was "
                     "made, but it did not finish enrolling. On its page, Finish enrolling "
                     "it, or destroy it to start again; or choose another name.")

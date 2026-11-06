@@ -193,7 +193,11 @@ def test_a_retry_removes_what_the_failed_attempt_left_first(env, home):  # noqa:
     assert code == 1 and "Trying again removes first what this attempt left: VM 9101" in err
     assert attempts.get("ship-05").left == [{"kind": "vm", "vmid": 9101, "name": "ship-05"}]
     leaving.leave = False
-    code, out, _ = env.run("new", "ship-05", "--driver", "proxmox")
+    code, out, err = env.run("new", "ship-05", "--driver", "proxmox")  # no terminal
+    assert code == 1 and "rerun with --yes" in err and leaving.removed == []
+    assert leaving.created == [] and not env.store.load().has_ship("ship-05")
+    assert attempts.get("ship-05").stage == "create"  # the refusal saved nothing over it
+    code, out, _ = env.run("new", "ship-05", "--driver", "proxmox", "--yes")
     assert code == 0
     assert leaving.removed == [("ship-05", [{"kind": "vm", "vmid": 9101, "name": "ship-05"}])]
     assert out.index("Deleted VM 9101") < out.index("seed written")  # before the new one
@@ -206,7 +210,7 @@ def test_a_retry_is_refused_while_what_it_left_cannot_be_removed(env, home):  # 
     env.app.driver_factory = lambda inv, d, **kw: leaving
     env.run("new", "ship-05", "--driver", "proxmox")
     leaving.leave, leaving.remove_fails = False, True
-    code, _, err = env.run("new", "ship-05", "--driver", "proxmox")
+    code, _, err = env.run("new", "ship-05", "--driver", "proxmox", "--yes")
     assert code == 1
     assert ("The failed attempt at ship-05 left VM 9101 (ship-05), and FleetLedger cannot "
             "remove it: Proxmox DELETE failed: 500 VM is locked (clone)") in err
@@ -214,6 +218,54 @@ def test_a_retry_is_refused_while_what_it_left_cannot_be_removed(env, home):  # 
     assert leaving.created == []  # never a second VM of that name
     assert not env.store.load().has_ship("ship-05")
     assert attempts.get("ship-05").left  # still there to remove next time
+
+
+def test_at_a_terminal_new_asks_before_removing_a_leftover(env, home):  # noqa: F811
+    """As `ship-fleet destroy` does: the Ship's name, typed."""
+    leaving = LeavingDriver()
+    env.app.driver_factory = lambda inv, d, **kw: leaving
+    env.run("new", "ship-05", "--driver", "proxmox")
+    leaving.leave = False
+    env.app.stdin_isatty = lambda: True
+    asked = []
+    env.app.confirm = lambda prompt: asked.append(prompt) or "no"
+    code, _, err = env.run("new", "ship-05", "--driver", "proxmox")
+    assert code == 1 and "Nothing removed or made." in err
+    assert "first deletes VM 9101 (ship-05)" in asked[0] and "Type its name" in asked[0]
+    assert leaving.removed == [] and leaving.created == []
+    env.app.confirm = lambda prompt: "ship-05"
+    assert env.run("new", "ship-05", "--driver", "proxmox")[0] == 0
+    assert [n for n, _ in leaving.removed] == ["ship-05"]
+
+
+def test_the_web_job_passes_yes_only_for_the_attempt_it_confirmed(env):  # noqa: F811
+    from fleetledger.web import newship
+
+    started = []
+
+    class UI:
+        app = env.app
+
+        class jobs:  # noqa: N801
+            @staticmethod
+            def start(kind, ships, run, title, locks=()):
+                started.append(run)
+
+    newship.start(UI, "ship-05", ["new", "ship-05"], cleared=["ship-05"])
+    newship.start(UI, "ship-06", ["new", "ship-06"], cleared=["ship-05"])
+    import inspect
+
+    argvs = [inspect.getclosurevars(r).nonlocals["argv_"] for r in started]
+    assert argvs == [["new", "ship-05", "--yes"], ["new", "ship-06"]]
+
+
+def test_the_default_name_skips_a_saved_attempts(env, home):  # noqa: F811
+    from fleetledger.web import newship
+
+    inv = env.store.load()
+    assert newship.next_name(inv) == "ship-03"
+    attempts.save(attempts.Attempt("ship-03", 1.0, {"name": "ship-03"}, "x"))
+    assert newship.next_name(inv) == "ship-04"
 
 
 def test_a_ship_that_was_made_but_did_not_enrol_blocks_its_retry(env, home, monkeypatch):  # noqa: F811
