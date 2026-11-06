@@ -338,7 +338,7 @@ article.flow header { display: flex; gap: 8px; align-items: center; flex-wrap: w
 .signin-filters { margin: 10px 0 4px; justify-content: flex-start; gap: 8px 22px; }
 .signin-groups { margin: 10px 0 8px; }
 .chip .n { font-variant-numeric: tabular-nums; font-weight: 700; margin-left: 2px; }
-.chip.group-action:not(.on) .n { color: var(--bad); }
+.chip.group-action.some:not(.on) .n { color: var(--bad); }
 .signin-cards { margin: 18px 0 14px; }
 .signin-cards > article.flow { scroll-margin-top: 12px; }
 .signin-cards > h2 { margin: 6px 0 0; }

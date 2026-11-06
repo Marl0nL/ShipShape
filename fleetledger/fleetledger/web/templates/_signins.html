@@ -17,7 +17,7 @@
       <td class="service">{{ r.label }}</td>
       <td><span class="pill {{ r.state|pill }}">{{ r.state }}</span></td>
       <td class="when">{% if r.since %}<time datetime="{{ r.since }}" title="{{ r.since }}">{{ ago(r.since) }}</time>{% else %}-{% endif %}</td>
-      <td class="detail">{{ r.message }}{% if r.account and r.group != "healthy" %} <span class="quiet">({{ r.account }})</span>{% endif %}{% if r.deadline %} <span class="quiet">Link valid for <span data-deadline="{{ r.deadline|int }}">…</span>.</span>{% endif %}</td>
+      <td class="detail">{{ r.message }}{% if r.account and r.group != "healthy" %} <span class="quiet">({{ r.account }})</span>{% endif %}{% if r.deadline %} <span class="quiet">Link valid for <span data-deadline="{{ r.deadline|int }}">…</span>.</span>{% endif %}{% if r.note %} <span class="quiet note">{{ r.note }}</span>{% endif %}</td>
       <td class="row-actions">
         {% if r.state == "waiting" %}
           <a class="button" href="#flow-{{ r.flow }}">Continue</a>
@@ -37,7 +37,9 @@
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="ship" value="{{ r.ship }}">
             <input type="hidden" name="service" value="{{ r.provider }}">
-            <button type="submit"{% if r.group == "healthy" or r.state == "wrong account" %} class="ghost"{% endif %} title="ship-fleet login {{ r.ship }} {{ r.provider }}">{% if r.state == "failed" %}Try again{% elif r.signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
+            <input type="hidden" name="from" value="signin">
+            {% for k, v in filters.items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}
+            <button type="submit"{% if r.group == "healthy" or r.state == "wrong account" %} class="ghost"{% endif %} title="ship-fleet login {{ r.ship }} {{ r.provider }}">{% if r.state == "failed" or r.note %}Try again{% elif r.signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
           </form>
           {% if r.signed_in %}
           <form method="post" action="/ships/{{ r.ship }}/logout" class="inline"

@@ -6,7 +6,8 @@ document's auth keys: claude, gcloud, gcloud_adc, github), in groups:
 
 - action: needs you. A sign-in waiting for you to finish it (the web UI's
   concierge), expired, signed in as the wrong account, a sign-in that just
-  failed and is still not done, or missing while something on the Ship needs it
+  failed and is still not done (one that timed out keeps its row's own state,
+  with a note), or missing while something on the Ship needs it
   (Claude, a tool waiting for it, an agent's repository waiting for GitHub);
 - underway: a sign-in the concierge is running that does not need you now;
 - degraded: expiring soon, the tool's check failed, not known (the Ship does not
@@ -26,7 +27,7 @@ and states only, as the status document has them.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -50,7 +51,11 @@ PROVIDER = {key: provider for choice in signins.CHOICES
             for key, provider in zip(signins.STATUS_KEYS[choice], signins.PROVIDERS[choice],
                                      strict=True)}
 SERVICE_OF_PROVIDER = {p: k for k, p in PROVIDER.items()}
-FAILED_OUTCOMES = ("failed", "timeout", "wrong-account")
+# A last sign-in that ended so, while the sign-in is still not done, is the row's
+# state: it needs you. One that timed out does not (you left it, as a cancelled one):
+# the row keeps its own state, with the timeout as a note and Try again.
+FAILED_OUTCOMES = ("failed", "wrong-account")
+TIMED_OUT = "The last sign-in attempt timed out."
 # Flow states that wait for the person (web.flows.WAITING_FOR_YOU).
 FLOW_WAITING = ("link", "code", "live-offered", "live")
 
@@ -71,6 +76,8 @@ class Row:
     deadline: float | None = None  # wall clock: when the waiting sign-in's link runs out
     answers: bool = False  # the Ship answers: signing in or out can work
     tags: tuple[str, ...] = ()
+    expires_at: str | None = None  # an expiring sign-in: the soonest to go comes first
+    note: str | None = None  # a second line: what the last attempt did (it timed out)
 
     @property
     def provider(self) -> str:
@@ -187,7 +194,8 @@ def _status_row(view: ShipView, service: str, tags: tuple[str, ...]) -> Row:
     if state == "expiring":
         when = entry.get("expires_at")
         return Row(**base, group="degraded", state="expiring", level="warning", rank=0,
-                   message=f"Expires {_day(when)}." if when else "Expires soon.")
+                   message=f"Expires {_day(when)}." if when else "Expires soon.",
+                   expires_at=when)
     if state == "error":
         detail = entry.get("detail")
         return Row(**base, group="degraded", state="error", level="warning", rank=1,
@@ -249,9 +257,12 @@ def rows(views: Sequence[ShipView], inventory: Inventory | None,
             key = (view.ship.name, service)
             if row.group != "off" and key in open_flows:
                 row = _flow_row(row, open_flows[key])
-            elif (key in last_done and last_done[key].outcome in FAILED_OUTCOMES
-                  and row.group != "off" and not row.signed_in):
-                row = _flow_row(row, last_done[key])
+            elif key in last_done and row.group != "off" and not row.signed_in:
+                last = last_done[key]
+                if last.outcome in FAILED_OUTCOMES:
+                    row = _flow_row(row, last)
+                elif last.outcome == "timeout":
+                    row = replace(row, note=TIMED_OUT, flow=last.id, batch=last.batch)
             found.append(row)
     return sorted(found, key=lambda r: _sort_key(r, order))
 
@@ -262,6 +273,8 @@ def _sort_key(row: Row, order: dict[str, int]) -> tuple:
     when = _wall(row.since) if by_age else None
     if row.state == "waiting" and row.deadline is not None:
         when = row.deadline  # the link that runs out first
+    elif row.state == "expiring" and _wall(row.expires_at) is not None:
+        when = _wall(row.expires_at)  # the sign-in that goes first
     return (group, row.rank, when is None, when or 0.0, order.get(row.ship, 0),
             SERVICES.index(row.service) if row.service in SERVICES else len(SERVICES))
 

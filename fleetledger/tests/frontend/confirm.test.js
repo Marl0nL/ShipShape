@@ -88,7 +88,15 @@ const PAGE = `
   <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> remove it</label>
   <button type="submit" id="keep" data-confirm-skip>Keep it</button>
   <button type="submit" id="remove">Remove it</button>
-</form>`;
+</form>
+<div id="list">
+<form id="rowout" method="post" action="/ships/ship-02/logout"
+  data-confirm="ship-02 forgets this sign-in." data-confirm-action="Sign out of Claude" data-confirm-danger>
+  <input type="hidden" name="service" value="claude">
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+  <button type="submit">Sign out</button>
+</form>
+</div>`;
 
 /** A page with app.js loaded; `sent` collects every form the browser would post. */
 function page({ dialogs = true } = {}) {
@@ -383,4 +391,41 @@ test("a field longer than it may be sent stops its form and says what to do", on
   assert.equal(sent.length, 1);  // not sent, and not cut short either
   assert.equal($("#too-long").hidden, false);
   assert.equal($("#check textarea").value, '{"acls": [], "tests": []}');
+}));
+
+test("a polled list waits to redraw while the dialog asks about a form in it", on({}, (p) => {
+  const list = p.$("#list");
+  const fire = (name, detail) => {
+    const event = new p.window.CustomEvent(name, { bubbles: true, cancelable: true, detail });
+    list.dispatchEvent(event);
+    return event;
+  };
+  p.click("#rowout button");
+  assert.equal(p.dialog().open, true);
+  assert.equal(fire("htmx:beforeRequest", { elt: list }).defaultPrevented, true);
+  const swap = { target: list, shouldSwap: true };
+  fire("htmx:beforeSwap", swap);
+  assert.equal(swap.shouldSwap, false, "the form the dialog holds stays in the page");
+  p.choose("ok");
+  assert.deepEqual(p.sent, [{ form: "rowout", data: { service: "claude", confirm: "yes" } }]);
+  // once the dialog has closed, the list redraws again
+  assert.equal(fire("htmx:beforeRequest", { elt: list }).defaultPrevented, false);
+  const later = { target: list, shouldSwap: true };
+  fire("htmx:beforeSwap", later);
+  assert.equal(later.shouldSwap, true);
+}));
+
+test("a form redrawn under the dialog all the same: its twin is sent", on({}, (p) => {
+  p.click("#rowout button");
+  const list = p.$("#list");
+  list.innerHTML = list.innerHTML.replace('id="rowout"', 'id="rowout-new"');
+  p.choose("ok");
+  assert.deepEqual(p.sent, [{ form: "rowout-new", data: { service: "claude", confirm: "yes" } }]);
+}));
+
+test("a form gone from the page with no twin sends nothing", on({}, (p) => {
+  p.click("#rowout button");
+  p.$("#list").innerHTML = "";
+  p.choose("ok");
+  assert.deepEqual(p.sent, []);
 }));

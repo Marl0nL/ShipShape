@@ -1014,6 +1014,14 @@ def _signin_context(ui: UI, filters: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def _signin_filters_known(ui: UI, params: Any) -> dict[str, str]:
+    """The filters, with a Ship the fleet does not have dropped (as a bad value is)."""
+    filters = _signin_filters(params)
+    if filters.get("ship") not in (None, *ui.fleet.snapshot.by_name):
+        del filters["ship"]
+    return filters
+
+
 async def signin_page(request: Request) -> Response:
     ui = ui_of(request)
     ui.fleet.touch()
@@ -1025,7 +1033,8 @@ async def signin_page(request: Request) -> Response:
         return render(request, "signin.html", flows=ui.concierge.batch(batch), batch=batch,
                       filters={}, **common)
     return render(request, "signin.html", batch=None,
-                  **{**common, **_signin_context(ui, _signin_filters(request.query_params))})
+                  **{**common, **_signin_context(ui, _signin_filters_known(
+                      ui, request.query_params))})
 
 
 async def signins_partial(request: Request) -> Response:
@@ -1034,7 +1043,7 @@ async def signins_partial(request: Request) -> Response:
     if request.query_params.get("v") == _signin_version(ui):
         return Response(status_code=204)
     return partial(request, "_signins.html", oob=True,
-                   **_signin_context(ui, _signin_filters(request.query_params)))
+                   **_signin_context(ui, _signin_filters_known(ui, request.query_params)))
 
 
 async def signin_start(request: Request) -> Response:
@@ -1044,19 +1053,30 @@ async def signin_start(request: Request) -> Response:
     service = one(fields, "service")
     tag = one(fields, "tag")
     names = [n.strip() for n in fields.get("ship", []) if n.strip()]
+    on_list = one(fields, "from") == "signin"  # a row of every sign-in: back to it
+
+    def failed() -> RedirectResponse:
+        return _signin_back(fields) if on_list else back("/signin")
+
     if service not in SERVICES:
         ui.flash(session, "bad", "Choose a service.")
-        return back("/signin")
+        return failed()
     if any(not NAME_RE.match(n) for n in names) or (tag and not TAG_RE.match(tag)):
         ui.flash(session, "bad", "Not a valid Ship name or tag.")
-        return back("/signin")
+        return failed()
     try:
         inv = ui.app.store_factory().load()
         ships = [s.name for s in inv.select(names, tag or None)]
         batch = ui.concierge.start(ships, service)
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
-        return back("/signin")
+        return failed()
+    if on_list:  # the same view, at the new sign-in's card
+        done = _signin_back(fields)
+        started = ui.concierge.batch(batch)
+        if started:
+            done.headers["location"] += f"#flow-{started[0].id}"
+        return done
     return back("/signin", batch=batch)
 
 

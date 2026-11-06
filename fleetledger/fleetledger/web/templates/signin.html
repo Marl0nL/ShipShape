@@ -54,10 +54,11 @@
 {% if open_flows %}
 <section class="flows signin-cards" aria-labelledby="cards-heading">
   <h2 id="cards-heading">In progress</h2>
-  {% set card_from = "signin" %}
+  {% with card_from = "signin" %}
   {% for flow in open_flows %}
     {% include "_flow.html" %}
   {% endfor %}
+  {% endwith %}
 </section>
 {% endif %}
 

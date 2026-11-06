@@ -3,6 +3,6 @@
 <nav class="filter signin-groups" id="signin-groups" aria-label="Sign-ins by group"{% if oob %} hx-swap-oob="true"{% endif %}>
   <a href="{{ signin_url(filters, group='') }}" class="chip{% if not filters.group %} on{% endif %}"{% if not filters.group %} aria-current="true"{% endif %}>All <span class="n">{{ total }}</span></a>
   {% for g in SIGNIN_GROUPS if counts[g] or g != "off" %}
-  <a href="{{ signin_url(filters, group=g) }}" class="chip group-{{ g }}{% if filters.group == g %} on{% endif %}"{% if filters.group == g %} aria-current="true"{% endif %}>{{ SIGNIN_GROUP_LABELS[g] }} <span class="n">{{ counts[g] }}</span></a>
+  <a href="{{ signin_url(filters, group=g) }}" class="chip group-{{ g }}{% if counts[g] %} some{% endif %}{% if filters.group == g %} on{% endif %}"{% if filters.group == g %} aria-current="true"{% endif %}>{{ SIGNIN_GROUP_LABELS[g] }} <span class="n">{{ counts[g] }}</span></a>
   {% endfor %}
 </nav>

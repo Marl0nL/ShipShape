@@ -1900,3 +1900,53 @@ def test_a_batch_still_shows_only_its_own_cards(web):
     page = web.client.get(response.headers["location"]).text
     assert "Show every sign-in" in page and _rows(page) == []
     assert page.count('<article class="flow') == 1
+
+
+def test_counts_per_group_stay_the_scopes_whichever_group_is_shown(web):
+    web.sign_in()
+    every = web.client.get("/signin").text
+    healthy = web.client.get("/signin?group=healthy").text
+    chips = r'group=([a-z]+)"[^>]*>[^<]+<span class="n">(\d+)<'
+    assert re.findall(chips, every) == re.findall(chips, healthy)
+    assert int(dict(re.findall(chips, healthy))["action"]) > 0
+    assert set(g for g in _groups(healthy)) == {"healthy"}
+
+
+def test_a_rows_sign_in_comes_back_to_the_same_view_at_its_card(web):
+    web.sign_in()
+    page = web.client.get("/signin?service=claude&group=action").text
+    row = page[page.index('data-ship="ship-02" data-service="claude"'):]
+    row = row[:row.index("</tr>")]
+    assert 'name="from" value="signin"' in row and 'name="f_group" value="action"' in row
+    response = web.post("/signin", {"ship": "ship-01", "service": "claude", "from": "signin",
+                                    "f_service": "claude", "f_group": "action"})
+    flow = flow_of(web)
+    assert response.headers["location"] == (
+        f"/signin?service=claude&group=action#flow-{flow.id}")
+    # refused (already under way): the same view, with why
+    response = web.post("/signin", {"ship": "ship-01", "service": "claude", "from": "signin",
+                                    "f_service": "claude"})
+    assert response.headers["location"] == "/signin?service=claude"
+    assert "already under way" in web.client.get("/signin?service=claude").text
+    web.concierge.cancel_all()
+
+
+def test_a_timed_out_sign_in_says_so_and_offers_try_again(web):
+    web.sign_in()
+    flow = WebFlow("1-00000000", "ab" * 6, "ship-01", "gcloud-adc", "gcloud ADC", "paste-back",
+                   state=flows.DONE, outcome="timeout", detail="Timed out.")
+    with web.concierge._lock:
+        web.concierge._flows[flow.id] = flow
+        web.concierge._order.append(flow.id)
+    page = web.client.get("/signin").text
+    row = page[page.index('data-ship="ship-01" data-service="gcloud_adc"'):]
+    row = row[:row.index("</tr>")]
+    assert "The last sign-in attempt timed out." in row and ">Try again<" in row
+    tr = re.search(r'<tr class="([^"]*)" data-ship="ship-01" data-service="gcloud_adc"', page)
+    assert tr.group(1) == "lvl-notice" and "sev-tag lvl-notice" in row  # missing, unused
+
+
+def test_a_ship_the_fleet_does_not_have_is_dropped_from_the_filters(web):
+    web.sign_in()
+    page = web.client.get("/signin?ship=ship-99&group=healthy").text
+    assert "ship-99" not in page and "group=healthy" in page and _rows(page)

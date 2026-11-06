@@ -210,13 +210,13 @@ Cloud, its Application Default Credentials, GitHub), one row each, in groups:
 
 | Group | What is in it |
 |---|---|
-| **Needs you** | a sign-in waiting for you to finish it (its card is on the page; **Continue** goes to it), expired, signed in as the wrong account, a sign-in that just failed and is still not done, or not signed in while something on the Ship needs it (Claude for its agents, a tool waiting for it, an agent's repository waiting for GitHub) |
+| **Needs you** | a sign-in waiting for you to finish it (its card is on the page; **Continue** goes to it), expired, signed in as the wrong account, a sign-in that just failed and is still not done (one that timed out is not this: its row keeps its own state, says the last attempt timed out, and offers **Try again**), or not signed in while something on the Ship needs it (Claude for its agents, a tool waiting for it, an agent's repository waiting for GitHub) |
 | **Under way** | a sign-in FleetLedger is running that does not need you now |
 | **Degraded or unknown** | expiring soon, the tool's check failed, a Ship that does not answer (**Check now**), or not signed in while nothing needs it yet |
 | **Healthy** | signed in |
 | **Not used** | the Ship does not use it (`ship-fleet signins SHIP --off`; turn it on in the Ship's Settings) |
 
-Within a group the most urgent comes first, then the oldest. Each row shows the
+Within a group the most urgent comes first, then the oldest (a waiting sign-in whose link runs out first, an expiring one that goes first). Each row shows the
 Ship, the service, its state, since when (when FleetLedger first saw it as it is
 now, or when it expired), what it means, and its fix: **Sign in** (or
 **Re-sign**, **Try again**) starts the same concierge sign-in as everywhere
@@ -229,7 +229,7 @@ picker; every filter is in the address (`/signin?service=claude&group=action`),
 so a view can be bookmarked or shared, and each group's chip shows its count
 for the Ships and services chosen. The list redraws itself when a Ship's status
 or a sign-in changes. After a row's or a card's button you come back to the same
-view. The link a newly started sign-in opens (`/signin?batch=...`) still shows
+view (after **Sign in**, at the new sign-in's card). The link a sign-in started from the forms below opens (`/signin?batch=...`) still shows
 only those sign-ins' cards, with **Show every sign-in**.
 
 `ship-fleet signins` with no Ship named prints the same rows in the same order,

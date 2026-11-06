@@ -137,9 +137,10 @@ def test_a_waiting_sign_in_comes_first_and_replaces_its_row():
 
 def test_a_failed_sign_in_needs_you_until_it_is_done():
     missing = view("ship-01", auth={"github": ("missing", None)})
-    failed = flow("ship-01", "github", state="done", outcome="timeout", detail="Timed out.")
+    failed = flow("ship-01", "github", state="done", outcome="failed",
+                  detail="The tool exited with 1.")
     row = next(r for r in signinlist.rows([missing], None, [failed]) if r.service == "github")
-    assert (row.group, row.state) == ("action", "failed") and "Timed out" in row.message
+    assert (row.group, row.state) == ("action", "failed") and "exited with 1" in row.message
     # signed in since: the failure no longer matters
     row = next(r for r in signinlist.rows([view("ship-01")], None, [failed])
                if r.service == "github")
@@ -233,3 +234,56 @@ def test_cli_named_ship_still_shows_and_changes_what_it_uses(env):  # noqa: F811
     assert code == 1 and "Name the Ship" in err
     code, _, err = env.run("signins", "ship-01", "--off", "gcloud", "--json")
     assert code == 1 and "without --on" in err
+
+
+def test_a_timed_out_sign_in_keeps_its_rows_own_state_with_a_note():
+    timed_out = flow("ship-01", "github", state="done", outcome="timeout", detail="Timed out.")
+    # unused and missing: still degraded, not pinned as critical
+    missing = view("ship-01", auth={"github": ("missing", None)})
+    row = next(r for r in signinlist.rows([missing], None, [timed_out])
+               if r.service == "github")
+    assert (row.group, row.state, row.level) == ("degraded", "missing", "notice")
+    assert row.note == signinlist.TIMED_OUT and row.flow == timed_out.id
+    # expired: it needs you because it expired, and says the last try timed out
+    expired = view("ship-01", auth={"github": ("expired", "x")})
+    row = next(r for r in signinlist.rows([expired], None, [timed_out])
+               if r.service == "github")
+    assert (row.group, row.state, row.note) == ("action", "expired", signinlist.TIMED_OUT)
+    # signed in since: no note
+    row = next(r for r in signinlist.rows([view("ship-01")], None, [timed_out])
+               if r.service == "github")
+    assert row.note is None and row.group == "healthy"
+
+
+def test_two_waiting_sign_ins_the_link_that_runs_out_first_comes_first():
+    now = time.time()
+    flows = [flow("ship-01", "claude", state="code", started=now - 10, deadline=now + 500),
+             flow("ship-02", "github", state="link", started=now, deadline=now + 60)]
+    rows = signinlist.rows([view("ship-01"), view("ship-02")], None, flows)
+    assert keys(rows[:2]) == [("ship-02", "github", "waiting"), ("ship-01", "claude", "waiting")]
+
+
+def test_a_sign_in_offering_the_live_terminal_needs_you():
+    for state in ("live-offered", "live"):
+        row = signinlist.rows([view("ship-01")], None, [flow("ship-01", "claude", state=state)])[0]
+        assert (row.ship, row.service, row.group, row.state) == (
+            "ship-01", "claude", "action", "waiting")
+
+
+def test_expiring_sign_ins_the_one_that_goes_first_comes_first():
+    def expiring(name, when, seen):
+        return view(name, auth={"gcloud": {"state": "expiring", "account": "w@example.com",
+                                           "expires_at": when}}, since={"gcloud": seen})
+    rows = signinlist.rows([expiring("ship-01", "2026-11-20T00:00:00Z", "2026-11-01T00:00:00Z"),
+                            expiring("ship-02", "2026-11-08T00:00:00Z", "2026-11-05T00:00:00Z")],
+                           None)
+    assert [r.ship for r in rows if r.state == "expiring"] == ["ship-02", "ship-01"]
+
+
+def test_since_starts_again_when_the_account_changes(home):
+    doc = copy.deepcopy(RUNNING)
+    doc["auth"]["github"]["checked_at"] = T0
+    status.track_since("ship-01", doc)
+    later = copy.deepcopy(doc)
+    later["auth"]["github"].update(account="someone-else", checked_at="2026-11-02T00:00:00Z")
+    assert status.track_since("ship-01", later)["github"] == "2026-11-02T00:00:00Z"
