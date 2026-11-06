@@ -25,7 +25,7 @@ from fleetledger.errors import FleetError
 from fleetledger.seed.bundle import Bundle
 from fleetledger.ssh import HostKeyMismatch, Result, Unreachable
 
-from fleetledger import cli, ops, status
+from fleetledger import cli, inhibitors, ops, status
 
 HERE = Path(__file__).resolve().parent
 EXAMPLES = HERE.parents[1] / "contracts" / "examples"
@@ -95,6 +95,11 @@ class SimShip:
         self.forgotten = 0  # shared SSH connections closed by FleetLedger
         self.time_format = "%Y-%m-%dT%H:%M:%SZ"  # the contract also allows fractions
         self.refuse_reboot = None  # stderr of a refused reboot command
+        self.refuse_forced = None  # ... of a refused forced one (--check-inhibitors=no)
+        self.blockers = []  # what the inhibitor probe finds (inhibitors.PROBE's items)
+        self.lock_released = False  # the lock goes away once the probe has looked
+        self.probe_fails = False
+        self.probes = 0
         self.after_reboot_id = None  # someone else answers at its name after the reboot
         self.after_reboot_host_key = False  # ... or answers with a different host key
         self.impostor = False
@@ -159,9 +164,21 @@ class SimShip:
             local = [self.incoming.as_posix() if a == ops.INCOMING else a for a in command]
             proc = subprocess.run(local, input=input or b"", capture_output=True)
             return proc.returncode, proc.stdout, proc.stderr.decode()
-        if command == ["sudo", "-n", "systemctl", "reboot"]:
-            if self.refuse_reboot:
-                return 1, "", self.refuse_reboot
+        if command == ["python3", "-I", "-"]:  # inhibitors.PROBE, as fleet
+            assert input == inhibitors.PROBE.encode()
+            self.probes += 1
+            if self.probe_fails:
+                return 3, "", "busctl: not found\n"
+            found = json.dumps({"blockers": self.blockers})
+            if self.lock_released:
+                self.refuse_reboot, self.blockers = None, []
+            return 0, found, ""
+        if command[:4] == ["sudo", "-n", "systemctl", "reboot"]:
+            forced = command[4:] == ["--check-inhibitors=no"]
+            assert forced or command[4:] == [], command
+            refused = self.refuse_forced if forced else self.refuse_reboot
+            if refused:
+                return 1, "", refused
             self.reboots.append(list(ship.names))
             self.down_until = self.clock.t + self.boot_delay
             raise Unreachable(f"Cannot reach {ship.name}: connection closed by remote host")
@@ -440,7 +457,117 @@ def test_a_refused_reboot_command_fails_at_once(world):
 def test_reboot_without_wait_reports_a_refused_command(world):
     world.sims["ship-01"].refuse_reboot = "Operation inhibited\n"
     [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], wait=False)
-    assert not outcome.ok and "the reboot command failed" in outcome.summary
+    assert not outcome.ok and outcome.summary.startswith("reboot refused:")
+
+
+# What logind (systemd 258 and later) says when a block lock refuses a root reboot.
+DENIED = "Call to Reboot failed: Operation denied due to active block inhibitor\n"
+# APT installing packages for `sudo apt upgrade` in fleet's interactive SSH login.
+APT_IN_SESSION = {
+    "who": "APT", "why": "APT is installing or removing packages", "mode": "block",
+    "user": "root", "pid": 4242,
+    "process": {"pid": 4242, "comm": "apt", "user": "root", "tty": "pts/0",
+                "session": {"id": "7", "user": "fleet", "service": "sshd", "tty": None,
+                            "state": "active"},
+                "unit": None, "unit_user": None},
+    "still_running": [],
+}
+
+
+def test_a_reboot_refused_by_a_shutdown_lock_names_it_and_the_next_step(world):
+    """The refusal seen with an `apt upgrade` left running in an open SSH login: the
+    outcome says what holds the lock and where, and how to get past it, at once."""
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot, sim.blockers = DENIED, [APT_IN_SESSION]
+    seen, on_event = events()
+    start = world.clock.t
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], on_event=on_event)
+    assert not outcome.ok
+    assert outcome.summary == (
+        'reboot refused: a login session is blocking it: apt (PID 4242, as root) in '
+        "fleet's SSH login session on pts/0 holds a shutdown lock: \"APT is installing or "
+        'removing packages".')
+    assert outcome.details[0] == ("Let it finish, or close fleet's session on the Ship (log "
+                                  "out of it), then reboot again.")
+    assert "ship-fleet reboot ship-01 --force" in outcome.details[1]
+    assert "herdr still saves every agent first" in outcome.details[1]
+    assert "sudo dpkg --configure -a" in outcome.details[2]
+    assert outcome.data["refused"]["said"] == DENIED.strip()
+    assert outcome.data["refused"]["blockers"][0]["process"]["session"]["user"] == "fleet"
+    assert ("ship-01", "reboot refused: something holds a shutdown lock") in seen
+    assert sim.reboots == [] and sim.probes == 1
+    assert world.clock.t == start  # no waiting for a reboot that is not happening
+
+
+def test_a_lock_released_while_it_was_looked_up_is_tried_once_more(world):
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot, sim.lock_released = DENIED, True
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert outcome.ok, outcome
+    assert len(sim.reboots) == 1 and sim.probes == 1
+
+
+def test_a_lock_that_cannot_be_looked_up_still_gets_the_next_step(world):
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot, sim.probe_fails = DENIED, True
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert not outcome.ok
+    assert outcome.summary.startswith(
+        "reboot refused: Call to Reboot failed: Operation denied due to active block "
+        "inhibitor. Something on the Ship holds a shutdown lock")
+    assert "ship-fleet reboot ship-01 --force" in outcome.details[-1]
+    assert outcome.data["refused"]["blockers"] is None
+
+
+def test_a_refused_sudo_is_not_mistaken_for_a_lock(world):
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot = "sudo: a password is required\n"
+    ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert sim.probes == 0
+
+
+def test_force_overrides_the_lock_and_still_waits_for_the_agents(world):
+    """--force: systemctl reboot --check-inhibitors=no (delay locks such as herdr's
+    still get their time), then the same checks as any reboot."""
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot, sim.blockers = DENIED, [APT_IN_SESSION]
+    seen, on_event = events()
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], on_event=on_event,
+                           force=True)
+    assert outcome.ok, outcome
+    assert ["sudo", "-n", "systemctl", "reboot", "--check-inhibitors=no"] in sim.calls
+    assert ["sudo", "-n", "systemctl", "reboot"] not in sim.calls
+    assert outcome.data["forced"] is True and "2/2 agents resumed" in outcome.summary
+    assert ("ship-01", "rebooting, overriding any shutdown lock") in seen
+    assert sim.probes == 0
+
+
+@pytest.mark.parametrize("said", ["Call to Reboot failed: Access denied",
+                                  "Call to Reboot failed: Operation denied due to active "
+                                  "block inhibitor"])
+def test_a_refused_forced_reboot_is_reported_as_it_is(world, said):
+    """Forcing was the way past a lock already: no lookup, no second try."""
+    sim = world.sims["ship-01"]
+    sim.refuse_forced, sim.blockers = said + "\n", [APT_IN_SESSION]
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")], force=True)
+    assert not outcome.ok
+    assert outcome.summary == f"ship-01: the reboot command failed: {said}"
+    assert sim.probes == 0
+
+
+def test_update_then_a_refused_reboot_says_both_and_how_to_finish(world):
+    """The update is done; the reboot that switches herdr is what is left to do."""
+    sim = world.sims["ship-01"]
+    sim.herdr_changes = True
+    sim.refuse_reboot, sim.blockers = DENIED, [APT_IN_SESSION]
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert not outcome.ok
+    assert outcome.summary.startswith("updated to ")
+    assert "; reboot refused: a login session is blocking it: apt (PID 4242" in \
+        outcome.summary
+    assert outcome.data["rebooted"] is False and "refused" in outcome.data["reboot"]
+    assert any("ship-fleet reboot ship-01 --force" in d for d in outcome.details)
+    assert sim.converged and sim.reboots == []
 
 
 def test_reboot_stops_when_another_machine_answers_at_the_name(world):
@@ -895,6 +1022,30 @@ def test_cli_agent_restart(app, world):
     assert json.loads(out)[0]["data"]["skipped"][0]["name"] == "main"
     code, _, err = app.run("agent", "restart", "ship-01", "main", "--all")
     assert code == 1 and "not both" in err
+
+
+def test_cli_reboot_refused_by_a_lock_says_what_holds_it_then_force_reboots(app, world):
+    sim = world.sims["ship-01"]
+    sim.refuse_reboot, sim.blockers = DENIED, [APT_IN_SESSION]
+    code, out, _ = app.run("reboot", "ship-01")
+    assert code == 1 and sim.reboots == []
+    assert ("ship-01: FAILED: reboot refused: a login session is blocking it: apt (PID 4242, "
+            "as root) in fleet's SSH login session on pts/0") in out
+    assert "  To reboot anyway: ship-fleet reboot ship-01 --force" in out
+    code, out, _ = app.run("reboot", "ship-01", "--force")
+    assert code == 0, out
+    assert sim.reboots and sim.calls[-1] != ["sudo", "-n", "systemctl", "reboot"]
+    assert "2/2 agents resumed in their modes" in out
+
+
+def test_cli_force_reboot_of_many_asks_as_a_force_reboot(app, world):
+    code, _, err = app.run("reboot", "all", "--force")
+    assert code == 1 and "This would force-reboot 2 Ships (ship-01, ship-02)" in err
+    app.tty["value"] = True
+    app.answers.append("no")
+    code, _, err = app.run("reboot", "all", "--force")
+    assert code == 1 and "Nothing done" in err
+    assert world.sims["ship-01"].reboots == []
 
 
 def test_cli_set_by_tag_and_all(app, world):

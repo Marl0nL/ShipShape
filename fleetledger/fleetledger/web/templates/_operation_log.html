@@ -1,0 +1,1 @@
+{% if op.log %}<pre class="log{% if op.outcome == "failed" %} bad{% endif %}">{{ op.log|join("\n") }}</pre>{% else %}<p class="quiet">No log.</p>{% endif %}

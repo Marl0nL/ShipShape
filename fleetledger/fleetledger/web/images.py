@@ -123,7 +123,7 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
 
     return {"images": images.listing(inv),
             "default_driver": inv.defaults.get("driver", "manual"),
-            "image_jobs": [j for j in ui.jobs.recent() if j.kind == "image"][:3]}
+            "image_jobs": [j for j in ui.jobs.shown() if j.kind == "image"][:3]}
 
 
 def routes() -> list[Route]:

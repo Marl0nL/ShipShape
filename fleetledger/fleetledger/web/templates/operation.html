@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ op.title }} · Activity · FleetLedger{% endblock %}
+{% block body %}
+<p class="crumbs"><a href="/activity">Activity</a>{% if op.ships|length == 1 %} · <a href="/activity?ship={{ op.ships[0] }}">{{ op.ships[0] }}</a>{% endif %}</p>
+<h1>{{ op.title }}</h1>
+<section class="operations history">
+  {% with whole=True %}{% include "_operation.html" %}{% endwith %}
+</section>
+{% endblock %}

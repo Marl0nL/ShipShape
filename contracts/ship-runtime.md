@@ -146,7 +146,9 @@ file, and agent forwarding off.
 | Any other ship-ctl command | `sudo -n /usr/local/bin/ship-ctl <command> ... --json` |
 | Sign-ins (concierge) | `ssh -tt fleet@<ship> sudo -n -iu agent -- <command>` (a login shell, so `HOME` and `PATH` are the agent's) |
 | Update tooling | upload the bundle into `/home/fleet/incoming/`, then `sudo -n /usr/local/bin/ship-ctl converge --bundle <path> --json` |
-| Reboot | `sudo -n systemctl reboot` (never a forced reboot) |
+| Reboot | `sudo -n systemctl reboot` (a clean reboot, never `--force`) |
+| Reboot past a shutdown lock (`ship-fleet reboot --force`) | `sudo -n systemctl reboot --check-inhibitors=no`: still clean, and delay locks (herdr's) still get their 30 s; only block locks are overridden |
+| Why a reboot was refused | `python3 -I -` as fleet, without sudo, with the script `fleetledger/inhibitors.py` `PROBE` on stdin: logind's `ListInhibitors` (busctl), then `/proc` and `loginctl show-session` for each holder |
 
 After a sign-in FleetLedger triggers nothing: within a minute the Ship finishes
 the tools that were waiting on it and, for Claude, starts its autostart agents.
@@ -155,8 +157,24 @@ An optional read-only poller key may be installed for `fleet` with
 `restrict,command="sudo -n /usr/local/bin/ship-ctl status --json"`.
 
 FleetLedger never reads the agent's credential files, never forwards an SSH
-agent, and runs nothing as root except through ship-ctl and the reboot command
+agent, and runs nothing as root except through ship-ctl and the reboot commands
 above.
+
+### Shutdown locks
+
+logind (systemd 257 and later; the Ship image has 259) refuses a reboot, root's
+included, while any program holds a *block* lock on shutdown, unless the reboot
+overrides it. The only such lock on a Ship is APT's ("APT is installing or
+removing packages"): `apt`, `apt-get` and `unattended-upgrade` hold it while
+they install or remove packages, until the last of their own processes ends. An
+`apt` still going in an interactive login holds every reboot off until it ends
+or that session is closed, including while it waits at a question (a changed
+configuration file, a needrestart prompt) or runs its after-install hooks, when
+it can look finished. herdr holds a *delay* lock: it never refuses, it only
+delays the shutdown until herdr has saved (at most `InhibitDelayMaxSec`). Claude
+Code holds none on Linux. When a reboot is refused FleetLedger reads the locks
+as above and says what holds each one and where (the process, the user, the
+login session or service), with the next step.
 
 Agents themselves read `/run/shipshape/status.json` (through ship-axi) and never
 need ship-ctl.

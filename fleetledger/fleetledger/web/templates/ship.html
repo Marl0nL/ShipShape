@@ -9,13 +9,16 @@
     · driver {{ ship.driver }}
     {% if doc and doc.overlay %}· overlay: {{ doc.overlay.name or "no name yet" }} ({{ doc.overlay.state }}){% if doc.overlay.ssh_listen == "overlay" %}, SSH on the overlay only{% endif %}{% endif %}
     · {% if snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status{% endif %}
+    · <a href="/activity?ship={{ ship.name }}">past operations</a>
   </p>
 </section>
 {% from "_macros.html" import ship_action_bar with context %}
 {{ ship_action_bar() }}
 {% if jobs %}
-<section class="ship-jobs">
-  {% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}
+{% from "_macros.html" import jobs_toolbar with context %}
+<section class="ship-jobs" aria-label="Operations on {{ ship.name }}">
+  {{ jobs_toolbar(None, jobs, "/activity?ship=" ~ ship.name, ship=ship.name) }}
+  {% with on_ship_page=True %}{% for job in jobs[:3] %}{% include "_job.html" %}{% endfor %}{% endwith %}
 </section>
 {% endif %}
 <nav class="tabs">

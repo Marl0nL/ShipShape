@@ -98,7 +98,7 @@ def page_context(ui: Any, inv: Any, tag: str | None) -> dict[str, Any]:
         "tools": tool_choices(ui.app, None)["list"],
         "sources": commands.LOG_SOURCES,
         "LOG_LINES": LOG_LINES,
-        "fleet_jobs": [j for j in ui.jobs.recent() if j.kind in KINDS][:4],
+        "fleet_jobs": [j for j in ui.jobs.shown() if j.kind in KINDS][:4],
     }
 
 

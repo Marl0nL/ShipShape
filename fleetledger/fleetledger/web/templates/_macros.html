@@ -254,6 +254,11 @@
         {{ power_form("stop") }}
         <p class="hint">{% if by_hand %}Made by hand, so FleetLedger shows the step to run.{% else %}Through {{ "Proxmox" if ship.driver == "proxmox" else ship.driver }}.{% endif %}
           Stopping is a clean shutdown: herdr saves every agent, and they resume when it starts.</p>
+        {% if doc and not view.problem %}
+        {{ force_reboot_form(ship.name) }}
+        <p class="hint">When a reboot is refused because a program holds a shutdown lock
+          (apt in an open login session, say): reboot anyway and cut it off.</p>
+        {% endif %}
         {% if overlay_set and not on_overlay %}
         {% set c = op_confirm("join", ship.name) %}
         <form method="post" action="/operations" class="inline"
@@ -318,6 +323,25 @@
 </form>
 {% endmacro %}
 
+{# Reboot a Ship even past a shutdown lock (POST /operations, force=yes: ship-fleet
+   reboot N --force), behind the danger dialog. Needs csrf in the context.
+   from_fleet: sent from anywhere but the Ship's own page, so it returns to the
+   Fleet page (whose Activity shows the job) instead of going to the Ship's. #}
+{% macro force_reboot_form(name, small=False, from_fleet=False) %}
+{% set c = op_confirm("force-reboot", name) %}
+<form method="post" action="/operations" class="inline"
+  data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
+  data-confirm-action="{{ c.action }}" data-confirm-danger>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="operation" value="reboot">
+  <input type="hidden" name="force" value="yes">
+  <input type="hidden" name="ship" value="{{ name }}">
+  {% if from_fleet %}<input type="hidden" name="from" value="fleet">{% endif %}
+  <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+  <button type="submit" class="ghost danger{{ ' small' if small }}" title="ship-fleet reboot {{ name }} --force">Force reboot…</button>
+</form>
+{% endmacro %}
+
 {# Start or stop the Ship's VM (POST /ships/N/power: ship-fleet start|stop); stop
    behind the confirm dialog. Needs ship, csrf and op_confirm in the context. #}
 {% macro power_form(verb, primary=False) %}
@@ -330,4 +354,25 @@
   {% if verb == "stop" %}<label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>{% endif %}
   <button type="submit" class="{{ '' if primary else 'ghost' }}{{ ' danger' if verb == 'stop' }}" title="ship-fleet {{ verb }} {{ ship.name }}">{{ verb|capitalize }} the VM</button>
 </form>
+{% endmacro %}
+
+{# The bar above a list of job cards: a heading (or none), a link to the Activity page
+   (all of it, or one Ship's) and, when two or more cards are finished, Dismiss all
+   finished (web/activity.py). Import it "with context": it reads csrf and here. #}
+{% macro jobs_toolbar(heading, jobs, history, ship=None) %}
+{% set finished = jobs|selectattr("done")|list %}
+<div class="toolbar jobs-toolbar">
+  {% if heading %}<h2>{{ heading }}</h2>{% endif %}
+  <div class="toolbar-actions">
+    <a href="{{ history }}">{{ "Past operations" if ship else "All past operations" }}</a>
+    {% if finished|length > 1 %}
+    <form class="inline" method="post" action="/jobs/dismiss">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="next" value="{{ here }}">
+      {% if ship %}<input type="hidden" name="ship" value="{{ ship }}">{% endif %}
+      <button type="submit" class="ghost small" id="dismiss-all-{{ ship or "fleet" }}" title="Hide every finished card{{ " of " ~ ship if ship }}; running ones stay. They all stay in Activity.">Dismiss all finished</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
 {% endmacro %}

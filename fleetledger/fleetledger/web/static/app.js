@@ -26,6 +26,35 @@
     });
   });
 
+  // --- dismissing a job card ----------------------------------------------------
+  // htmx removes the card (hx-swap="delete"); the focus, on its Dismiss button,
+  // would fall back to the page's top. Move it on first, to the next card's
+  // Dismiss (else the previous one's, else the list's Activity link), so a
+  // keyboard can dismiss card after card. Nothing moves if the server refused.
+  function dismissIn(el) {
+    return el.matches("article.job") ? el.querySelector("form[data-dismiss] button") : null;
+  }
+  function focusAfter(card) {
+    let target = null;
+    for (let el = card.nextElementSibling; !target && el; el = el.nextElementSibling) {
+      target = dismissIn(el);
+    }
+    for (let el = card.previousElementSibling; !target && el; el = el.previousElementSibling) {
+      target = dismissIn(el);
+    }
+    const list = card.parentElement;
+    target = target || (list && list.querySelector(".jobs-toolbar a")) ||
+      document.querySelector("header.top nav a[href='/activity']");
+    if (target) target.focus();
+  }
+  document.addEventListener("htmx:beforeSwap", function (event) {
+    const from = event.detail.requestConfig && event.detail.requestConfig.elt;
+    if (!event.detail.shouldSwap || !from || !from.hasAttribute ||
+        !from.hasAttribute("data-dismiss")) return;
+    const card = from.closest("article.job");
+    if (card && card.contains(document.activeElement)) focusAfter(card);
+  });
+
   // --- browser notifications when an agent starts waiting ----------------------
   const SEEN = "fleetledger-waiting-seen";
   function seen() {

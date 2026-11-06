@@ -77,7 +77,7 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
     from fleetledger import ca, trustcmd
     from fleetledger.web.setup import _tilde
 
-    jobs = {kind: [j for j in ui.jobs.recent() if j.kind == kind][:3] for kind in KINDS}
+    jobs = {kind: [j for j in ui.jobs.shown() if j.kind == kind][:3] for kind in KINDS}
     if ca.config(inv) is None:
         return {"certs": None}
     machines = ca.machines(inv)

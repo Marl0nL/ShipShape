@@ -28,10 +28,13 @@ class Outcome:
     ok: bool
     summary: str
     details: tuple[str, ...] = ()
+    refused: bool = False  # a shutdown lock refused its reboot: offer Force reboot
 
     @classmethod
     def of(cls, outcome: ops.Outcome) -> Outcome:
-        return cls(outcome.ship, outcome.ok, outcome.summary, tuple(outcome.details))
+        reboot = outcome.data.get("reboot") or {}  # an update's reboot
+        refused = "refused" in outcome.data or "refused" in reboot
+        return cls(outcome.ship, outcome.ok, outcome.summary, tuple(outcome.details), refused)
 
 
 def _fleet(app: Any) -> ops.Fleet:
@@ -111,13 +114,16 @@ def _join(app: Any, ships, event) -> list[ops.Outcome]:
     return results
 
 
-def start_operation(jobs: Any, app: Any, kind: str, ships: list[str]) -> Any:
+def start_operation(jobs: Any, app: Any, kind: str, ships: list[str],
+                    force: bool = False) -> Any:
     """Update, reboot or join these Ships as a background job (refused if one of
-    them is busy)."""
+    them is busy). force: reboot even past a shutdown lock (ops.reboot_one)."""
     from fleetledger.web.jobs import BrowserApp
 
     if kind not in KINDS:
         raise FleetError(f"Unknown operation '{kind}'.")
+    if force and kind != "reboot":
+        raise FleetError("Only a reboot can be forced.")
 
     def run(job) -> None:
         def event(ship: str, text: str) -> None:
@@ -135,11 +141,11 @@ def start_operation(jobs: Any, app: Any, kind: str, ships: list[str]) -> Any:
             results = ops.update(fleet, chosen, reboot_policy="auto", wait=True,
                                  on_event=event)
         else:
-            results = ops.reboot(fleet, chosen, wait=True, on_event=event)
+            results = ops.reboot(fleet, chosen, wait=True, on_event=event, force=force)
         job.outcomes = [Outcome.of(r) for r in results]
         job.ok = all(o.ok for o in job.outcomes)
 
-    return jobs.start(kind, list(ships), run, TITLES[kind])
+    return jobs.start(kind, list(ships), run, "Force reboot" if force else TITLES[kind])
 
 
 def tool_choices(app: Any, view: Any) -> dict[str, Any]:
