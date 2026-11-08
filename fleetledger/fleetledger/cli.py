@@ -25,13 +25,13 @@ COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
-    "image", "overlay", "put", "inbox", "migrate",
+    "image", "overlay", "put", "inbox", "migrate", "service",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
 EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
-                         "fleetledger.inbox", "fleetledger.migrate")
+                         "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service")
 
 
 @dataclass
@@ -56,6 +56,8 @@ class App:
     herdr: bool = True  # installing a trust bundle here may add herdr saved machines
     # (args) -> stdout of the local `tailscale` command (read-only; web/remote.py)
     tailscale: Callable[[list[str]], str] | None = None
+    # (argv) -> (exit code, stdout, stderr) of systemctl or loginctl (service.py)
+    system: Callable[[list[str]], tuple[int, str, str]] | None = None
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
 
     def __post_init__(self) -> None:
@@ -518,6 +520,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="seconds between status checks while the UI is open (default 30)")
     p.add_argument("--local", action="store_true",
                    help="this computer only, even when the remote UI is on")
+    p.add_argument("--service", action="store_true",
+                   help="run as a service (what ship-fleet service install sets up): no "
+                        "terminal or browser, no link printed (ship-fleet ui link --local "
+                        "gives one), the poller always on, and a stop lets running jobs "
+                        "finish first")
     ui_sub = p.add_subparsers(dest="ui_command", metavar="<action>", title="actions")
     r = ui_sub.add_parser(
         "remote", help="show, turn on or turn off the web UI for your other devices",
@@ -551,8 +558,14 @@ def build_parser() -> argparse.ArgumentParser:
                     "runs. It works once, within 15 minutes, and the device stays signed in\n"
                     "(across restarts) until it lapses or you revoke it. Fine over ssh:\n\n"
                     "  ssh desktop ship-fleet ui link --name laptop\n"
-                    "  ship-fleet ui link --name phone --qr         a QR code to scan",
+                    "  ship-fleet ui link --name phone --qr         a QR code to scan\n\n"
+                    "With --local, a one-time sign-in link for this computer's own address\n"
+                    "instead (127.0.0.1), from the running ship-fleet ui or service: for a\n"
+                    "browser here, or through an ssh tunnel to it.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    lk.add_argument("--local", dest="link_local", action="store_true",
+                    help="a sign-in link for this computer's address (127.0.0.1), from the "
+                         "running UI")
     lk.add_argument("--name", help="what to call the device (default: a guess from its "
                                    "browser, renamable in Settings)")
     lk.add_argument("--qr", action="store_true", help="also print the link as a QR code")
@@ -638,7 +651,7 @@ def _in_use(args, app):
 
 def _handed_over(args, app) -> None:
     """A copy on standby or retired (ship-fleet migrate) does not act on the fleet:
-    every command but migrate's own and doctor refuses, the web UI included."""
+    every command but migrate's own, doctor and service refuses, the web UI included."""
     from fleetledger import handover
 
     if args.command in handover.ALLOWED:

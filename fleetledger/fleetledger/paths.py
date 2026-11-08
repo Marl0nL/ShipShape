@@ -86,6 +86,35 @@ def private_dir(path: Path) -> Path:
     return path
 
 
+SOCKET_PATH_MAX = 100  # Unix socket paths are limited to about 108 bytes
+
+
+def runtime_socket(name: str, hint: str) -> Path:
+    """Where FleetLedger keeps one of its Unix sockets: in its private runtime folder,
+    or, when that path is too long for a socket, in a short private folder of yours
+    under /tmp (refused if anyone else owns it or can open it). hint: what to do
+    instead, for that refusal."""
+    import stat
+
+    from fleetledger.errors import FleetError
+
+    sock = runtime_dir() / name
+    if len(str(sock)) <= SOCKET_PATH_MAX:
+        private_dir(sock.parent)
+        return sock
+    folder = Path("/tmp") / f"fleetledger-{os.getuid()}"
+    try:
+        folder.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    st = folder.lstat()
+    if (not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid()
+            or stat.S_IMODE(st.st_mode) & 0o077):
+        raise FleetError(f"{folder} is not a private folder of yours; not using a socket "
+                         "there.", hint=hint)
+    return folder / name
+
+
 def write_private(path: Path, data: bytes) -> None:
     """Write a file atomically with mode 0600 (the folder must already exist)."""
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}")

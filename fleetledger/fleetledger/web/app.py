@@ -213,6 +213,7 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         this_device=session.device,  # a paired browser on the remote address, else None
         remote_on=ui.gate.remote is not None,
         machine_due=_machine_due(ui, session),
+        stopping=ui.jobs.stopping,  # a service letting its running jobs finish before a stop
         **context,
     )
     return HTMLResponse(html, status_code=status_code)

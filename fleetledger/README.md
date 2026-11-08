@@ -40,7 +40,8 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `shipfleet_launch.py` (next to the package) | | the `ship-fleet` command's entry point: drops the current folder and empty `PYTHONPATH` entries from `sys.path` first, so a ShipShape checkout's outer `fleetledger/` folder can never shadow the package |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
-| `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)) |
+| `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)); `web/control.py`, its private control socket (`ship-fleet ui link --local`) |
+| `fleetledger/service.py` | | FleetLedger as a systemd user service: `ship-fleet service install\|status\|restart\|uninstall` ([fleetledger-service.md](../docs/runbooks/fleetledger-service.md)) |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
 | `fleetledger/attempts.py` | | failed `ship-fleet new` attempts, kept (without secrets) to edit and try again, with what each left on the hypervisor |
 | `fleetledger/pins.py` | phase 2 | `ship-fleet pins`: check and move the `versions.toml` pins with their checksums and signatures |
@@ -76,6 +77,8 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/ca/` | the current revocation list, cached so its hash stays stable (0600) |
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
 | `~/.local/share/fleetledger/images/` | baked images and their manifests (0600); `base/` caches Ubuntu's verified cloud image |
+| `$XDG_RUNTIME_DIR/fleetledger/ui.sock` | a running web UI's control socket (0600, in a 0700 folder; gone when it stops): `ship-fleet ui link --local` and `ship-fleet service status` ask it |
+| `~/.config/systemd/user/fleetledger.service` | the systemd user unit `ship-fleet service install` writes, outside FleetLedger's own folders (0600) |
 
 `FLEETLEDGER_CONFIG_DIR`, `FLEETLEDGER_DATA_DIR` and `FLEETLEDGER_RUNTIME_DIR`
 override these (the XDG variables are honoured too). `SHIPSHAPE_REPO` points
@@ -303,7 +306,8 @@ README).
 
 `ship-fleet --help` lists every command; each has its own `--help`. The table
 covers the core ones; the rest are documented with their feature: `setup`,
-`doctor`, `ui` ([web-ui.md](../docs/web-ui.md)); `update`, `reboot`,
+`doctor`, `ui` ([web-ui.md](../docs/web-ui.md)); `service`
+([fleetledger-service.md](../docs/runbooks/fleetledger-service.md)); `update`, `reboot`,
 `attention`, `pins` (Day-2 below); `net` ([network.md](../docs/network.md));
 `ca`, `trust`, `untrust` ([trust-machines.md](../docs/runbooks/trust-machines.md));
 `overlay` ([remote-access.md](../docs/runbooks/remote-access.md)); `destroy`,

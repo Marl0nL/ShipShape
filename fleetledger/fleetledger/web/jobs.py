@@ -183,6 +183,7 @@ class Jobs:
         self._jobs: list[Job] = []
         self._ids = itertools.count(self._first_id())
         self._stopping = False
+        self._changed = threading.Event()  # set whenever a job ends (wait())
 
     def _first_id(self) -> int:
         if self.store is None:
@@ -300,10 +301,40 @@ class Jobs:
             self._save(job, ended=True)
             job.done = True
             job.version += 1
+            self._changed.set()
             try:
                 self.on_finished(job.ships)
             except Exception:  # noqa: BLE001 - a status refresh must not hide the outcome
                 pass
+
+    @property
+    def stopping(self) -> bool:
+        """Has drain() or stop() been called (new jobs are refused)?"""
+        with self._lock:
+            return self._stopping
+
+    def running(self) -> list[Job]:
+        with self._lock:
+            return [j for j in self._jobs if j.running]
+
+    def drain(self) -> list[Job]:
+        """Before a stop that should cut nothing short (the service stopping for a restart
+        or an update): refuse new jobs from now on, and return those still running. They
+        carry on; wait() for them."""
+        with self._lock:
+            self._stopping = True
+            return [j for j in self._jobs if j.running]
+
+    def wait(self, timeout: float, clock: Callable[[], float] = time.monotonic) -> list[Job]:
+        """Wait until no job runs, or timeout seconds; return those still running."""
+        deadline = clock() + timeout
+        while True:
+            left = self.running()
+            remaining = deadline - clock()
+            if not left or remaining <= 0:
+                return left
+            self._changed.wait(min(remaining, 1.0))
+            self._changed.clear()
 
     def stop(self) -> list[Job]:
         """At shutdown: refuse new jobs, and return those cut short (their threads die
