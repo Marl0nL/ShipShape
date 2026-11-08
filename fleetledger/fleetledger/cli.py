@@ -25,13 +25,13 @@ COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
-    "image", "overlay", "put", "inbox",
+    "image", "overlay", "put", "inbox", "migrate",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
 EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
-                         "fleetledger.inbox")
+                         "fleetledger.inbox", "fleetledger.migrate")
 
 
 @dataclass
@@ -616,6 +616,23 @@ def _hoist_tag_option(argv: list[str]) -> list[str]:
     return [argv[0], *hoisted, *rest]
 
 
+def _in_use(args, app):
+    """Every command but migrate holds FleetLedger's in-use lock (shared) while it runs,
+    so ship-fleet migrate never copies the fleet in the middle of a change. Where there
+    is no FleetLedger folder yet there is nothing to copy, and no lock."""
+    from contextlib import nullcontext
+
+    from fleetledger import inuse
+
+    if args.command == "migrate":
+        return nullcontext()  # it takes the lock exclusively itself
+    store = app.store_factory()
+    path = getattr(store, "path", None)
+    if path is None or not path.parent.is_dir():
+        return nullcontext()
+    return inuse.using(store)
+
+
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     from fleetledger import commands
 
@@ -639,7 +656,8 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     for module in EXTRA_COMMAND_MODULES:
         handler = handler or getattr(importlib.import_module(module), name, None)
     try:
-        return handler(args, app) or 0
+        with _in_use(args, app):
+            return handler(args, app) or 0
     except FleetError as exc:
         app.note(f"ship-fleet: {exc.message}")
         if exc.hint:

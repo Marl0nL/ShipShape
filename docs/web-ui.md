@@ -31,7 +31,10 @@ one choice:
   keeps and loads them itself, so you are never asked again), or you (they keep
   their passphrases; you load the admin key with `ssh-add`, or are asked for its
   passphrase, on a desktop often in a pop-up, each time FleetLedger connects).
-  The keys themselves stay the same either way.
+  The keys themselves stay the same either way. This starts an empty inventory,
+  so each Ship must be adopted again; to bring a whole fleet from another
+  computer (its Ships, trusted machines and secrets too), use `ship-fleet
+  migrate` instead ([move-fleetledger.md](runbooks/move-fleetledger.md)).
 
 Anything already on this computer is offered rather than asked again: a Proxmox
 token secret already in the keyring or in `~/.config/fleetledger/proxmox-token`

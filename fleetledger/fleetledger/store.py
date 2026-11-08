@@ -272,6 +272,16 @@ class TomlFileStore:
             os.close(fd)
 
     @contextmanager
+    def held(self) -> Iterator[str]:
+        """The inventory's text, with its lock held until the block ends, so no change
+        lands meanwhile (ship-fleet migrate copies it). Do not edit inside the block."""
+        with self._locked():
+            try:
+                yield self.path.read_text(encoding="utf-8")
+            except FileNotFoundError as exc:
+                raise ConfigError(f"No inventory at {self.path}.") from exc
+
+    @contextmanager
     def edit(self) -> Iterator[InventoryEditor]:
         with self._locked():
             editor = InventoryEditor(self._read())
