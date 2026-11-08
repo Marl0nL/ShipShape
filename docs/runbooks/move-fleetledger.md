@@ -16,18 +16,27 @@ same certificate authority, and nothing on a Ship can tell the difference.
 ```sh
 # On the old computer:
 ship-fleet migrate check                    # what would move, what stays, what stops it
-ship-fleet migrate push you@new-computer    # move it there over SSH, then check every Ship
+ship-fleet migrate push you@new-computer    # move it, check every Ship, hand over
 
-# Or, run from the new computer (where your keyring is unlocked):
-ssh you@old-computer ship-fleet migrate send | ship-fleet migrate receive
-
-# On the new computer, at any time later:
-ship-fleet migrate verify                   # does the fleet work from here?
+# Two weeks later, once you are happy, on the old computer:
+ship-fleet migrate wipe                     # delete the old copy's keys and secrets
 ```
 
-`push` and `receive` change nothing on the old computer. Afterwards **both copies
-can act on the fleet: use only one of them** (two FleetLedgers acting at once can
-undo each other's changes).
+**Only one copy acts on the fleet at a time.** Two FleetLedgers acting at once undo
+each other's changes: an older checkout's `update` rolls Ships back, and a stale
+inventory pushes a revocation list that un-revokes machines. So `push` hands over
+in steps:
+
+1. The new computer receives the fleet **on standby**: it has everything, but
+   refuses to act on the fleet.
+2. It checks every key, secret and Ship (read-only).
+3. Only then does the old copy **retire**: it refuses to act on the fleet from
+   then on, and keeps its files for a rollback.
+4. The new copy becomes **active**, with the next **epoch** (a number in
+   `ships.toml` that goes up at every hand-over).
+
+Retiring comes before activating, so a hand-over cut short (the network drops)
+leaves no copy acting, never two. Nothing changes on any Ship at any step.
 
 ## Before you start
 
@@ -38,7 +47,9 @@ On the **new** computer:
    another commit: `ship-fleet update` packs `ship/` from the checkout, so an older
    one would roll Ships back.
 2. Have no FleetLedger there yet. `receive` never writes over one: it refuses if
-   `~/.config/fleetledger` or `~/.local/share/fleetledger` holds anything.
+   `~/.config/fleetledger` or `~/.local/share/fleetledger` holds anything, except a
+   copy on standby from an earlier move (replaced: it never acted), or the marker a
+   wiped copy leaves (see "Wipe the old copy").
 3. Let it reach the Ships the way the old computer does: the same LAN (with
    `libnss-mdns` for `.local` names), or the overlay network for Ships with
    `ssh_listen=overlay` (the tailnet policy must let it reach `tag:ship:22`).
@@ -113,16 +124,75 @@ computer with `ssh-add` before FleetLedger can use them (`verify` says so).
   `ship-ctl status`), and its host certificate and revocation list match this CA;
 - the time zone (new Ships copy it): a different one is a warning.
 
-`push` returns what `receive` returned: 0 when the new computer has the fleet and
-reached every Ship; 5 when the fleet is written there but a check failed (fix it,
-for example the network path to a Ship, then `ship-fleet migrate verify` there;
-until then keep using the old copy); anything else when nothing was written there.
+`push` exits:
+
+| Exit | Means |
+|---|---|
+| 0 | the new computer is the active FleetLedger; this copy is retired |
+| 5 | the fleet is on standby there, but a check failed (say, the network path to a Ship), so **this copy is still the active one**. Fix it, then push again: it replaces the copy on standby |
+| 6 | this copy retired, but the new one did not become active: **no copy acts on the fleet**. Run `ship-fleet migrate activate` there, or `ship-fleet migrate unretire` here |
+| other | nothing was written there; nothing changed here |
+
+`push --no-cutover` stops after step 2: a trial copy on standby, with this copy
+still the active one. Push again (without it) to move for real.
+
+## Handing over by hand
+
+From the new computer, where your keyring is unlocked, the move is a pipe:
+
+```sh
+ssh you@old-computer ship-fleet migrate send | ship-fleet migrate receive
+```
+
+That leaves the new copy on standby and the old one active. Hand over in the same
+order push does: first, on the old computer, `ship-fleet migrate retire --to
+new-computer`; then, on the new one, `ship-fleet migrate activate` (it checks every
+Ship again first). `ship-fleet migrate verify` checks a copy at any time, on
+standby or active.
+
+## A retired copy
+
+A retired copy refuses every command but `ship-fleet migrate` and `doctor`, the web
+UI included, with a line saying when it retired and where the fleet went. Its files
+stay as they were, so you can roll back. Until it is wiped, the old computer is as
+sensitive as before: it still holds the admin and CA keys.
+
+**Roll back** (within the two weeks): on the new computer `ship-fleet migrate retire
+--to old-computer`, then on the old one `ship-fleet migrate unretire`. The old copy
+acts again with an epoch above any handed over. What the new copy changed in the
+meantime (a new Ship, a trusted machine) does not come back that way; to bring it,
+wipe the old copy (`ship-fleet migrate wipe --now`) and move the fleet back with
+`push` from the new computer instead.
+
+**The epoch** guards against an old state coming back: a computer that handed the
+fleet on at epoch 3 refuses a fleet from epoch 2 or before (an old backup, a copy
+forgotten on standby somewhere), even after it is wiped.
+
+## Wipe the old copy
+
+Two weeks after it retired, delete the old copy's keys and secrets:
+
+```sh
+ship-fleet migrate wipe        # lists what goes and what stays, then asks
+```
+
+Earlier than that it refuses (it is kept for a rollback) unless you add `--now`; an
+active copy is never wiped. It deletes:
+
+- the fleet admin key and the CA keys that FleetLedger looks after, and their
+  passphrases (keyring items or files);
+- the Proxmox token and the OAuth secret;
+- the inventory, `this-computer.json`, and everything else in
+  `~/.config/fleetledger` and `~/.local/share/fleetledger`.
+
+It keeps, and says so: keys you look after yourself (delete them yourself unless
+something else uses them), and your own key that FleetLedger made, with its
+passphrase, because the old computer still attaches to Ships with it. Afterwards
+only `~/.config/fleetledger/retired.json` stays (no secrets), so that an older copy
+of the fleet is refused here. A copy on standby can be wiped at once.
 
 ## Afterwards
 
-- **Use only one copy.** The old copy is unchanged and can still act on the fleet;
-  two FleetLedgers acting at once can undo each other's changes (an older checkout
-  rolling Ships back, a stale inventory un-revoking a machine).
 - **The old computer is now a trusted machine like any other.** If it was "this
   computer" (trusted with your own key, so `ssh <ship>` worked there), its bundle
   in `~/.ssh/shipshape/` keeps working until its certificate lapses (7 days by
@@ -143,6 +213,19 @@ until then keep using the old copy); anything else when nothing was written ther
   again.
 - **Nothing else starts on the old computer during a push**, the web UI included,
   until the new computer has checked every Ship; a large fleet takes a while.
+- **"This FleetLedger was retired"** or **"is on standby"**: this copy does not act
+  on the fleet; the line says where it went or came from. Use the active copy, or
+  hand over as above.
+- **"has a retired FleetLedger"** (when moving the fleet back): wipe that copy first
+  (`ship-fleet migrate wipe --now`), then push again.
+- **"an older state"**: the fleet coming in is older than one this computer handed
+  on. Move the fleet from the active copy instead.
+- **"standby.json cannot be read"** (or `retired.json`): the marker was edited or
+  damaged, so this copy acts on nothing and no hand-over command acts on what it
+  seems to say. Find out which copy is the active one, then fix or delete the file.
+- **A push that replaces a copy on standby** clears that copy first, so if the new
+  stream then breaks off, the new computer is left empty. Nothing is lost (this
+  copy is still the active one): push again.
 - **"already has a FleetLedger"**: that computer has one. Move its files aside (or
   point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders).
 - **"Not writing over files already here"**: a key of that name is already in the

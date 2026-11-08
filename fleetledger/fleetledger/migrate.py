@@ -13,7 +13,8 @@ again.
   that cannot be read; a file FleetLedger does not know; uncommitted changes in the
   checkout). Read-only.
 - push [USER@]HOST: check, then stream it all over SSH into `ship-fleet migrate
-  receive` on HOST. HOST's key must already be known (StrictHostKeyChecking=yes).
+  receive` on HOST (its host key must already be known: StrictHostKeyChecking=yes),
+  then hand over (handover.py): this copy retires, then HOST activates.
 - send: the same stream to a pipe, for running the move from the new computer
   (`ssh old ship-fleet migrate send | ship-fleet migrate receive`, where that
   computer's keyring is unlocked). Never to a terminal or a file.
@@ -22,13 +23,15 @@ again.
   before writing any; stores each secret in this computer's own store under names it
   works out itself (a passphrase's keyring item depends on the key's full path);
   rewrites only the key paths and secret stores in ships.toml (and checks nothing
-  else in it changed); then verify.
+  else in it changed); keeps the fleet on standby; then verify.
 - verify: every key opens, doctor's checks, the Proxmox token through its pin, the
   OAuth client's scopes, and a read-only status of every Ship with its certificate
   and revocation-list check. Nothing on any Ship changes.
+- activate, retire, unretire, wipe: the hand-over by hand, a rollback, and deleting
+  a retired copy after its two weeks (handover.py).
 
-Nothing on the old computer changes, and nothing is written to a file at rest on the
-way. What never moves: this-computer.json (a fact about that computer), locks,
+Until the hand-over nothing on the old computer changes, and nothing is written to
+a file at rest on the way. What never moves: this-computer.json (a fact about that computer), locks,
 known_hosts (rebuilt from ships.toml), runtime sockets, a part-finished Proxmox setup,
 the inbox upload spool, Ubuntu's cloud image cache and, unless --with-images, baked
 image files. A key of your own that FleetLedger made stays on your machines: only
@@ -54,12 +57,12 @@ import tarfile
 import tempfile
 import threading
 import tomllib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from fleetledger import __version__, ca, inuse, keys, paths
+from fleetledger import __version__, ca, handover, inuse, keys, paths
 from fleetledger.errors import ConfigError, FleetError
 
 SCHEMA = "fleetledger.migrate/1"
@@ -73,8 +76,9 @@ MAX_SECRET = 512
 CHUNK = 1024 * 1024
 STAGING = ".migrate-"  # the receiving side's own folder in the data dir, while it works
 
-# Exit codes: received and verified; nothing written; written but not verified.
-VERIFIED, REFUSED, UNVERIFIED = 0, 1, 5
+# Exit codes: received and verified; nothing written; written but not verified; the
+# old copy retired but the new one not made active (no copy acts on the fleet).
+VERIFIED, REFUSED, UNVERIFIED, NOT_ACTIVATED = 0, 1, 5, 6
 
 SEGMENT = re.compile(r"^[A-Za-z0-9_.@:+=,-]{1,200}$")
 FILE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@+-]{0,199}$")  # never . or ..
@@ -164,8 +168,11 @@ def build_plan(app, text: str, inv, *, with_images: bool = False) -> Plan:
     """Everything that moves, stays or stops the move. Reads only (secrets included:
     each is read now, so a locked keyring stops the move before anything is sent)."""
     plan = Plan(inv, text)
-    plan.moves.append(Move("config/ships.toml", app.store_factory().path,
-                           f"inventory: {summary(inv)}"))
+    store = app.store_factory()
+    plan.moves.append(Move("config/ships.toml", store.path, f"inventory: {summary(inv)}"))
+    here = handover.marker(store)
+    if here is not None:
+        plan.block("this copy", handover.banner(here).message)
     moving: set[Path] = set()
     _plan_checkout(plan, app)
     for ship in inv.ships():
@@ -342,6 +349,8 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
             continue
         if rel == "ships.toml.lock":
             plan.leave(f, "a lock")
+        elif rel in (handover.STANDBY, handover.RETIRED):
+            continue  # this copy's own marker: it stops the move ("this copy", above)
         elif rel == "known_hosts":
             plan.leave(f, "FleetLedger's known_hosts: rebuilt from the inventory's pins")
         elif rel == trustcmd.THIS_COMPUTER:
@@ -503,6 +512,7 @@ def manifest_of(plan: Plan, files: list[dict[str, Any]], with_images: bool) -> d
             "timezone": local_timezone(),
         },
         "summary": summary(plan.inventory),
+        "epoch": handover.epoch(plan.inventory),
         "keys": plan.keys,
         "secrets": plan.secret_names,
         "files": files,
@@ -611,10 +621,9 @@ SSH_OPTIONS = ("StrictHostKeyChecking=yes", "ForwardAgent=no", "ForwardX11=no",
                "ClearAllForwardings=yes", "PermitLocalCommand=no", "RequestTTY=no")
 
 
-def remote_command(ship_fleet: str, store_kind: str | None) -> str:
-    """What runs on the new computer: ship-fleet migrate receive, in a login shell (so
-    pipx's ~/.local/bin is on PATH)."""
-    argv = ["migrate", "receive"] + (["--store", store_kind] if store_kind else [])
+def remote_command(ship_fleet: str, argv: Sequence[str]) -> str:
+    """What runs on the new computer: ship-fleet with argv, in a login shell (so pipx's
+    ~/.local/bin is on PATH)."""
     if ship_fleet.startswith("~/"):
         program = '"$HOME"/' + shlex.quote(ship_fleet[2:])
     else:
@@ -643,32 +652,22 @@ def _relay(stream, say: Callable[[str], None], prefix: str) -> threading.Thread:
     return thread
 
 
-def push(app, host: str, *, store_kind: str | None = None, with_images: bool = False,
-         options: Iterable[str] = (), ship_fleet: str = "ship-fleet") -> int:
-    """Send everything over SSH to `ship-fleet migrate receive` on host. Returns
-    receive's exit code (VERIFIED: the new computer has the fleet and reached every
-    Ship)."""
-    argv = ssh_argv(host, remote_command(ship_fleet, store_kind), options)
+def _session(app, host: str, argv: list[str],
+             feed: Callable[[BinaryIO], None] | None = None) -> tuple[int, bool]:
+    """Run ssh, relaying what the other side says; feed writes its input. Returns the
+    exit code, and whether it stopped reading before the input was all sent."""
     popen = getattr(app, "popen", None) or subprocess.Popen
-    store = app.store_factory()
-    if not store.exists():
-        raise ConfigError(f"No inventory at {store.path}: there is no FleetLedger here to move.")
-    with inuse.exclusive(store), store.held() as text:
-        plan = build_plan(app, text, store.load(), with_images=with_images)
-        print_plan(app.say, plan)
-        if plan.blockers:
-            raise FleetError("Not moving: see what stops the move above.")
-        app.say(f"\nSending to {host} (nothing on this computer changes)...")
+    try:
+        proc = popen(argv, stdin=subprocess.PIPE if feed else subprocess.DEVNULL,
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError as exc:
+        raise FleetError("ssh not found; install OpenSSH.") from exc
+    relays = [_relay(proc.stdout, app.say, f"{host}: "),
+              _relay(proc.stderr, app.note, f"{host}: ")]
+    cut_short = False
+    if feed is not None:
         try:
-            proc = popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE)
-        except FileNotFoundError as exc:
-            raise FleetError("ssh not found; install OpenSSH.") from exc
-        relays = [_relay(proc.stdout, app.say, f"{host}: "),
-                  _relay(proc.stderr, app.note, f"{host}: ")]
-        cut_short = False
-        try:
-            write_stream(plan, proc.stdin, with_images=with_images)
+            feed(proc.stdin)
         except (BrokenPipeError, ConnectionResetError, ValueError):
             cut_short = True  # it stopped reading: its own output says why
         except BaseException:
@@ -679,25 +678,54 @@ def push(app, host: str, *, store_kind: str | None = None, with_images: bool = F
                 proc.stdin.close()
             except (BrokenPipeError, OSError, ValueError):
                 pass
-        code = proc.wait()
-        for relay in relays:
-            relay.join(timeout=10)
+    code = proc.wait()
+    for relay in relays:
+        relay.join(timeout=10)
     if code == 255:
         raise FleetError(f"ssh could not log in to {host} (or its host key is not known here, "
                          "or it changed).",
                          hint=f"Log in once with plain ssh {host} and compare its host key's "
-                         "fingerprint first. Nothing on this computer changed.")
+                         "fingerprint first.")
     if code == 127:
         raise FleetError(f"{host} has no ship-fleet on PATH.",
                          hint="Install FleetLedger there (fleetledger/install.sh), or name it: "
                          "--ship-fleet ~/.local/bin/ship-fleet.")
+    return code, cut_short
+
+
+def push(app, host: str, *, store_kind: str | None = None, with_images: bool = False,
+         options: Iterable[str] = (), ship_fleet: str = "ship-fleet",
+         cutover: bool = True) -> int:
+    """Send everything over SSH to `ship-fleet migrate receive` on host, which keeps
+    it on standby and checks every Ship. Then, unless cutover is False, hand over:
+    this copy retires first, then host activates with the next epoch (so a hand-over
+    cut short leaves no copy active, never two). Returns 0 once host is the active
+    FleetLedger (or, without the cut-over, on standby and checked)."""
+    receive_argv = ["migrate", "receive", "--pushed"] + (["--store", store_kind]
+                                                         if store_kind else [])
+    argv = ssh_argv(host, remote_command(ship_fleet, receive_argv), options)
+    store = app.store_factory()
+    if not store.exists():
+        raise ConfigError(f"No inventory at {store.path}: there is no FleetLedger here to move.")
+    with inuse.exclusive(store), store.held() as text:
+        inv = store.load()
+        plan = build_plan(app, text, inv, with_images=with_images)
+        print_plan(app.say, plan)
+        if plan.blockers:
+            raise FleetError("Not moving: see what stops the move above.")
+        app.say(f"\nSending to {host} (nothing on this computer changes until it has checked "
+                "every Ship)...")
+        code, cut_short = _session(app, host, argv,
+                                   lambda out: write_stream(plan, out, with_images=with_images))
+        if code == VERIFIED and cutover:
+            return _cut_over(app, store, host, handover.epoch(inv) + 1, options, ship_fleet)
     if code == VERIFIED:
-        app.say(f"\n{host} now has the fleet and reached every Ship. This copy is unchanged "
-                "and can still act on the fleet: from now on use only one of them.")
+        app.say(f"\n{host} has the fleet on standby and reached every Ship; this copy is still "
+                "the active one. To move for real, push again (it replaces the copy on standby).")
     elif code == UNVERIFIED:
-        app.note(f"\n{host} has the fleet, but could not check all of it yet (see above). Fix "
-                 f"that there, then run ship-fleet migrate verify on {host}. Until then, keep "
-                 "using this copy.")
+        app.note(f"\n{host} has the fleet on standby, but could not check all of it (see "
+                 "above), so this copy is still the active one. Fix that there, then push "
+                 "again (it replaces the copy on standby).")
     else:
         app.note(f"\n{host} did not take the fleet" + (" (it stopped reading)" if cut_short
                                                        else "") +
@@ -705,17 +733,42 @@ def push(app, host: str, *, store_kind: str | None = None, with_images: bool = F
     return code
 
 
+def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
+              ship_fleet: str) -> int:
+    handover.retire(store, host, handed)  # first: never two active copies
+    app.say(f"\nThis copy is now retired: it no longer acts on the fleet. Making {host} the "
+            "active FleetLedger...")
+    argv = ssh_argv(host, remote_command(ship_fleet, ["migrate", "activate", "--yes"]), options)
+    try:
+        code, _ = _session(app, host, argv)
+    except Exception as exc:  # noqa: BLE001 - this copy has retired: say what to do, always
+        app.note(exc.message if isinstance(exc, FleetError) else type(exc).__name__)
+        code = REFUSED
+    if code == 0:
+        app.say(f"\n{host} is now the active FleetLedger (epoch {handed}), and nothing on any "
+                "Ship changed. This copy refuses to act on the fleet and keeps its files for a "
+                f"rollback (ship-fleet migrate retire on {host}, then ship-fleet migrate unretire "
+                "here). After two weeks, delete its keys and secrets: ship-fleet migrate wipe.")
+        return VERIFIED
+    app.note(f"\nThis copy is retired, but {host} did not become active (exit {code}), so no "
+             f"copy acts on the fleet now. Fix that there, then run ship-fleet migrate activate "
+             f"on {host}; or, to keep using this copy instead, ship-fleet migrate unretire here.")
+    return NOT_ACTIVATED
+
+
 # --- receive (the new computer) ------------------------------------------------------------
 
 
 def existing_state(store) -> list[Path]:
-    """FleetLedger files already on this computer (locks and an earlier receive's
-    leftover folder do not count): receive never writes over a FleetLedger."""
+    """FleetLedger files already on this computer (locks, the marker a wiped copy
+    leaves and an earlier receive's leftover folder do not count): receive never
+    writes over a FleetLedger."""
     found = []
+    markers = {store.path.with_name(handover.STANDBY), store.path.with_name(handover.RETIRED)}
     for base in (paths.config_dir(), paths.data_dir(), store.path.parent):
         for f in _files(base):
             rel = f.relative_to(base).as_posix()
-            if rel == "ships.toml.lock" or rel.startswith(STAGING):
+            if rel == "ships.toml.lock" or rel.startswith(STAGING) or f in markers:
                 continue
             if f not in found:
                 found.append(f)
@@ -767,6 +820,9 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
     if not isinstance(manifest["source"], dict) or not re.fullmatch(
             r"[0-9a-f]{40}", str(manifest["source"].get("commit", ""))):
         raise bad("no commit")
+    epoch = manifest.setdefault("epoch", 0)
+    if not isinstance(epoch, int) or isinstance(epoch, bool) or epoch < 0:
+        raise bad("epoch")
     seen = set()
     for f in manifest["files"]:
         member = f.get("member") if isinstance(f, dict) else None
@@ -1094,8 +1150,9 @@ def _store_secret(kind: str, where: str, value: str, store_kind: str,
 
 def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
              text: str, to_store: list[tuple[str, str, str]], store_kind: str,
-             store) -> list[Path]:
-    """Put everything in place, ships.toml last. Anything going wrong takes back what
+             store, standby: handover.Marker) -> list[Path]:
+    """Put everything in place: the standby marker before ships.toml (so the copy is
+    never active by accident), ships.toml last. Anything going wrong takes back what
     this receive wrote, so the computer is left as it was."""
     undo: list[Callable[[], None]] = []
     written: list[Path] = []
@@ -1124,7 +1181,10 @@ def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
         for kind, place, value in to_store:
             _store_secret(kind, place, value, store_kind, undo)
         paths.private_dir(store.path.parent)
+        handover.write(store, standby)
+        undo.append(lambda: handover.clear(store, "standby"))
         paths.write_private(store.path, text.encode("utf-8"))
+        handover.clear(store, "retired")  # a wiped copy's marker: this one is newer
     except BaseException:
         for step in reversed(undo):
             try:
@@ -1135,11 +1195,29 @@ def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
     return written
 
 
-def receive(app, source: BinaryIO, *, store_kind: str | None = None) -> int:
-    """Take a fleet from the stream on source. Returns VERIFIED, or UNVERIFIED when it
-    was written but a check here failed (fix it, then ship-fleet migrate verify)."""
+def receive(app, source: BinaryIO, *, store_kind: str | None = None,
+            pushed: bool = False) -> int:
+    """Take a fleet from the stream on source and keep it on standby (it does not act
+    until activated). Returns VERIFIED, or UNVERIFIED when it was written but a check
+    here failed (fix it, then ship-fleet migrate verify).
+
+    Onto a computer with no FleetLedger, or with one on standby (replaced: it never
+    acted), or with only the marker a wiped copy left, which refuses a fleet older
+    than the one it handed on."""
     store = app.store_factory()
-    found = existing_state(store)
+    here = handover.marker(store)
+    if here is not None and here.role == "unreadable":
+        raise handover.banner(here)
+    if here is not None and here.role == "retired" and not here.wiped:
+        raise FleetError(
+            f"This computer has a retired FleetLedger (it handed the fleet to "
+            f"{here.other or 'another computer'} on {here.when[:10]}); migrate never writes "
+            "over one. Nothing was written.",
+            hint="To bring the fleet back here with what changed since: ship-fleet migrate wipe "
+            "here first. To roll back without those changes: ship-fleet migrate retire there, "
+            "then ship-fleet migrate unretire here.")
+    replacing = here is not None and here.role == "standby"
+    found = [] if replacing else existing_state(store)
     if found:
         listed = ", ".join(paths.tilde(f) for f in found[:5]) + (" ..." if len(found) > 5 else "")
         raise FleetError(f"This computer already has a FleetLedger ({listed}); migrate never "
@@ -1164,7 +1242,17 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None) -> int:
         except (tarfile.TarError, OSError) as exc:
             raise FleetError(f"The stream broke off ({type(exc).__name__}); nothing was "
                              "written.", hint="Run the move again.") from None
+        if here is not None and here.role == "retired" and manifest["epoch"] < here.epoch:
+            raise FleetError(
+                f"This computer handed the fleet on at epoch {here.epoch}, and the fleet coming "
+                f"in is from epoch {manifest['epoch']}: an older state. Nothing was written.",
+                hint="Move the active FleetLedger's fleet here, not an older copy or backup.")
         _check_commit(app, manifest)
+        if replacing:
+            app.say(f"Replacing the copy on standby here (from {here.other or 'another computer'}"
+                    f", received {here.when[:10]}; it never acted on the fleet).")
+            handover.wipe(store, handover.wipe_plan(store)[0])
+            handover.clear(store, "standby")
         where = placement(manifest, store)
         refused, same = clashes(manifest, where)
         if refused:
@@ -1184,7 +1272,9 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None) -> int:
             text = staged["config/ships.toml"].read_text(encoding="utf-8")
             new_text, to_store = rewrite(text, manifest, where, kind, secrets)
             del secrets
-            _install(staged, where, same, new_text, to_store, kind, store)
+            standby = handover.Marker("standby", handover.now(), src.get("host"),
+                                      manifest["epoch"] + 1)
+            _install(staged, where, same, new_text, to_store, kind, store, standby)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     inv = store.load()
@@ -1195,12 +1285,16 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - the fleet is written: say so, whatever happened
         checks = [Check("fail", "verify", f"stopped with {type(exc).__name__}")]
     ok = report(app, checks)
+    me = socket.gethostname().split(".")[0]
+    by_hand = ("" if pushed else " It acts on the fleet once made active: on the old "
+               f"computer, ship-fleet migrate retire --to {me}; then here, ship-fleet migrate "
+               "activate.")
     if ok:
-        app.say("\nThis computer has the fleet and reached every Ship; nothing on any Ship "
-                "changed.")
+        app.say("\nThis computer has the fleet on standby and reached every Ship; nothing on "
+                "any Ship changed." + by_hand)
         return VERIFIED
-    app.say("\nThe fleet is here, but not everything checks out yet (FAIL above). Fix that, "
-            "then run ship-fleet migrate verify.")
+    app.say("\nThe fleet is here on standby, but not everything checks out yet (FAIL above). "
+            "Fix that, then run ship-fleet migrate verify." + by_hand)
     return UNVERIFIED
 
 
@@ -1259,7 +1353,7 @@ def verify(app, *, source_timezone: str | None = None,
     inv = store.load()
     checks: list[Check] = []
     for item in firstrun.everything(app, offline=True):
-        if item.state in ("fail", "missing", "warn"):
+        if item.state in ("fail", "missing", "warn") and item.name != "this copy":
             state = "fail" if item.state == "fail" else "warn"
             checks.append(Check(state, f"doctor: {item.area} {item.name}",
                                 item.detail + (f" (next: {item.next})" if item.next else "")))
@@ -1395,20 +1489,32 @@ def report(app, checks: list[Check]) -> bool:
 # --- the command --------------------------------------------------------------------------
 
 
+ACTIONS = ("check", "push", "send", "receive", "verify", "activate", "retire", "unretire",
+           "wipe")
+
+
 def add_parsers(sub, add) -> None:
+    import argparse
+
     p = add(sub, "migrate", "move FleetLedger to another computer, with every key, secret and Ship",
             "Move this FleetLedger, with everything it needs, to another computer: the\n"
             "inventory (every Ship and pin, trusted machine, issued certificate and\n"
             "revocation), the fleet admin key and the CA keys, the secrets (stored again\n"
             "in that computer's own keyring or files) and the history. The Ships keep\n"
-            "working from there with nothing changed on them. Nothing here changes.\n\n"
+            "working from there with nothing changed on them.\n\n"
+            "Only one copy acts on the fleet: the new one waits on standby until it has\n"
+            "checked every Ship; then this one retires (it refuses to act, and keeps its\n"
+            "files for a rollback) and the new one takes over with the next epoch.\n\n"
             "  ship-fleet migrate check                 what would move, and what stops it\n"
-            "  ship-fleet migrate push you@new-computer move it there over SSH\n"
+            "  ship-fleet migrate push you@new-computer move it there over SSH, then hand over\n"
             "  ssh old-computer ship-fleet migrate send | ship-fleet migrate receive\n"
             "                                           the same, run on the new computer\n"
-            "  ship-fleet migrate verify                on the new computer: check it works\n\n"
+            "  ship-fleet migrate verify                on the new computer: check it works\n"
+            "  ship-fleet migrate retire, activate      hand over by hand: old, then new\n"
+            "  ship-fleet migrate unretire              roll back: this copy acts again\n"
+            "  ship-fleet migrate wipe                  after two weeks: delete a retired copy\n\n"
             "See docs/runbooks/move-fleetledger.md.")
-    p.add_argument("action", choices=("check", "push", "send", "receive", "verify"))
+    p.add_argument("action", choices=ACTIONS)
     p.add_argument("host", nargs="?", metavar="[USER@]HOST", help="push: the new computer")
     p.add_argument("--store", choices=STORES,
                    help="push/receive: where the new computer keeps the secrets (default: its "
@@ -1419,6 +1525,16 @@ def add_parsers(sub, add) -> None:
                    help="push: an ssh -o option, e.g. Port=2222 (repeatable)")
     p.add_argument("--ship-fleet", default="ship-fleet", metavar="PATH",
                    help="push: ship-fleet on the new computer (default: found on its PATH)")
+    p.add_argument("--no-cutover", action="store_true",
+                   help="push: leave the new copy on standby; this one stays the active one")
+    p.add_argument("--to", metavar="HOST",
+                   help="retire: where the fleet is managed from now on (said to anyone who "
+                   "runs this copy)")
+    p.add_argument("--now", action="store_true",
+                   help="wipe: do not wait the two weeks a retired copy is kept for a rollback")
+    p.add_argument("--yes", action="store_true",
+                   help="activate, retire, unretire, wipe: do not ask first")
+    p.add_argument("--pushed", action="store_true", help=argparse.SUPPRESS)  # push runs receive
 
 
 def cmd_migrate(args, app) -> int:
@@ -1437,7 +1553,8 @@ def cmd_migrate(args, app) -> int:
             raise FleetError("migrate push needs the new computer: ship-fleet migrate push "
                              "[USER@]HOST.")
         return push(app, args.host, store_kind=args.store, with_images=args.with_images,
-                    options=args.ssh_option, ship_fleet=args.ship_fleet)
+                    options=args.ssh_option, ship_fleet=args.ship_fleet,
+                    cutover=not args.no_cutover)
     if action == "send":
         out = getattr(app, "stdout_bytes", None) or sys.stdout.buffer
         _pipe_only(out)
@@ -1457,6 +1574,116 @@ def cmd_migrate(args, app) -> int:
                                  "a pipe (ssh OLD ship-fleet migrate send | ship-fleet migrate "
                                  "receive), or use migrate push from the old computer.")
             source = sys.stdin.buffer
-        return receive(app, source, store_kind=args.store)
-    checks = verify(app)
-    return 0 if report(app, checks) else 1
+        return receive(app, source, store_kind=args.store, pushed=args.pushed)
+    if action == "verify":
+        return 0 if report(app, verify(app)) else 1
+    return {"activate": _activate, "retire": _retire, "unretire": _unretire,
+            "wipe": _wipe}[action](args, app)
+
+
+# --- handing over: activate, retire, unretire, wipe -------------------------------------------
+
+
+def _activate(args, app) -> int:
+    store = app.store_factory()
+    with inuse.exclusive(store):
+        m = handover.marker(store)
+        if m is not None and m.role == "unreadable":
+            raise handover.banner(m)
+        if m is None or m.role != "standby":
+            raise FleetError("This FleetLedger is not on standby: there is nothing to activate.")
+        handover.confirm(app, f"Make this copy the active FleetLedger (epoch {m.epoch})? Only "
+                         f"once the copy on {m.other or 'the old computer'} is retired "
+                         "(ship-fleet migrate retire there): two active copies undo each "
+                         "other's changes.", "yes", args.yes)
+        if not report(app, verify(app)):
+            raise FleetError("Not made active: a check failed (FAIL above). Fix it, then try "
+                             "again.")
+        epoch = handover.activate(store)
+    app.say(f"\nThis FleetLedger is now the active one (epoch {epoch}).")
+    return 0
+
+
+def _retire(args, app) -> int:
+    if args.to and not HOST_RE.match(args.to):
+        raise FleetError(f"--to: '{args.to}' is not [USER@]HOST.")
+    store = app.store_factory()
+    with inuse.exclusive(store):
+        m = handover.marker(store)
+        if m is not None and m.role == "standby":
+            raise FleetError("This copy is on standby: it never acted on the fleet, so there is "
+                             "nothing to retire.", hint="To drop it: ship-fleet migrate wipe.")
+        if m is not None:
+            raise handover.banner(m)
+        inv = store.load()
+        handover.confirm(app, "This FleetLedger stops acting on the fleet" + (
+            f", which is managed at {args.to} from now on" if args.to else "") +
+            "; its files stay, for a rollback.", "retire", args.yes)
+        handover.retire(store, args.to, handover.epoch(inv) + 1)
+    app.say("This FleetLedger is retired: it refuses to act on the fleet. To act again: "
+            "ship-fleet migrate unretire. After two weeks, delete its keys and secrets: "
+            "ship-fleet migrate wipe.")
+    return 0
+
+
+def _unretire(args, app) -> int:
+    store = app.store_factory()
+    with inuse.exclusive(store):
+        m = handover.marker(store)
+        if m is not None and m.role == "unreadable":
+            raise handover.banner(m)
+        if m is None or m.role != "retired":
+            raise FleetError("This FleetLedger is not retired.")
+        if m.wiped:
+            raise handover.banner(m)
+        handover.confirm(
+            app, f"This copy acts on the fleet again. Retire the copy at "
+            f"{m.other or 'the other computer'} first (ship-fleet migrate retire there): two "
+            "active copies undo each other's changes. What it changed since does not come back "
+            "here; to bring that too, wipe this copy and move the fleet back from there "
+            "instead.", "unretire", args.yes)
+        epoch = handover.unretire(store)
+    app.say(f"This FleetLedger acts on the fleet again (epoch {epoch}).")
+    return 0
+
+
+def _wipe(args, app) -> int:
+    import dataclasses
+
+    from fleetledger.commands import table
+
+    store = app.store_factory()
+    with inuse.exclusive(store):
+        m = handover.marker(store)
+        if m is not None and m.role == "unreadable":
+            raise handover.banner(m)
+        if m is None:
+            raise FleetError("This FleetLedger is the active one: wipe deletes only a retired "
+                             "copy (or one on standby).",
+                             hint="To stop using it, move the fleet first (ship-fleet migrate "
+                             "push), or ship-fleet migrate retire.")
+        if m.wiped:
+            raise FleetError(f"This copy was wiped already, on {m.wiped[:10]}.")
+        if m.role == "retired" and m.age < handover.WIPE_AFTER and not args.now:
+            left = (handover.WIPE_AFTER - m.age).days + 1
+            raise FleetError(f"This copy retired on {m.when[:10]} and is kept two weeks for a "
+                             f"rollback ({left} more day(s)).",
+                             hint=f"Check the fleet works from {m.other or 'its new computer'}, "
+                             "then wipe it now with --now.")
+        gone, kept = handover.wipe_plan(store)
+        app.say("Deletes:")
+        app.say(table([[g.what, ("keyring item " if g.keyring else "") + (
+            g.where if g.keyring else paths.tilde(g.where))] for g in gone], ["WHAT", "WHERE"]))
+        if kept:
+            app.say("\nKeeps:")
+            app.say(table([list(k) for k in kept], ["FILE", "WHY"]))
+        handover.confirm(app, "Delete all of that from this computer? It cannot be undone.",
+                         "wipe", args.yes)
+        handover.wipe(store, gone)
+        if m.role == "retired":
+            handover.write(store, dataclasses.replace(m, wiped=handover.now()))
+        else:
+            handover.clear(store, "standby")
+    app.say("\nWiped. " + ("Only a small marker stays, so this computer refuses an older copy "
+                           "of the fleet." if m.role == "retired" else ""))
+    return 0
