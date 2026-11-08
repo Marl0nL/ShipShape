@@ -220,7 +220,7 @@ Serve brought from a person's device whose Tailscale login you allowed, with a
 pairs once with a one-time link and becomes a named, revocable device, kept only as
 a hash, that lapses after 12 hours unused or 30 days, and needs a pairing younger
 than 4 hours for destroy, rollback, trusting machines, setup's keys and pairing
-another device ([runbooks/remote-ui.md](runbooks/remote-ui.md)). The setup page takes secrets (the Proxmox token, an OAuth client
+another device ([runbooks/remote-ui.md](runbooks/remote-ui.md)). A paired device never sets up the FleetLedger computer's own ssh (not from Access, Settings or a new Ship's enrolment); it gets its own machine's attach commands, and that machine's bundle, and no other, as a download (a renewed certificate, no secret, audited). The setup page takes secrets (the Proxmox token, an OAuth client
 secret, a key's current passphrase) only in POST bodies, sends each straight to
 its check and store, and never echoes, logs or audits them. Details:
 [web-ui.md](web-ui.md#security).

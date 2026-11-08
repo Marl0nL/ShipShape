@@ -1,23 +1,33 @@
-{# A Ship's Access tab (web.overlayweb): every way to attach from this computer, this
-   computer's trust, the overlay, and the host certificate. Read from what the page
-   already has (status document, inventory, cached revocation list): nothing is
-   contacted. Context: ship, doc, view, csrf, snap, attach_here, attach_until,
-   can_trust_here, overlay_set, on_overlay, cert (ca.judge, or None without a CA). #}
+{# A Ship's Access tab (web.overlayweb): every way to attach from the machine this
+   browser is on (this computer; or, on a paired device, the trusted machine it runs
+   on), that machine's trust, the overlay, and the host certificate. Read from what the
+   page already has (status document, inventory, cached revocation list): nothing is
+   contacted. Context: ship, doc, view, csrf, snap, attach_here, attach_owner,
+   attach_until, here_machine, here_label, remote_session, machine_choices,
+   this_device, can_trust_here, overlay_set, on_overlay, cert (ca.judge, or None
+   without a CA). #}
 {% macro until(stamp) %}{% if stamp %}{{ stamp[:10] }} {{ stamp[11:16] }} UTC{% else %}-{% endif %}{% endmacro %}
 {% macro cmd(line, what) %}<tr><td><code>{{ line }}</code></td><td><button type="button" class="ghost small" data-copy="{{ line }}">Copy</button></td><td>{{ what }}</td></tr>{% endmacro %}
 {% set owner = snap.inventory.owner %}
 <section class="grid access-attach">
   <div>
-  <h2>Attach from this computer</h2>
+  <h2>Attach from {{ here_label }}</h2>
   <table class="attach-commands">
     <tbody>
     {% if attach_here %}
     {{ cmd("herdr --remote " ~ ship.name, "the agents, in herdr (as the agent: your key and the fleet's certificate)") }}
     {{ cmd("ssh " ~ ship.name, "a shell as the agent (no sudo)") }}
+    {% endif %}
+    {% if attach_owner %}
     {{ cmd("ssh " ~ owner ~ "@" ~ ship.name, "a shell as you, with sudo, for admin work") }}
     {% endif %}
+    {% if remote_session %}
+    {{ cmd("ship-fleet ssh " ~ ship.name, "on the FleetLedger computer (ssh to it first): a shell as the agent, through FleetLedger") }}
+    {{ cmd("ship-fleet ssh " ~ ship.name ~ " --as owner", "on the FleetLedger computer: a shell as you, with sudo") }}
+    {% else %}
     {{ cmd("ship-fleet ssh " ~ ship.name, "a shell as the agent, through FleetLedger (works without trusting this computer)") }}
     {{ cmd("ship-fleet ssh " ~ ship.name ~ " --as owner", "a shell as you, with sudo, through FleetLedger") }}
+    {% endif %}
     </tbody>
   </table>
   <p class="hint">The agent's login has no sudo; its herdr session is the agent's own, so
@@ -28,6 +38,50 @@
 </section>
 <section class="grid access">
   <div>
+  {% if remote_session %}
+  <h2>This browser's machine</h2>
+  {% if here_machine %}
+  <p>{{ this_device.name }} runs on {{ here_machine }}, a trusted machine{% if attach_until %}: its
+    certificate is valid until {{ until(attach_until) }}{% endif %}.
+    {% if not attach_here and not attach_owner %}It does not reach {{ ship.name }} yet: its
+    Ships do not include it, or {{ ship.name }} has no host certificate.{% endif %}</p>
+  <form method="post" action="/settings/machines/bundle" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="machine" value="{{ here_machine }}">
+    <input type="hidden" name="ship" value="{{ ship.name }}">
+    <input type="hidden" name="from" value="access">
+    <button type="submit" class="ghost" title="ship-fleet trust {{ here_machine }} --hostnames overlay">Renew and download its bundle</button>
+  </form>
+  {% set unpack = "tar xzf shipshape-" ~ here_machine ~ ".tar.gz && sh shipshape-" ~ here_machine ~ "/install.sh" %}
+  <p class="hint">Then, on {{ here_machine }}, in the folder it downloaded to:
+    <code>{{ unpack }}</code> <button type="button" class="ghost small" data-copy="{{ unpack }}">Copy</button>.
+    Its certificate lasts a week or so (the fleet's setting): download it again to renew.
+    It holds no secret; the key stays on {{ here_machine }}.</p>
+  <form method="post" action="/settings/devices/machine" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="device" value="mine">
+    <input type="hidden" name="back" value="{{ ship.name }}">
+    <input type="hidden" name="machine" value="">
+    <button type="submit" class="ghost small" title="ship-fleet ui devices {{ this_device.name }} --no-machine">Not on {{ here_machine }}</button>
+  </form>
+  {% else %}
+  <p>Which trusted machine is {{ this_device.name }} on? Say so, and these pages show that
+    machine's commands and offer its bundle.</p>
+  {% if machine_choices %}
+  <form method="post" action="/settings/devices/machine" class="inline">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="device" value="mine">
+    <input type="hidden" name="back" value="{{ ship.name }}">
+    <label>It runs on <select name="machine">{% for m in machine_choices %}<option value="{{ m }}">{{ m }}</option>{% endfor %}</select></label>
+    <button type="submit" class="ghost" title="ship-fleet ui devices {{ this_device.name }} --machine NAME">Save</button>
+  </form>
+  {% endif %}
+  <p class="hint">Not trusted yet? On it, make a key
+    (<code>ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519</code>), then trust it in
+    Settings ▸ <a href="/settings?said=machines#machines">Trusted machines</a>, ticking
+    "this browser runs on it". (A phone needs none: it has no ssh.)</p>
+  {% endif %}
+  {% else %}
   <h2>This computer</h2>
   {% if attach_here %}
   <p>Trusted: its certificate is valid until {{ until(attach_until) }}; FleetLedger renews it
@@ -52,6 +106,7 @@
   {% else %}
   <p class="hint">The fleet has no certificate authority yet: make it in Settings ▸
     <a href="/settings#access">Access</a>.</p>
+  {% endif %}
   {% endif %}
 
   </div>
