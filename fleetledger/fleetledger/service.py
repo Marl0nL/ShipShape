@@ -18,9 +18,16 @@ nothing changes for a FleetLedger you start yourself with `ship-fleet ui`.
 - uninstall: stop and disable it, and remove the unit.
 
 In the unit: Restart=on-failure with a growing delay (Tailscale may not be up yet
-just after boot, and the remote UI's check then refuses), no start limit, a stop
-timeout above the drain's, KillMode=mixed (the stop signal goes to FleetLedger
-only, so its ssh children finish with their jobs), UMask=0077 and NoNewPrivileges.
+just after boot, and the remote UI's check then refuses), no start limit, but no
+restart after a refusal only a person can fix (exit status 2: a broken setting, or a
+copy handed over by ship-fleet migrate); a stop timeout above the drain's;
+KillMode=mixed (the stop signal goes to FleetLedger only, so its ssh children finish
+with their jobs); UMask=0077, NoNewPrivileges and the seccomp settings a user unit
+can have.
+
+A reboot stops the whole user manager, and Ubuntu gives that 5 seconds
+(user@.service's TimeoutStopSec), so a reboot cuts running jobs short unless root
+raises it for this user: install says so, with the command (REBOOT_DROP_IN).
 """
 
 from __future__ import annotations
@@ -46,6 +53,9 @@ CARRIED = ("FLEETLEDGER_CONFIG_DIR", "FLEETLEDGER_DATA_DIR", "FLEETLEDGER_RUNTIM
            "XDG_CONFIG_HOME", "XDG_DATA_HOME")
 SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 HEADER = "# Written by ship-fleet service install"
+REFUSED = 2  # ui --service exits with it when only a person can fix what stops it
+STOP_NOW = "systemctl --user kill -s TERM fleetledger"
+DRAIN_FOR = 45 * 60  # seconds a stop may take (the unit's TimeoutStopSec)
 
 
 def unit_dir() -> Path:
@@ -139,7 +149,11 @@ def render_unit(ship_fleet: str, port: int, interval: float,
         "WorkingDirectory=%h",
         "UMask=0077",
         "NoNewPrivileges=yes",
+        "LockPersonality=yes",
+        "RestrictRealtime=yes",
+        "SystemCallArchitectures=native",
         "Restart=on-failure",
+        f"RestartPreventExitStatus={REFUSED}",
         "RestartSec=15s",
         "RestartSteps=6",
         "RestartMaxDelaySec=15min",
@@ -192,6 +206,47 @@ def lingering(app: Any) -> bool | None:
     if code != 0:
         return None
     return out.strip() == "yes"
+
+
+def reboot_stop_seconds(app: Any) -> float | None:
+    """How long a reboot gives this user's systemd manager (and so the service) to
+    stop, from user@<uid>.service's TimeoutStopUSec; None when systemctl cannot say."""
+    code, out, _err = _runner(app)(["systemctl", "show", f"user@{os.getuid()}.service",
+                                    "--property=TimeoutStopUSec", "--value"])
+    return _seconds(out.strip()) if code == 0 else None
+
+
+def _seconds(text: str) -> float | None:
+    """systemd's time span ("5s", "2min", "1h 30min", "infinity") in seconds."""
+    if text == "infinity":
+        return float("inf")
+    units = {"us": 1e-6, "ms": 1e-3, "s": 1, "min": 60, "h": 3600, "d": 86400}
+    total = 0.0
+    for number, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(us|ms|min|s|h|d)", text):
+        total += float(number) * units[unit]
+    return total if text and total else None
+
+
+def reboot_drop_in() -> str:
+    """The root command that lets a reboot wait for running jobs too."""
+    uid = os.getuid()
+    folder = f"/etc/systemd/system/user@{uid}.service.d"
+    return (f"sudo mkdir -p {folder} && printf '[Service]\\nTimeoutStopSec=45min\\n' | "
+            f"sudo tee {folder}/fleetledger-drain.conf >/dev/null && sudo systemctl "
+            "daemon-reload")
+
+
+def _say_reboot(app: Any) -> None:
+    allowed = reboot_stop_seconds(app)
+    if allowed is not None and allowed >= DRAIN_FOR:
+        app.say("A reboot also lets running jobs finish first (this user's systemd manager "
+                "may take as long as they need).")
+        return
+    app.say("A reboot cuts running jobs short: it gives this user's systemd manager "
+            + (f"{allowed:g} seconds" if allowed is not None else "only a few seconds")
+            + " to stop. Before a reboot, ship-fleet service status shows what is running. "
+            "To let a reboot wait for them too (once, as root):")
+    app.say(f"  {reboot_drop_in()}")
 
 
 def _say_linger(app: Any) -> None:
@@ -248,6 +303,7 @@ def cmd_install(args: Any, app: Any) -> int:
                                  hint="journalctl --user -u fleetledger says why.")
             app.say("Started.")
     _say_linger(app)
+    _say_reboot(app)
     app.say(f"Sign in from this computer, or an ssh tunnel to it: ship-fleet ui link --local "
             f"(the socket is {paths.tilde(control.socket_path())}).")
     app.say("Its output: journalctl --user -u fleetledger. ship-fleet service status shows "
@@ -278,7 +334,8 @@ def cmd_status(args: Any, app: Any) -> int:
                "service)") + ".")
     jobs = answer.get("jobs") or []
     if answer.get("stopping"):
-        app.say(f"Stopping: waiting for {len(jobs)} running job(s) to finish.")
+        app.say(f"Stopping: waiting for {len(jobs)} running job(s) to finish. To stop at "
+                f"once, cutting them short: {STOP_NOW}")
     for job in jobs:
         app.say(f"  running: {job.get('title')} ({', '.join(job.get('ships') or [])})")
     if not jobs and not answer.get("stopping"):

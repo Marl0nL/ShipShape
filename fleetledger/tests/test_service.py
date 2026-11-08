@@ -20,6 +20,7 @@ import pytest
 from fleetledger.errors import FleetError
 from fleetledger.web import control, server
 from fleetledger.web.jobs import Jobs
+from test_keys import short_folder  # noqa: F401 - the short /tmp folder, cleaned up
 from test_web import web  # noqa: F401 - the web UI fixture
 
 from fleetledger import cli, service
@@ -55,10 +56,14 @@ class FakeSystem:
         self.manager = manager
         self.enabled = False
 
+    reboot_stop = "5s"  # Ubuntu's user@.service timeout.conf
+
     def __call__(self, argv):
         self.calls.append(list(argv))
         if argv[0] == "loginctl":
             return 0, self.linger + "\n", ""
+        if argv[:2] == ["systemctl", "show"]:
+            return 0, self.reboot_stop + "\n", ""
         args = [a for a in argv[2:] if a != "--no-block"]
         if args == ["show-environment"]:
             return (0, "HOME=/home/example\n", "") if self.manager else \
@@ -77,7 +82,7 @@ class FakeSystem:
 
     def verbs(self):
         return [[a for a in c[2:] if a != "--no-block"] for c in self.calls
-                if c[0] == "systemctl"]
+                if c[:2] == ["systemctl", "--user"]]
 
 
 def app_with(store, system, out=None):
@@ -359,7 +364,9 @@ def test_install_writes_a_user_unit_and_starts_it(store, home, units, ship_fleet
     assert f"Environment=FLEETLEDGER_CONFIG_DIR={home / 'config'}\n" in text
     assert f"Environment=FLEETLEDGER_DATA_DIR={home / 'data'}\n" in text
     for line in ("KillMode=mixed", "TimeoutStopSec=45min", "Restart=on-failure", "UMask=0077",
-                 "NoNewPrivileges=yes", "WantedBy=default.target", "StartLimitIntervalSec=0"):
+                 "NoNewPrivileges=yes", "WantedBy=default.target", "StartLimitIntervalSec=0",
+                 "RestartPreventExitStatus=2", "LockPersonality=yes",
+                 "SystemCallArchitectures=native"):
         assert line in text.splitlines()
     assert system.verbs() == [["show-environment"], ["daemon-reload"],
                               ["enable", "fleetledger.service"],
@@ -369,6 +376,38 @@ def test_install_writes_a_user_unit_and_starts_it(store, home, units, ship_fleet
     assert "sudo loginctl enable-linger" in said
     assert "ship-fleet ui link --local" in said
     assert "token" not in text
+    # Ubuntu gives the user manager 5 seconds at a reboot: said, with the root fix.
+    assert "A reboot cuts running jobs short: it gives this user's systemd manager 5 seconds" \
+        in said
+    assert f"/etc/systemd/system/user@{os.getuid()}.service.d" in said
+    assert "TimeoutStopSec=45min" in said
+
+
+def test_install_says_a_reboot_drains_once_root_allowed_it(store, home, units, ship_fleet):
+    system = FakeSystem()
+    system.reboot_stop = "45min"
+    app, out = app_with(store, system)
+    assert cli.main(["service", "install", "--ship-fleet", str(ship_fleet)], app) == 0
+    assert "A reboot also lets running jobs finish first" in out.getvalue()
+    assert "user@" not in out.getvalue()
+
+
+def test_systemd_time_spans_are_read():
+    assert [service._seconds(t) for t in ("5s", "2min", "1h 30min", "infinity", "100ms", "")] \
+        == [5.0, 120.0, 5400.0, float("inf"), 0.1, None]
+
+
+def test_a_handed_over_copy_tells_systemd_not_to_start_it_again(store, home, monkeypatch):
+    from fleetledger import handover
+
+    handover.write(store, handover.Marker("retired", handover.now(), "vm.example", 1))
+    monkeypatch.setattr(server, "serve", lambda app, **kw: pytest.fail("must not start"))
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    assert cli.main(["ui", "--service", "--port", "8765"], app) == service.REFUSED
+    assert "retired" in out.getvalue()
+    assert cli.main(["ui", "--port", "8765"], cli.App(out=out, err=out,
+                                                      store_factory=lambda: store)) == 1
 
 
 def test_install_uses_the_remote_uis_port(store, home, units, ship_fleet):
@@ -438,6 +477,7 @@ def test_status_restart_and_uninstall(store, home, units, ship_fleet, runtime):
         said = out.getvalue()
         assert "Service: active, enabled." in said
         assert "running: Update (ship-01)" in said
+        assert "systemctl --user kill" not in said  # not stopping
         app, out = app_with(store, system)
         assert cli.main(["service", "restart"], app) == 0
         assert "lets 1 running job(s) finish first" in out.getvalue()
@@ -510,3 +550,40 @@ def test_a_real_service_process_stops_cleanly_on_sigterm(tmp_path, runtime):
     assert proc.returncode == 0, out
     assert b"token" not in out and b"FleetLedger service is running" in out
     assert not (runtime / control.SOCKET).exists()
+
+
+def test_status_while_stopping_says_how_to_stop_at_once(store, home, units, ship_fleet,
+                                                        runtime):
+    system = FakeSystem(active=True)
+    ctl = control.Control({"status": lambda: {
+        "url": "http://127.0.0.1:8765", "remote": None, "service": True, "stopping": True,
+        "jobs": [{"id": 3, "title": "Update", "ships": ["ship-01"]}]}})
+    assert ctl.start()
+    try:
+        app, out = app_with(store, system)
+        cli.main(["service", "status"], app)
+    finally:
+        ctl.stop()
+    assert "Stopping: waiting for 1 running job(s) to finish. To stop at once, cutting them " \
+        "short: systemctl --user kill -s TERM fleetledger" in out.getvalue()
+
+
+def test_an_open_page_learns_fleetledger_is_stopping(web):  # noqa: F811
+    web.sign_in()
+    assert 'hx-get="/partials/banners"' in web.client.get("/").text
+    assert "FleetLedger is stopping" not in web.client.get("/partials/banners").text
+    web.app_ui.jobs.drain()
+    assert "FleetLedger is stopping" in web.client.get("/partials/banners").text
+
+
+def test_two_homes_with_long_runtime_folders_get_their_own_control_socket(monkeypatch,
+                                                                         tmp_path,
+                                                                         short_folder):  # noqa: F811
+    first = tmp_path / ("x" * 60) / "one"
+    second = tmp_path / ("x" * 60) / "two"
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(first))
+    a = control.socket_path()
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(second))
+    b = control.socket_path()
+    assert a != b and a.parent == b.parent and len(str(a)) <= 100
+    assert a.name.endswith("-ui.sock")

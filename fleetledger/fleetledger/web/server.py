@@ -45,6 +45,8 @@ from fleetledger.errors import FleetError
 
 HOST = "127.0.0.1"
 DRAIN_TIMEOUT = 40 * 60  # an image bake's own limit; the unit's TimeoutStopSec is longer
+# A second stop signal under systemd (a second systemctl stop is merged into the first).
+STOP_NOW = "systemctl --user kill -s TERM fleetledger"
 
 
 def bind(port: int) -> socket.socket:
@@ -118,8 +120,8 @@ def service_server(config: Any, jobs: Any, say: Any, timeout: float = DRAIN_TIME
             left = jobs.drain()
             if left:
                 say(f"Stopping once {len(left)} running job(s) finish (at most "
-                    f"{int(timeout // 60)} minutes); nothing new starts. Signal again to stop "
-                    "at once.")
+                    f"{int(timeout // 60)} minutes); nothing new starts. To stop at once, "
+                    f"cutting them short: {STOP_NOW}")
                 still = jobs.wait(timeout)
                 if still:
                     say(f"Stopping now: {len(still)} job(s) still running are cut short.")

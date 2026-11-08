@@ -31,9 +31,7 @@
   {% endif %}
 </header>
 <main>
-{% if stopping %}
-  <div class="warning stopping" role="status">FleetLedger is stopping (a restart or an update): the jobs running now finish first, and nothing new starts until it is back.</div>
-{% endif %}
+{% include "_banners.html" %}
 {% if machine_due %}
   <div class="warning machine-due">
     <form method="post" action="/settings/machines/bundle" class="inline">

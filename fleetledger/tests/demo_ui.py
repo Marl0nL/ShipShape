@@ -715,8 +715,8 @@ def main() -> int:
     parser.add_argument("--service", action="store_true",
                         help="run as the service does (ship-fleet ui --service): no link "
                              "printed (ship-fleet ui link --local, with this home's "
-                             "FLEETLEDGER_RUNTIME_DIR, gives one), and a stop lets running "
-                             "jobs finish first")
+                             "FLEETLEDGER_RUNTIME_DIR set to its run/ folder, gives one), and "
+                             "a stop lets running jobs finish first")
     args = parser.parse_args()
     base = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="fleetledger-demo-"))
     home(base)

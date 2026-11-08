@@ -44,7 +44,7 @@ NOT_RUNNING_HINT = ("Start it (ship-fleet ui, or ship-fleet service status if it
 
 def socket_path() -> Path:
     return paths.runtime_socket(SOCKET, "Set FLEETLEDGER_RUNTIME_DIR to a shorter private "
-                                        "folder.")
+                                        "folder.", per_home=True)
 
 
 def peer_uid(conn: socket.socket) -> int | None:

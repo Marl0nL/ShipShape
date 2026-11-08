@@ -684,7 +684,14 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     for module in EXTRA_COMMAND_MODULES:
         handler = handler or getattr(importlib.import_module(module), name, None)
     try:
-        _handed_over(args, app)
+        try:
+            _handed_over(args, app)
+        except FleetError as exc:
+            if getattr(args, "service", False):
+                # The service: a handed-over copy stays refused until someone acts, so
+                # systemd should not start it again and again (service.REFUSED).
+                exc.exit_code = 2
+            raise
         with _in_use(args, app):
             return handler(args, app) or 0
     except FleetError as exc:

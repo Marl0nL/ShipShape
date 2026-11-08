@@ -382,6 +382,11 @@ async def home(request: Request) -> Response:
                   **_fleet_context(ui, tag, session_of(request)))
 
 
+async def banners_partial(request: Request) -> Response:
+    """The notes at the top of every page that can change while it is open (polled)."""
+    return partial(request, "_banners.html", stopping=ui_of(request).jobs.stopping)
+
+
 async def fleet_partial(request: Request) -> Response:
     ui = ui_of(request)
     ui.fleet.touch()
@@ -1329,6 +1334,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
     routes = [
         Route("/", home),
         Route("/partials/fleet", fleet_partial),
+        Route("/partials/banners", banners_partial),
         Route("/partials/signins", signins_partial),
         Route("/partials/charts", charts_partial),
         Route("/ships/{name}", ship_page),

@@ -1,0 +1,6 @@
+{# Notes that can change while a page is open: polled, so an open page shows them too. #}
+<div id="banners" hx-get="/partials/banners" hx-trigger="every 10s" hx-swap="outerHTML">
+{% if stopping %}
+  <div class="warning stopping" role="status">FleetLedger is stopping (a restart or an update): the jobs running now finish first, and nothing new starts until it is back.</div>
+{% endif %}
+</div>

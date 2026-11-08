@@ -30,12 +30,30 @@ four differences:
   open; the service polls every Ship every 30 seconds (`--interval`), so the charts,
   Needs attention and certificate renewals are current whenever you look. The history
   it keeps is bounded as ever (7 days of samples).
-- **A stop lets running jobs finish.** On `systemctl --user stop fleetledger` (or a
-  restart, or a reboot) it first stops taking new jobs, lets the running ones (an
-  update, a new Ship, an image bake ...) finish, for up to 40 minutes, and only then
-  stops. The pages keep answering meanwhile and say "FleetLedger is stopping". A second
-  stop signal stops it at once, cutting the jobs short, as Ctrl-C does in a terminal;
-  each job cut short is saved to Activity as "stopped".
+- **A stop lets running jobs finish.** On `systemctl --user stop fleetledger` (or
+  `ship-fleet service restart`) it first stops taking new jobs, lets the running ones
+  (an update, a new Ship, an image bake ...) finish, for up to 40 minutes, and only
+  then stops. The pages keep answering meanwhile and say "FleetLedger is stopping".
+  To stop it at once instead, cutting the jobs short (as a second Ctrl-C does in a
+  terminal), send it a second signal: `systemctl --user kill -s TERM fleetledger`
+  (a second `systemctl --user stop` does nothing: systemd merges it into the
+  first). Each job cut short is saved to Activity as "stopped".
+- **A reboot does not wait, unless you let it.** A reboot stops your whole systemd
+  user manager, and Ubuntu gives that 5 seconds, so running jobs are killed, and not
+  even recorded as stopped. Before a reboot, `ship-fleet service status` shows what is
+  running. To let a reboot wait for them too, raise that limit for your user, once,
+  as root (`ship-fleet service install` prints this when it is needed):
+
+  ```sh
+  sudo mkdir -p /etc/systemd/system/user@$(id -u).service.d
+  printf '[Service]\nTimeoutStopSec=45min\n' | sudo tee /etc/systemd/system/user@$(id -u).service.d/fleetledger-drain.conf
+  sudo systemctl daemon-reload
+  ```
+
+  A reboot then waits as long as the jobs need, up to 45 minutes.
+
+Restarting it (or stopping it) cancels any sign-in still open in the web UI, as
+stopping `ship-fleet ui` always has: the Ship is unchanged; start the sign-in again.
 
 Everything else is the same: it binds `127.0.0.1` only, the same gate, sessions, CSRF
 checks and Content-Security-Policy hold, and every action in it runs the same CLI
@@ -59,6 +77,17 @@ If your shell sets `FLEETLEDGER_CONFIG_DIR`, `FLEETLEDGER_DATA_DIR`,
 `FLEETLEDGER_RUNTIME_DIR`, `XDG_CONFIG_HOME` or `XDG_DATA_HOME`, the unit carries them,
 so the service uses the same folders as your commands. Install it again after changing
 one.
+
+**Secrets without a desktop keyring.** The service reads the same secrets as your
+commands: the passphrases of the keys FleetLedger looks after, the Proxmox token and
+the Tailscale OAuth secret. On a desktop they are in your OS keyring, which is
+unlocked only while you are logged in, so a service that runs while you are logged
+out (lingering, below) cannot read them then: its jobs and renewals fail until you
+log in again. On a computer with no desktop session (an always-on VM), keep them in
+the file store instead (setup chooses it by itself where no keyring is usable;
+`ship-fleet migrate receive --store file` when you move the fleet there): `0600` files in
+`~/.config/fleetledger/`, readable by the service at any time, but on the same disk as
+the keys, so a copy of that disk holds the whole fleet.
 
 **At boot, and while you are logged out.** A user unit runs while you are logged in.
 For it to start at boot and keep running after you log out, turn on lingering for your
@@ -113,7 +142,7 @@ ship-fleet service restart
 ```
 
 It returns at once; the service lets its running jobs finish, then starts again with
-the new code. Sessions on this computer's address end with the restart (get a new link);
+the new code (`systemctl --user kill -s TERM fleetledger` makes it stop at once). Sessions on this computer's address end with the restart (get a new link);
 paired remote devices stay signed in.
 
 To stop it for a while: `systemctl --user stop fleetledger` (running jobs finish
@@ -152,5 +181,5 @@ there, as `ship-fleet ui` does.
 | The remote web UI is set up on port … | leave out `--port`, or move the remote UI to that port first |
 | (`ship-fleet ui link --local`) No ship-fleet ui is running here | `ship-fleet service status`; `journalctl --user -u fleetledger` says why it stopped |
 | (`ship-fleet ui --service`) A service needs a fixed port | `--port 8765`; `ship-fleet service install` sets it |
-| (in the journal) Tailscale is not running here / Serve is not serving … | as in [remote-ui.md](remote-ui.md); systemd retries by itself, or `ship-fleet service restart` once it is fixed |
-| (in the journal) This FleetLedger is on standby / was retired | it handed its fleet on or has not taken it over yet ([move-fleetledger.md](move-fleetledger.md)); `ship-fleet service uninstall` here if it should no longer run |
+| (in the journal) Tailscale is not running here / Serve is not serving … | as in [remote-ui.md](remote-ui.md); systemd tries again by itself (after 15 seconds, then longer, up to every 15 minutes), or `ship-fleet service restart` once it is fixed |
+| (in the journal) This FleetLedger is on standby / was retired, or a setting it cannot read | it exits with status 2, which systemd does not retry: only you can fix these. A handed-over copy ([move-fleetledger.md](move-fleetledger.md)): `ship-fleet service uninstall` here if it should no longer run; else fix what it says, then `systemctl --user start fleetledger` |
