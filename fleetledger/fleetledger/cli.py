@@ -351,6 +351,8 @@ def build_parser() -> argparse.ArgumentParser:
              "A new herdr binary takes over only after a reboot. --reboot auto (the\n"
              "default) reboots exactly the Ships whose herdr changed, then checks every\n"
              "agent came back in its permission mode.\n\n"
+             "It never rolls a Ship back: a Ship on a newer commit than this checkout's\n"
+             "(or one this checkout does not have) is left as it is unless --force.\n\n"
              "  ship-fleet update ship-01\n  ship-fleet update --tag work\n"
              "  ship-fleet update all --reboot never")
     p.add_argument("names", nargs="*", metavar="SHIP|all")
@@ -360,7 +362,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for rebooted Ships to come back")
     p.add_argument("--force", action="store_true",
-                   help="converge even if the Ship already has this bundle")
+                   help="converge even if the Ship already has this bundle, or runs a newer "
+                   "ShipShape commit than this checkout (that rolls it back)")
     p.add_argument("--yes", action="store_true", help="do not ask before acting on many Ships")
     p.add_argument("--json", action="store_true", help="print the results as JSON")
 
