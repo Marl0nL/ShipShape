@@ -74,6 +74,48 @@ ShipShape: GitHub is now signed in as example-user. Re-check it if you need it.
 or waiting at a permission prompt, which is never typed into). The Ship records
 each notice in its journal: `ship-fleet logs SHIP system`.
 
+## Extra GitHub scopes
+
+gh signs in with its own minimum scopes (`repo`, `read:org`, `gist`). Some agent work
+needs more, chosen per Ship (none by default):
+
+| Scope | Allows | Why you might want it |
+|---|---|---|
+| `workflow` | changing GitHub Actions workflows | agents that push commits touching `.github/workflows/` (GitHub refuses those pushes without it). Workflows run with the repository's secrets: tick it only where agents maintain CI |
+| `project` | reading and changing GitHub Projects (boards) | `gh project`, agents that move their own cards |
+| `write:packages` | publishing and reading GitHub Packages | agents that build and push images to ghcr.io |
+
+Scopes that delete or administer (`delete_repo`, `admin:org`, ...) are not offered: an
+agent holding them can do lasting damage. Add one by hand on the Ship if you must;
+FleetLedger leaves scopes outside this list alone.
+
+```sh
+ship-fleet new ship-02 --github-scopes workflow       # a new Ship
+ship-fleet set ship-01 github_scopes=workflow,project # change the choice (empty: none)
+ship-fleet login ship-01 github --scopes workflow     # choose, then sign in with them
+```
+
+Or tick them on the New Ship form (and setup's first Ship), or in a Ship's
+**Settings** under **GitHub scopes**.
+
+Changing the choice never changes the sign-in on the Ship. Until you sign in again,
+its status says so (`signin-scopes-differ`), and the Sign-ins page lists the row
+under **Needs you**:
+
+- The token **lacks** a chosen scope: **Sign in again with these scopes** adds it.
+- The token **has** a catalogue scope that is not chosen, most likely one you added
+  by hand before this choice existed (say `gh auth refresh -s workflow` over SSH):
+  **Keep workflow: tick it in Settings** comes first (`ship-fleet set SHIP
+  github_scopes=workflow`, which the fix column says). Signing in again would drop
+  it, and its button says so (**Sign in again and drop workflow**).
+
+A scope the Ship reports as chosen that this FleetLedger does not know (chosen by a
+newer FleetLedger, or `ship.toml` edited by hand) is shown on its Settings, never
+asked for, and dropped from the choice if you save the tickboxes there. Signing in to GitHub, from anywhere, asks for exactly the
+chosen scopes: on a Ship not signed in, `gh auth login --scopes ...`; on one signed
+in with other scopes, `gh auth refresh --scopes <added> --remove-scopes <dropped>`,
+in the same device flow, for the same account (GitHub shows the scopes to approve).
+
 ## Remote Control
 
 Remote Control is on by default: once Claude is signed in, every agent's session

@@ -37,9 +37,10 @@ def posted(**values):
 
 
 def test_every_set_key_but_tags_is_on_the_tab():
-    """Tags have their own section (and owner is the fleet's, ship-fleet owner)."""
+    """Tags and GitHub scopes have their own sections (and owner is the fleet's,
+    ship-fleet owner)."""
     on_tab = set(shipsettings.FIELDS) | {"ssh_listen"}
-    assert on_tab == set(ops.SET_KEYS) - {"tags"}
+    assert on_tab == set(ops.SET_KEYS) - {"tags", "github_scopes"}
 
 
 def test_current_values_come_from_the_ships_report():

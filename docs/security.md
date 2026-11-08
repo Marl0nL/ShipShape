@@ -131,6 +131,12 @@ your other machines without forwarding router ports
 - **A sign-in a Ship does not use** (`ship-fleet signins`) is never offered or run
   there, and turning one off signs it out, so its credentials do not stay on that
   Ship.
+- **GitHub scopes are least by default.** A Ship's GitHub token has gh's minimum
+  (`repo`, `read:org`, `gist`) unless you tick extra scopes for it, from a short
+  catalogue (`workflow`, `project`, `write:packages`); scopes that delete or
+  administer are not offered. Changing the choice never changes a token by itself:
+  the Ship reports the difference until you sign in again, which is where GitHub
+  shows the scopes you approve ([sign-in.md](runbooks/sign-in.md#extra-github-scopes)).
 - **Root-owned, out of agents' reach:** Claude Code's managed settings (Remote
   Control, the bypass policy), herdr's binary, `ship.toml`, the resume shim,
   and the network visibility collector and its records ([network.md](network.md)).

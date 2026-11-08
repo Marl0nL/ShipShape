@@ -574,6 +574,12 @@
           "uniqueItems": true,
           "description": "The sign-ins this Ship uses (gcloud covers its application default credentials). Absent: all of them. A service left out gets no sign-in prompt, flow or attention item from FleetLedger, is shown as off, and is signed out on the Ship when it is turned off. Its tool may stay installed."
         },
+        "github_scopes": {
+          "type": "array",
+          "items": { "enum": ["workflow", "project", "write:packages"] },
+          "uniqueItems": true,
+          "description": "Extra GitHub scopes the Ship's GitHub sign-in asks for (ship.toml github.scopes; ship-fleet set SHIP github_scopes=...). Absent or empty: gh's minimum only."
+        },
         "overlay_node": {
           "type": "string",
           "pattern": "^[A-Za-z0-9]{1,64}$",

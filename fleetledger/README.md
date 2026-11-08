@@ -31,6 +31,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/github.py` | | an autostart agent's GitHub repo: the name check, and whether it is public |
 | `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins SHIP`) |
 | `fleetledger/signinlist.py` | | every sign-in on every Ship, most urgent first: the Sign-ins page and `ship-fleet signins` with no Ship |
+| `fleetledger/ghscopes.py` | | the extra GitHub scopes a Ship's GitHub sign-in may ask for (`--github-scopes`, `github_scopes=`) |
 | `fleetledger/history.py` | | the bounded history (`history.sqlite3`): Ship status for the dashboard's charts, and the web UI's finished operations for its Activity page |
 | `fleetledger/overlay/`, `access.py`, `overlay_setup.py` | phase 5 | the overlay network: providers, one-off keys (pasted, or minted with a Tailscale OAuth client whose secret is in the OS keyring or a 0600 file), `ship-fleet overlay setup|check|join|leave|status|policy` |
 | `fleetledger/firstrun.py`, `setupcmd.py` | first run | `ship-fleet setup` (the guided first run: each step checks first and skips what is done) and `ship-fleet doctor` (read-only: what is set up, what is missing, the next command); both use the checks in `firstrun.py` |

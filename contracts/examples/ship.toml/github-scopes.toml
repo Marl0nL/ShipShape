@@ -1,0 +1,11 @@
+# A Ship whose agents push GitHub Actions workflows: its GitHub sign-in asks for
+# the workflow scope on top of gh's minimum (repo, read:org, gist).
+schema = 1
+
+[ship]
+name = "ship-02"
+id = "9b2f4c1e-3d5a-4e6b-8c7d-0a1b2c3d4e5f"
+tags = ["work"]
+
+[github]
+scopes = ["workflow"]

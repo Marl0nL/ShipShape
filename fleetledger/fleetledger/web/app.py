@@ -29,7 +29,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import attempts, commands, inbox, net, ops, signinlist, signins
+from fleetledger import attempts, commands, ghscopes, inbox, net, ops, signinlist, signins
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -133,6 +133,7 @@ def make_env() -> Environment:
         SERVICES=SERVICES,
         MODES=commands.MODES,
         SIGNIN_CHOICES=signins.CHOICES,
+        GITHUB_SCOPES=ghscopes.CATALOGUE,
         SIZE=_size_limits_for_forms(),
         SIGNIN_LABELS=signins.LABELS,
         SETTING_GROUPS=shipsettings.GROUPS,
@@ -166,7 +167,7 @@ def _pill(value: str | None) -> str:
                  "invalid", "provision-failed"):
         return "bad"
     if value in ("missing", "expiring", "needs-sign-in", "unreachable", "waiting", "blocked",
-                 "provisioning", "timeout", "not-enrolled"):
+                 "provisioning", "timeout", "not-enrolled", "scopes differ"):
         return "warn"
     return "muted"
 
@@ -430,6 +431,7 @@ def _ship_context(ui: UI, name: str, session: Session | None = None) -> dict[str
         "snap": snap,
         **_attach_context(inv, view.ship, session),
         "signins_used": signins.used(view.ship),
+        "gh": ghscopes.summary(view.ship, view.status),
     }
 
 
@@ -658,6 +660,41 @@ async def ship_signins(request: Request) -> Response:
     ui.flash(session, "ok" if ok else "bad", " ".join(said))
     await run_in_threadpool(ui.fleet.poll, [name])
     return back(f"/ships/{name}/settings")
+
+
+async def ship_github_scopes(request: Request) -> Response:
+    """Choose the extra GitHub scopes a Ship's GitHub sign-in asks for (ghscopes). The
+    sign-in on the Ship is not touched: if its token's scopes now differ, the page
+    offers to sign in again with these scopes."""
+    ui = ui_of(request)
+    name = _known_ship(request)
+    if name is None:
+        return not_found(request, NO_SUCH_SHIP)
+    fields = await form(request)
+    session = session_of(request)
+    where = f"/ships/{name}/settings#github-scopes"
+    try:
+        wanted = ghscopes.check(fields.get("scope", []))
+    except FleetError as exc:
+        ui.flash(session, "bad", exc.message)
+        return back(where)
+    outcome = await run_in_threadpool(actions.set_settings, ui.app, name,
+                                      [f"github_scopes={','.join(wanted)}"])
+    await run_in_threadpool(ui.fleet.poll, [name])
+    if not outcome.ok:
+        _flash_outcome(ui, session, outcome)
+        return back(where)
+    view = ui.fleet.snapshot.by_name.get(name)
+    now = ghscopes.summary(view.ship, view.status) if view is not None else None
+    said = f"{name}: GitHub scopes {ghscopes.describe(wanted)}."
+    if now is not None and now.differ.extra:
+        said += (f" Its GitHub sign-in {now.differ.describe()}: tick it to keep it; signing "
+                 "in again drops it.")
+    elif now is not None and now.differ:
+        said += (f" Its GitHub sign-in {now.differ.describe()}: nothing changes on the Ship "
+                 "until you sign in again with these scopes.")
+    ui.flash(session, "ok", said)
+    return back(where)
 
 
 async def ship_size(request: Request) -> Response:
@@ -1340,6 +1377,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/tools", ship_tools, methods=["POST"]),
         Route("/ships/{name}/size", ship_size, methods=["POST"]),
         Route("/ships/{name}/signins", ship_signins, methods=["POST"]),
+        Route("/ships/{name}/github-scopes", ship_github_scopes, methods=["POST"]),
         Route("/attach-here", attach_here, methods=["POST"]),
         Route("/ships/{name}/logout", ship_logout, methods=["POST"]),
         Route("/ships/{name}/power", ship_power, methods=["POST"]),

@@ -81,6 +81,19 @@
         }
       }
     },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/githubScope" },
+          "uniqueItems": true,
+          "default": [],
+          "description": "Extra GitHub scopes the Ship's GitHub sign-in asks for, beyond gh's own minimum (repo, read:org, gist). FleetLedger's sign-in passes them to gh auth login --scopes (or gh auth refresh on a Ship already signed in); ship-ctl status reports the scopes the token has and the attention item signin-scopes-differ when they differ. Empty: gh's minimum, as before."
+        }
+      }
+    },
     "owner": {
       "type": "object",
       "additionalProperties": false,
@@ -213,6 +226,10 @@
     },
     "remoteControl": { "enum": ["on", "off", "blocked"] },
     "updateChannel": { "enum": ["latest", "stable"] },
+    "githubScope": {
+      "enum": ["workflow", "project", "write:packages"],
+      "description": "The extra GitHub scopes a Ship may ask for (FleetLedger's catalogue, fleetledger/ghscopes.py). Scopes that can delete or administer (delete_repo, admin:*) are deliberately not offered."
+    },
     "claudeSettings": {
       "type": "object",
       "additionalProperties": false,

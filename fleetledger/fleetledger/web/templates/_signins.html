@@ -36,13 +36,16 @@
             <button type="submit" class="ghost" title="ship-fleet status {{ r.ship }}">Check now</button>
           </form>
         {% else %}
+          {% if r.drops %}
+          <a class="button" href="/ships/{{ r.ship }}/settings#github-scopes" title="ship-fleet set {{ r.ship }} github_scopes={{ r.keep|join(',') }}">Keep {{ r.drops|join(", ") }}: tick it in Settings</a>
+          {% endif %}
           <form method="post" action="/signin" class="inline">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="ship" value="{{ r.ship }}">
             <input type="hidden" name="service" value="{{ r.provider }}">
             <input type="hidden" name="from" value="signin">
             {% for k, v in filters.items() %}<input type="hidden" name="f_{{ k }}" value="{{ v }}">{% endfor %}
-            <button type="submit"{% if r.group == "healthy" or r.state == "wrong account" %} class="ghost"{% endif %} title="ship-fleet login {{ r.ship }} {{ r.provider }}">{% if r.state == "failed" or r.note %}Try again{% elif r.signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
+            <button type="submit"{% if r.group == "healthy" or r.state == "wrong account" or r.drops %} class="ghost"{% endif %} title="ship-fleet login {{ r.ship }} {{ r.provider }}">{% if r.state == "failed" or r.note %}Try again{% elif r.drops %}Sign in again and drop {{ r.drops|join(", ") }}{% elif r.state == "scopes differ" %}Sign in again with these scopes{% elif r.signed_in %}Re-sign{% else %}Sign in{% endif %}</button>
           </form>
           {% if r.signed_in %}
           <form method="post" action="/ships/{{ r.ship }}/logout" class="inline"

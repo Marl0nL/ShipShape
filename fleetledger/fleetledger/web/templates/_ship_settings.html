@@ -76,6 +76,54 @@
       prompt, no sign-in and no attention item, and shows as off. Unticking one signs it
       out on {{ ship.name }}, so no credentials for it stay there.</p>
   </section>
+  <section id="github-scopes" class="github-scopes">
+    <h2>GitHub scopes</h2>
+    <form method="post" action="/ships/{{ ship.name }}/github-scopes" class="github-scopes-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for s in GITHUB_SCOPES %}
+      <label class="scope"><input type="checkbox" name="scope" value="{{ s.id }}"{% if s.id in gh.chosen %} checked{% endif %}>
+        <span><code>{{ s.id }}</code> {{ s.label }}<span class="hint">{{ s.explain }}</span></span></label>
+      {% endfor %}
+      <button type="submit" title="ship-fleet set {{ ship.name }} github_scopes=...">Save scopes</button>
+    </form>
+    <p class="hint">Extra scopes {{ ship.name }}'s GitHub sign-in asks for, on top of gh's
+      own (repo, read:org, gist). Saving changes only what the next sign-in asks for, never
+      the sign-in already there.{% if not gh.reported %} {{ ship.name }} is not answering, or
+      does not report its choice yet: this shows FleetLedger's copy.{% endif %}</p>
+    {% if gh.unknown %}
+    <p class="warning">{{ ship.name }} also chooses {{ gh.unknown|join(", ") }}, which this
+      FleetLedger does not know (a newer FleetLedger chose it, or <code>ship.toml</code> was
+      edited by hand): it is never asked for from here, and saving these tickboxes drops it
+      from the choice.</p>
+    {% endif %}
+    {% if "github" not in signins_used %}
+    <p class="hint">{{ ship.name }} does not use GitHub (Sign-ins it uses, above).</p>
+    {% elif gh.token is not none %}
+    <p class="quiet">The token on {{ ship.name }} has {{ gh.token_extras|join(", ") or "no extra scopes" }}.</p>
+    {% if gh.differ %}
+    {% set drops = gh.differ.extra|join(", ") %}
+    <div class="scopes-differ">
+      {% if gh.differ.extra %}
+      <p class="warning">{{ ship.name }}'s GitHub sign-in {{ gh.differ.describe() }} here
+        (given by hand, most likely). <strong>To keep {{ drops }}, tick it above and save.</strong>
+        Signing in again with the scopes ticked now drops {{ drops }}{% if gh.differ.missing %}
+        and adds {{ gh.differ.missing|join(", ") }}{% endif %}: GitHub asks you to approve
+        the new scopes, for the same account.</p>
+      {% else %}
+      <p class="warning">{{ ship.name }}'s GitHub sign-in {{ gh.differ.describe() }}, against
+        the scopes chosen here. Nothing changes until you sign in again: GitHub then asks you
+        to approve the new scopes, for the same account.</p>
+      {% endif %}
+      <form method="post" action="/signin" class="inline">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="ship" value="{{ ship.name }}">
+        <input type="hidden" name="service" value="github">
+        <button type="submit"{% if gh.differ.extra %} class="ghost"{% endif %} title="ship-fleet login {{ ship.name }} github (gh auth refresh)">{% if gh.differ.extra %}Sign in again and drop {{ drops }}{% else %}Sign in again with these scopes{% endif %}</button>
+      </form>
+    </div>
+    {% endif %}
+    {% endif %}
+  </section>
   <section class="setting-group">
     <h2>Tools</h2>
     {% if tools.error %}<p class="flash bad">{{ tools.error }}</p>

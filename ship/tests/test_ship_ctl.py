@@ -587,6 +587,7 @@ def test_status_reports_the_settings_set_last_applied(ship):
         "agent": {"sudo": False},
         "network": {"lan_guard": False, "lan_guard_allow": [], "ssh_listen": "any"},
         "updates": {"auto_reboot": False, "reboot_time": "04:00"},
+        "github": {"scopes": []},
         "owner": None,
         "autostart": [{"name": "main", "cwd": "~/work/main"},
                       {"name": "grinder", "cwd": "~/work/grinder",

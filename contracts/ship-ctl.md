@@ -60,20 +60,22 @@ How fields are worked out:
 | `auth.claude` | `claude auth status --json` as `agent`: `loggedIn` gives `ok` or `missing`; `account` is the email; `detail` is the plan or method. |
 | `auth.gcloud` | `gcloud auth list --filter=status:ACTIVE --format="value(account)"` as `agent`. |
 | `auth.gcloud_adc` | `gcloud auth application-default print-access-token` as `agent`, output discarded: exit 0 gives `ok`. `account` may be null. |
-| `auth.github` | `gh auth status --hostname github.com` as `agent`; `account` is the login it reports. |
+| `auth.github` | `gh auth status --hostname github.com` as `agent`; `account` is the login it reports; `scopes` the token's scopes it lists (`Token scopes:`), sorted, or null when it lists none. |
 | `herdr` | `herdr status server` and `herdr agent list` as `agent`. `mode` comes from the mode ledger. `last_resume` comes from ship-resume's record. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
 | `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
 | `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
-| `settings` | `ship.toml` with its defaults filled in: the values `set` manages (tags, time zone, the Claude settings, agent sudo, LAN guard and its allowed addresses, SSH listen, OS-update reboots), the owner login's name, and the `[[autostart]]` agents (name, folder, mode, repo). Optional in the schema: Ships with older tooling leave it out, and FleetLedger then shows their settings as unknown. |
+| `settings` | `ship.toml` with its defaults filled in: the values `set` manages (tags, time zone, the Claude settings, agent sudo, LAN guard and its allowed addresses, SSH listen, OS-update reboots, the extra GitHub scopes), the owner login's name, and the `[[autostart]]` agents (name, folder, mode, repo). Optional in the schema: Ships with older tooling leave it out, and FleetLedger then shows their settings as unknown. |
 | `overlay` | `null` when the overlay tooling is absent; otherwise the overlay record (see `overlay` below) plus `tailscale status --json` (`BackendState`, `Self.DNSName`, `Self.TailscaleIPs`, `Self.Tags`). |
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
 `reboot-required`, `herdr-restart-pending`, `provision-failed`, `tool-waiting`,
-`tool-failed`, `host-cert-expiring` (the host certificate ends within 14 days),
+`tool-failed`, `signin-scopes-differ` (GitHub is signed in, and its token lacks an
+extra scope `github.scopes` chooses, or has a catalogue scope it no longer chooses;
+`settings.md`, "Extra GitHub scopes"; for a scope it has but does not choose, the message says to tick it to keep it before it says that signing in again drops it), `host-cert-expiring` (the host certificate ends within 14 days),
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
 running), `overlay-down` (joined, but the overlay is not `running`).
 FleetLedger adds its own on top (`signin-wrong-account` from the tag check,
@@ -102,7 +104,9 @@ atomically, then runs `apply`.
   `claude.session_prefix`, `agent.sudo`, `network.lan_guard`,
   `network.lan_guard_allow` (comma-separated; empty clears it),
   `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`, `owner.name`,
-  `owner.keys` (comma-separated public keys). Booleans are `true` or `false`.
+  `owner.keys` (comma-separated public keys), `github.scopes` (comma-separated, from
+  the catalogue; empty for none: `settings.md`, "Extra GitHub scopes"). Booleans are
+  `true` or `false`.
 - `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
   that name), and `autostart.add=NAME:github:OWNER/REPO[:MODE]` adds one that works
   in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it; a running

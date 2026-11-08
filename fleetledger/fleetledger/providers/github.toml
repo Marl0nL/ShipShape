@@ -25,3 +25,11 @@ account = "stdout"
 
 [logout]
 run = "gh auth logout --hostname github.com"
+
+# Extra scopes the Ship chose (fleetledger/ghscopes.py): login asks for them with
+# --scopes; on a Ship already signed in, gh auth refresh adds and drops them in the
+# same device flow (and refuses an approval by a different account).
+[scopes]
+add = "--scopes"
+refresh = "GH_PROMPT_DISABLED=1 gh auth refresh --hostname github.com"
+remove = "--remove-scopes"
