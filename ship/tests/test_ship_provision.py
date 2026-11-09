@@ -586,3 +586,56 @@ def test_npmrc_fifo_does_not_hang(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert (home / ".npmrc").is_file()
     assert (home / ".npmrc").read_text() == "prefix=/home/agent/.local\n"
+
+
+def _install_core(tmp_path: Path, archive: Path, digest: str) -> subprocess.CompletedProcess:
+    """Run install_herdr_core from the sourced script against a --root sandbox."""
+    root = tmp_path / "root"
+    script = (f'. "{PROVISION}"; ROOT="{root}"; SANDBOX=1; '
+              f'install_herdr_core "{archive}" "{digest}"')
+    return subprocess.run(["bash", "-c", script], env={"PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, timeout=60)
+
+
+def _core_archive(tmp_path: Path) -> Path:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "herdr-core").write_text("#!/bin/sh\necho herdr-core\n")
+    (src / "LICENSE").write_text("license\n")
+    archive = tmp_path / "herdr-core-linux-x86_64.tar.gz"
+    subprocess.run(["tar", "-czf", str(archive), "-C", str(src), "herdr-core", "LICENSE"],
+                   check=True)
+    return archive
+
+
+def test_herdr_core_installs_the_binary_and_hc_link(tmp_path):
+    import hashlib
+    archive = _core_archive(tmp_path)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    result = _install_core(tmp_path, archive, digest)
+    assert result.returncode == 0, result.stderr
+    bin_dir = tmp_path / "root/usr/local/bin"
+    assert mode(bin_dir / "herdr-core") == "0o755"
+    assert (bin_dir / "herdr-core").read_text().endswith("echo herdr-core\n")
+    assert os.readlink(bin_dir / "hc") == "herdr-core"
+    assert not (bin_dir / "LICENSE").exists()
+    assert (tmp_path / "root/var/lib/shipshape/herdr-core.sha256").read_text().strip() == digest
+
+
+def test_herdr_core_refuses_a_mismatched_archive(tmp_path):
+    archive = _core_archive(tmp_path)
+    result = _install_core(tmp_path, archive, "0" * 64)
+    assert result.returncode != 0
+    assert "herdr-core checksum mismatch" in result.stderr + result.stdout
+    assert not (tmp_path / "root/usr/local/bin/herdr-core").exists()
+    assert not (tmp_path / "root/usr/local/bin/hc").exists()
+
+
+def test_herdr_core_pin_is_in_versions():
+    import tomllib
+    pin = tomllib.loads((SHIP.parent / "versions.toml").read_text())["herdr_core"]
+    assert pin["version"] == "0.1.19"
+    assert pin["assets"]["x86_64"]["sha256"] == (
+        "4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424")
+    assert all(a["url"].startswith("https://releases.herdr.dev/core/0.1.19/")
+               and a["url"].endswith(".tar.gz") for a in pin["assets"].values())

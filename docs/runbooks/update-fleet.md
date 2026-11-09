@@ -1,6 +1,6 @@
 # Runbook: update the fleet
 
-How to roll a change out to running Ships: a new herdr, npm tool or uv pin, a
+How to roll a change out to running Ships: a new herdr, herdr-core, npm tool or uv pin, a
 recipe or profile change, or new Ship tooling. Ships are updated in place,
 never re-imaged; agents keep their conversations and modes.
 
@@ -17,8 +17,13 @@ and Ubuntu security fixes.
    ```sh
    ship-fleet pins                    # every pin against its newest release
    ship-fleet pins set herdr 0.9.6    # new URLs; each download must match GitHub's SHA-256
+   ship-fleet pins set herdr_core 0.1.20  # from the releases.herdr.dev manifest
    ship-fleet pins set gh-axi 0.1.48  # the version must exist in the npm registry
    ```
+
+   herdr-core's manifest is not signed: a download must match it, but the sha256
+   written to `versions.toml` is what Ships check, so compare it with the release
+   page before committing.
 
    It rewrites `versions.toml` in place (comments kept) and refuses anything it
    cannot verify. Read the herdr release notes before moving herdr: its CLI and

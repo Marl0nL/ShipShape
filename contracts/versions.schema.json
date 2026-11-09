@@ -5,7 +5,7 @@
   "description": "Repo root file. ship-provision installs these (W4); the seed generator reads [ubuntu] (W3); ship-fleet compares [shipshape].tooling with each Ship (W8).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "shipshape", "ubuntu", "herdr", "claude", "node", "uv", "npm", "apt"],
+  "required": ["schema", "shipshape", "ubuntu", "herdr", "herdr_core", "claude", "node", "uv", "npm", "apt"],
   "properties": {
     "schema": { "const": 1 },
     "shipshape": {
@@ -47,6 +47,29 @@
         "version": { "$ref": "#/$defs/semver" },
         "assets": {
           "type": "object",
+          "propertyNames": { "enum": ["x86_64", "aarch64"] },
+          "required": ["x86_64"],
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url", "sha256"],
+            "properties": {
+              "url": { "$ref": "#/$defs/httpsUrl" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    "herdr_core": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "assets"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "assets": {
+          "type": "object",
+          "description": "Release tar.gz archives (holding the herdr-core binary) by machine architecture, from the releases.herdr.dev manifest; ship-provision verifies the checksum.",
           "propertyNames": { "enum": ["x86_64", "aarch64"] },
           "required": ["x86_64"],
           "additionalProperties": {

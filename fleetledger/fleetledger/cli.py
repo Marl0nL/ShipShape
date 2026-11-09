@@ -412,17 +412,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="poll every SECONDS (default 30) and print new items")
 
     p = _add(sub, "pins", "check or move the versions.toml pins in this checkout",
-             "  ship-fleet pins                   herdr, uv, the Ubuntu image and npm tools\n"
+             "  ship-fleet pins                   herdr, herdr_core, uv, Ubuntu, npm tools\n"
              "                                    against their newest releases\n"
              "  ship-fleet pins set herdr 0.9.6   new URLs; each download must match\n"
              "                                    GitHub's published SHA-256\n"
+             "  ship-fleet pins set herdr_core 0.1.20\n"
+             "                                    each download must match the manifest\n"
              "  ship-fleet pins set ubuntu 20261101\n"
              "                                    hashes from the signed SHA256SUMS\n"
              "  ship-fleet pins set gh-axi 0.1.48 must exist in the npm registry\n\n"
              "Then run scripts/check, commit, and roll it out with ship-fleet update\n"
              "(docs/runbooks/update-fleet.md).")
     p.add_argument("action", nargs="?", choices=("check", "set"), default="check")
-    p.add_argument("pin", nargs="?", help="herdr, uv, ubuntu or an npm package")
+    p.add_argument("pin", nargs="?", help="herdr, herdr_core, uv, ubuntu or an npm package")
     p.add_argument("value", nargs="?", help="the version (or image build) to pin")
     p.add_argument("--json", action="store_true", help="print JSON (check)")
 
