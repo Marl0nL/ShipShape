@@ -844,6 +844,25 @@ def _tamper(stream: bytes, how: str) -> bytes:
         manifest["files"] = [f for f in manifest["files"] if f["member"] not in gone]
         members = [(members[0][0], json.dumps(manifest).encode())] + \
             [m for m in members[1:] if m[0].name not in gone]
+    elif how == "pub half":  # the private half carried, its .pub not
+        manifest = json.loads(members[0][1])
+        manifest["files"] = [f for f in manifest["files"] if f["member"] != "keys/host-ca.pub"]
+        members = [(members[0][0], json.dumps(manifest).encode())] + \
+            [m for m in members[1:] if m[0].name != "keys/host-ca.pub"]
+    elif how in ("root source", "folder source"):  # placed by a source that names no file
+        manifest = json.loads(members[0][1])
+        key = next(k for k in manifest["keys"] if k["role"] == "host-ca")
+        key["source"] = "/" if how == "root source" else str(Path(key["source"]).parent) + "/"
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+    elif how == "unclaimed key":  # carried, but no key entry says what it is
+        manifest = json.loads(members[0][1])
+        manifest["keys"] = [k for k in manifest["keys"] if k["role"] != "host-ca"]
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+    elif how == "listed twice":
+        manifest = json.loads(members[0][1])
+        agent = next(k for k in manifest["keys"] if k["role"] == "agent")
+        manifest["keys"].append(dict(agent, name="another.pub"))
+        members[0] = (members[0][0], json.dumps(manifest).encode())
     elif how == "agent member":
         manifest = json.loads(members[0][1])
         next(k for k in manifest["keys"] if k["role"] == "agent")["member"] = "data/audit.log"
@@ -869,15 +888,18 @@ def _tamper(stream: bytes, how: str) -> bytes:
 @pytest.mark.parametrize("how", ["flipped", "cut short", "extra", "manifest", "secrets",
                                  "control character", "..", "config", "missing key",
                                  "agent member", "ssh source", "cut in the manifest",
-                                 "truncated"])
+                                 "pub half", "root source", "folder source", "unclaimed key",
+                                 "listed twice", "truncated"])
 def test_a_stream_that_is_not_what_was_sent_writes_nothing(computers, monkeypatch, how):
     a, b, world = computers
     bad = _tamper(send_bytes(a, monkeypatch), how)
     b.use(monkeypatch)
     with pytest.raises(FleetError, match="nothing was written|not a FleetLedger move") as said:
         receive(b, monkeypatch, bad)
-    if how == "missing key":
+    if how in ("missing key", "pub half"):
         assert "keys/host-ca is not in the stream" in said.value.message
+    if how == "unclaimed key":
+        assert "no key entry says what it is" in said.value.message
     assert not b.store.path.exists() and not (b.home / ".ssh").exists()
     assert b.ring.sets == []
     assert not list((b.root / "data").glob(migrate.STAGING + "*"))
