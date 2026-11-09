@@ -42,6 +42,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
 | `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)); `web/control.py`, its private control socket (`ship-fleet ui link --local`) |
+| `fleetledger/appliance.py`, `backup.py`, `selfupdate.py` | | FleetLedger on its own VM: `ship-fleet appliance seed\|show\|forget` (the cloud-init seed, `[fleet] self` and its guard), `backup now\|schedule\|unschedule` (sealed under the vault; restored with `migrate import`), `self-update` ([fleetledger-vm.md](../docs/runbooks/fleetledger-vm.md)) |
 | `fleetledger/service.py` | | FleetLedger as a systemd user service: `ship-fleet service install\|status\|restart\|uninstall` ([fleetledger-service.md](../docs/runbooks/fleetledger-service.md)) |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
 | `fleetledger/attempts.py` | | failed `ship-fleet new` attempts, kept (without secrets) to edit and try again, with what each left on the hypervisor |
@@ -71,7 +72,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.config/fleetledger/agent-keys/` | the `.pub` of your keys for Ships, on a computer FleetLedger was moved to (`ship-fleet migrate`): their private halves stay on your machines |
 | `~/.config/fleetledger/standby.json`, `retired.json` | after a move (`ship-fleet migrate`): this copy is on standby (received, not active yet) or retired (handed the fleet on; after a wipe, only this file stays). Either way it refuses to act on the fleet (0600) |
 | `~/.config/fleetledger/ships.toml.lock` | guards each change to the inventory. Every `ship-fleet` also holds a shared lock (flock) on the folder itself while it runs, and `migrate` holds it alone, so a move never copies a fleet mid-change |
-| `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols |
+| `~/.local/share/fleetledger/seeds/` | seed ISOs (folder 0700, files 0600) until each Ship enrols; `appliance-<name>.iso`, FleetLedger's own VM's, until you delete it after its first boot |
 | `~/.local/share/fleetledger/audit.log` | the concierge's audit log: time, Ship, service, outcome, account (0600) |
 | `~/.local/share/fleetledger/status/` | the last good status per Ship (0600), for `ls --offline` |
 | `~/.local/share/fleetledger/history.sqlite3` | the status history behind the dashboard's charts, and the operations history behind the Activity page (redacted; 30 days, at most 200) (0600) |
@@ -81,6 +82,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
 | `~/.local/share/fleetledger/images/` | baked images and their manifests (0600); `base/` caches Ubuntu's verified cloud image |
 | `$XDG_RUNTIME_DIR/fleetledger/ui.sock` | a running web UI's control socket (0600, in a 0700 folder; gone when it stops): `ship-fleet ui link --local` and `ship-fleet service status` ask it |
+| `~/.config/systemd/user/fleetledger-backup.service`, `.timer` | the daily encrypted backup `ship-fleet backup schedule` sets up (0600) |
 | `~/.config/systemd/user/fleetledger.service` | the systemd user unit `ship-fleet service install` writes, outside FleetLedger's own folders (0600) |
 
 `FLEETLEDGER_CONFIG_DIR`, `FLEETLEDGER_DATA_DIR` and `FLEETLEDGER_RUNTIME_DIR`

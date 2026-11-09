@@ -45,7 +45,12 @@ def cmd_overlay(args, app) -> int:
     inv = store.load()
     config = overlay.settings(inv)
     if args.action == "policy":
-        app.say(overlay.policy(config).rstrip())
+        from fleetledger import appliance
+
+        text = overlay.policy(config)
+        if appliance.fleet_self(inv):  # FleetLedger's own VM: tag:fleetledger's two rules
+            text = appliance.policy_with_self(text)
+        app.say(text.rstrip())
         return 0
     if args.action == "status":
         ships = inv.select(args.names, args.tag) if (args.names or args.tag) else inv.ships()

@@ -91,7 +91,8 @@ FleetLedger's vault ([../vault.md](../vault.md)): every secret in one encrypted 
 unlocked once after each boot (`ship-fleet unlock`, or the web UI), for the service
 and your commands alike, and a copy of the disk opens nothing. Without it, the file
 store works too (`0600` files in `~/.config/fleetledger/`), but they sit on the same
-disk as the keys, so a copy of that disk holds the whole fleet.
+disk as the keys, so a copy of that disk holds the whole fleet. FleetLedger on its own
+VM, from the seed to the move: [fleetledger-vm.md](fleetledger-vm.md).
 
 **At boot, and while you are logged out.** A user unit runs while you are logged in.
 For it to start at boot and keep running after you log out, turn on lingering for your

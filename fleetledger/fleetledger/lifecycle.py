@@ -6,10 +6,11 @@ here knows which hypervisor a Ship runs on.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import UTC, datetime
 
-from fleetledger import enrol, history, images, overlay, status
+from fleetledger import enrol, history, images, overlay, paths, status
 from fleetledger.commands import table
 from fleetledger.concierge import audit
 from fleetledger.drivers import NotSupported, PublishedImage
@@ -74,13 +75,15 @@ def add_parsers(sub, add) -> None:
 
     p = add(sub, "image", "build, publish and pin baked base images",
             "  ship-fleet image build [--recipes ID,...] [--backend virt-customize|qemu]\n"
+            "  ship-fleet image build --out DIR   a file to import elsewhere (no fleet needed)\n"
+            "  ship-fleet image import FILE.qcow2 one built elsewhere (its .json beside it)\n"
             "  ship-fleet image ls\n"
             "  ship-fleet image publish ID [--driver proxmox] [--template-vmid N]\n"
             "  ship-fleet image use ID|stock      pin the image new Ships start from\n"
             "  ship-fleet image rm ID\n\n"
             "Existing Ships are never re-imaged; update them in place.\n"
             "See docs/runbooks/images.md.")
-    p.add_argument("action", choices=("build", "ls", "publish", "use", "rm"))
+    p.add_argument("action", choices=("build", "ls", "publish", "use", "rm", "import"))
     p.add_argument("image", nargs="?", help="image id (or stock, for use)")
     p.add_argument("--recipes", help="build: bake these recipes (default: every bake = true)")
     p.add_argument("--backend", choices=("virt-customize", "qemu"), default="virt-customize",
@@ -90,6 +93,9 @@ def add_parsers(sub, add) -> None:
                    help="publish: record a template you made by hand instead")
     p.add_argument("--keep-file", action="store_true",
                    help="rm: keep the local qcow2")
+    p.add_argument("--out", metavar="DIR",
+                   help="build: write the image (and its .json) here and record it nowhere, "
+                        "to import on FleetLedger's own VM (no fleet needed here)")
 
 
 # --- destroy -------------------------------------------------------------------
@@ -305,7 +311,13 @@ def cmd_image(args, app) -> int:
         "publish": _image_publish,
         "use": _image_use,
         "rm": _image_rm,
+        "import": _image_import,
     }[args.action]
+    if args.out and args.action != "build":
+        raise FleetError("--out is for image build.")
+    if args.action == "import" and not args.image:
+        raise FleetError("image import needs the image file: ship-fleet image import "
+                         "FILE.qcow2 (its .json beside it).")
     if args.action in ("publish", "use", "rm") and not args.image:
         raise FleetError(f"image {args.action} needs an image id.")
     if args.action in ("build", "ls") and args.image:
@@ -314,15 +326,72 @@ def cmd_image(args, app) -> int:
 
 
 def _image_build(args, app) -> int:
-    store = app.store_factory()
-    store.load()  # fail early on a broken inventory
     recipes = [r.strip() for r in args.recipes.split(",") if r.strip()] if args.recipes else None
     builder = getattr(app, "image_builder", None) or images.build
+    if args.out:  # for FleetLedger's own VM, when it cannot build quickly itself
+        out_dir = paths.private_dir(paths.expand(args.out))
+        built = builder(app.repo_factory(), recipes=recipes, backend=args.backend,
+                        note=app.note, out_dir=out_dir)
+        app.say(f"Built image {built.id}: {built.path} and {built.path.with_suffix('.json')} "
+                "(recorded nowhere here).")
+        app.say(f"Copy both to FleetLedger's VM (scp), then there: ship-fleet image import "
+                f"{built.path.name}")
+        return 0
+    store = app.store_factory()
+    store.load()  # fail early on a broken inventory
     built = builder(app.repo_factory(), recipes=recipes, backend=args.backend, note=app.note)
     with store.edit() as ed:
         ed.add_image(built.id, built.entry)
     app.say(f"Built image {built.id}: {built.path} (sha256 {built.entry['sha256'][:16]}...).")
     app.say(f"Next: ship-fleet image publish {built.id}, then ship-fleet image use {built.id}")
+    return 0
+
+
+def _image_import(args, app) -> int:
+    """An image built elsewhere (image build --out), checked, then recorded here as if
+    built here: its manifest against the schema, the file against the manifest's
+    sha256, its tooling commit against this checkout's."""
+    import json
+    import shutil
+
+    from fleetledger import schemas
+
+    src = paths.expand(args.image)
+    side = src.with_suffix(".json")
+    try:
+        doc = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FleetError(f"Cannot read {side}, the image's manifest (it comes beside the "
+                         "image).") from exc
+    repo = app.repo_factory()
+    schemas.check("image-manifest", doc, "the image manifest", repo.contracts)
+    if not src.is_file() or images.sha256_file(src) != doc.get("sha256"):
+        raise FleetError(f"{src} does not match its manifest's sha256; not importing it.")
+    here = repo.git_state("ship", "versions.toml", "contracts", "fleetledger").commit
+    if doc["commit"] != here:
+        app.note(f"Note: it was built from commit {doc['commit'][:12]}, and this checkout is at "
+                 f"{here[:12]}: new Ships from it get that commit's tooling until updated.")
+    store = app.store_factory()
+    if doc["id"] in store.load().images:
+        raise FleetError(f"Image {doc['id']} is recorded here already.")
+    folder = paths.private_dir(images.images_dir())
+    out = folder / f"{doc['id']}.qcow2"
+    if out.exists():
+        raise FleetError(f"{out} already exists.")
+    shutil.copyfile(src, out)
+    os.chmod(out, 0o600)
+    if images.sha256_file(out) != doc["sha256"]:
+        out.unlink(missing_ok=True)
+        raise FleetError("The copy does not match its sha256; nothing was recorded.")
+    paths.write_private(out.with_suffix(".json"), (json.dumps(doc, indent=2) + "\n").encode())
+    entry = {"created": doc["created"], "sha256": doc["sha256"], "file": paths.tilde(out),
+             "ubuntu": {"release": doc["ubuntu"]["release"], "build": doc["ubuntu"]["build"]},
+             "tooling": doc["tooling"], "commit": doc["commit"], "dirty": doc["dirty"],
+             "recipes": doc["recipes"]}
+    with store.edit() as ed:
+        ed.add_image(doc["id"], entry)
+    app.say(f"Imported image {doc['id']}. Next: ship-fleet image publish {doc['id']}, then "
+            f"ship-fleet image use {doc['id']}")
     return 0
 
 

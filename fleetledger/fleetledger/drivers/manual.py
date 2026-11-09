@@ -34,12 +34,17 @@ class ManualDriver(Driver):
     id = "manual"
 
     def __init__(
-        self, proxmox: Mapping[str, Any] | None = None, *, ubuntu_release: str = "26.04"
+        self, proxmox: Mapping[str, Any] | None = None, *, ubuntu_release: str = "26.04",
+        protected: int | None = None,
     ) -> None:
         self.px = proxmox
         self.release = ubuntu_release
+        self.protected = protected  # FleetLedger's own VM id ([fleet] self): no step for it
 
     def _vmid(self, ship: Ship) -> str:
+        from fleetledger.appliance import refuse_self
+
+        refuse_self(ship.driver_ref.get("vmid"), self.protected)
         return str(ship.driver_ref.get("vmid", "<vmid>"))
 
     def _volume(self, instance_id: str) -> str:

@@ -56,6 +56,7 @@ FROZEN_PREFIXES = ("docs/archive/",)
 ALLOWED_HOME_USERS = {
     "agent",
     "fleet",
+    "fleetledger",  # FleetLedger's own VM's user (ship-fleet appliance seed)
     "ubuntu",
     "user",
     "username",

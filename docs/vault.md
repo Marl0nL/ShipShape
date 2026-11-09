@@ -72,9 +72,11 @@ are. FleetLedger adds no cipher, mode or padding of its own. Why these:
   **Unlock** button. Every change is refused except unlocking (and signing in, pairing
   and revoking devices). The poller stops polling Ships, since it cannot log in to
   them.
-- On the command line, every command but `unlock`, `vault`, `doctor`, `ui` and
-  `service` refuses and says to unlock. `--offline` reads (`ship-fleet ls --offline`)
-  still work.
+- On the command line, every command but `unlock`, `vault`, `doctor`, `ui`,
+  `service` and `self-update` refuses and says to unlock. `--offline` reads
+  (`ship-fleet ls --offline`) still work, and so does `ship-fleet migrate retire`: a
+  copy that comes back after the fleet was restored elsewhere must step aside
+  without being unlocked.
 - **Your Ships keep running.** They do not depend on FleetLedger. Agents resume,
   Remote Control works, and your laptop's own certificate still attaches until it
   lapses (7 days by default).
@@ -163,7 +165,11 @@ In order:
    a `ship-fleet migrate`). There, `ship-fleet migrate unretire`, then move the fleet
    back to the VM with `ship-fleet migrate push`. The VM gets a new vault with a new
    passphrase.
-3. **None of these.** The secrets are gone. Your Ships keep running, but nothing can
+3. **An encrypted backup** (`ship-fleet backup`, [runbooks/fleetledger-vm.md](runbooks/fleetledger-vm.md#backups)).
+   It is sealed under the same vault, so it opens with the passphrase or the recovery
+   code it had when it was made: `ship-fleet migrate import FILE`. That only helps if
+   you still have one of those.
+4. **None of these.** The secrets are gone. Your Ships keep running, but nothing can
    log in to them as FleetLedger. Rebuilding control means:
    - putting a new admin key on every Ship by hand, from its console;
    - a new CA: `ship-fleet ca sign` on every Ship, and trusting every machine again;

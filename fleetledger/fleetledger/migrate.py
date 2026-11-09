@@ -391,7 +391,10 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
         top = rel.split("/", 1)[0]
         if f.resolve() in moving:
             continue
-        if top == "seeds":
+        if top == "seeds" and f.name.startswith("appliance-"):
+            plan.block(paths.tilde(f), "FleetLedger's own VM's seed holds that VM's private "
+                       "host key: delete it once the VM has booted (and from Proxmox's storage)")
+        elif top == "seeds":
             plan.block(paths.tilde(f), "a seed holds a Ship's private host key: finish enrolling "
                        "that Ship, or remove the seed of one that is gone")
         elif paths.tilde(f) in listed:
@@ -704,14 +707,20 @@ def push(app, host: str, *, store_kind: str | None = None, with_images: bool = F
     this copy retires first, then host activates with the next epoch (so a hand-over
     cut short leaves no copy active, never two). Returns 0 once host is the active
     FleetLedger (or, without the cut-over, on standby and checked)."""
+    from fleetledger import appliance
+
     receive_argv = ["migrate", "receive", "--pushed"] + (["--store", store_kind]
                                                          if store_kind else [])
-    argv = ssh_argv(host, remote_command(ship_fleet, receive_argv), options)
+    ssh_argv(host, "", options)  # refuses a host that is not one, before anything else
     store = app.store_factory()
     if not store.exists():
         raise ConfigError(f"No inventory at {store.path}: there is no FleetLedger here to move.")
     with inuse.exclusive(store), store.held() as text:
         inv = store.load()
+        # FleetLedger's own VM ([fleet] self): its host key pinned when its seed was made,
+        # checked here before anything else may set where ssh looks for it.
+        options = [*appliance.push_options(inv, host), *options]
+        argv = ssh_argv(host, remote_command(ship_fleet, receive_argv), options)
         plan = build_plan(app, text, inv, with_images=with_images)
         print_plan(app.say, plan)
         if plan.blockers:
@@ -1513,7 +1522,7 @@ def report(app, checks: list[Check]) -> bool:
 
 
 ACTIONS = ("check", "push", "send", "receive", "verify", "activate", "retire", "unretire",
-           "wipe")
+           "wipe", "import")
 
 
 def add_parsers(sub, add) -> None:
@@ -1538,7 +1547,10 @@ def add_parsers(sub, add) -> None:
             "  ship-fleet migrate wipe                  after two weeks: delete a retired copy\n\n"
             "See docs/runbooks/move-fleetledger.md.")
     p.add_argument("action", choices=ACTIONS)
-    p.add_argument("host", nargs="?", metavar="[USER@]HOST", help="push: the new computer")
+    p.add_argument("host", nargs="?", metavar="[USER@]HOST|FILE",
+                   help="push: the new computer; import: the backup file (ship-fleet backup)")
+    p.add_argument("--recovery", action="store_true",
+                   help="import: open the backup with the vault's recovery code")
     p.add_argument("--store", choices=STORES,
                    help="push/receive: where the new computer keeps the secrets (default: its "
                    "keyring when one is unlocked there, else 0600 files)")
@@ -1562,6 +1574,8 @@ def add_parsers(sub, add) -> None:
 
 def cmd_migrate(args, app) -> int:
     action = args.action
+    if action == "import":
+        return import_backup(app, args.host, store_kind=args.store, recovery=args.recovery)
     if action != "push" and args.host:
         raise FleetError(f"migrate {action} takes no host.")
     if action == "check":
@@ -1602,6 +1616,36 @@ def cmd_migrate(args, app) -> int:
         return 0 if report(app, verify(app)) else 1
     return {"activate": _activate, "retire": _retire, "unretire": _unretire,
             "wipe": _wipe}[action](args, app)
+
+
+def import_backup(app, file: str | None, *, store_kind: str | None = None,
+                  recovery: bool = False) -> int:
+    """Restore a backup (ship-fleet backup): open it with the vault's passphrase or
+    recovery code as they were when it was made, then take the fleet in as receive
+    does (on standby, every Ship checked; migrate activate makes it the active copy)."""
+    import getpass
+
+    from fleetledger import backup
+
+    if not file:
+        raise FleetError("migrate import needs the backup file: ship-fleet migrate import FILE.")
+    path = paths.expand(file)
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise FleetError(f"Cannot read {path}: {exc.strerror}.") from None
+    ask = getattr(app, "ask_secret", None)
+    if ask is None:
+        if not app.stdin_isatty():
+            raise FleetError("migrate import asks for the vault's passphrase: run it in a "
+                             "terminal.")
+        ask = lambda prompt: getpass.getpass(prompt, stream=sys.stderr)  # noqa: E731
+    secret = ask("The backup's recovery code: " if recovery
+                 else "The vault passphrase the backup was made with (not shown): ")
+    stream, header = backup.open_backup(data, secret, recovery=recovery)
+    app.say(f"Opened the backup of {header.get('fleet', 'a fleet')} made {header.get('made')} "
+            f"(epoch {header.get('epoch')}, commit {str(header.get('commit'))[:12]}).")
+    return receive(app, io.BytesIO(stream), store_kind=store_kind)
 
 
 # --- handing over: activate, retire, unretire, wipe -------------------------------------------

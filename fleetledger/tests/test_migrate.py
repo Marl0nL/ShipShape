@@ -1286,3 +1286,102 @@ def test_a_copy_with_its_vault_on_moves_and_its_wipe_empties_the_vault(computers
     assert "the vault (every secret in it)" in out
     assert not vaults.vault_path().exists() and not vaults.key_path().exists()
     assert vaults.state() == "off"
+
+
+# --- backups (backup.py) and restoring one (migrate import) ---------------------------------
+
+
+def test_a_backup_is_sealed_under_the_vault_and_restores_on_another_computer(
+        computers, monkeypatch, vaults, tmp_path):
+    from fleetledger import backup
+
+    a, b, world = computers
+    _with_hypervisor_secrets(a, monkeypatch)
+    code = vaults.create("correct horse battery staple")
+    from fleetledger import vaultcmd
+
+    vaultcmd.move_in(a.app, a.store)
+    secrets_ = list(vaults.backend()._items()["fleetledger"].values())
+    folder = tmp_path / "backups"
+    code_, out, err = a.run("backup", "now", "--to", str(folder), "--keep", "2")
+    assert code_ == 0, out + err
+    [made] = list(folder.iterdir())
+    assert stat.S_IMODE(made.stat().st_mode) == 0o600
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+    data = made.read_bytes()
+    assert secrets_ and not any(s.encode() in data for s in secrets_)  # sealed
+    header = json.loads(data.split(b"\n", 1)[0])
+    assert header["schema"] == backup.SCHEMA and header["epoch"] == 0
+    assert "ships.toml" not in data.decode("ascii", "replace")  # nothing readable inside
+
+    # On another computer: the wrong passphrase opens nothing and writes nothing.
+    b.use(monkeypatch)
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    b.app.ask_secret = lambda prompt: "not the passphrase at all"
+    code_, out, err = b.run("migrate", "import", str(made))
+    assert code_ == 1 and "does not open this backup" in err
+    assert not b.store.path.exists()
+    # The recovery code opens it; the fleet comes on standby, every Ship checked.
+    b.app.ask_secret = lambda prompt: code
+    code_, out, err = b.run("migrate", "import", str(made), "--recovery", "--store", "file")
+    assert code_ == migrate.VERIFIED, out + err
+    assert "Opened the backup of" in out
+    assert invariant(tomllib.loads(b.store.path.read_text())) == \
+        invariant(tomllib.loads(a.store.path.read_text()))
+    assert "on standby" in b.run("ls")[2]
+
+    # Older ones go; never an unencrypted backup (the vault off, or locked).
+    a.use(monkeypatch)
+    for _ in range(2):
+        assert a.run("backup", "now", "--to", str(folder), "--keep", "2")[0] == 0
+    kept = sorted(f.name for f in folder.iterdir())
+    assert len(kept) == 2 and made.name not in kept  # the oldest went
+    vaults.lock()
+    code_, out, err = a.run("backup", "now", "--to", str(folder))
+    assert code_ == 1 and "vault is locked" in err
+
+
+def test_no_backup_without_the_vault(computers, monkeypatch, tmp_path):
+    a, b, world = computers
+    code, out, err = a.run("backup", "now", "--to", str(tmp_path / "backups"))
+    assert code == 1 and "there is never an unencrypted backup" in err
+    assert not (tmp_path / "backups").exists()
+
+
+def test_a_backup_runs_beside_the_running_service(computers, monkeypatch, vaults, tmp_path):
+    """It takes the inventory's lock while it reads, not the whole FleetLedger: the
+    service (holding the shared lock) keeps running."""
+    from fleetledger import inuse
+
+    a, b, world = computers
+    vaults.create("correct horse battery staple")
+    from fleetledger import vaultcmd
+
+    vaultcmd.move_in(a.app, a.store)
+    with inuse.using(a.store):  # what a running ship-fleet ui holds
+        code, out, err = a.run("backup", "now", "--to", str(tmp_path / "b"))
+    assert code == 0, out + err
+
+
+def test_a_scheduled_backup_is_a_daily_user_timer(computers, monkeypatch, vaults, tmp_path):
+    from test_service import FakeSystem
+
+    a, b, world = computers
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    vaults.create("correct horse battery staple")
+    ship_fleet = tmp_path / "bin" / "ship-fleet"
+    ship_fleet.parent.mkdir()
+    ship_fleet.write_text("#!/bin/sh\n")
+    ship_fleet.chmod(0o755)
+    system = FakeSystem()
+    a.app.system = system
+    code, out, err = a.run("backup", "schedule", "--to", str(tmp_path / "nas"), "--at", "04:15",
+                           "--keep", "7", "--ship-fleet", str(ship_fleet))
+    assert code == 0, out + err
+    units = tmp_path / "xdg" / "systemd" / "user"
+    service_text = (units / "fleetledger-backup.service").read_text()
+    assert f"ExecStart={ship_fleet} backup now --to {tmp_path / 'nas'} --keep 7" in service_text
+    assert "OnCalendar=*-*-* 04:15:00" in (units / "fleetledger-backup.timer").read_text()
+    assert ["enable", "--now", "fleetledger-backup.timer"] in system.verbs()
+    code, out, err = a.run("backup", "unschedule")
+    assert code == 0 and not (units / "fleetledger-backup.timer").exists()

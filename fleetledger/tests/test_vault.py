@@ -399,13 +399,21 @@ def test_locked_every_command_that_acts_refuses_before_it_starts(store, home):
         assert "ship-fleet unlock" in out.getvalue()
     app, out = app_for(store)
     assert cli.main(["ls", "--offline"], app) == 0  # the caches, read-only
+    # A copy that came back after a restore elsewhere steps aside without an unlock.
+    app, out = app_for(store)
+    assert cli.main(["migrate", "retire", "--to", "elsewhere", "--yes"], app) == 0, \
+        out.getvalue()
+    from fleetledger import handover
+
+    assert handover.marker(store).role == "retired"
+    handover.clear(store, "retired")
     for argv in (["vault", "status"], ["doctor", "--offline"]):
         app, out = app_for(store)
         cli.main(argv, app)
         assert "locked" in out.getvalue()
     allowed = {c for c in cli.COMMANDS if c in cli.LOCKED_ALLOWED}
     assert allowed == {"unlock", "vault", "doctor", "ui"} | (
-        {"service"} if "service" in cli.COMMANDS else set())
+        {"service", "self-update"} & set(cli.COMMANDS))
 
 
 def test_nothing_changes_for_an_owner_who_never_turns_it_on(store, home, ring):
