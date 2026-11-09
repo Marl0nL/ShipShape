@@ -89,6 +89,7 @@ SEVERITY = {
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
     "agent-repo-waiting": "medium",  # its agent starts once GitHub is signed in
     "agent-repo-failed": "medium",
+    "agent-relaunch-failed": "medium",  # a recorded agent died and did not start again
     "behind-tooling": "low",
     "not-enrolled": "low",  # in the inventory, never enrolled: being made or made by hand
     "tool-waiting": "low",
@@ -270,8 +271,21 @@ def _require_status(view: status_mod.ShipView) -> dict[str, Any]:
 
 
 def agent_modes(doc: dict[str, Any]) -> dict[str, str | None]:
-    """Named agents and their permission modes, from a status document."""
+    """Named agents running now and their permission modes, from a status document."""
     return {a["name"]: a["mode"] for a in doc["herdr"]["agents"] if a.get("name")}
+
+
+def expected_modes(doc: dict[str, Any]) -> dict[str, str | None]:
+    """The agents a reboot must bring back, each in its mode: every agent the Ship's
+    agent record keeps running (one that crashed and is about to start again too), and
+    every named agent running now. A running agent's mode is the one it runs in now (the
+    Ship resumes it in that one); else the record's. Tooling without a record: the
+    agents running now."""
+    expected = {a["name"]: a["mode"] for a in (doc.get("agent_record") or {}).get("agents", [])
+                if a["state"] in ("running", "starting")}
+    for name, mode in agent_modes(doc).items():
+        expected[name] = mode if mode is not None else expected.get(name)
+    return expected
 
 
 def has_attention(doc: dict[str, Any], code: str) -> bool:
@@ -350,7 +364,7 @@ def reboot_one(
         view = _fetch(fleet, inventory, ship)
         before = _require_status(view)
         host = view.host
-    expected = agent_modes(before)
+    expected = expected_modes(before)
     on_event(ship.name, "rebooting, overriding any shutdown lock" if force else "rebooting")
     started = fleet.clock()
     try:
@@ -402,7 +416,10 @@ def _wait_back(fleet, inventory, ship, started, times, on_event) -> dict[str, An
 
 
 def _resumed_this_boot(doc: dict[str, Any]) -> bool:
-    last = doc["herdr"]["last_resume"]
+    """The Ship has started its agents again since this boot: its agent record's
+    resume, else (tooling without one) herdr's."""
+    last = ((doc.get("agent_record") or {}).get("resume")
+            or doc["herdr"]["last_resume"])
     if not last:
         return False
     boot = _parse_ts(doc["generated_at"]) - doc["host"]["uptime_s"]

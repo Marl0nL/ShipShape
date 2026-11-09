@@ -357,6 +357,25 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         agents[0]["state"] = "working"
         agents.append({"name": "tests", "kind": "claude", "state": "working", "mode": "auto",
                        "pane": "w3:p1", "workspace": "w3"})
+        # Its agent record: the two running, and one that died and did not start again.
+        boot = _stamp(datetime.fromtimestamp(now - host["uptime_s"] + 40, UTC))
+        doc["agent_record"] = {"runtime": "herdr", "resume": {
+            "at": boot, "method": "ship-ctl", "resumed": 3, "failed": 0}, "agents": [
+            {"name": n, "cwd": f"/home/agent/work/{n}", "mode": m, "autostart": n == "main",
+             "state": st, "relaunch_failures": tries, "created_at": boot, "updated_at": boot,
+             **({"last_error": "claude exited: No conversation found"} if tries else {})}
+            for n, m, st, tries in (("builder", "bypassPermissions", "running", 0),
+                                    ("docs", "acceptEdits", "failed", 3),
+                                    ("main", "auto", "running", 0),
+                                    ("tests", "auto", "running", 0))]}
+        doc["agent_record"]["resume"]["resumed"] = 4
+        doc["herdr"]["last_resume"] = {"at": boot, "method": "api-fallback", "resumed": 4,
+                                       "failed": 0}
+        doc["attention"].append({"code": "agent-relaunch-failed", "subject": "docs",
+                                 "message": "Agent 'docs' stopped and did not start again "
+                                 "after 3 tries: claude exited: No conversation found. "
+                                 "Restart it (ship-ctl agent restart docs, --fresh for a new "
+                                 "conversation) or forget it (ship-ctl agent forget docs)."})
     if name == "ship-03":
         doc["claude"]["remote_control"] = "off"
         doc["auth"]["claude"].update(state="expired", account="you@example.com")

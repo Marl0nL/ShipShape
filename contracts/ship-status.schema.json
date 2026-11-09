@@ -53,7 +53,7 @@
           "code": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, provision-failed, tool-waiting, tool-failed, agent-repo-waiting, agent-repo-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down. FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, provision-failed, tool-waiting, tool-failed, agent-repo-waiting, agent-repo-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down, agent-relaunch-failed. FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
           },
           "message": { "type": "string", "maxLength": 500 },
           "subject": {
@@ -113,12 +113,12 @@
             "additionalProperties": false,
             "required": ["name", "kind", "state", "mode"],
             "properties": {
-              "name": { "type": ["string", "null"], "description": "herdr agent name, if it has one." },
+              "name": { "type": ["string", "null"], "description": "herdr agent name, if it has one (ShipShape names every agent it records)." },
               "kind": { "type": "string", "description": "herdr agent kind, e.g. claude." },
               "state": { "enum": ["idle", "working", "blocked", "done", "unknown"] },
               "mode": {
                 "oneOf": [{ "$ref": "#/$defs/permissionMode" }, { "type": "null" }],
-                "description": "Claude permission mode from the mode ledger; null if unknown or not Claude."
+                "description": "Claude permission mode from the mode ledger, else the agent record's; null if unknown or not Claude."
               },
               "pane": { "type": "string", "description": "herdr pane id, e.g. w1:p2." },
               "workspace": { "type": "string" },
@@ -135,7 +135,10 @@
               "required": ["at", "method", "resumed"],
               "properties": {
                 "at": { "$ref": "#/$defs/timestamp" },
-                "method": { "enum": ["hidden-client", "api-fallback"] },
+                "method": {
+                  "enum": ["hidden-client", "api-fallback"],
+                  "description": "api-fallback: ship-ctl started the recorded agents again through herdr's API (agent_record.resume says the same, as ship-ctl). hidden-client: ship-resume let herdr resume them (tooling before the agent record)."
+                },
                 "resumed": { "type": "integer", "minimum": 0 },
                 "failed": { "type": "integer", "minimum": 0 }
               }
@@ -382,6 +385,57 @@
               "repo": { "type": "string" }
             }
           }
+        }
+      }
+    },
+    "agent_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The agent record: the Claude agents ShipShape keeps running, resumes after a boot and starts again after a crash (contracts/agent-record.schema.json, ship-ctl.md \"The agent record\"). Session ids are not reported. Optional: Ships with older tooling leave it out.",
+      "required": ["runtime", "agents", "resume"],
+      "properties": {
+        "runtime": { "type": "string", "description": "What runs the agents, e.g. herdr." },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "cwd", "mode", "autostart", "state", "relaunch_failures", "created_at", "updated_at"],
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+              "cwd": { "type": "string" },
+              "mode": {
+                "oneOf": [{ "$ref": "#/$defs/permissionMode" }, { "type": "null" }],
+                "description": "The mode it runs in and is resumed in; null if not known."
+              },
+              "autostart": { "type": "boolean", "description": "It is an [[autostart]] agent." },
+              "state": {
+                "enum": ["running", "starting", "failed", "stopped", "unknown"],
+                "description": "running: live now. starting: it should run and is not live; the next status refresh starts it (after a boot, every agent until it is resumed). failed: it did not start again after 3 tries this boot (attention agent-relaunch-failed). stopped: exited on purpose; an [[autostart]] agent starts afresh at the next boot. unknown: the runtime is not answering."
+              },
+              "relaunch_failures": { "type": "integer", "minimum": 0, "description": "Failed starts this boot." },
+              "last_error": { "type": "string", "maxLength": 200 },
+              "created_at": { "$ref": "#/$defs/timestamp" },
+              "updated_at": { "$ref": "#/$defs/timestamp" }
+            }
+          }
+        },
+        "resume": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["at", "method", "resumed", "failed"],
+              "description": "The last boot's resume: when ship-ctl had started every recorded agent once.",
+              "properties": {
+                "at": { "$ref": "#/$defs/timestamp" },
+                "method": { "const": "ship-ctl" },
+                "resumed": { "type": "integer", "minimum": 0 },
+                "failed": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
         }
       }
     },

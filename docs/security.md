@@ -138,7 +138,8 @@ your other machines without forwarding router ports
   the Ship reports the difference until you sign in again, which is where GitHub
   shows the scopes you approve ([sign-in.md](runbooks/sign-in.md#extra-github-scopes)).
 - **Root-owned, out of agents' reach:** Claude Code's managed settings (Remote
-  Control, the bypass policy), herdr's binary, `ship.toml`, the resume shim,
+  Control, the bypass policy), herdr's binary, `ship.toml`, the agent record
+  (which agents resume after a boot, and in which mode),
   and the network visibility collector and its records ([network.md](network.md)).
   The collector runs with `ProtectHome=yes` and never touches a home folder.
 - **Bypass is opt-in per Ship.** Without `allow_bypass`, managed settings disable

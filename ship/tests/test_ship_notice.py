@@ -83,7 +83,7 @@ def test_an_agent_at_a_permission_prompt_is_not_typed_into(ship):
 
 
 def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
-    """`unknown`, as while ship-resume brings the panes back after a boot."""
+    """`unknown`, as just after an agent was started again."""
     start_core_agents(ship)
     s = ship.scenario()
     for a in s["herdr"]["agents"]:
@@ -97,11 +97,12 @@ def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
 
 
 def test_nothing_is_sent_while_this_boots_resume_is_pending(ship):
-    """Just after a boot, before ship-resume has written this boot's record."""
+    """Just after a boot, before the status refresh has resumed the recorded agents."""
     start_core_agents(ship)
-    record = ship.p("/home/agent/.local/state/shipshape/last-resume.json")
-    old = json.loads(record.read_text())
-    record.write_text(json.dumps({**old, "boot_id": "0b6f7e0e-0000-4000-8000-0000000000ff"}))
+    record = ship.p("/var/lib/shipshape/agents.json")
+    doc = json.loads(record.read_text())
+    doc["resume"]["boot_id"] = "0b6f7e0e-0000-4000-8000-0000000000ff"
+    record.write_text(json.dumps(doc))
     ship.p("/proc/uptime").write_text("40.0 10.0\n")
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert rc == 0
@@ -134,8 +135,9 @@ def test_a_working_agent_still_gets_it(ship):
     assert doc["data"]["sent"] == ["main", "grinder"]
 
 
-def test_a_core_agent_renamed_by_herdr_after_a_reboot_is_still_found(ship):
-    """herdr can resume a pane without its name: matched by the session autostart recorded."""
+def test_a_core_agent_that_lost_its_name_is_still_found(ship):
+    """An agent without its herdr name (started again by hand in its pane) is matched
+    by the session the agent record keeps for it."""
     start_core_agents(ship, extra=("worker-1",))
     s = ship.scenario()
     for a in s["herdr"]["agents"]:

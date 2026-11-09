@@ -1,0 +1,662 @@
+"""The agent record: ShipShape's own list of the Claude agents it keeps running.
+
+`/var/lib/shipshape/agents.json` (root, 0644; contracts/agent-record.schema.json):
+one entry per agent, keyed by its name, with its folder, Claude session id,
+permission mode, the first prompt autostart gave it, where it last ran and
+whether it should be running. The runtime (runtime.py) is told what to do from
+this record. Nothing depends on the runtime saving or resuming agents itself.
+
+It is kept in step at every status refresh (`upkeep`), and whenever ship-ctl
+starts, restarts or changes an agent:
+
+- **sync**: every live Claude agent that reports a session is in the record. One
+  started by hand is picked up ("adopted"), named after its folder if it has no
+  name. A recorded agent whose session changed (`/clear`, a restart by hand in
+  its pane) is followed, and its mode follows the mode ledger.
+- **reconcile**: an agent that should run but is not live is started again,
+  with `claude --resume <session>` in its folder and mode. After a boot, that is
+  how agents resume. Within one boot, that is the crash policy. An agent counts as
+  stopped on purpose, and is not started again (an adopted one leaves the record),
+  when Claude reported it exited (SessionEnd `prompt_input_exit` or `logout`, kept
+  by the mode ledger) or its place is gone (its pane was closed). After
+  MAX_TRIES failed starts in one boot it is left alone (`failed`, the attention
+  item agent-relaunch-failed) until it is restarted or forgotten, or the next boot.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+import re
+import socket
+import threading
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from . import PERMISSION_MODES
+from .context import Context, utc_now
+from .fsutil import ensure_dir, read_json, write_atomic
+from .runtime import Herdr, for_ship, mode_args
+from .shiptoml import ShipToml
+from .status import boot_id, read_ledger
+
+SCHEMA = "shipshape.agent-record/1"
+FILE = "agents.json"
+LOCK = "agents.lock"
+OLD_AUTOSTART = "autostart.json"  # autostart's record before this one (imported once)
+NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")  # herdr's rule for agent names
+MAX_TRIES = 3  # failed starts in one boot before an agent is left alone
+DELIBERATE_ENDS = ("prompt_input_exit", "logout")  # Claude's SessionEnd reasons
+RESUME_GRACE_S = 600  # after this much uptime, nothing waits for this boot's resume
+DNS_PROBE = "api.anthropic.com"  # resumed sessions reconnect Remote Control at once
+LOG_TAG = "agent record"  # starts every line upkeep logs
+
+
+# --- the file -------------------------------------------------------------------
+def _ts(value: object) -> str | None:
+    return value if isinstance(value, str) and len(value) == 20 and value.endswith("Z") else None
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _clean(e: dict) -> dict:
+    """An entry with every field the right shape (a hand-edited file is tolerated)."""
+    place = e.get("place") if isinstance(e.get("place"), dict) else None
+    if place and not _text(place.get("id")):
+        place = None
+    relaunch = e.get("relaunch") if isinstance(e.get("relaunch"), dict) else {}
+    failures = relaunch.get("failures")
+    return {
+        "cwd": e["cwd"],
+        "session": _text(e.get("session")),
+        "mode": e.get("mode") if e.get("mode") in PERMISSION_MODES else None,
+        "prompt": _text(e.get("prompt")),
+        "session_name": _text(e.get("session_name")),
+        "origin": e.get("origin") if e.get("origin") in ("autostart", "adopted") else "adopted",
+        "want": "stopped" if e.get("want") == "stopped" else "running",
+        "place": None if place is None else {
+            "runtime": _text(place.get("runtime")) or Herdr.kind, "id": place["id"],
+            "workspace": _text(place.get("workspace")), "boot_id": _text(place.get("boot_id"))},
+        "relaunch": {
+            "boot_id": _text(relaunch.get("boot_id")),
+            "failures": failures if isinstance(failures, int) and failures >= 0 else 0,
+            "last_error": _text(relaunch.get("last_error")),
+            "last_at": _ts(relaunch.get("last_at")),
+        },
+        "launched_at": _ts(e.get("launched_at")),
+        "stopped_at": _ts(e.get("stopped_at")),
+        "created_at": _ts(e.get("created_at")) or utc_now(),
+        "updated_at": _ts(e.get("updated_at")) or utc_now(),
+    }
+
+
+def load(ctx: Context) -> dict:
+    raw = read_json(ctx.paths.state / FILE, None)
+    doc: dict = {"schema": SCHEMA, "runtime": Herdr.kind, "agents": {}, "resume": None}
+    if not isinstance(raw, dict) or raw.get("schema") != SCHEMA:
+        if raw is not None:
+            ctx.log(f"{FILE}: not an agent record; starting a new one")
+        return doc
+    doc["runtime"] = _text(raw.get("runtime")) or Herdr.kind
+    agents = raw.get("agents") if isinstance(raw.get("agents"), dict) else {}
+    for name, e in agents.items():
+        if NAME.match(str(name)) and isinstance(e, dict) and _text(e.get("cwd")):
+            doc["agents"][name] = _clean(e)
+    resume = raw.get("resume")
+    if isinstance(resume, dict) and _text(resume.get("boot_id")) and _ts(resume.get("at")):
+        doc["resume"] = {"boot_id": resume["boot_id"], "at": resume["at"],
+                         "resumed": int(resume.get("resumed") or 0),
+                         "failed": int(resume.get("failed") or 0)}
+    return doc
+
+
+def save(ctx: Context, doc: dict) -> bool:
+    text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
+    return write_atomic(ctx.paths.state / FILE, text, 0o644)
+
+
+_held = 0  # this process holds the lock (ship-ctl runs one command at a time)
+
+
+@contextlib.contextmanager
+def locked(ctx: Context, wait: bool = True) -> Iterator[bool]:
+    """Hold the record's lock: one ship-ctl at a time starts, stops or records
+    agents. Yields False (without the lock) when wait is False and it is taken."""
+    global _held
+    if _held:
+        _held += 1
+        try:
+            yield True
+        finally:
+            _held -= 1
+        return
+    ensure_dir(ctx.paths.state, 0o755)
+    with open(ctx.paths.state / LOCK, "a") as fh:
+        os.chmod(fh.name, 0o600)
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            got = False
+        else:
+            got = True
+        if not got:
+            yield False
+            return
+        _held = 1
+        try:
+            yield True
+        finally:
+            _held = 0
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+# --- the host ---------------------------------------------------------------------
+def uptime(ctx: Context) -> float | None:
+    try:
+        return float((ctx.paths.proc / "uptime").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def boot_started(ctx: Context) -> str:
+    """When this boot began, as a timestamp ("" if unknown: everything is after)."""
+    up = uptime(ctx)
+    if up is None:
+        return ""
+    return (datetime.now(UTC) - timedelta(seconds=up)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def dns_ready(ctx: Context) -> bool:
+    if ctx.paths.sandbox:
+        return True
+    answer: list[bool] = []
+
+    def resolve() -> None:
+        try:
+            socket.getaddrinfo(DNS_PROBE, 443)
+            answer.append(True)
+        except OSError:
+            answer.append(False)
+
+    t = threading.Thread(target=resolve, daemon=True)
+    t.start()
+    t.join(3)
+    return bool(answer and answer[0])
+
+
+def resume_pending(ctx: Context, doc: dict | None = None) -> bool:
+    """This boot's agents are not resumed yet (and the boot is young enough that
+    something should wait for it)."""
+    doc = load(ctx) if doc is None else doc
+    if (doc.get("resume") or {}).get("boot_id") == boot_id(ctx):
+        return False
+    up = uptime(ctx)
+    return up is not None and up < RESUME_GRACE_S
+
+
+# --- the mode ledger's word on how sessions started and ended ---------------------------
+def ledger_sessions(ctx: Context) -> dict[str, dict]:
+    """{session: {"ended": {"reason", "at"} or None, "watched": bool}}. watched: the
+    hook saw the session start, so it runs under the SessionEnd hook too (Claude
+    Code reads hooks when a session starts) and an exit of it is recorded."""
+    doc = ctx.read_home_json(ctx.paths.mode_ledger, {})
+    sessions = doc.get("sessions", {}) if isinstance(doc, dict) else {}
+    out = {}
+    for sid, entry in sessions.items() if isinstance(sessions, dict) else ():
+        if not isinstance(entry, dict):
+            continue
+        ended = entry.get("ended")
+        if not (isinstance(ended, dict) and _text(ended.get("reason")) and _ts(ended.get("at"))):
+            ended = None
+        out[sid] = {"ended": None if ended is None else {"reason": ended["reason"],
+                                                         "at": ended["at"]},
+                    "watched": _ts(entry.get("started_at")) is not None}
+    return out
+
+
+# --- matching the record to what runs -------------------------------------------------
+def match(doc: dict, live: list[dict]) -> dict[str, dict]:
+    """{record name: the live agent that is it}. A live Claude agent is a recorded
+    one if it has its name; else, having no name, if it runs its session or sits
+    in its place."""
+    claude = [a for a in live if a["kind"] == "claude"]
+    out: dict[str, dict] = {}
+    taken: set[int] = set()
+
+    def claim(name: str, test) -> None:
+        a = next((a for a in claude if id(a) not in taken and test(a)), None)
+        if a is not None:
+            out[name] = a
+            taken.add(id(a))
+
+    agents = doc["agents"]
+    for name in agents:
+        claim(name, lambda a, n=name: a["name"] == n)
+    for name, e in agents.items():
+        if name not in out and e["session"]:
+            claim(name, lambda a, s=e["session"]: a["name"] is None and a["session"] == s)
+    for name, e in agents.items():
+        if name not in out and e["place"]:
+            claim(name, lambda a, p=e["place"]["id"]: a["name"] is None and a["place"] == p)
+    return out
+
+
+def find_live(ctx: Context, name: str, live: list[dict], doc: dict | None = None) -> dict | None:
+    """The live agent that is record entry `name`, else the live Claude agent by
+    that name, or None."""
+    doc = load(ctx) if doc is None else doc
+    found = match(doc, live).get(name)
+    if found is None and name not in doc["agents"]:
+        found = next((a for a in live if a["kind"] == "claude" and a["name"] == name), None)
+    return found
+
+
+def tries_this_boot(ctx: Context, e: dict) -> int:
+    """Failed starts of entry e in this boot."""
+    return e["relaunch"]["failures"] if e["relaunch"]["boot_id"] == boot_id(ctx) else 0
+
+
+def _place(rt: Herdr, ctx: Context, place: str, workspace: str | None) -> dict:
+    return {"runtime": rt.kind, "id": place, "workspace": workspace, "boot_id": boot_id(ctx)}
+
+
+def _new_name(cwd: str, taken: set[str]) -> str:
+    base = re.sub(r"[^a-z0-9_-]+", "-", os.path.basename(cwd.rstrip("/")).lower()).strip("-_")
+    if not base or not base[0].isalpha():
+        base = f"agent-{base}" if base else "agent"
+    base = base[:28].rstrip("-_")
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def _set(e: dict, **fields) -> bool:
+    changed = False
+    for key, value in fields.items():
+        if e.get(key) != value:
+            e[key] = value
+            changed = True
+    if changed:
+        e["updated_at"] = utc_now()
+    return changed
+
+
+def new_entry(cwd: str, *, origin: str, session: str | None = None, mode: str | None = None,
+              prompt: str | None = None, session_name: str | None = None,
+              place: dict | None = None) -> dict:
+    now = utc_now()
+    return {"cwd": cwd, "session": session, "mode": mode, "prompt": prompt,
+            "session_name": session_name, "origin": origin, "want": "running",
+            "place": place, "relaunch": {"boot_id": None, "failures": 0, "last_error": None,
+                                         "last_at": None},
+            "launched_at": now, "stopped_at": None, "created_at": now, "updated_at": now}
+
+
+def launched(ctx: Context, rt: Herdr, doc: dict, name: str, *, cwd: str, place: str,
+             workspace: str | None, session: str | None, mode: str | None,
+             origin: str = "autostart", prompt: str | None = None,
+             session_name: str | None = None) -> dict:
+    """Record that ship-ctl just started `name` (autostart, restart)."""
+    e = doc["agents"].get(name)
+    if e is None:
+        e = doc["agents"][name] = new_entry(cwd, origin=origin)
+    fields = {"cwd": cwd, "mode": mode, "want": "running", "stopped_at": None,
+              "launched_at": utc_now(), "place": _place(rt, ctx, place, workspace),
+              "relaunch": {"boot_id": boot_id(ctx), "failures": 0, "last_error": None,
+                           "last_at": None}}
+    if session:
+        fields["session"] = session
+    if prompt is not None:
+        fields["prompt"] = prompt
+    if session_name is not None:
+        fields["session_name"] = session_name
+    _set(e, **fields)
+    return e
+
+
+def sync(ctx: Context, rt: Herdr, doc: dict, live: list[dict], ledger: dict[str, str]) -> bool:
+    """Bring the record up to what runs (module docstring). True if it changed."""
+    changed = False
+    found = match(doc, live)
+    for name, a in found.items():
+        e = doc["agents"][name]
+        if a["name"] is None and a["place"] and rt.rename(a["place"], name):
+            a["name"] = name  # its name went (a restart by hand in its pane): back again
+        session = a["session"] or e["session"]
+        fields = {"session": session, "mode": ledger.get(session or "") or e["mode"],
+                  "want": "running", "stopped_at": None}
+        if a["cwd"]:
+            fields["cwd"] = a["cwd"]
+        if a["place"]:
+            here = _place(rt, ctx, a["place"], a["workspace"])
+            if e["place"] != here:
+                fields["place"] = here
+        if e["relaunch"]["failures"]:
+            fields["relaunch"] = {**e["relaunch"], "failures": 0, "last_error": None}
+        changed |= _set(e, **fields)
+    claimed = {id(a) for a in found.values()}
+    taken = set(doc["agents"]) | {a["name"] for a in live if a["name"]}
+    for a in live:
+        if id(a) in claimed or a["kind"] != "claude" or not a["session"] or not a["cwd"]:
+            continue
+        name = a["name"]
+        if name is None:
+            name = _new_name(a["cwd"], taken)
+            if a["place"] and rt.rename(a["place"], name):
+                a["name"] = name
+        if not NAME.match(name):
+            continue
+        taken.add(name)
+        place = _place(rt, ctx, a["place"], a["workspace"]) if a["place"] else None
+        doc["agents"][name] = new_entry(a["cwd"], origin="adopted", session=a["session"],
+                                        mode=ledger.get(a["session"]), place=place)
+        ctx.log(f"{LOG_TAG}: picked up {name} ({a['cwd']})")
+        changed = True
+    return changed
+
+
+def _stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
+                        since: str) -> str | None:
+    """Why an agent that ran this boot and is gone now was stopped, not crashed."""
+    seen = sessions.get(e["session"] or "") or {"ended": None, "watched": False}
+    # An exit ship-ctl made itself (agent restart) is no longer in the ledger: the
+    # restart records the session's new mode through the hook, which clears it.
+    end = seen["ended"]
+    if end and end["reason"] in DELIBERATE_ENDS and end["at"] >= max(since,
+                                                                     e["launched_at"] or ""):
+        return f"it was exited ({end['reason']})"
+    if not seen["watched"]:
+        # It started before this tooling's hooks (a Ship just updated): an exit of it
+        # looks like a crash, so it is treated as one would have been before, and
+        # left stopped. The next boot resumes everything under the new hooks.
+        return "it started before the Ship could tell an exit from a crash"
+    if places is None:
+        return None
+    here = places.get(e["place"]["id"])
+    if here is None:
+        return "its pane was closed"
+    if here["agent"]:
+        return f"another agent ({here['agent']}) is in its pane"
+    if here["cwd"] and os.path.normpath(here["cwd"]) != os.path.normpath(e["cwd"]):
+        return f"its pane is in another folder now ({here['cwd']})"
+    return None
+
+
+def _stop(doc: dict, name: str, autostart: set[str]) -> None:
+    e = doc["agents"][name]
+    if e["origin"] == "adopted" and name not in autostart:
+        del doc["agents"][name]  # as herdr forgets a pane's agent when it exits
+    else:
+        _set(e, want="stopped", stopped_at=utc_now())
+
+
+def _folder_exists(ctx: Context, cwd: str) -> bool:
+    return (ctx.paths.p(cwd) if ctx.paths.sandbox else Path(cwd)).is_dir()
+
+
+def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
+             places: dict | None, *, same_place: bool, mode: str | None = None,
+             fresh: list[str] | None = None) -> tuple[bool, str]:
+    """Start recorded agent `name` again, continuing its session (or, with fresh,
+    a new conversation with those extra arguments): in its own place when
+    same_place (it died there this boot), else in its restored place if that is a
+    free shell in its folder, else in a new one. (ok, why not)."""
+    e = doc["agents"][name]
+    # The ledger has the session's latest mode (a change in Claude reaches the record
+    # only at the next sync), so it comes first.
+    mode = mode or read_ledger(ctx).get(e["session"] or "") or e["mode"]
+    if mode == "bypassPermissions" and not ship.claude["allow_bypass"]:
+        mode = ship.claude["default_mode"]
+    cwd = e["cwd"]
+    if not _folder_exists(ctx, cwd):
+        return False, f"its folder {cwd} is not there"
+    args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]])]
+    old = (e["place"] or {}).get("id")
+    spot = (places or {}).get(old or "")
+    if same_place:
+        tries = [old]
+    elif old and places is None:
+        tries = [old, None]  # herdr did not list its panes: its own first, if it is there
+    elif old and spot and spot["usable"] and os.path.normpath(spot["cwd"] or "") == (
+            os.path.normpath(cwd)):
+        tries = [old, None]
+    else:
+        tries = [None]
+    why = ""
+    for place in tries:
+        workspace = (spot or {}).get("workspace") if place else None
+        if place is None:
+            place, workspace, why = rt.new_place(cwd, name)
+            if place is None:
+                continue
+        ok, why = rt.start_settled(name, place, args)
+        if ok:
+            back = rt.in_place(place) or {}
+            launched(ctx, rt, doc, name, cwd=cwd, place=place,
+                     workspace=back.get("workspace") or workspace,
+                     session=back.get("session") or (None if fresh is not None
+                                                     else e["session"]),
+                     mode=mode, origin=e["origin"])
+            if fresh is not None and not back.get("session"):
+                e["session"] = None  # a new conversation: the next sync learns its id
+            return True, ""
+    return False, why or "it did not start"
+
+
+def reconcile(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dict]
+              ) -> tuple[int, int, list[str]]:
+    """Start again every agent that should run and does not (module docstring).
+    Returns (started, failed, messages)."""
+    found = match(doc, live)
+    wanted = [n for n, e in doc["agents"].items() if e["want"] == "running" and n not in found]
+    if not wanted:
+        return 0, 0, []
+    boot = boot_id(ctx)
+    since = boot_started(ctx)
+    sessions = ledger_sessions(ctx)
+    places = rt.places()
+    autostart = {e["name"] for e in ship.autostart}
+    started = failed = 0
+    messages: list[str] = []
+    for name in wanted:
+        e = doc["agents"][name]
+        r = e["relaunch"]
+        if r["boot_id"] != boot:  # a new boot: a fresh set of tries
+            r.update(boot_id=boot, failures=0, last_error=None, last_at=None)
+        this_boot = bool(e["place"]) and e["place"]["boot_id"] == boot
+        why = _stopped_on_purpose(e, sessions, places, since) if this_boot else None
+        if why:
+            _stop(doc, name, autostart)
+            messages.append(f"{name} stopped ({why}); not started again.")
+            continue
+        if not e["session"]:
+            # Nothing to continue (it never reported a session): autostart starts
+            # an [[autostart]] agent afresh; any other is let go.
+            _stop(doc, name, autostart)
+            messages.append(f"{name}: no session to resume; left stopped.")
+            continue
+        if r["failures"] >= MAX_TRIES:
+            continue
+        ok, why = relaunch(ctx, ship, rt, doc, name, places, same_place=this_boot)
+        if ok:
+            started += 1
+            messages.append(f"{name} started again, continuing its session"
+                            + (" (it had stopped)" if this_boot else "") + ".")
+        else:
+            failed += 1
+            r.update(failures=r["failures"] + 1, last_error=why[:200], last_at=utc_now())
+            e["updated_at"] = utc_now()
+            messages.append(f"{name} did not start again ({why}); try {r['failures']} of "
+                            f"{MAX_TRIES}.")
+    return started, failed, messages
+
+
+def import_autostart(ctx: Context, doc: dict, live: list[dict]) -> bool:
+    """Bring autostart's old record (tooling before this one) into this one, once:
+    an [[autostart]] agent running now under that record is recorded as autostart's,
+    with its session name. Agents it lists that are not running are not resumed:
+    autostart starts them afresh, as it did."""
+    path = ctx.paths.state / OLD_AUTOSTART
+    old = read_json(path, None)
+    if old is None:
+        return False
+    for name, rec in (old if isinstance(old, dict) else {}).items():
+        if name in doc["agents"] or not isinstance(rec, dict) or not NAME.match(str(name)):
+            continue
+        claude = [a for a in live if a["kind"] == "claude"]
+        a = (next((a for a in claude if a["name"] == name), None)
+             or next((a for a in claude if rec.get("session") and a["session"] == rec["session"]
+                      and a["name"] is None), None)
+             or next((a for a in claude if rec.get("pane") and a["place"] == rec["pane"]
+                      and a["name"] is None), None))
+        if a is None or not a["cwd"]:
+            continue
+        doc["agents"][name] = new_entry(
+            a["cwd"], origin="autostart", session=a["session"] or _text(rec.get("session")),
+            mode=_text(rec.get("mode")), session_name=_text(rec.get("session_name")),
+            place={"runtime": Herdr.kind, "id": a["place"], "workspace": a["workspace"],
+                   "boot_id": boot_id(ctx)} if a["place"] else None)
+    path.unlink()
+    return True
+
+
+def upkeep(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dict], state: str
+           ) -> tuple[list[dict], list[str], bool]:
+    """Sync the record with what runs, then start what should run and does not.
+    Call it with the lock held. Returns (live agents now, messages, changed)."""
+    changed = import_autostart(ctx, doc, live)
+    changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
+    if state in ("provisioning", "needs-sign-in"):
+        return live, [], changed  # nothing starts before Claude is signed in
+    boot = boot_id(ctx)
+    first = (doc.get("resume") or {}).get("boot_id") != boot
+    if first and not dns_ready(ctx) and (uptime(ctx) or 0) < RESUME_GRACE_S:
+        return live, [f"{LOG_TAG}: resume waits for DNS"], changed
+    started, failed, messages = reconcile(ctx, ship, rt, doc, live)
+    messages = [f"{LOG_TAG}: {m}" for m in messages]  # `ship-ctl logs resume` finds them
+    changed |= bool(started or failed or messages)
+    if first:
+        doc["resume"] = {"boot_id": boot, "at": utc_now(), "resumed": started,
+                         "failed": failed}
+        changed = True
+    if started:
+        _, again, _ = rt.agents()
+        live = again if again is not None else live
+        changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
+    return live, messages, changed
+
+
+def refresh(ctx: Context, ship: ShipToml, state: str) -> list[str]:
+    """The status refresh's turn: upkeep, unless another ship-ctl holds the record."""
+    rt = for_ship(ctx)
+    with locked(ctx, wait=False) as got:
+        if not got:
+            return []
+        server, live, _ = rt.agents()
+        if server != "running" or live is None:
+            return []
+        doc = load(ctx)
+        _, messages, changed = upkeep(ctx, ship, rt, doc, live, state)
+        if changed:
+            save(ctx, doc)
+    return messages
+
+
+def capture(ctx: Context, timeout: float = 15) -> list[str]:
+    """Record every running agent now (`ship-ctl apply`, so also every converge):
+    a Ship updated from tooling before the record has its agents recorded before it
+    next reboots, and comes back with them in their modes."""
+    rt = for_ship(ctx)
+    with locked(ctx, wait=False) as got:
+        if not got:
+            return []  # a refresh is keeping the record in step this moment
+        server, live, errors = rt.agents(timeout)
+        if live is None:
+            if server == "running" or "timed out" in " ".join(errors):
+                return [f"agent record: herdr's agents could not be read ({'; '.join(errors)}); "
+                        "the next status refresh records them"]
+            return []  # herdr is not running yet (first boot): nothing to record
+        doc = load(ctx)
+        changed = import_autostart(ctx, doc, live)
+        changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
+        if changed:
+            save(ctx, doc)
+    return []
+
+
+def forget(ctx: Context, names: list[str]) -> tuple[dict, list[str], list[str]]:
+    """Drop agents that are not running from the record. (data, changed, messages)."""
+    from .errors import CtlError
+
+    rt = for_ship(ctx)
+    with locked(ctx):
+        doc = load(ctx)
+        _, live, _ = rt.agents()
+        found = match(doc, live or [])
+        unknown = [n for n in names if n not in doc["agents"]]
+        if unknown:
+            raise CtlError("invalid-input", f"not in the agent record: {', '.join(unknown)} "
+                           f"(recorded: {', '.join(sorted(doc['agents'])) or 'none'})")
+        running = [n for n in names if n in found]
+        if running:
+            raise CtlError("invalid-input", f"{', '.join(running)} is running; exit it first "
+                           "(it leaves the record when it exits)")
+        for name in dict.fromkeys(names):
+            del doc["agents"][name]
+        save(ctx, doc)
+    removed = list(dict.fromkeys(names))
+    return {"forgotten": removed}, removed, [f"Forgot {', '.join(removed)}: not resumed at "
+                                             "boot, not started again."]
+
+
+# --- the status document ---------------------------------------------------------------
+def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, dict[str, dict]]:
+    """The status document's `agent_record` block, and {record name: live agent}."""
+    doc = load(ctx)
+    found = match(doc, live or [])
+    autostart = {e["name"] for e in ship.autostart}
+    agents = []
+    for name, e in sorted(doc["agents"].items()):
+        tries = tries_this_boot(ctx, e)
+        if e["want"] == "stopped":
+            state = "stopped"
+        elif name in found:
+            state = "running"
+        elif live is None:
+            state = "unknown"
+        elif tries >= MAX_TRIES:
+            state = "failed"
+        else:
+            state = "starting"
+        item = {"name": name, "cwd": e["cwd"], "mode": e["mode"], "autostart": name in autostart,
+                "state": state, "relaunch_failures": tries,
+                "created_at": e["created_at"], "updated_at": e["updated_at"]}
+        if tries and e["relaunch"]["last_error"]:
+            item["last_error"] = e["relaunch"]["last_error"]
+        agents.append(item)
+    resume = doc["resume"]
+    block = {"runtime": doc["runtime"], "agents": agents,
+             "resume": None if resume is None else {
+                 "at": resume["at"], "method": "ship-ctl", "resumed": resume["resumed"],
+                 "failed": resume["failed"]}}
+    return block, found
+
+
+def attention(block: dict | None) -> list[tuple[str, str, str]]:
+    """(code, message, agent) for recorded agents that could not be started again."""
+    out = []
+    for a in (block or {}).get("agents", []):
+        if a["state"] == "failed":
+            why = f": {a['last_error']}" if a.get("last_error") else ""
+            out.append(("agent-relaunch-failed",
+                        f"Agent '{a['name']}' stopped and did not start again after "
+                        f"{a['relaunch_failures']} tries{why}. Restart it (ship-ctl agent "
+                        f"restart {a['name']}, --fresh for a new conversation) or forget it "
+                        f"(ship-ctl agent forget {a['name']}).", a["name"]))
+    return out

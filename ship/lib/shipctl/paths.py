@@ -75,8 +75,7 @@ class Paths:
     def status_cache(self) -> Path:
         return self.run / "status.json"
 
-    # --- installed copies of the hook and shim ----------------------------
-    SHIM = "/opt/shipshape/shim/claude"
+    # --- the installed copy of the mode-ledger hook --------------------------
     LEDGER_HOOK = "/opt/shipshape/hooks/mode-ledger"
 
     # --- the release this ship-ctl came from ------------------------------
@@ -116,6 +115,7 @@ class Paths:
 
     @property
     def last_resume(self) -> Path:
+        """Written by ship-resume, on tooling before the agent record (read only)."""
         return self.agent_state / "last-resume.json"
 
     @property

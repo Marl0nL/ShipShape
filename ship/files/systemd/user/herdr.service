@@ -7,8 +7,7 @@ ConditionUser=agent
 
 [Service]
 Type=simple
-# The resume shim first, so herdr's `claude --resume <id>` goes through it.
-Environment=PATH=/opt/shipshape/shim:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=npm_config_prefix=%h/.local
 # Catalogue tool settings (written by ship-ctl tools).
 EnvironmentFile=-%h/.config/shipshape/env
@@ -16,7 +15,8 @@ WorkingDirectory=%h
 ExecStart=/usr/local/bin/herdr server
 Restart=on-failure
 RestartSec=2
-# herdr saves its state on shutdown; logind allows 30 s (50-shipshape.conf).
+# herdr saves its layout on shutdown; logind allows 30 s (50-shipshape.conf). Agents
+# do not depend on it: ship-ctl resumes them from its own record after a boot.
 TimeoutStopSec=25
 
 [Install]

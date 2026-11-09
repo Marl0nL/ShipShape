@@ -48,6 +48,7 @@ FAKE_COMMANDS = [
 ]
 ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the sandbox
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
+LEDGER = "/home/agent/.local/state/shipshape/modes.json"
 
 BASIC_TOML = """\
 schema = 1
@@ -120,6 +121,58 @@ class Ship:
         rows = [json.loads(line) for line in path.read_text().splitlines()]
         return [r for r in rows if command is None or r[0] == command]
 
+    # --- what happens to agents -----------------------------------------------------
+    def agent(self, name: str) -> dict:
+        return next(a for a in self.scenario()["herdr"]["agents"] if a.get("name") == name)
+
+    def crash(self, name: str) -> None:
+        """claude dies in its pane (killed, out of memory): no SessionEnd, and the
+        pane stays, back at its shell."""
+        s = self.scenario()
+        s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a.get("name") != name]
+        self.set(herdr=s["herdr"])
+
+    def exit(self, name: str, reason: str = "prompt_input_exit") -> None:
+        """Someone exits the agent (/exit): Claude runs the SessionEnd hook first."""
+        ag = self.agent(name)
+        self.crash(name)
+        self.end_session(ag["agent_session"]["value"], reason)
+
+    def end_session(self, session: str, reason: str) -> None:
+        path = self.p(LEDGER)
+        doc = json.loads(path.read_text()) if path.exists() else {
+            "schema": "shipshape.modes/1", "sessions": {}}
+        entry = doc["sessions"].setdefault(session, {"updated_at": "2026-01-01T00:00:00Z"})
+        from datetime import UTC, datetime
+
+        entry["ended"] = {"reason": reason,
+                          "at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        path.write_text(json.dumps(doc))
+
+    def reboot(self, uptime: float = 40.0) -> None:
+        """A new boot: herdr's server starts again and restores every pane under its
+        old id, a fresh shell in its folder, with no agent in it (ShipShape turns
+        herdr's own resume off)."""
+        s = self.scenario()
+        h = s["herdr"]
+        known = {p["pane_id"] for p in h.get("panes", [])}
+        h.setdefault("panes", []).extend(
+            {"pane_id": a["pane_id"], "workspace_id": a.get("workspace_id"), "cwd": a.get("cwd")}
+            for a in h["agents"] if a.get("pane_id") and a["pane_id"] not in known)
+        h["agents"] = []
+        h["exited"] = []
+        self.set(herdr=h)
+        boot = self.p("/proc/sys/kernel/random/boot_id")
+        n = int(boot.read_text().strip()[-4:], 16) + 1
+        boot.write_text(BOOT_ID[:-4] + f"{n:04x}\n")
+        self.p("/proc/uptime").write_text(f"{uptime} 1.0\n")
+        run = self.p("/run")
+        if run.exists():
+            shutil.rmtree(run)  # /run is cleared at boot
+
+    def record(self) -> dict:
+        return self.json("/var/lib/shipshape/agents.json")
+
     # --- files ----------------------------------------------------------------------
     def p(self, path: str) -> Path:
         return self.root / path.lstrip("/")
@@ -186,18 +239,7 @@ def ship(tmp_path: Path) -> Ship:
     (state / "provision.json").write_text(
         json.dumps({"result": "ok", "last_run": "2026-01-01T00:00:00Z"})
     )
-    resume = root / "home/agent/.local/state/shipshape"
-    resume.mkdir(parents=True)
-    (resume / "last-resume.json").write_text(
-        json.dumps(
-            {
-                "at": "2026-01-01T00:00:00Z",
-                "method": "hidden-client",
-                "resumed": 0,
-                "boot_id": BOOT_ID,
-            }
-        )
-    )
+    (root / "home/agent/.local/state/shipshape").mkdir(parents=True)
     env = {
         "PATH": f"{bindir}:/usr/bin:/bin",
         "SHIPSHAPE_ROOT": str(root),

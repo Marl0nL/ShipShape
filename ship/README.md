@@ -7,7 +7,7 @@ except `tests/`.
 | Folder | Work item | What goes here |
 |---|---|---|
 | `provision/` | W4 | `ship-provision`, the idempotent setup script |
-| `files/` | W4, W5 | systemd units, drop-ins, the resume shim (`shim/claude.py`), the mode-ledger hook (`hooks/mode_ledger.py`) |
+| `files/` | W4, W5 | systemd units, drop-ins, the mode-ledger hook (`hooks/mode_ledger.py`) |
 | `bin/` | W5 | `ship-ctl` (entry point) |
 | `lib/shipctl/` | W5 | the `ship-ctl` code (standard library only) |
 | `schemas/` | W5 | copies of the contract schemas ship-ctl validates against (bundles hold only `ship/`; a test keeps them identical) |

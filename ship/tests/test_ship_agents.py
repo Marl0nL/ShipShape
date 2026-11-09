@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 
 import pytest
-from ship_harness import SHIP, assert_valid
-
-LEDGER = "/home/agent/.local/state/shipshape/modes.json"
-
-spec = importlib.util.spec_from_file_location("shim", SHIP / "files/shim/claude.py")
-shim = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(shim)
+from ship_harness import LEDGER, assert_valid
 
 
 @pytest.fixture
@@ -77,17 +70,19 @@ def test_restart_continues_the_conversation_in_the_new_default_mode(running):
     h = ship.scenario()["herdr"]
     assert [pane, "ctrl+c"] in h["keys"] and [pane, "/exit"] in h["prompts"]
     assert not any(k[1:] == ["esc"] for k in h["keys"])  # idle: nothing interrupted
-    # The ledger, the status document and autostart's record all say the new mode...
+    # The ledger, the status document and the agent record all say the new mode...
     assert ledger(ship)["sess-main"] == "bypassPermissions"
     assert status_modes(ship) == {"main": "bypassPermissions", "grinder": "bypassPermissions"}
-    assert ship.json("/var/lib/shipshape/autostart.json")["main"]["mode"] == "bypassPermissions"
-    # ...so herdr's bare resume at the next boot brings it back in that mode.
-    toml = ship.p("/etc/shipshape/ship.toml")
-    args, _ = shim.decide(["--resume", "sess-main"], str(ship.p(LEDGER)), str(toml))
-    assert args == ["--dangerously-skip-permissions", "--resume", "sess-main"]
+    assert ship.record()["agents"]["main"]["mode"] == "bypassPermissions"
     # No new workspace, and grinder was not touched.
     assert len(h["workspaces"]) == 2
     assert agent(ship, "grinder")["args"][0] == "--dangerously-skip-permissions"
+    # ...so the next boot resumes it in that mode.
+    ship.reboot()
+    ship.ctl("refresh")
+    assert agent(ship, "main")["args"] == ["--dangerously-skip-permissions",
+                                           "--resume", "sess-main"]
+    assert agent(ship, "main")["pane_id"] == pane
 
 
 def test_restart_in_a_chosen_mode_comes_back_in_it_after_a_reboot(running):
@@ -97,9 +92,11 @@ def test_restart_in_a_chosen_mode_comes_back_in_it_after_a_reboot(running):
     assert agent(ship, "grinder")["args"] == ["--permission-mode", "plan",
                                               "--resume", "sess-grinder"]
     assert status_modes(ship)["grinder"] == "plan"
-    toml = ship.p("/etc/shipshape/ship.toml")
-    args, _ = shim.decide(["--resume", "sess-grinder"], str(ship.p(LEDGER)), str(toml))
-    assert args == ["--permission-mode", "plan", "--resume", "sess-grinder"]
+    ship.reboot()
+    ship.ctl("refresh")
+    assert agent(ship, "grinder")["args"] == ["--permission-mode", "plan",
+                                              "--resume", "sess-grinder"]
+    assert status_modes(ship)["grinder"] == "plan"
 
 
 def test_bypass_is_refused_where_it_is_not_allowed(running):
@@ -159,7 +156,7 @@ def test_fresh_starts_a_new_conversation_with_the_same_name(running):
     new = main["agent_session"]["value"]
     assert new != "sess-main"
     assert ledger(ship)[new] == "plan"
-    assert ship.json("/var/lib/shipshape/autostart.json")["main"]["session"] == new
+    assert ship.record()["agents"]["main"]["session"] == new
     assert doc["data"]["restarted"][0]["conversation"] == "fresh"
     assert ["main", "Get oriented."] in ship.scenario()["herdr"]["prompts"]  # its first prompt
 
@@ -220,13 +217,28 @@ def test_unknown_names_and_bad_arguments(running):
     assert rc == 2 and doc["error"]["code"] == "usage"
 
 
-def test_without_a_known_session_only_a_fresh_start_works(running):
-    ship = running
+def forget_herdr_session(ship, name: str) -> None:
     s = ship.scenario()
     for a in s["herdr"]["agents"]:
-        if a["name"] == "main":
+        if a["name"] == name:
             a.pop("agent_session")
     (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
+
+
+def test_the_session_comes_from_the_record_when_herdr_does_not_report_it(running):
+    ship = running
+    forget_herdr_session(ship, "main")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 0, doc
+    assert agent(ship, "main")["args"] == ["--permission-mode", "auto", "--resume", "sess-main"]
+
+
+def test_without_a_known_session_only_a_fresh_start_works(running):
+    ship = running
+    forget_herdr_session(ship, "main")
+    doc = ship.record()
+    doc["agents"]["main"]["session"] = None
+    ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(doc))
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 1 and doc["error"]["code"] == "agent-failed"
     assert "restart it fresh" in doc["data"]["skipped"][0]["reason"]

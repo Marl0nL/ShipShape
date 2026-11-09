@@ -61,7 +61,8 @@ How fields are worked out:
 | `auth.gcloud` | `gcloud auth list --filter=status:ACTIVE --format="value(account)"` as `agent`. |
 | `auth.gcloud_adc` | `gcloud auth application-default print-access-token` as `agent`, output discarded: exit 0 gives `ok`. `account` may be null. |
 | `auth.github` | `gh auth status --hostname github.com` as `agent`; `account` is the login it reports; `scopes` the token's scopes it lists (`Token scopes:`), sorted, or null when it lists none. |
-| `herdr` | `herdr status server` and `herdr agent list` as `agent`. `mode` comes from the mode ledger. `last_resume` comes from ship-resume's record. |
+| `herdr` | `herdr --version` and `herdr agent list` as `agent`. `mode` comes from the mode ledger for the agent's session, else from the agent record. `last_resume` is the agent record's last resume after a boot, with `method` `api-fallback` (ship-ctl started the recorded agents again through herdr's API); until a Ship's first boot on tooling with the record, the one ship-resume recorded (`hidden-client`). |
+| `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed starts this boot, and the last boot's resume (`method` `ship-ctl`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
@@ -77,7 +78,9 @@ Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 extra scope `github.scopes` chooses, or has a catalogue scope it no longer chooses;
 `settings.md`, "Extra GitHub scopes"; for a scope it has but does not choose, the message says to tick it to keep it before it says that signing in again drops it), `host-cert-expiring` (the host certificate ends within 14 days),
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
-running), `overlay-down` (joined, but the overlay is not `running`).
+running), `overlay-down` (joined, but the overlay is not `running`),
+`agent-relaunch-failed` (a recorded agent stopped and did not start again after 3
+tries this boot; subject: the agent).
 FleetLedger adds its own on top (`signin-wrong-account` from the tag check,
 `behind-tooling` from `versions.toml`, `tags-differ` from the inventory,
 `host-cert-missing` and `ssh-trust-behind` from its certificate authority); it
@@ -121,16 +124,20 @@ atomically, then runs `apply`.
 
 ### `ship-ctl autostart [--json]`
 
-Starts every `[[autostart]]` agent that is not running, in its own mode, with
-`herdr agent start <name> --kind claude`, then sends its prompt, or "Get oriented
-and ready to work." if the entry has none (a chosen default: every autostart
-agent starts with a first prompt). It does nothing
+Starts every `[[autostart]]` agent that is not running. First the agent record is
+brought up to date and every recorded agent that should run and does not is started
+again, continuing its session (after a boot, that is the resume: "The agent record"
+below). Then each entry that is still not running, and that the record is not
+starting again, starts afresh in a new workspace labelled with its name, in its own
+mode, with `herdr agent start <name> --kind claude`, then gets its prompt, or "Get
+oriented and ready to work." if the entry has none (a chosen default: every
+autostart agent starts with a first prompt), and goes into the record. An entry
+exited on purpose (it is `stopped` in the record) starts afresh. It does nothing
 while the Ship is `provisioning` or `needs-sign-in`.
 
-The Ship runs it on its own: at boot (the first status refresh after
-`ship-resume.service` has finished) and once whenever Claude becomes signed in
-(see "Reacting to sign-ins" below). FleetLedger never needs to call it; calling
-it anyway is harmless.
+The Ship runs it on its own: at the first status refresh after a boot, and once
+whenever Claude becomes signed in (see "Reacting to sign-ins" below). FleetLedger
+never needs to call it; calling it anyway is harmless.
 
 An entry with a `repo` is cloned into its `cwd` first, as the agent, once (into a
 folder that is empty or not there yet). A repo that cannot be cloned before the
@@ -144,15 +151,22 @@ yet), the item says so, not that a sign-in is missing, and the clone is tried ag
 at every status refresh. An agent removed from `[[autostart]]` takes its repo state
 and attention item with it. Other agents start regardless.
 
-`data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`.
+`data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`. A
+`reason` is `running`, `resuming` (the record is starting it again),
+`relaunch-failed` (the record gave up on it this boot: `agent-relaunch-failed`),
+`resume-pending`
+(this boot's resume waits for DNS), `provisioning`, `needs-sign-in`, or why its repo
+or its start failed.
 
 ### `ship-ctl agent restart (NAME... | --all) [--mode MODE] [--fresh] [--force] [--json]`
 
-Swaps running Claude agents for ones in another permission mode, in place. A
-running session keeps its mode across a resume, so a new `default_mode` (or an
-`[[autostart]]` mode) reaches only agents started afterwards; this is how a
-running one adopts it. NAME is a herdr agent name; `--all` is every Claude agent
-herdr lists with a name (one without a name is skipped, with a reason).
+Swaps Claude agents for ones in another permission mode, in place. A running
+session keeps its mode across a resume, so a new `default_mode` (or an
+`[[autostart]]` mode) reaches only agents started afterwards; this is how a running
+one adopts it. NAME is an agent's name in the agent record (the same as its herdr
+name; the record is brought up to date first, so an agent started by hand counts
+too) or a herdr agent name. `--all` is every Claude agent herdr lists with a name
+(one without a name is skipped, with a reason).
 
 - **Mode:** `--mode`, else the mode the agent would start in now: its
   `[[autostart]]` entry's `mode`, else `claude.default_mode`.
@@ -171,32 +185,91 @@ herdr lists with a name (one without a name is skipped, with a reason).
 - **Starting again:** `herdr agent start <name> --kind claude --pane <the same
   pane>`, so the same workspace, folder and name, with the mode's flag
   (`--permission-mode MODE`, or `--dangerously-skip-permissions`) and
-  `--resume <its session>`: the conversation continues. `--fresh` starts a new
-  conversation instead, with `--name` as autostart names it, and an
-  `[[autostart]]` agent gets its first prompt again. An agent whose session herdr
-  does not report can only be restarted `--fresh`. Remote Control comes back by
-  itself (managed settings; a resumed session reconnects to its own Remote
-  Control session), and session names survive the resume.
-- **Recorded:** the mode ledger gets the session in its new mode, so the status
-  document reports it, `ship-fleet reboot` expects it, and the resume shim puts it
-  back after the next reboot (`settings.md`, "Permission modes across reboots").
-  For an `[[autostart]]` agent, autostart's own record gets the mode and session.
+  `--resume <its session>`: the conversation continues. The session is the one
+  herdr reports, else the record's. `--fresh` starts a new conversation instead,
+  with `--name` as autostart names it, and an agent that was given a first prompt
+  (an `[[autostart]]` one) gets it again. An agent whose session is known to
+  neither can only be restarted `--fresh`. Remote Control comes back by itself
+  (managed settings; a resumed session reconnects to its own Remote Control
+  session), and session names survive the resume. One that stopped but did not
+  start again is started by the next status refresh, as after a crash.
+- **A recorded agent that is not running** (it stopped, or did not start again
+  after a crash: `failed`) is started again from the record: its folder and
+  session, in the mode above, in its old pane if that is a free shell in its
+  folder, else in a new workspace. That clears `agent-relaunch-failed`.
+- **Recorded:** the mode ledger and the agent record get the session in its new
+  mode, so the status document reports it, `ship-fleet reboot` expects it, and the
+  next boot resumes it in that mode (`settings.md`, "Permission modes across
+  reboots").
 
 `data`: `{ "restarted": [{ "name", "mode", "previous_mode" (from the ledger, or
-null), "conversation": "continued" | "fresh", "was": <its herdr state> }],
-"skipped": [{ "name", "reason" }] }`; `changed` lists the agents restarted.
+null), "conversation": "continued" | "fresh", "was": <its herdr state, or its
+record state when it was not running> }], "skipped": [{ "name", "reason" }] }`;
+`changed` lists the agents restarted.
 Errors, with `data` still saying what did happen: `agent-busy` when only busy
 agents were left alone (run again with `--force`, or when they are idle),
 `agent-failed` when an agent did not exit, did not start again, or has no known
-session; `herdr-unavailable` when herdr does not answer; `invalid-input` for an
-agent name herdr does not list.
+session; `herdr-unavailable` when herdr does not answer; `invalid-input` for a
+name neither the record nor herdr has.
 
 Doing it by hand, on the Ship as `agent` (attach with herdr and go to its pane):
 exit the agent (`/exit`), then in the same pane run
 `claude --permission-mode MODE --continue` (or `--dangerously-skip-permissions`
 for bypass, or `--resume <session id>` for one session of several in that folder).
 The mode-ledger hook records the new mode as the session starts (it reads the
-launch flags), so a reboot keeps it.
+launch flags), and the next status refresh gives the agent its name back and
+records it, so a reboot keeps it.
+
+### `ship-ctl agent forget NAME... [--json]`
+
+Drops recorded agents that are not running from the agent record: they are not
+resumed at boot and not started again (and `agent-relaunch-failed` goes). A running
+agent is refused (`invalid-input`): exit it, and it leaves the record by itself (an
+`[[autostart]]` agent stays, as `stopped`, and starts afresh at the next boot; to
+stop that, remove it from `[[autostart]]`). `data`: `{ "forgotten": [names] }`.
+
+### The agent record
+
+ShipShape keeps its own record of the Claude agents a Ship runs,
+`/var/lib/shipshape/agents.json` (root, `agent-record.schema.json`): each agent's
+name, folder, Claude session id, permission mode, the first prompt autostart gave
+it, where it last ran, and whether it should be running. The record, not herdr,
+decides what comes back after a boot: herdr's own resume is off
+(`resume_agents_on_restore = false`, `settings.md`), and herdr restores only its
+layout, each pane a shell in its folder under its old id.
+
+- **Written** whenever ship-ctl starts, restarts or forgets an agent, and kept in
+  step at every status refresh: a live Claude agent that reports a session and is
+  not recorded (started by hand, or by a firstmate) is picked up, named after its
+  folder if it has no herdr name (`herdr agent rename`); a recorded one whose
+  session changed (`/clear`, or a hand restart in its pane) is followed, and its
+  mode follows the mode ledger. `ship-ctl apply` (so every converge) records what
+  runs too, which is how a Ship updated from tooling before the record keeps its
+  agents across the reboot that follows: they come back in the modes they ran in.
+- **Resume after a boot:** the first status refresh of a boot (once Claude is
+  signed in, and DNS answers, at most 10 minutes) starts every recorded agent that
+  should run with `herdr agent start <name> --kind claude --pane <pane> --
+  <mode flag> --resume <session>`: in the pane herdr restored for it when that is a
+  free shell in its folder, else in a new workspace labelled with its name. Its
+  mode is the ledger's for that session, else the record's (`bypassPermissions`
+  only where `allow_bypass` is true; elsewhere `default_mode`). Then the record
+  notes this boot's resume (`agent_record.resume`, `herdr.last_resume`), and
+  notices may be typed again.
+- **Crash policy:** a recorded agent that stops in the middle of a boot is started
+  again, with `--resume`, by the next status refresh, in its own pane. It counts
+  as stopped on purpose, and is not started again, when Claude reported that it
+  was exited (its `SessionEnd` hook said `prompt_input_exit` or `logout`, kept in
+  the mode ledger) or its pane is gone, holds another agent, or is in another
+  folder now. A session the mode-ledger hook never saw start (it began before the
+  Ship was updated to this tooling, so it runs without the `SessionEnd` hook) is
+  left stopped too, as it was before: its exit could not be told from a crash.
+  After the next boot every agent runs under the new hooks. An `[[autostart]]`
+  agent stopped on purpose stays in the record, `stopped`, and starts afresh at the
+  next boot; any other leaves the record. After 3 failed starts in one boot, the
+  agent is left alone (`failed`, attention `agent-relaunch-failed`) until
+  `agent restart`, `agent forget` or the next boot.
+- **One at a time:** ship-ctl holds a lock while it starts, stops or records agents;
+  a status refresh that finds it held leaves the record for the next refresh.
 
 ### `ship-ctl notify-signin SERVICE [--json]`
 
@@ -207,7 +280,7 @@ account, because agents started before that sign-in may already have found it
 missing.
 
 - **Core agents only:** the `[[autostart]]` entries, matched to live herdr agents
-  as `autostart` matches them. No other agent is ever messaged (a Ship running a
+  through the agent record. No other agent is ever messaged (a Ship running a
   firstmate may have many worker agents).
 - **One line**, typed with `herdr agent prompt`:
   `ShipShape: <service> is now signed in as <account>. Re-check it if you need it.`
@@ -221,7 +294,8 @@ missing.
     typed text and Enter could answer it;
   - an agent in any other state, such as `unknown` (`not-ready`): its foreground
     is not known;
-  - every entry while this boot's resume is not done yet (`resume-pending`).
+  - every entry while this boot's resume is not done yet (`resume-pending`): the
+    first status refresh of a boot does it.
 - **Recorded** in the Ship's journal (`ship-ctl logs system`, tag `ship-ctl`).
 - A service that is not signed in sends nothing.
 
@@ -242,9 +316,10 @@ previous refresh:
 - `github` changed to `ok`: clone the repos that waited for it, then start just
   those agents (never one you stopped).
 
-This is triggered by the change, not by the state, so an agent you stop later is
-not restarted until the next boot or the next time Claude goes from signed out
-to signed in. It works however the sign-in happened: through the concierge or by
+This is triggered by the change, not by the state, so an `[[autostart]]` agent
+you exit later is not started afresh until the next boot or the next time Claude
+goes from signed out to signed in. (Every refresh also keeps the agent record in
+step and starts again a recorded agent that crashed: "The agent record".) It works however the sign-in happened: through the concierge or by
 hand over SSH. The first refresh after boot compares against "not signed in", and
 autostart is idempotent, so a boot that is already signed in starts each agent
 once.
@@ -263,7 +338,8 @@ exits 1. `data`: `{ "from": release, "to": release }`.
 
 Converge never restarts herdr or reboots: agents keep running. When it replaced
 the herdr binary, the status document reports `herdr-restart-pending` until the
-next reboot.
+next reboot. Its `apply` records every running agent in the agent record first, so
+the next reboot brings them back in their modes.
 
 ### `ship-ctl tools list|run|add|remove [ID...] [--json]`
 
@@ -285,7 +361,8 @@ error: `changed` is empty. `data`: `{ "device": "/dev/sda1", "grown": true|false
 ### `ship-ctl logs SOURCE [--lines N] [--json]`
 
 SOURCE is one of `provision`, `herdr`, `resume`, `tools`, `status`, `system`;
-default 200 lines. With `--json`, `data` is `{ "lines": [strings] }`. Log lines
+default 200 lines. `resume` is the agent record's lines from the status refresh:
+agents resumed after a boot, started again after a crash, or let go. With `--json`, `data` is `{ "lines": [strings] }`. Log lines
 are passed through as written; the Ship track keeps secrets out of them.
 
 ### `ship-ctl ssh-trust --file - [--json]`

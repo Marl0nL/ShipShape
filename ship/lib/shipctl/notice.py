@@ -13,17 +13,18 @@ The line names the account, nothing else, and is typed with `herdr agent prompt`
 which Claude Code queues while a turn is running. Only an agent herdr reports
 as idle, working or done is typed into: one waiting at a permission prompt
 could have it answered by the text and Enter, and one herdr cannot classify
-(`unknown`, as while ship-resume brings panes back after a boot) has a
-foreground nobody knows. Until this boot's resume is done, nothing is sent.
+(`unknown`, as just after it was started again) has a foreground nobody knows.
+Until this boot's resume is done, nothing is sent.
 """
 
 from __future__ import annotations
 
 import re
 
-from . import autostart, status
+from . import record as agent_record
+from . import status
 from .context import Context
-from .fsutil import read_json
+from .runtime import for_ship
 from .shiptoml import ShipToml
 
 # notify-signin SERVICE (FleetLedger's provider id) -> (status auth key, label)
@@ -89,28 +90,26 @@ def send_to_cores(ctx: Context, ship: ShipToml, line: str, data: dict) -> str | 
     cores = [a["name"] for a in ship.autostart]
     if not cores:
         return "This Ship has no [[autostart]] agents; no notice sent."
-    if autostart.resume_pending(ctx):
+    if agent_record.resume_pending(ctx):
         data["skipped"] = [{"name": name, "reason": "resume-pending"} for name in cores]
         return "This boot's resume is not done yet; no notice sent."
-    _, live, _ = status.herdr_agents(ctx)
-    started = read_json(ctx.paths.state / "autostart.json", {})
-    started = started if isinstance(started, dict) else {}
+    rt = for_ship(ctx)
+    _, live, _ = rt.agents()
+    doc = agent_record.load(ctx)
     for name in cores:
-        match = autostart.find_live(name, started, live or [])
+        match = agent_record.find_live(ctx, name, live or [], doc)
         if match is None:
             data["skipped"].append({"name": name, "reason": "not-running"})
             continue
-        state = match.get("agent_status")
+        state = match["state"]
         if state == "blocked":
             data["skipped"].append({"name": name, "reason": "waiting-for-permission"})
             continue
         if state not in READY_STATES:
             data["skipped"].append({"name": name, "reason": "not-ready"})
             continue
-        target = match.get("name") or match.get("pane_id")
-        r = ctx.runner.run(["herdr", "agent", "prompt", str(target), line],
-                           timeout=30, agent=True)
-        if r.ok:
+        sent, _ = rt.prompt(str(match["name"] or match["place"]), line)
+        if sent:
             data["sent"].append(name)
         else:
             data["skipped"].append({"name": name, "reason": "send-failed"})

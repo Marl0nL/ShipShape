@@ -107,6 +107,9 @@ class SimShip:
         self.allow_bypass = True
         self.working = set()  # agents herdr reports as working
         self.ctl_version = 1  # 0: tooling from before `ship-ctl agent`
+        self.recorded = False  # tooling with the agent record (status agent_record)
+        self.relaunching = {}  # recorded agents not running now; they come back at boot
+        self.herdr_resume = True  # also report herdr.last_resume (older FleetLedgers read it)
         self.converged = []
         self.reboots = []
 
@@ -122,6 +125,9 @@ class SimShip:
         self.impostor = bool(self.after_reboot_id or self.after_reboot_host_key)
         if self.after_reboot is not None:
             self.agents = dict(self.after_reboot)
+        else:
+            self.agents.update(self.relaunching)
+        self.relaunching = {}
         return True
 
     def status(self, ship):
@@ -140,10 +146,22 @@ class SimShip:
         doc["herdr"]["agents"] = [
             {"name": n, "kind": "claude", "state": "idle", "mode": m} for n, m in agents.items()
         ]
-        doc["herdr"]["last_resume"] = None if not resumed else {
-            "at": datetime.fromtimestamp(EPOCH + self.booted + self.resume_delay, UTC)
-            .strftime(self.time_format),
-            "method": "hidden-client", "resumed": len(agents), "failed": 0}
+        at = datetime.fromtimestamp(EPOCH + self.booted + self.resume_delay, UTC).strftime(
+            self.time_format)
+        doc["herdr"]["last_resume"] = None if not resumed or not self.herdr_resume else {
+            "at": at, "method": "api-fallback" if self.recorded else "hidden-client",
+            "resumed": len(agents), "failed": 0}
+        if self.recorded:
+            stamp = "2026-01-01T00:00:00Z"
+            doc["agent_record"] = {"runtime": "herdr", "resume": None if not resumed else {
+                "at": at, "method": "ship-ctl", "resumed": len(agents), "failed": 0},
+                "agents": [{"name": n, "cwd": f"/home/agent/work/{n}", "mode": m,
+                            "autostart": False, "state": state, "relaunch_failures": 0,
+                            "created_at": stamp, "updated_at": stamp}
+                           for n, m, state in [
+                               *((n, m, "running" if resumed else "starting")
+                                 for n, m in self.agents.items()),
+                               *((n, m, "starting") for n, m in self.relaunching.items())]]}
         for service, account in self.accounts.items():
             doc["auth"][service]["account"] = account
         doc["attention"] = []
@@ -344,6 +362,47 @@ def test_reboot_waits_and_checks_agents_resumed_in_their_modes(world):
     assert world.sims["ship-01"].reboots == [["ship-01.local"]]
     assert world.sims["ship-01"].forgotten == 1  # no polling over a dead connection
     assert ("ship-01", "rebooting") in seen
+
+
+def test_reboot_expects_every_agent_the_record_keeps_running(world):
+    """helper crashed just before the reboot and the Ship's record is starting it
+    again: it must come back too, in the mode the record keeps for it. And the
+    resume is the record's (herdr.last_resume is only for older FleetLedgers)."""
+    sim = world.sims["ship-01"]
+    sim.recorded, sim.relaunching, sim.herdr_resume = True, {"helper": "plan"}, False
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    assert outcome.ok, outcome
+    assert outcome.data["agents_before"] == {"main": "auto", "builder": "bypassPermissions",
+                                             "helper": "plan"}
+    assert "3/3 agents resumed in their modes" in outcome.summary
+
+
+def test_reboot_flags_a_recorded_agent_that_did_not_come_back(world):
+    sim = world.sims["ship-01"]
+    sim.recorded, sim.relaunching = True, {"helper": "plan"}
+    sim.after_reboot = {"main": "auto", "builder": "bypassPermissions"}
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")],
+                           times=ops.RebootTimes(back=600, resume=60, poll=10))
+    assert not outcome.ok
+    assert outcome.details == ["agent helper did not come back"]
+
+
+def test_expected_modes_come_from_the_record_and_what_runs():
+    doc = copy.deepcopy(RUNNING)
+    doc["herdr"]["agents"] = [
+        {"name": "main", "kind": "claude", "state": "idle", "mode": "plan"},
+        {"name": "other", "kind": "codex", "state": "idle", "mode": None},
+    ]
+    stamp = "2026-01-01T00:00:00Z"
+    doc["agent_record"] = {"runtime": "herdr", "resume": None, "agents": [
+        {"name": n, "cwd": "/w", "mode": m, "autostart": False, "state": st,
+         "relaunch_failures": 0, "created_at": stamp, "updated_at": stamp}
+        for n, m, st in [("main", "auto", "running"), ("crashed", "dontAsk", "starting"),
+                         ("gone", "auto", "stopped"), ("broken", "auto", "failed")]]}
+    # main runs in plan now (changed in Claude since the record last synced): plan.
+    assert ops.expected_modes(doc) == {"main": "plan", "other": None, "crashed": "dontAsk"}
+    del doc["agent_record"]
+    assert ops.expected_modes(doc) == {"main": "plan", "other": None}
 
 
 def test_reboot_flags_an_agent_that_lost_bypass(world):

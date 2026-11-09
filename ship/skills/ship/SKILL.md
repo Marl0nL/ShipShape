@@ -16,8 +16,10 @@ agents may and may not change.
 ## How the Ship is run
 
 - You run as the `agent` user inside **herdr**, a terminal multiplexer that keeps
-  every agent in its own pane. herdr starts at boot; after a reboot it restores the
-  panes and resumes each Claude conversation, in the permission mode it was in.
+  every agent in its own pane. herdr starts at boot and restores its panes; then
+  the Ship starts each recorded agent again, continuing its Claude conversation in
+  the permission mode it was in. If your claude process dies, the Ship starts it
+  again the same way within a minute; if you `/exit`, it stays stopped.
   To change your mode, the person may restart you (`ship-fleet agent restart`): you
   are asked to `/exit`, then started again in the same pane, continuing this
   conversation in the new mode.

@@ -1,0 +1,264 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/agent-record.schema.json",
+  "title": "Agent record (/var/lib/shipshape/agents.json, version 1)",
+  "description": "ShipShape's own record of the Claude agents a Ship keeps running: written only by ship-ctl (root), read by ship-ctl. It, not the runtime, decides which agents resume after a boot and which start again after a crash, so the runtime underneath (herdr's server today) can change without losing them. See contracts/ship-ctl.md, \"The agent record\". FleetLedger sees it through the status document's agent_record block, never this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "runtime",
+    "agents",
+    "resume"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shipshape.agent-record/1"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "What runs the agents: herdr (its server, 0.9)."
+    },
+    "agents": {
+      "type": "object",
+      "description": "Keyed by the agent's name, which is also its name in the runtime.",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/agent"
+      }
+    },
+    "resume": {
+      "description": "This Ship's last resume after a boot: written once per boot, when every recorded agent has been started once.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "boot_id",
+            "at",
+            "resumed",
+            "failed"
+          ],
+          "properties": {
+            "boot_id": {
+              "type": "string",
+              "description": "/proc/sys/kernel/random/boot_id of that boot."
+            },
+            "at": {
+              "$ref": "#/$defs/timestamp"
+            },
+            "resumed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cwd",
+        "session",
+        "mode",
+        "prompt",
+        "session_name",
+        "origin",
+        "want",
+        "place",
+        "relaunch",
+        "launched_at",
+        "stopped_at",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Its working folder; claude --resume finds the session from here."
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The Claude session id it runs, continued with claude --resume."
+        },
+        "mode": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/permissionMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The permission mode it runs in, and is resumed in. Follows the mode ledger."
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The first prompt autostart gave it (sent again by a fresh restart)."
+        },
+        "session_name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The name it was launched with (claude --name)."
+        },
+        "origin": {
+          "enum": [
+            "autostart",
+            "adopted"
+          ],
+          "description": "autostart: started by ship-ctl autostart. adopted: started some other way and picked up from the runtime."
+        },
+        "want": {
+          "enum": [
+            "running",
+            "stopped"
+          ],
+          "description": "running: resumed at boot, started again when it dies. stopped: it was exited on purpose (an adopted agent leaves the record instead)."
+        },
+        "place": {
+          "description": "Where it last ran: opaque to everything but the runtime adapter (herdr: its pane id).",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "runtime",
+                "id",
+                "workspace",
+                "boot_id"
+              ],
+              "properties": {
+                "runtime": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "workspace": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "boot_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The boot it was seen there in."
+                }
+              }
+            }
+          ]
+        },
+        "relaunch": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "boot_id",
+            "failures",
+            "last_error",
+            "last_at"
+          ],
+          "description": "Failed starts in one boot (the crash policy gives up after 3).",
+          "properties": {
+            "boot_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "failures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "last_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "last_at": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "launched_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "When ship-ctl last started it, or picked it up."
+        },
+        "stopped_at": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/timestamp"
+        }
+      }
+    },
+    "permissionMode": {
+      "enum": [
+        "default",
+        "acceptEdits",
+        "plan",
+        "auto",
+        "dontAsk",
+        "bypassPermissions"
+      ],
+      "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    }
+  }
+}

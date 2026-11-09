@@ -44,9 +44,12 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   new herdr takes over, and FleetLedger checks every agent came back in the mode
   it had. Add `--reboot never` to postpone that; the Ship then shows
   `herdr-restart-pending` until you run `ship-fleet reboot ship-01`.
-- `FAILED` with `agent X came back in auto, was bypassPermissions` means the
-  resume shim did not restore the mode: look at `ship-fleet logs ship-01 resume`
-  and `herdr` before going further. A reboot keeps each agent in the mode it was
+- `FAILED` with `agent X came back in auto, was bypassPermissions` means the Ship
+  did not resume it in its recorded mode: look at `ship-fleet logs ship-01 resume`
+  and `herdr` before going further (and check that the Ship still allows bypass).
+  `agent X did not come back`: it is not running yet, or it failed to start 3 times
+  (attention `agent-relaunch-failed`); `ship-fleet agent restart ship-01 X` tries
+  again, `--fresh` in a new conversation. A reboot keeps each agent in the mode it was
   in, never the new default: to change it, see "Change a running agent's mode".
 - A failed converge rolls the Ship back to its previous tooling by itself; read
   `ship-fleet logs ship-01 provision`.
@@ -147,8 +150,8 @@ Let it finish, or close that session, and reboot again. To reboot anyway:
 ship-fleet reboot ship-01 --force
 ```
 
-It is still a clean reboot (services stop, herdr saves every agent first and
-they resume in their modes), but what holds the lock is cut off. If that was
+It is still a clean reboot (services stop, herdr saves its layout first, and the
+agents resume in their modes), but what holds the lock is cut off. If that was
 APT, run `sudo dpkg --configure -a` on the Ship afterwards. In the web UI a
 refused reboot's card has **Force reboot…**, and so has the Ship's **More**
 menu, each behind its own confirm dialog. Nothing needs updating on the Ships for
@@ -158,7 +161,7 @@ this: FleetLedger reads the locks with what every Ship already has.
 
 `default_mode` (and an autostart agent's own mode) applies to agents started
 afterwards. A running agent keeps its mode, and so does every reboot and update:
-herdr resumes each session, and the Ship puts back the mode it was in. To switch
+the Ship resumes each session itself, in the mode its agent record has for it. To switch
 running agents, swap them for new ones in the mode you want:
 
 ```sh

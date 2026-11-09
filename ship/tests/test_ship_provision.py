@@ -1,10 +1,9 @@
 """ship-provision (W4), offline: --root sandbox runs, --dry-run, the pinned-key check,
-the files it installs, and ship-resume."""
+and the files it installs."""
 
 from __future__ import annotations
 
 import configparser
-import importlib.util
 import json
 import os
 import shutil
@@ -49,10 +48,7 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     assert "changed:" not in second.stdout
 
     root = tmp_path
-    assert (root / "opt/shipshape/shim/claude").read_bytes() == (
-        FILES / "shim/claude.py"
-    ).read_bytes()
-    assert mode(root / "opt/shipshape/shim/claude") == "0o755"
+    assert not (root / "opt/shipshape/shim").exists()  # ship-ctl resumes agents itself
     assert mode(root / "opt/shipshape/hooks/mode-ledger") == "0o755"
     assert os.readlink(root / "usr/local/bin/ship-ctl") == "/opt/shipshape/current/bin/ship-ctl"
     axi = os.readlink(root / "usr/local/bin/ship-axi")
@@ -237,12 +233,10 @@ def test_user_units():
     assert herdr["Unit"]["ConditionUser"] == "agent"
     assert herdr["Service"]["ExecStart"] == "/usr/local/bin/herdr server"
     text = (FILES / "systemd/user/herdr.service").read_text()
-    assert "Environment=PATH=/opt/shipshape/shim:%h/.local/bin:" in text  # shim first
+    assert "Environment=PATH=%h/.local/bin:" in text and "shim" not in text
     assert herdr["Install"]["WantedBy"] == "default.target"
-    resume = unit(FILES / "systemd/user/ship-resume.service")
-    assert resume["Unit"]["After"] == "herdr.service"
-    assert resume["Service"]["Type"] == "oneshot"
-    assert "ship_resume.py" in resume["Service"]["ExecStart"]
+    # herdr is the only user unit: ship-ctl resumes agents from its record.
+    assert sorted(p.name for p in (FILES / "systemd/user").iterdir()) == ["herdr.service"]
 
 
 def test_status_timer():
@@ -321,66 +315,10 @@ def test_profile_snippet(tmp_path):
     assert prefix == f"{home}/.local" and example == "/x/y z"
 
 
-# --- ship-resume ---------------------------------------------------------------------------
-def load_resume():
-    spec = importlib.util.spec_from_file_location("ship_resume", FILES / "libexec/ship_resume.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-class FakeClock:
-    def __init__(self):
-        self.t = 0.0
-
-    def __call__(self):
-        return self.t
-
-    def sleep(self, s):
-        self.t += s
-
-
-def test_ship_resume_attaches_waits_and_records(tmp_path, monkeypatch):
-    mod = load_resume()
-    calls = []
-    lists = iter(
-        [None]
-        + [[{"pane_id": "w1:p1", "agent": "claude", "agent_status": "unknown"}]] * 2
-        + [[{"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle"}]] * 10
-    )
-
-    def fake_run(argv, timeout=15):
-        calls.append(argv)
-        rc = 1 if argv[-3:] == ["has-session", "-t", "resume"] else 0
-        return subprocess.CompletedProcess(argv, rc, "", "")
-
-    monkeypatch.setattr(mod, "run", fake_run)
-    monkeypatch.setattr(mod, "agent_list", lambda: next(lists))
-    monkeypatch.setattr(mod, "dns_ok", lambda: True)
-    monkeypatch.setattr(mod, "boot_id", lambda: "boot-1")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    clock = FakeClock()
-    assert mod.main(clock=clock, sleep=clock.sleep) == 0
-    new_session = next(c for c in calls if "new-session" in c)
-    assert new_session[:3] == ["tmux", "-L", "ship-resume"] and new_session[-1] == "herdr"
-    assert ["tmux", "-L", "ship-resume", "kill-server"] == calls[-1]
-    rec = json.loads((tmp_path / ".local/state/shipshape/last-resume.json").read_text())
-    assert rec["method"] == "hidden-client" and rec["resumed"] == 1 and rec["failed"] == 0
-    assert rec["boot_id"] == "boot-1" and rec["at"].endswith("Z")
-
-
-def test_ship_resume_gives_up_without_herdr(tmp_path, monkeypatch):
-    mod = load_resume()
-    monkeypatch.setattr(mod, "agent_list", lambda: None)
-    monkeypatch.setattr(mod, "dns_ok", lambda: True)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    clock = FakeClock()
-    assert mod.main(clock=clock, sleep=clock.sleep) == 1
-    assert not (tmp_path / ".local/state/shipshape/last-resume.json").exists()
-
-
-def test_resume_record_feeds_status(tmp_path):
-    """The record ship-resume writes is what ship-ctl reports as herdr.last_resume."""
+# --- herdr.last_resume ------------------------------------------------------------------
+def test_last_resume_comes_from_the_record_else_ship_resumes_old_one(tmp_path):
+    """Until a Ship's first boot on tooling with the agent record, status reports the
+    record ship-resume wrote; from then on, the agent record's."""
     sys.path.insert(0, str(SHIP / "lib"))
     from shipctl.context import Context
     from shipctl.paths import Paths
@@ -388,24 +326,19 @@ def test_resume_record_feeds_status(tmp_path):
 
     home = tmp_path / "home/agent/.local/state/shipshape"
     home.mkdir(parents=True)
-    (home / "last-resume.json").write_text(
-        json.dumps(
-            {
-                "at": "2026-01-01T00:00:00Z",
-                "method": "hidden-client",
-                "resumed": 2,
-                "failed": 0,
-                "boot_id": "b",
-            }
-        )
-    )
+    (home / "last-resume.json").write_text(json.dumps({
+        "at": "2026-01-01T00:00:00Z", "method": "hidden-client", "resumed": 2, "failed": 0,
+        "boot_id": "b"}))
     ctx = Context(Paths(tmp_path, SHIP))
-    assert last_resume(ctx) == {
-        "at": "2026-01-01T00:00:00Z",
-        "method": "hidden-client",
-        "resumed": 2,
-        "failed": 0,
-    }
+    assert last_resume(ctx) == {"at": "2026-01-01T00:00:00Z", "method": "hidden-client",
+                                "resumed": 2, "failed": 0}
+    state = tmp_path / "var/lib/shipshape"
+    state.mkdir(parents=True)
+    (state / "agents.json").write_text(json.dumps({
+        "schema": "shipshape.agent-record/1", "runtime": "herdr", "agents": {},
+        "resume": {"boot_id": "c", "at": "2026-01-02T00:00:00Z", "resumed": 3, "failed": 1}}))
+    assert last_resume(ctx) == {"at": "2026-01-02T00:00:00Z", "method": "api-fallback",
+                                "resumed": 3, "failed": 1}
 
 
 def test_agent_home_symlinks_are_replaced_not_followed(tmp_path):
@@ -448,12 +381,35 @@ def test_claude_folder_symlink_and_home_mode(tmp_path):
 
 def test_mode_drift_is_repaired(tmp_path):
     provision("--converge", "--root", str(tmp_path))
-    shim = tmp_path / "opt/shipshape/shim/claude"
-    shim.chmod(0o700)
+    hook = tmp_path / "opt/shipshape/hooks/mode-ledger"
+    hook.chmod(0o700)
     r = provision("--converge", "--root", str(tmp_path))
-    assert "changed: /opt/shipshape/shim/claude" in r.stdout
+    assert "changed: /opt/shipshape/hooks/mode-ledger" in r.stdout
     assert r.stdout.rstrip().endswith("done: 1 change(s)")
-    assert mode(shim) == "0o755"
+    assert mode(hook) == "0o755"
+
+
+def test_converge_removes_the_resume_shim_and_ship_resume(tmp_path):
+    """A Ship provisioned before the agent record had the resume shim and the
+    hidden-client unit, enabled: a converge takes both away."""
+    provision("--converge", "--root", str(tmp_path))
+    old = {"opt/shipshape/shim/claude": "#!/usr/bin/python3\n",
+           "etc/systemd/user/ship-resume.service": "[Unit]\n"}
+    for rel, text in old.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    wants = tmp_path / "etc/systemd/user/default.target.wants/ship-resume.service"
+    wants.parent.mkdir(parents=True, exist_ok=True)
+    wants.symlink_to("/etc/systemd/user/ship-resume.service")
+    r = provision("--converge", "--root", str(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    for rel in ("opt/shipshape/shim/claude", "etc/systemd/user/default.target.wants/"
+                "ship-resume.service", "etc/systemd/user/ship-resume.service"):
+        assert f"changed: removed /{rel}" in r.stdout
+        assert not (tmp_path / rel).exists() and not (tmp_path / rel).is_symlink()
+    assert not (tmp_path / "opt/shipshape/shim").exists()
+    again = provision("--converge", "--root", str(tmp_path))
+    assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
 
 
 def test_a_failed_run_records_failed(tmp_path):
@@ -470,8 +426,8 @@ def test_units_are_enabled(tmp_path):
         pytest.skip("needs systemctl")
     provision("--first-boot", "--root", str(tmp_path))
     assert (tmp_path / "etc/systemd/system/timers.target.wants/ship-status.timer").is_symlink()
-    for unit in ("herdr.service", "ship-resume.service"):
-        assert (tmp_path / "etc/systemd/user/default.target.wants" / unit).is_symlink()
+    wants = tmp_path / "etc/systemd/user/default.target.wants"
+    assert sorted(p.name for p in wants.iterdir()) == ["herdr.service"]
 
 
 def test_root_slash_is_refused(tmp_path):
@@ -491,12 +447,6 @@ def test_keyring_match_is_exact(tmp_path):
         assert r.returncode != 0, allowed
 
 
-def test_resume_service_waits_for_herdr():
-    resume = unit(FILES / "systemd/user/ship-resume.service")
-    assert resume["Unit"]["Requires"] == "herdr.service"
-    assert resume["Unit"]["ConditionUser"] == "agent"
-
-
 def test_profile_snippet_ignores_other_users(tmp_path):
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -511,35 +461,6 @@ def test_profile_snippet_ignores_other_users(tmp_path):
         text=True,
     )
     assert r.stdout.strip() == f"{path}|"
-
-
-def test_ship_resume_waits_for_launches_and_counts_failures(tmp_path, monkeypatch):
-    mod = load_resume()
-    pending = [
-        {"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle", "launch_pending": True}
-    ]
-    final = [
-        {"pane_id": "w1:p1", "agent": "claude", "agent_status": "idle"},
-        {"pane_id": "w2:p1", "agent": "claude", "agent_status": "unknown"},
-    ]
-    lists = iter([pending] * 5 + [final] * 100)
-    monkeypatch.setattr(
-        mod,
-        "run",
-        lambda argv, timeout=15: subprocess.CompletedProcess(
-            argv, 1 if "has-session" in argv else 0, "", ""
-        ),
-    )
-    monkeypatch.setattr(mod, "agent_list", lambda: next(lists))
-    dns = iter([False, False, True] + [True] * 100)
-    monkeypatch.setattr(mod, "dns_ok", lambda: next(dns))
-    monkeypatch.setattr(mod, "boot_id", lambda: "b")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    clock = FakeClock()
-    assert mod.main(clock=clock, sleep=clock.sleep) == 0
-    rec = json.loads((tmp_path / ".local/state/shipshape/last-resume.json").read_text())
-    assert rec["resumed"] == 1 and rec["failed"] == 1
-    assert clock.t >= 2  # waited for DNS
 
 
 # --- install-claude.sh against a fake release server ----------------------------------------

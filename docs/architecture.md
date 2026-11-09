@@ -14,9 +14,13 @@ A Ship is an Ubuntu 26.04 LTS virtual machine for running coding agents.
 - **Users:** `fleet` (admin, for FleetLedger), `agent` (runs herdr and every
   agent, owns every sign-in; no sudo by default) and your own login, with sudo
   (`human` unless `ship-fleet owner` names another).
-- **On boot:** herdr runs as a systemd user service, restores its layout, and
-  resumes each Claude Code conversation in the mode it was in. A hidden client
-  attaches briefly, because herdr resumes agents only once a client is attached.
+- **On boot:** herdr runs as a systemd user service and restores its layout. The
+  Ship keeps its own record of every Claude agent it runs (folder, session, mode:
+  `/var/lib/shipshape/agents.json`), and its first status refresh starts each one
+  again with `claude --resume`, in its pane and its mode. A recorded agent that
+  crashes later is started again the same way; one you exit stays stopped. herdr is
+  reached only through one adapter (`ship/lib/shipctl/runtime.py`), so the runtime
+  underneath can change without losing agents.
 - **Settings:** `ship.toml` drives Claude Code's managed settings (Remote
   Control, the default permission mode, whether bypass is allowed), herdr's
   config, and the catalogue tools installed for agents.
