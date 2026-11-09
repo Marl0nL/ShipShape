@@ -19,7 +19,7 @@
     },
     {
       "code": "agent-relaunch-failed",
-      "message": "Agent 'helper' stopped and did not start again after 3 tries: agent_not_ready. Restart it (ship-ctl agent restart helper, --fresh for a new conversation) or forget it (ship-ctl agent forget helper).",
+      "message": "Agent 'helper' stopped and was not kept running after 3 tries: agent_not_ready. Restart it (ship-ctl agent restart helper, --fresh for a new conversation) or forget it (ship-ctl agent forget helper).",
       "subject": "helper"
     }
   ],

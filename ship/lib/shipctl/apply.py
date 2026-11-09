@@ -242,7 +242,7 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
     changed: list[str] = []
     messages: list[str] = []
     if not dry_run:
-        messages += record.capture(ctx)
+        messages += record.capture(ctx, ship)
 
     def note(path: Path, did: bool) -> None:
         if did:

@@ -461,6 +461,7 @@ def test_ship_page_lists_recorded_agents_that_are_not_running(web):
     row = row[:row.index("</tr>")]
     assert "<td>helper</td>" in row and "failed" in row and "/home/agent/work/side" in row
     assert 'name="agent" value="helper"' in row and "helper is not running" in row
+    assert '<option value="">the mode it was in (plan)</option>' in row  # not the default
     assert "Last resume 2026-01-02T00:00:00Z (by ShipShape, from its agent record)" in page
     assert "2 Claude agents running" in page  # a recorded one not running is not counted
 

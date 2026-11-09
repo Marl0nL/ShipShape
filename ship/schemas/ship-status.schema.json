@@ -411,9 +411,9 @@
               "autostart": { "type": "boolean", "description": "It is an [[autostart]] agent." },
               "state": {
                 "enum": ["running", "starting", "failed", "stopped", "unknown"],
-                "description": "running: live now. starting: it should run and is not live; the next status refresh starts it (after a boot, every agent until it is resumed). failed: it did not start again after 3 tries this boot (attention agent-relaunch-failed). stopped: exited on purpose; an [[autostart]] agent starts afresh at the next boot. unknown: the runtime is not answering."
+                "description": "running: live now. starting: it should run and is not live; the next status refresh starts it (after a boot, every agent until it is resumed). failed: 3 failed tries this boot (a start that failed, or it stopped within 10 minutes of starting; attention agent-relaunch-failed). stopped: exited on purpose; an [[autostart]] agent starts afresh at the next boot. unknown: the runtime is not answering."
               },
-              "relaunch_failures": { "type": "integer", "minimum": 0, "description": "Failed starts this boot." },
+              "relaunch_failures": { "type": "integer", "minimum": 0, "description": "Failed tries this boot." },
               "last_error": { "type": "string", "maxLength": 200 },
               "created_at": { "$ref": "#/$defs/timestamp" },
               "updated_at": { "$ref": "#/$defs/timestamp" }

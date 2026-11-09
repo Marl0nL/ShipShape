@@ -318,7 +318,9 @@ def build_parser() -> argparse.ArgumentParser:
              "(claude --resume); Remote Control and its session name come back as before.\n"
              "Without --mode, each takes the mode it would start in now: its own autostart\n"
              "mode, else the Ship's default_mode. The Ship records the new mode, so a\n"
-             "reboot or update resumes it in that mode.\n\n"
+             "reboot or update resumes it in that mode. An agent the Ship records but that\n"
+             "is not running (it stopped, or did not start again after a crash) starts\n"
+             "again, by default in the mode it was in.\n\n"
              "An agent that is working is left alone unless --force (which interrupts its\n"
              "turn); one waiting for an answer has that question dismissed. bypassPermissions\n"
              "needs allow_bypass=true on the Ship.\n\n"
@@ -333,7 +335,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("agents", nargs="*", metavar="AGENT", help="herdr agent names")
     p.add_argument("--all", action="store_true", help="every running Claude agent with a name")
     p.add_argument("--mode", choices=MODES,
-                   help="default: its autostart mode, else the Ship's default_mode")
+                   help="default: its autostart mode, else the Ship's default_mode (for "
+                        "one not running: the mode it was in)")
     p.add_argument("--fresh", action="store_true",
                    help="start a new conversation instead of continuing it")
     p.add_argument("--force", action="store_true",

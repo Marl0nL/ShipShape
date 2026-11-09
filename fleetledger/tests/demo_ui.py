@@ -357,7 +357,7 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         agents[0]["state"] = "working"
         agents.append({"name": "tests", "kind": "claude", "state": "working", "mode": "auto",
                        "pane": "w3:p1", "workspace": "w3"})
-        # Its agent record: the two running, and one that died and did not start again.
+        # Its agent record: those running, and one that died and was not kept running.
         boot = _stamp(datetime.fromtimestamp(now - host["uptime_s"] + 40, UTC))
         doc["agent_record"] = {"runtime": "herdr", "resume": {
             "at": boot, "method": "ship-ctl", "resumed": 3, "failed": 0}, "agents": [
@@ -372,7 +372,7 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         doc["herdr"]["last_resume"] = {"at": boot, "method": "api-fallback", "resumed": 4,
                                        "failed": 0}
         doc["attention"].append({"code": "agent-relaunch-failed", "subject": "docs",
-                                 "message": "Agent 'docs' stopped and did not start again "
+                                 "message": "Agent 'docs' stopped and was not kept running "
                                  "after 3 tries: claude exited: No conversation found. "
                                  "Restart it (ship-ctl agent restart docs, --fresh for a new "
                                  "conversation) or forget it (ship-ctl agent forget docs)."})

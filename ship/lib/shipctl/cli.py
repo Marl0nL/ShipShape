@@ -117,7 +117,8 @@ def build_parser() -> Parser:
     ag.add_argument("--all", dest="everyone", action="store_true",
                     help="every named Claude agent")
     ag.add_argument("--mode", choices=PERMISSION_MODES,
-                    help="default: its [[autostart]] mode, else claude.default_mode")
+                    help="default: its [[autostart]] mode, else claude.default_mode; for one "
+                         "not running, the mode it was in")
     ag.add_argument("--fresh", action="store_true",
                     help="start a new conversation instead of continuing it")
     ag.add_argument("--force", action="store_true",

@@ -16,10 +16,12 @@ starts, restarts or changes an agent:
 - **reconcile**: an agent that should run but is not live is started again,
   with `claude --resume <session>` in its folder and mode. After a boot, that is
   how agents resume. Within one boot, that is the crash policy. An agent counts as
-  stopped on purpose, and is not started again (an adopted one leaves the record),
-  when Claude reported it exited (SessionEnd `prompt_input_exit` or `logout`, kept
-  by the mode ledger) or its place is gone (its pane was closed). After
-  MAX_TRIES failed starts in one boot it is left alone (`failed`, the attention
+  stopped on purpose, and is not started again (one that is not an [[autostart]]
+  agent leaves the record), when Claude reported it exited (SessionEnd
+  `prompt_input_exit` or `logout`, kept by the mode ledger) or its place is gone
+  (its pane was closed). A start that fails, or an agent that stops within
+  STABLE_S of starting, is a failed try; its tries reset once it has run that long.
+  After MAX_TRIES failed tries in one boot it is left alone (`failed`, the attention
   item agent-relaunch-failed) until it is restarted or forgotten, or the next boot.
 """
 
@@ -30,16 +32,16 @@ import fcntl
 import json
 import os
 import re
-import socket
-import threading
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import PERMISSION_MODES
 from .context import Context, utc_now
+from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
-from .runtime import Herdr, for_ship, mode_args
+from .runtime import Herdr, for_ship, mode_args, wait_budget
 from .shiptoml import ShipToml
 from .status import boot_id, read_ledger
 
@@ -48,7 +50,10 @@ FILE = "agents.json"
 LOCK = "agents.lock"
 OLD_AUTOSTART = "autostart.json"  # autostart's record before this one (imported once)
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")  # herdr's rule for agent names
-MAX_TRIES = 3  # failed starts in one boot before an agent is left alone
+MAX_TRIES = 3  # failed tries in one boot before an agent is left alone
+STABLE_S = 600  # an agent that stops sooner after it started counts as a failed try
+LOCK_WAIT_S = 60  # how long a command waits for another ship-ctl's agents to start
+DNS_TIMEOUT_S = 3
 DELIBERATE_ENDS = ("prompt_input_exit", "logout")  # Claude's SessionEnd reasons
 RESUME_GRACE_S = 600  # after this much uptime, nothing waits for this boot's resume
 DNS_PROBE = "api.anthropic.com"  # resumed sessions reconnect Remote Control at once
@@ -87,6 +92,7 @@ def _clean(e: dict) -> dict:
             "failures": failures if isinstance(failures, int) and failures >= 0 else 0,
             "last_error": _text(relaunch.get("last_error")),
             "last_at": _ts(relaunch.get("last_at")),
+            "counted_launch": _ts(relaunch.get("counted_launch")),
         },
         "launched_at": _ts(e.get("launched_at")),
         "stopped_at": _ts(e.get("stopped_at")),
@@ -124,9 +130,10 @@ _held = 0  # this process holds the lock (ship-ctl runs one command at a time)
 
 
 @contextlib.contextmanager
-def locked(ctx: Context, wait: bool = True) -> Iterator[bool]:
+def locked(ctx: Context, wait: bool = True, timeout: float | None = None) -> Iterator[bool]:
     """Hold the record's lock: one ship-ctl at a time starts, stops or records
-    agents. Yields False (without the lock) when wait is False and it is taken."""
+    agents. Yields False (without the lock) when it is taken and wait is False, or
+    still taken after timeout seconds."""
     global _held
     if _held:
         _held += 1
@@ -138,12 +145,19 @@ def locked(ctx: Context, wait: bool = True) -> Iterator[bool]:
     ensure_dir(ctx.paths.state, 0o755)
     with open(ctx.paths.state / LOCK, "a") as fh:
         os.chmod(fh.name, 0o600)
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        except BlockingIOError:
-            got = False
-        else:
-            got = True
+        deadline = time.monotonic() + (timeout or 0)
+        while True:
+            try:
+                blocking = wait and timeout is None
+                fcntl.flock(fh, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            except BlockingIOError:
+                if wait and time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    continue
+                got = False
+            else:
+                got = True
+            break
         if not got:
             yield False
             return
@@ -153,6 +167,17 @@ def locked(ctx: Context, wait: bool = True) -> Iterator[bool]:
         finally:
             _held = 0
             fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def held(ctx: Context) -> Iterator[None]:
+    """The lock, for a command someone runs: it waits at most LOCK_WAIT_S for another
+    ship-ctl (a boot's resume, say) to finish starting agents, then gives up saying so."""
+    with locked(ctx, timeout=wait_budget(ctx, LOCK_WAIT_S)) as got:
+        if not got:
+            raise CtlError("agent-busy", "another ship-ctl is starting or stopping agents "
+                           "(after a boot, the resume); try again in a minute")
+        yield
 
 
 # --- the host ---------------------------------------------------------------------
@@ -172,21 +197,17 @@ def boot_started(ctx: Context) -> str:
 
 
 def dns_ready(ctx: Context) -> bool:
-    if ctx.paths.sandbox:
-        return True
-    answer: list[bool] = []
+    """The resolver answers for Claude's API (getent, with a hard timeout)."""
+    return ctx.runner.run(["getent", "ahosts", DNS_PROBE], timeout=DNS_TIMEOUT_S).ok
 
-    def resolve() -> None:
-        try:
-            socket.getaddrinfo(DNS_PROBE, 443)
-            answer.append(True)
-        except OSError:
-            answer.append(False)
 
-    t = threading.Thread(target=resolve, daemon=True)
-    t.start()
-    t.join(3)
-    return bool(answer and answer[0])
+def _age_s(stamp: str | None) -> float | None:
+    """Seconds since a timestamp of this record, or None."""
+    try:
+        when = datetime.strptime(stamp or "", "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    return (datetime.now(UTC) - when).total_seconds()
 
 
 def resume_pending(ctx: Context, doc: dict | None = None) -> bool:
@@ -294,22 +315,27 @@ def new_entry(cwd: str, *, origin: str, session: str | None = None, mode: str | 
     return {"cwd": cwd, "session": session, "mode": mode, "prompt": prompt,
             "session_name": session_name, "origin": origin, "want": "running",
             "place": place, "relaunch": {"boot_id": None, "failures": 0, "last_error": None,
-                                         "last_at": None},
+                                         "last_at": None, "counted_launch": None},
             "launched_at": now, "stopped_at": None, "created_at": now, "updated_at": now}
 
 
 def launched(ctx: Context, rt: Herdr, doc: dict, name: str, *, cwd: str, place: str,
              workspace: str | None, session: str | None, mode: str | None,
              origin: str = "autostart", prompt: str | None = None,
-             session_name: str | None = None) -> dict:
-    """Record that ship-ctl just started `name` (autostart, restart)."""
+             session_name: str | None = None, keep_tries: bool = False) -> dict:
+    """Record that ship-ctl just started `name` (autostart, restart, or the crash
+    policy, which keeps the boot's failed tries: they reset only once it has run
+    STABLE_S)."""
     e = doc["agents"].get(name)
     if e is None:
         e = doc["agents"][name] = new_entry(cwd, origin=origin)
     fields = {"cwd": cwd, "mode": mode, "want": "running", "stopped_at": None,
-              "launched_at": utc_now(), "place": _place(rt, ctx, place, workspace),
-              "relaunch": {"boot_id": boot_id(ctx), "failures": 0, "last_error": None,
-                           "last_at": None}}
+              "launched_at": utc_now(), "place": _place(rt, ctx, place, workspace)}
+    if not keep_tries:
+        fields["relaunch"] = {"boot_id": boot_id(ctx), "failures": 0, "last_error": None,
+                              "last_at": None, "counted_launch": None}
+    else:  # a new start: an early stop of it is still to be counted
+        fields["relaunch"] = {**e["relaunch"], "counted_launch": None}
     if session:
         fields["session"] = session
     if prompt is not None:
@@ -337,7 +363,9 @@ def sync(ctx: Context, rt: Herdr, doc: dict, live: list[dict], ledger: dict[str,
             here = _place(rt, ctx, a["place"], a["workspace"])
             if e["place"] != here:
                 fields["place"] = here
-        if e["relaunch"]["failures"]:
+        age = _age_s(e["launched_at"])
+        if e["relaunch"]["failures"] and age is not None and age >= STABLE_S:
+            # It has run long enough since its last start: its tries are spent no more.
             fields["relaunch"] = {**e["relaunch"], "failures": 0, "last_error": None}
         changed |= _set(e, **fields)
     claimed = {id(a) for a in found.values()}
@@ -389,11 +417,23 @@ def _stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
 
 
 def _stop(doc: dict, name: str, autostart: set[str]) -> None:
-    e = doc["agents"][name]
-    if e["origin"] == "adopted" and name not in autostart:
-        del doc["agents"][name]  # as herdr forgets a pane's agent when it exits
+    """Let an agent go: an [[autostart]] one stays, stopped (autostart starts it
+    afresh at the next boot); any other leaves the record, as herdr forgets a pane's
+    agent when it exits."""
+    if name not in autostart:
+        del doc["agents"][name]
     else:
-        _set(e, want="stopped", stopped_at=utc_now())
+        _set(doc["agents"][name], want="stopped", stopped_at=utc_now())
+
+
+def prune(doc: dict, ship: ShipToml) -> bool:
+    """Drop stopped agents that are no longer [[autostart]] agents (removed from it
+    after they stopped): nothing would ever start them again."""
+    autostart = {e["name"] for e in ship.autostart}
+    gone = [n for n, e in doc["agents"].items() if e["want"] == "stopped" and n not in autostart]
+    for name in gone:
+        del doc["agents"][name]
+    return bool(gone)
 
 
 def _folder_exists(ctx: Context, cwd: str) -> bool:
@@ -402,7 +442,7 @@ def _folder_exists(ctx: Context, cwd: str) -> bool:
 
 def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
              places: dict | None, *, same_place: bool, mode: str | None = None,
-             fresh: list[str] | None = None) -> tuple[bool, str]:
+             fresh: list[str] | None = None, keep_tries: bool = True) -> tuple[bool, str]:
     """Start recorded agent `name` again, continuing its session (or, with fresh,
     a new conversation with those extra arguments): in its own place when
     same_place (it died there this boot), else in its restored place if that is a
@@ -437,12 +477,12 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
                 continue
         ok, why = rt.start_settled(name, place, args)
         if ok:
-            back = rt.in_place(place) or {}
+            back = rt.in_place(place, name) or {}
             launched(ctx, rt, doc, name, cwd=cwd, place=place,
                      workspace=back.get("workspace") or workspace,
                      session=back.get("session") or (None if fresh is not None
                                                      else e["session"]),
-                     mode=mode, origin=e["origin"])
+                     mode=mode, origin=e["origin"], keep_tries=keep_tries)
             if fresh is not None and not back.get("session"):
                 e["session"] = None  # a new conversation: the next sync learns its id
             return True, ""
@@ -468,7 +508,8 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dic
         e = doc["agents"][name]
         r = e["relaunch"]
         if r["boot_id"] != boot:  # a new boot: a fresh set of tries
-            r.update(boot_id=boot, failures=0, last_error=None, last_at=None)
+            r.update(boot_id=boot, failures=0, last_error=None, last_at=None,
+                     counted_launch=None)
         this_boot = bool(e["place"]) and e["place"]["boot_id"] == boot
         why = _stopped_on_purpose(e, sessions, places, since) if this_boot else None
         if why:
@@ -483,6 +524,18 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dic
             continue
         if r["failures"] >= MAX_TRIES:
             continue
+        lived = _age_s(e["launched_at"]) if this_boot else None
+        if lived is not None and lived < STABLE_S and r["counted_launch"] is None:
+            # It stopped soon after it started (its transcript too big to load, a
+            # crash on start): a failed try, once per start, so a loop of them ends.
+            r.update(failures=r["failures"] + 1, counted_launch=e["launched_at"],
+                     last_at=utc_now(), last_error=f"it stopped {int(lived)} s after it started")
+            e["updated_at"] = utc_now()
+            if r["failures"] >= MAX_TRIES:
+                failed += 1
+                messages.append(f"{name} stopped again soon after it started; left alone "
+                                f"after {MAX_TRIES} tries.")
+                continue
         ok, why = relaunch(ctx, ship, rt, doc, name, places, same_place=this_boot)
         if ok:
             started += 1
@@ -532,6 +585,7 @@ def upkeep(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dict],
     Call it with the lock held. Returns (live agents now, messages, changed)."""
     changed = import_autostart(ctx, doc, live)
     changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
+    changed |= prune(doc, ship)
     if state in ("provisioning", "needs-sign-in"):
         return live, [], changed  # nothing starts before Claude is signed in
     boot = boot_id(ctx)
@@ -568,7 +622,7 @@ def refresh(ctx: Context, ship: ShipToml, state: str) -> list[str]:
     return messages
 
 
-def capture(ctx: Context, timeout: float = 15) -> list[str]:
+def capture(ctx: Context, ship: ShipToml, timeout: float = 15) -> list[str]:
     """Record every running agent now (`ship-ctl apply`, so also every converge):
     a Ship updated from tooling before the record has its agents recorded before it
     next reboots, and comes back with them in their modes."""
@@ -585,6 +639,7 @@ def capture(ctx: Context, timeout: float = 15) -> list[str]:
         doc = load(ctx)
         changed = import_autostart(ctx, doc, live)
         changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
+        changed |= prune(doc, ship)  # `set autostart.remove=` lets a stopped one go
         if changed:
             save(ctx, doc)
     return []
@@ -592,13 +647,14 @@ def capture(ctx: Context, timeout: float = 15) -> list[str]:
 
 def forget(ctx: Context, names: list[str]) -> tuple[dict, list[str], list[str]]:
     """Drop agents that are not running from the record. (data, changed, messages)."""
-    from .errors import CtlError
-
     rt = for_ship(ctx)
-    with locked(ctx):
+    with held(ctx):
         doc = load(ctx)
-        _, live, _ = rt.agents()
-        found = match(doc, live or [])
+        server, live, _ = rt.agents()
+        if server != "running" or live is None:  # then nothing could be told to run
+            raise CtlError("herdr-unavailable", "the herdr server is not answering, so "
+                           "whether the agent runs is not known; nothing forgotten")
+        found = match(doc, live)
         unknown = [n for n in names if n not in doc["agents"]]
         if unknown:
             raise CtlError("invalid-input", f"not in the agent record: {', '.join(unknown)} "
@@ -655,7 +711,7 @@ def attention(block: dict | None) -> list[tuple[str, str, str]]:
         if a["state"] == "failed":
             why = f": {a['last_error']}" if a.get("last_error") else ""
             out.append(("agent-relaunch-failed",
-                        f"Agent '{a['name']}' stopped and did not start again after "
+                        f"Agent '{a['name']}' stopped and was not kept running after "
                         f"{a['relaunch_failures']} tries{why}. Restart it (ship-ctl agent "
                         f"restart {a['name']}, --fresh for a new conversation) or forget it "
                         f"(ship-ctl agent forget {a['name']}).", a["name"]))

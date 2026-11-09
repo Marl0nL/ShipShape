@@ -183,9 +183,10 @@
             "boot_id",
             "failures",
             "last_error",
-            "last_at"
+            "last_at",
+            "counted_launch"
           ],
-          "description": "Failed starts in one boot (the crash policy gives up after 3).",
+          "description": "Failed tries in one boot: a start that failed, or an agent that stopped within 10 minutes of starting. The crash policy gives up after 3; they reset once the agent has run 10 minutes.",
           "properties": {
             "boot_id": {
               "type": [
@@ -212,6 +213,17 @@
                   "type": "null"
                 }
               ]
+            },
+            "counted_launch": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/timestamp"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set (to that start's launched_at) once the current start's early stop has been counted as a failed try; cleared by every start."
             }
           }
         },

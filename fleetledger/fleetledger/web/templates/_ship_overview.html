@@ -112,7 +112,7 @@
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <input type="hidden" name="agent" value="{{ a.name }}">
               <label>Mode <select name="mode">
-                <option value="">the mode it starts in{% if r.start_mode %} ({{ r.start_mode }}){% endif %}</option>
+                <option value="">{{ r.default_label or "the mode it starts in" }}{% if r.start_mode %} ({{ r.start_mode }}){% endif %}</option>
                 {% for m in MODES %}{% if m != "bypassPermissions" or bypass_ok %}<option value="{{ m }}">{{ m }}</option>{% endif %}{% endfor %}
               </select></label>
               <label><input type="checkbox" name="fresh" value="yes"> New conversation</label>

@@ -160,11 +160,12 @@ class Herdr:
             }
         return out
 
-    def in_place(self, place: str) -> dict | None:
-        """The Claude agent in this place now, or None."""
+    def in_place(self, place: str, name: str | None = None) -> dict | None:
+        """The Claude agent in this place now (with name: only one by that name, as
+        `start` names the agent it starts), or None."""
         _, live, _ = self.agents()
-        return next((a for a in live or [] if a["place"] == place and a["kind"] == "claude"),
-                    None)
+        return next((a for a in live or [] if a["place"] == place and a["kind"] == "claude"
+                     and (name is None or a["name"] == name)), None)
 
     # --- starting -------------------------------------------------------------------
     def new_place(self, cwd: str, label: str) -> tuple[str | None, str | None, str]:
@@ -188,12 +189,15 @@ class Herdr:
 
     def start_settled(self, name: str, place: str, args: list[str]) -> tuple[bool, str]:
         """start, once more after a moment if the shell was not back at its prompt
-        yet; ok when claude is in the place afterwards, whatever herdr answered."""
+        yet; ok when the agent it started, by its name, is in the place afterwards,
+        whatever herdr answered. Another agent there is never taken for it."""
         ok, why = self.start(name, place, args)
-        if not ok and self.in_place(place) is None:
+        if not ok and self.in_place(place, name) is None:
+            if self.in_place(place) is not None:
+                return False, "another agent is in that pane"
             time.sleep(min(3.0, wait_budget(self.ctx, 3.0)))
             ok, why = self.start(name, place, args)
-        return ok or self.in_place(place) is not None, why
+        return ok or self.in_place(place, name) is not None, why
 
     # --- talking to an agent ----------------------------------------------------------
     def prompt(self, target: str, text: str) -> tuple[bool, str]:

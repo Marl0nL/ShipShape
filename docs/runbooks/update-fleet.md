@@ -49,7 +49,9 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   and `herdr` before going further (and check that the Ship still allows bypass).
   `agent X did not come back`: it is not running yet, or it failed to start 3 times
   (attention `agent-relaunch-failed`); `ship-fleet agent restart ship-01 X` tries
-  again, `--fresh` in a new conversation. A reboot keeps each agent in the mode it was
+  again in the mode it was in, `--fresh` in a new conversation. An agent stays
+  stopped only when it is exited (`/exit`) or its pane is closed: one that is
+  killed counts as crashed, and the Ship starts it again. A reboot keeps each agent in the mode it was
   in, never the new default: to change it, see "Change a running agent's mode".
 - A failed converge rolls the Ship back to its previous tooling by itself; read
   `ship-fleet logs ship-01 provision`.

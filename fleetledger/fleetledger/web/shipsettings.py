@@ -143,15 +143,18 @@ def start_mode(view: Any, name: str) -> str | None:
 def recorded_not_running(view: Any) -> list[dict[str, Any]]:
     """Agents the Ship's agent record has that are not running (starting again after a
     crash or a boot, given up on, or exited), as rows like herdr's agents, each with
-    the mode it would start in: `ship-fleet agent restart` starts one again."""
+    the mode it was in: `ship-fleet agent restart` starts one again, in that mode
+    unless told another."""
     doc = view.status if view is not None else None
     out = []
     for a in ((doc or {}).get("agent_record") or {}).get("agents") or []:
         if a["state"] == "running":
             continue
+        # Restarted without a mode, the Ship brings it back in the mode it was in.
         out.append({"name": a["name"], "kind": "claude", "state": a["state"], "mode": a["mode"],
                     "cwd": a["cwd"], "workspace": "not running",
-                    "start_mode": start_mode(view, a["name"]), "drifted": False})
+                    "start_mode": a["mode"] or start_mode(view, a["name"]),
+                    "default_label": "the mode it was in", "drifted": False})
     return out
 
 

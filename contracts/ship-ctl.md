@@ -62,7 +62,7 @@ How fields are worked out:
 | `auth.gcloud_adc` | `gcloud auth application-default print-access-token` as `agent`, output discarded: exit 0 gives `ok`. `account` may be null. |
 | `auth.github` | `gh auth status --hostname github.com` as `agent`; `account` is the login it reports; `scopes` the token's scopes it lists (`Token scopes:`), sorted, or null when it lists none. |
 | `herdr` | `herdr --version` and `herdr agent list` as `agent`. `mode` comes from the mode ledger for the agent's session, else from the agent record. `last_resume` is the agent record's last resume after a boot, with `method` `api-fallback` (ship-ctl started the recorded agents again through herdr's API); until a Ship's first boot on tooling with the record, the one ship-resume recorded (`hidden-client`). |
-| `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed starts this boot, and the last boot's resume (`method` `ship-ctl`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
+| `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed tries this boot, and the last boot's resume (`method` `ship-ctl`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
@@ -169,7 +169,8 @@ too) or a herdr agent name. `--all` is every Claude agent herdr lists with a nam
 (one without a name is skipped, with a reason).
 
 - **Mode:** `--mode`, else the mode the agent would start in now: its
-  `[[autostart]]` entry's `mode`, else `claude.default_mode`.
+  `[[autostart]]` entry's `mode`, else `claude.default_mode` (for an agent that
+  is not running: the mode it was in, below).
   `bypassPermissions` on a Ship whose `claude.allow_bypass` is false is refused
   (`invalid-input`) before any agent is touched; every agent's mode is checked
   first.
@@ -195,8 +196,10 @@ too) or a herdr agent name. `--all` is every Claude agent herdr lists with a nam
   start again is started by the next status refresh, as after a crash.
 - **A recorded agent that is not running** (it stopped, or did not start again
   after a crash: `failed`) is started again from the record: its folder and
-  session, in the mode above, in its old pane if that is a free shell in its
-  folder, else in a new workspace. That clears `agent-relaunch-failed`.
+  session, in its old pane if that is a free shell in its folder, else in a new
+  workspace. Without `--mode` it comes back in the mode it was in (its session's
+  in the mode ledger, else the record's; `default_mode` where that is bypass and
+  bypass is no longer allowed). That clears `agent-relaunch-failed`.
 - **Recorded:** the mode ledger and the agent record get the session in its new
   mode, so the status document reports it, `ship-fleet reboot` expects it, and the
   next boot resumes it in that mode (`settings.md`, "Permission modes across
@@ -210,7 +213,8 @@ Errors, with `data` still saying what did happen: `agent-busy` when only busy
 agents were left alone (run again with `--force`, or when they are idle),
 `agent-failed` when an agent did not exit, did not start again, or has no known
 session; `herdr-unavailable` when herdr does not answer; `invalid-input` for a
-name neither the record nor herdr has.
+name neither the record nor herdr has; `agent-busy` too when another ship-ctl held
+the record for 60 seconds (see "The agent record").
 
 Doing it by hand, on the Ship as `agent` (attach with herdr and go to its pane):
 exit the agent (`/exit`), then in the same pane run
@@ -225,8 +229,10 @@ records it, so a reboot keeps it.
 Drops recorded agents that are not running from the agent record: they are not
 resumed at boot and not started again (and `agent-relaunch-failed` goes). A running
 agent is refused (`invalid-input`): exit it, and it leaves the record by itself (an
-`[[autostart]]` agent stays, as `stopped`, and starts afresh at the next boot; to
-stop that, remove it from `[[autostart]]`). `data`: `{ "forgotten": [names] }`.
+`[[autostart]]` agent stays, as `stopped`, and starts afresh at the next boot;
+removing it from `[[autostart]]` lets it go). While herdr does not answer nothing
+is forgotten (`herdr-unavailable`): whether the agent runs is not known.
+`data`: `{ "forgotten": [names] }`.
 
 ### The agent record
 
@@ -265,11 +271,19 @@ layout, each pane a shell in its folder under its old id.
   left stopped too, as it was before: its exit could not be told from a crash.
   After the next boot every agent runs under the new hooks. An `[[autostart]]`
   agent stopped on purpose stays in the record, `stopped`, and starts afresh at the
-  next boot; any other leaves the record. After 3 failed starts in one boot, the
-  agent is left alone (`failed`, attention `agent-relaunch-failed`) until
-  `agent restart`, `agent forget` or the next boot.
+  next boot; any other (one removed from `[[autostart]]` too) leaves the record.
+  A start that fails, and an agent that stops within 10 minutes of starting (its
+  transcript too big to load, a crash on start), is a failed try; the tries reset
+  once it has run 10 minutes. After 3 failed tries in one boot the agent is left
+  alone (`failed`, attention `agent-relaunch-failed`) until `agent restart`,
+  `agent forget` or the next boot. So an agent that keeps dying is started again at
+  most twice, never in a loop. An agent stopped any other way than an exit (killed,
+  `herdr agent stop`) counts as crashed and is started again.
 - **One at a time:** ship-ctl holds a lock while it starts, stops or records agents;
   a status refresh that finds it held leaves the record for the next refresh.
+  `autostart`, `agent restart` and `agent forget` wait for it at most 60 seconds
+  (a boot's resume can hold it for a while), then fail with `agent-busy`, saying
+  why; nothing has been touched.
 
 ### `ship-ctl notify-signin SERVICE [--json]`
 

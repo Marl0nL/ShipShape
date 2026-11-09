@@ -144,7 +144,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
     server, live, _ = rt.agents()
     if server != "running" or live is None:
         raise CtlError("herdr-unavailable", "the herdr server is not answering")
-    with record.locked(ctx):
+    with record.held(ctx):
         doc = record.load(ctx)
         live, notes, _ = record.upkeep(ctx, ship, rt, doc, live, state)
         messages += notes
@@ -199,7 +199,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
                 continue
             started.append(name)
             prompt = entry.get("prompt") or DEFAULT_PROMPT
-            back = rt.in_place(pane) or {}
+            back = rt.in_place(pane, name) or {}
             record.launched(ctx, rt, doc, name, cwd=cwd, place=pane,
                             workspace=back.get("workspace") or workspace,
                             session=back.get("session"), mode=mode, origin="autostart",

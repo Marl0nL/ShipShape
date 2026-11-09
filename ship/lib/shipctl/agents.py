@@ -133,9 +133,9 @@ def restart(ctx: Context, ship: ShipToml, names: list[str], *, everyone: bool = 
     server, live, _ = rt.agents()
     if server != "running" or live is None:
         raise CtlError("herdr-unavailable", "the herdr server is not answering")
-    # A mode not given is the one it would start in, which ship.toml's schema only
-    # allows to be bypassPermissions where allow_bypass is true: nothing more to check.
-    with record.locked(ctx):
+    # A mode not given is the one it would start in (or, for one not running, the one
+    # it was in), which is bypassPermissions only where allow_bypass is true.
+    with record.held(ctx):
         doc = record.load(ctx)
         if record.sync(ctx, rt, doc, live, read_ledger(ctx)):
             record.save(ctx, doc)
@@ -178,8 +178,12 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
         return naming.launch_args(label(name), named)
 
     for name, a in targets:
-        new_mode = wanted_mode(ship, name, mode)
         rec = doc["agents"].get(name)
+        new_mode = wanted_mode(ship, name, mode)
+        if a is None and mode is None:  # not running: back as it was
+            new_mode = ledger.get(rec["session"] or "") or rec["mode"] or new_mode
+            if new_mode == "bypassPermissions" and not ship.claude["allow_bypass"]:
+                new_mode = ship.claude["default_mode"]
         previous = (rec or {}).get("mode")  # before this restart records the new one
         if a is not None and (a["session"] or (rec or {}).get("session")) in ledger:
             previous = ledger[a["session"] or rec["session"]]
@@ -191,7 +195,8 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
                                 "conversation cannot be continued; restart it fresh instead"})
                 continue
             ok, why = record.relaunch(ctx, ship, rt, doc, name, rt.places(), same_place=False,
-                                      mode=new_mode, fresh=fresh_args(name) if fresh else None)
+                                      mode=new_mode, fresh=fresh_args(name) if fresh else None,
+                                      keep_tries=False)
             if not ok:
                 failed += 1
                 skipped.append({"name": name, "reason": f"did not start again: {why}"})
@@ -229,7 +234,7 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
                 record_mode(ctx, session, new_mode)
             args = [*mode_args(new_mode), *(fresh_args(name) if fresh else ["--resume", session])]
             ok, why = rt.start_settled(name, place, args)
-            back = rt.in_place(place)
+            back = rt.in_place(place, name)
             cwd = a["cwd"] or (rec or {}).get("cwd")
             if not ok and back is None:
                 failed += 1
@@ -240,11 +245,12 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
                                 f"pane with: {launch}")
                 if rec is not None and not fresh:
                     # A crash, as far as the record goes (the restart cleared its /exit
-                    # from the ledger): the next refresh starts it again, in its new mode.
+                    # from the ledger): the next refresh starts it again, in its new mode,
+                    # and counts this as its first failed try (it stopped at once).
                     record.launched(ctx, rt, doc, name, cwd=rec["cwd"], place=place,
                                     workspace=a["workspace"], session=session, mode=new_mode,
                                     origin=rec["origin"])
-                    rec["relaunch"].update(failures=1, last_error=why[:200])
+                    rec["relaunch"].update(last_error=why[:200])
                 continue
             new_session = (back or {}).get("session") or (None if fresh else session)
             if new_session and (fresh or new_session != session):

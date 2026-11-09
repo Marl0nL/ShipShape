@@ -45,6 +45,7 @@ FAKE_COMMANDS = [
     "ip",
     "timedatectl",
     "logger",
+    "getent",
 ]
 ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the sandbox
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"

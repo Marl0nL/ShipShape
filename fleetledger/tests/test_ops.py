@@ -370,8 +370,11 @@ def test_reboot_expects_every_agent_the_record_keeps_running(world):
     resume is the record's (herdr.last_resume is only for older FleetLedgers)."""
     sim = world.sims["ship-01"]
     sim.recorded, sim.relaunching, sim.herdr_resume = True, {"helper": "plan"}, False
-    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")])
+    start = world.clock.t
+    [outcome] = ops.reboot(world.fleet, [world.ship("ship-01")],
+                           times=ops.RebootTimes(back=600, resume=600, poll=10))
     assert outcome.ok, outcome
+    assert world.clock.t - start < 200  # it saw the record's resume, not the full window
     assert outcome.data["agents_before"] == {"main": "auto", "builder": "bypassPermissions",
                                              "helper": "plan"}
     assert "3/3 agents resumed in their modes" in outcome.summary

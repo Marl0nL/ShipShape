@@ -20,7 +20,8 @@
         "boot_id": "0b6f7e0e-0000-4000-8000-000000000002",
         "failures": 0,
         "last_error": null,
-        "last_at": null
+        "last_at": null,
+        "counted_launch": null
       },
       "launched_at": "2026-01-02T08:00:40Z",
       "stopped_at": null,
@@ -45,7 +46,8 @@
         "boot_id": "0b6f7e0e-0000-4000-8000-000000000002",
         "failures": 3,
         "last_error": "agent_not_ready",
-        "last_at": "2026-01-02T08:01:40Z"
+        "last_at": "2026-01-02T08:01:40Z",
+        "counted_launch": null
       },
       "launched_at": "2026-01-01T12:00:00Z",
       "stopped_at": null,
@@ -65,7 +67,8 @@
         "boot_id": null,
         "failures": 0,
         "last_error": null,
-        "last_at": null
+        "last_at": null,
+        "counted_launch": null
       },
       "launched_at": "2026-01-01T09:00:00Z",
       "stopped_at": "2026-01-01T18:00:00Z",

@@ -571,6 +571,14 @@ def resize2fs(s: dict, a: list[str]) -> int:
     return 0
 
 
+def getent(s: dict, a: list[str]) -> int:
+    """`getent ahosts NAME`: answers unless the scenario says DNS is not up yet."""
+    if not s.get("dns", True):
+        return 2
+    print(f"192.0.2.53      STREAM {a[-1]}")
+    return 0
+
+
 def useradd(s: dict, a: list[str]) -> int:
     """Adds the user to the sandbox's /etc/passwd, as the real one would."""
     name = a[-1]
@@ -607,6 +615,7 @@ HANDLERS = {
     "ip": ip,
     "timedatectl": timedatectl,
     "logger": logger,
+    "getent": getent,
 }
 
 
