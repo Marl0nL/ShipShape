@@ -110,7 +110,8 @@ def test_the_seed_makes_a_locked_down_vm_and_records_it_as_self(store, home, che
     assert ["loginctl", "enable-linger", "fleetledger"] in doc["runcmd"]
     assert doc["swap"] == {"size": 0}
     drop_in = {f["path"]: f["content"] for f in doc["write_files"]}
-    assert drop_in["/etc/systemd/system/user@.service.d/fleetledger-drain.conf"] == \
+    # Its name sorts after Ubuntu's timeout.conf (TimeoutStopSec=5), or it would lose.
+    assert drop_in["/etc/systemd/system/user@.service.d/zz-fleetledger-drain.conf"] == \
         "[Service]\nTimeoutStopSec=45min\n"
     assert "AllowUsers fleetledger vmadmin" in \
         drop_in["/etc/ssh/sshd_config.d/10-fleetledger.conf"]

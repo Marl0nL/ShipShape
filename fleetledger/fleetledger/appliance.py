@@ -35,6 +35,7 @@ from typing import Any
 
 from fleetledger import paths
 from fleetledger.errors import ConfigError, FleetError
+from fleetledger.service import DROP_IN
 
 USER = "fleetledger"
 TAG = "tag:fleetledger"
@@ -163,7 +164,8 @@ def user_data(name: str, host_key: Any, login_keys: list[str], repo_url: str, co
                      "libguestfs-tools"],
         "swap": {"size": 0},
         "write_files": [
-            {"path": "/etc/systemd/system/user@.service.d/fleetledger-drain.conf",
+            # Named to sort after Ubuntu's user@.service.d/timeout.conf (service.DROP_IN).
+            {"path": "/etc/systemd/system/user@.service.d/" + DROP_IN,
              "owner": "root:root", "permissions": "0644", "content": REBOOT_DROP_IN},
             {"path": "/etc/ssh/sshd_config.d/10-fleetledger.conf", "owner": "root:root",
              "permissions": "0644", "content": SSHD},
