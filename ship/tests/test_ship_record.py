@@ -158,6 +158,44 @@ def test_another_agent_in_its_old_pane_never_becomes_it(started):
     assert ship.record()["agents"]["main"]["session"] == "sess-main"
 
 
+def test_an_unnamed_agent_in_its_pane_but_another_folder_never_becomes_it(started):
+    """main crashed; someone uses its pane, `cd`s elsewhere and runs claude there by
+    hand (no herdr name). That is another agent: main keeps its own session, mode
+    and folder, and the other is recorded under its own name."""
+    ship = started
+    ship.crash("main")
+    add_live(ship, None, "sess-x", "/home/agent/work/elsewhere", "w1:p1", mode="plan")
+    ship.ctl("refresh")
+    record = ship.record()["agents"]
+    assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"]) == (
+        "sess-main", "auto", "/home/agent/work/main")
+    assert record["elsewhere"]["session"] == "sess-x"  # adopted, named after its folder
+    renames = [c[3:] for c in ship.calls("herdr") if c[1:3] == ["agent", "rename"]]
+    assert ["w1:p1", "main"] not in renames and ["w1:p1", "elsewhere"] in renames
+    assert record["main"]["want"] == "stopped"  # its pane holds another agent now
+    # An [[autostart]] agent, so the next boot starts it afresh, and the other resumes.
+    ship.p("/home/agent/work/elsewhere").mkdir(parents=True)
+    ship.reboot()
+    ship.ctl("refresh")
+    assert args(ship)["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x"]
+    assert args(ship)["main"] == ["--permission-mode", "auto", "--name", "ship-01-main"]
+    assert not [c for c in starts(ship) if c[3] == "main" and "sess-x" in c]
+
+
+def test_claude_started_again_by_hand_in_its_pane_and_folder_is_still_it(started):
+    """The same, in its own folder (claude started again there by hand, in a new
+    session): that is the recorded agent, its name given back, its session followed."""
+    ship = started
+    ship.crash("main")
+    add_live(ship, None, "sess-main-2", "/home/agent/work/main", "w1:p1", mode="auto")
+    ship.ctl("refresh")
+    assert set(ship.record()["agents"]) == {"main", "grinder"}
+    assert ship.record()["agents"]["main"]["session"] == "sess-main-2"
+    assert ["w1:p1", "main"] in [c[3:] for c in ship.calls("herdr") if c[1:3] == ["agent",
+                                                                                   "rename"]]
+    assert len([c for c in starts(ship) if c[3] == "main"]) == 1  # not started again
+
+
 def test_a_pane_in_another_folder_is_not_used(started):
     ship = started
     ship.reboot()
