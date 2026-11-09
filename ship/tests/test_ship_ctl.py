@@ -79,7 +79,8 @@ def test_status_running_ship_validates(ship):
     assert doc["auth"]["github"]["account"] == "example-user"
     assert doc["auth"]["gcloud_adc"]["state"] == "ok"
     assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
-    assert doc["agent_record"] == {"runtime": "herdr", "agents": [], "resume": None}
+    assert doc["agent_record"] == {"runtime": "herdr", "agents": [], "resume": None,
+                                   "primary": None}
     assert {a["code"] for a in doc["attention"]} == {"agent-waiting"}
     assert doc["host"]["mem_used_pct"] == 50.0 and doc["host"]["uptime_s"] == 4000
 
@@ -578,6 +579,11 @@ def test_a_ship_without_tags_still_gets_the_owners_principals(ship):
     assert (principals / "human").read_text() == "owner:all\nowner:ship:ship-01\n"
 
 
+WAKE_TEXT = ("Your Ship rebooted {delay} ago. Make sure you've resumed any background "
+             "processes or work that you should be doing, and review whether subagents or "
+             "crews may have been interrupted by the reboot too.")
+
+
 def test_status_reports_the_settings_set_last_applied(ship):
     rc, doc, _ = ship.ctl("status", "--json")
     assert_valid("ship-status", doc)
@@ -589,6 +595,7 @@ def test_status_reports_the_settings_set_last_applied(ship):
         "network": {"lan_guard": False, "lan_guard_allow": [], "ssh_listen": "any"},
         "updates": {"auto_reboot": False, "reboot_time": "04:00"},
         "github": {"scopes": []},
+        "wake": {"after_boot": False, "delay_minutes": 10, "text": WAKE_TEXT},
         "owner": None,
         "autostart": [{"name": "main", "cwd": "~/work/main"},
                       {"name": "grinder", "cwd": "~/work/grinder",

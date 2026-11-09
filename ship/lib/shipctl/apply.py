@@ -18,7 +18,7 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import languard, overlay, record, shiptoml, sshtrust, tomlw
+from . import languard, overlay, record, shiptoml, sshtrust, tomlw, wake
 from .context import Context
 from .errors import CtlError
 from .fsutil import remove, write_atomic
@@ -294,6 +294,11 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
     guard_changed, guard_messages = languard.sync(ctx, ship, dry_run=dry_run)
     changed += guard_changed
     messages += guard_messages
+
+    # The boot timer that wakes the primary agent ([wake]).
+    wake_changed, wake_messages = wake.sync(ctx, ship, dry_run=dry_run)
+    changed += wake_changed
+    messages += wake_messages
 
     # Root-owned: where sshd accepts logins (network.ssh_listen, phase 5).
     did, notes = overlay.apply_listen(ctx, ship, dry_run=dry_run)

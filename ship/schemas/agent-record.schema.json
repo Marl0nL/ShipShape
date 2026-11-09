@@ -29,6 +29,18 @@
         "$ref": "#/$defs/agent"
       }
     },
+    "primary": {
+      "description": "The agent marked as the Ship's primary (`ship-ctl agent primary NAME`), the one woken after a boot; at most one. null or absent: none is marked, and the first [[autostart]] agent recorded as running is the primary.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+        }
+      ]
+    },
     "resume": {
       "description": "This Ship's last resume after a boot: written once per boot, when every recorded agent has been started once.",
       "oneOf": [

@@ -557,6 +557,8 @@ def settings_section(ship: ShipToml) -> dict:
         "updates": {"auto_reboot": bool(ship.updates["auto_reboot"]),
                     "reboot_time": ship.updates["reboot_time"]},
         "github": {"scopes": ship.github_scopes},
+        "wake": {"after_boot": bool(ship.wake["after_boot"]),
+                 "delay_minutes": int(ship.wake["delay_minutes"]), "text": ship.wake["text"]},
         "owner": (ship.owner or {}).get("name"),
         "autostart": [{k: e[k] for k in keep if e.get(k)} for e in ship.autostart],
     }

@@ -103,7 +103,8 @@ def _clean(e: dict) -> dict:
 
 def load(ctx: Context) -> dict:
     raw = read_json(ctx.paths.state / FILE, None)
-    doc: dict = {"schema": SCHEMA, "runtime": Herdr.kind, "agents": {}, "resume": None}
+    doc: dict = {"schema": SCHEMA, "runtime": Herdr.kind, "agents": {}, "resume": None,
+                 "primary": None}
     if not isinstance(raw, dict) or raw.get("schema") != SCHEMA:
         if raw is not None:
             ctx.log(f"{FILE}: not an agent record; starting a new one")
@@ -118,6 +119,9 @@ def load(ctx: Context) -> dict:
         doc["resume"] = {"boot_id": resume["boot_id"], "at": resume["at"],
                          "resumed": int(resume.get("resumed") or 0),
                          "failed": int(resume.get("failed") or 0)}
+    mark = raw.get("primary")
+    if isinstance(mark, str) and mark in doc["agents"]:  # one that left the record loses it
+        doc["primary"] = mark
     return doc
 
 
@@ -676,6 +680,44 @@ def forget(ctx: Context, names: list[str]) -> tuple[dict, list[str], list[str]]:
                                              "boot, not started again."]
 
 
+# --- the primary agent -------------------------------------------------------------------
+def primary(doc: dict, ship: ShipToml) -> tuple[str | None, bool]:
+    """The Ship's primary agent: (its name, marked). The one marked with `ship-ctl
+    agent primary`, else the first [[autostart]] agent the record has that should
+    run, else None. At most one is marked: the record holds one name."""
+    if doc.get("primary") in doc["agents"]:
+        return doc["primary"], True
+    for entry in ship.autostart:
+        e = doc["agents"].get(entry["name"])
+        if e is not None and e["want"] == "running":
+            return entry["name"], False
+    return None, False
+
+
+def mark_primary(ctx: Context, ship: ShipToml, name: str | None
+                 ) -> tuple[dict, list[str], list[str]]:
+    """Mark one recorded agent as the Ship's primary (None: clear the mark).
+    Returns (data, changed, messages)."""
+    with held(ctx):
+        doc = load(ctx)
+        if name is not None and name not in doc["agents"]:
+            raise CtlError("invalid-input", f"not in the agent record: {name} (recorded: "
+                           f"{', '.join(sorted(doc['agents'])) or 'none'})")
+        changed = doc.get("primary") != name
+        if changed:
+            doc["primary"] = name
+            save(ctx, doc)
+    now, marked = primary(doc, ship)
+    if name is not None:
+        message = f"{name} is the primary agent."
+    elif now:
+        message = f"No agent is marked primary; the default is {now} (the first autostart agent)."
+    else:
+        message = "No agent is marked primary, and there is no autostart agent to default to."
+    return ({"primary": now, "marked": marked}, [f"primary: {name or 'none'}"] if changed else [],
+            [message])
+
+
 # --- the status document ---------------------------------------------------------------
 def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, dict[str, dict]]:
     """The status document's `agent_record` block, and {record name: live agent}."""
@@ -702,7 +744,9 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
             item["last_error"] = e["relaunch"]["last_error"]
         agents.append(item)
     resume = doc["resume"]
+    first, marked = primary(doc, ship)
     block = {"runtime": doc["runtime"], "agents": agents,
+             "primary": None if first is None else {"name": first, "marked": marked},
              "resume": None if resume is None else {
                  "at": resume["at"], "method": "ship-ctl", "resumed": resume["resumed"],
                  "failed": resume["failed"]}}

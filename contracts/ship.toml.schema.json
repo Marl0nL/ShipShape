@@ -81,6 +81,32 @@
         }
       }
     },
+    "wake": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A message to the Ship's primary agent some minutes after each boot, so it brings back the background work a reboot ended (contracts/settings.md, \"Waking the primary agent after a boot\").",
+      "properties": {
+        "after_boot": {
+          "type": "boolean",
+          "default": false,
+          "description": "Send it. Off by default. ship-ctl apply enables ship-wake.timer while it is on; it takes effect from the next boot."
+        },
+        "delay_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440,
+          "default": 10,
+          "description": "Minutes after the boot to send it (the timer's OnBootSec)."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+          "description": "The one line typed into the primary agent; {delay} becomes the delay (\"10 minutes\"). No line breaks. Default: Your Ship rebooted {delay} ago. Make sure you've resumed any background processes or work that you should be doing, and review whether subagents or crews may have been interrupted by the reboot too."
+        }
+      }
+    },
     "github": {
       "type": "object",
       "additionalProperties": false,

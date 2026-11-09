@@ -73,6 +73,7 @@ integration and agents edit these files too):
 | `network.lan_guard`, `lan_guard_allow` | nftables table `inet shipshape_lan_guard` present or absent, loaded at boot by `ship-lan-guard-early.service` and refreshed by `ship-lan-guard.service` (see "LAN guard") |
 | `updates.auto_reboot`, `updates.reboot_time` | `/etc/apt/apt.conf.d/52shipshape-unattended-upgrades`: `Unattended-Upgrade::Automatic-Reboot` and `Automatic-Reboot-Time` (see "OS updates") |
 | `network.ssh_listen` | `/etc/ssh/sshd_config.d/20-shipshape-listen.conf`: absent for `any`; for `overlay`, a `Match LocalAddress` block that denies every user on any local address other than loopback and the Ship's own overlay addresses (phase 5, `ship-ctl.md` overlay) |
+| `wake.after_boot`, `wake.delay_minutes` | `ship-wake.timer` enabled or disabled, its `OnBootSec` in `/etc/systemd/system/ship-wake.timer.d/50-shipshape.conf` (see "Waking the primary agent after a boot") |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
 | `github.scopes` | nothing on disk: FleetLedger's GitHub sign-in asks for these extra scopes, and `ship-ctl status` compares them with the token's (see "Extra GitHub scopes") |
 | `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
@@ -125,6 +126,43 @@ With `auto_reboot = false` (the default) a needed reboot shows as
 An automatic reboot is a clean `shutdown -r`; after it, the Ship resumes every
 recorded agent in its mode, as after any reboot (even an unclean one: the agent
 record and Claude's transcripts are on disk already).
+
+## Waking the primary agent after a boot
+
+After a reboot every recorded agent comes back in its conversation, but nothing
+prompts it, so the monitors, servers and loops it ran in the background stay down
+until someone writes to it. With `wake.after_boot = true` (off by default) the
+Ship types one line into its **primary agent** `wake.delay_minutes` (default 10)
+after each boot:
+
+```
+Your Ship rebooted 10 minutes ago. Make sure you've resumed any background processes or work that you should be doing, and review whether subagents or crews may have been interrupted by the reboot too.
+```
+
+`wake.text` replaces it: one line, at most 1000 characters, where `{delay}` becomes
+the delay ("10 minutes"); `ship-ctl set wake.text=` (empty) goes back to this one.
+
+- **The primary agent** is the one marked with `ship-ctl agent primary NAME` (at
+  most one: marking another moves the mark; `--clear` removes it). With none marked,
+  it is the first `[[autostart]]` agent the agent record has that should run. The
+  status document reports it (`agent_record.primary`, with `marked`). With no
+  primary at all, nothing is sent, and the journal says so.
+- **When:** `ship-ctl apply` enables `ship-wake.timer` only while `after_boot` is on,
+  with `OnBootSec` set to the delay; it first runs after the next boot. The timer
+  starts `ship-wake.service`, which runs `ship-ctl wake`.
+- **Once per boot:** `ship-ctl wake` keeps this boot's id and outcome in
+  `/var/lib/shipshape/wake.json`; a second run in the same boot (a restart of the
+  unit, a run by hand, a status refresh) sends nothing. It sends nothing more than
+  30 minutes after the time it was meant for (a timer enabled late in a boot fires
+  at once), and nothing before it.
+- **Notice rules:** as `notify-signin` (`ship-ctl.md`): typed with the runtime's
+  prompt only into an agent that is idle, working or done (Claude Code queues it
+  mid-turn), never into one at a permission prompt or in a state the runtime cannot
+  tell, and not before this boot's resume is done. The runtime cannot see a line
+  someone has half typed into the agent's pane. While the agent cannot be typed
+  into, or is not running yet, it tries again every minute, six tries in all, then
+  gives up for this boot. Each outcome is one line in the Ship's journal
+  (`ship-ctl logs system`, `wake: ...`).
 
 ## Permission modes across reboots
 

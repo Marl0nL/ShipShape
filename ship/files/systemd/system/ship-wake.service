@@ -1,0 +1,12 @@
+# Type the after-boot line into the Ship's primary agent (ship-ctl wake), once per
+# boot, retrying for a few minutes while the agent cannot be typed into. Started
+# by ship-wake.timer.
+[Unit]
+Description=ShipShape wake of the primary agent after a boot
+After=network-online.target ship-status.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ship-ctl wake
+TimeoutStartSec=15min

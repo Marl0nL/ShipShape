@@ -97,20 +97,24 @@ def send_to_cores(ctx: Context, ship: ShipToml, line: str, data: dict) -> str | 
     _, live, _ = rt.agents()
     doc = agent_record.load(ctx)
     for name in cores:
-        match = agent_record.find_live(ctx, name, live or [], doc)
-        if match is None:
-            data["skipped"].append({"name": name, "reason": "not-running"})
-            continue
-        state = match["state"]
-        if state == "blocked":
-            data["skipped"].append({"name": name, "reason": "waiting-for-permission"})
-            continue
-        if state not in READY_STATES:
-            data["skipped"].append({"name": name, "reason": "not-ready"})
-            continue
-        sent, _ = rt.prompt(str(match["name"] or match["place"]), line)
-        if sent:
+        why = send_one(ctx, rt, name, live or [], doc, line)
+        if why is None:
             data["sent"].append(name)
         else:
-            data["skipped"].append({"name": name, "reason": "send-failed"})
+            data["skipped"].append({"name": name, "reason": why})
     return None
+
+
+def send_one(ctx: Context, rt, name: str, live: list[dict], doc: dict, line: str) -> str | None:
+    """Type one line into recorded agent `name` if it is safe to: None when it was
+    sent, else why not (not-running, waiting-for-permission, not-ready, send-failed)."""
+    match = agent_record.find_live(ctx, name, live, doc)
+    if match is None:
+        return "not-running"
+    state = match["state"]
+    if state == "blocked":
+        return "waiting-for-permission"
+    if state not in READY_STATES:
+        return "not-ready"
+    sent, _ = rt.prompt(str(match["name"] or match["place"]), line)
+    return None if sent else "send-failed"

@@ -126,6 +126,25 @@ ship-fleet set all timezone=Europe/Berlin
 Automatic reboots are clean too, so agents resume in their modes as after any
 reboot.
 
+### Waking the primary agent after a reboot
+
+Resumed agents continue their conversations, but nothing prompts them, so their
+background monitors and processes stay down until someone writes to them. A Ship
+can send its primary agent one line a few minutes after each boot, asking it to
+start them again (off by default):
+
+```sh
+ship-fleet set ship-01 wake_after_boot=true                # 10 minutes after each boot
+ship-fleet set ship-01 wake_delay_minutes=15 wake_text="Rebooted {delay} ago: restart your monitors."
+```
+
+or on the Ship's Settings tab, **After a reboot**. It takes effect from the next
+boot. The primary agent is the first `[[autostart]]` agent unless you mark another,
+on the Ship: `sudo ship-ctl agent primary NAME`. It is sent once per boot, never
+into an agent waiting at a permission prompt; `ship-ctl logs system` on the Ship
+shows what happened (`wake: ...`). Details: `contracts/settings.md`, "Waking the
+primary agent after a boot".
+
 ### A reboot is refused
 
 A program holding a shutdown lock makes the Ship refuse to reboot. On a Ship that
