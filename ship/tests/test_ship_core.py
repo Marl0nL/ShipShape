@@ -463,3 +463,37 @@ def test_a_terminal_still_running_the_launcher_is_never_typed_into(core):
     assert not [x for x in hc(ship).get("sent", []) if "exec " in x[1]]
     assert len(runs(ship)) == 2
 
+
+
+# --- the wake-up after a boot -------------------------------------------------------------
+WAKE_LINE = ("Your Ship rebooted 10 minutes ago. Make sure you've resumed any background "
+             "processes or work that you should be doing, and review whether subagents or "
+             "crews may have been interrupted by the reboot too.")
+
+
+def woken(ship) -> dict:
+    rc, doc, out = ship.ctl("set", "wake.after_boot=true", "--json")
+    assert rc == 0, out
+    ship.p("/proc/uptime").write_text("605 1.0\n")
+    rc, doc, out = ship.ctl("wake", "--json")
+    assert rc == 0, out
+    return doc["data"]
+
+
+def test_the_wake_up_reaches_the_primary_through_hc_send(core):
+    ship = core
+    data = woken(ship)
+    assert data == {"outcome": "sent", "agent": "main", "tries": 1, "reason": None}
+    assert [ship.terminal("main")["address"], WAKE_LINE] in hc(ship)["sent"]
+    assert ["hc", "send", "--json", "main", "--", WAKE_LINE] in ship.calls("hc")
+    assert ship.calls("herdr") == []
+    never_killed(ship)
+
+
+def test_the_wake_up_never_types_into_a_blocked_primary(core):
+    ship = core
+    ship.core_status("main", "blocked", "permission", "approve Bash: make")
+    data = woken(ship)
+    assert data["outcome"] == "gave-up" and data["reason"] == "waiting-for-permission"
+    assert not [x for x in hc(ship)["sent"] if x[1] == WAKE_LINE]
+    never_killed(ship)
