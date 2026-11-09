@@ -110,11 +110,30 @@ def read_from(placed: Placed, source: Any) -> str:
     return value.strip()
 
 
-def gather(inv, source: Any) -> list[tuple[Placed, str]]:
+def _names_files(store) -> bool:
+    """Does ships.toml, as it is now, read any secret from a file? (Unreadable: say yes,
+    so files are kept rather than lost.)"""
+    try:
+        return any(p.store == "file" for p in named(store.load()))
+    except Exception:  # noqa: BLE001 - when unsure, keep the files
+        return True
+
+
+def _holds(path: Path, value: str) -> bool:
+    try:
+        return secret_store.read_file(str(path), "the secret") == value
+    except FleetError:
+        return False
+
+
+def gather(inv, source: Any, skip: set[str] = frozenset()) -> list[tuple[Placed, str]]:
     """Every secret ships.toml names, with its value; refuses (naming each) if any
-    cannot be read, before anything changes."""
+    cannot be read, before anything changes. skip: keyring items to leave out (those
+    already in the vault, when ships.toml reads them from the keyring, i.e. the vault)."""
     found, problems = [], []
     for placed in named(inv):
+        if placed.store == "keyring" and placed.secret.item in skip:
+            continue
         try:
             found.append((placed, read_from(placed, source)))
         except FleetError as exc:
@@ -225,28 +244,78 @@ class Progress:
 def move_in(app, store, progress: Progress | None = None) -> list[str]:
     """Every secret ships.toml names into the (unlocked) vault, then the old copies out.
     Returns the labels moved. Nothing to move without a fleet. progress: filled in as it
-    goes (vault init decides from it whether taking the vault back is safe)."""
+    goes (vault init decides from it whether taking the vault back is safe).
+
+    It also finishes one an interrupt cut short: a secret ships.toml already reads from
+    the vault is left as it is, and old copies left behind are deleted (leftovers)."""
     progress = progress if progress is not None else Progress()
     if not store.exists():
         return []
     inv = store.load()
     os_keyring, _why = secret_store.os_backend()
-    pending = [(p, v) for p, v in gather(inv, _Source(os_keyring))
-               if not (p.store == "keyring" and _in_vault(p.secret.item))]
-    if not pending:
-        return []
-    target = vault.backend()
-    for placed, value in pending:
-        target.set_password(secret_store.SERVICE, placed.secret.item, value)
-    with store.edit() as ed:
-        point_at(ed, pending, "keyring")
-        # ships.toml is written as this block ends: from here it may land, so an
-        # interrupt in the write itself already counts as pointed.
-        progress.pointing = True
-    _check_back(store)
-    for placed, _value in pending:
-        _delete_old(placed, os_keyring)
+    names = set(vault.backend().item_names(secret_store.SERVICE))
+    pending = gather(inv, _Source(os_keyring), skip=names)
+    if pending:
+        target = vault.backend()
+        for placed, value in pending:
+            target.set_password(secret_store.SERVICE, placed.secret.item, value)
+        with store.edit() as ed:
+            point_at(ed, pending, "keyring")
+            # ships.toml is written as this block ends: from here it may land, so an
+            # interrupt in the write itself already counts as pointed.
+            progress.pointing = True
+        _check_back(store)
+        for placed, _value in pending:
+            _delete_old(placed, os_keyring)
+    for left in leftovers(store.load(), os_keyring):
+        if left.same:  # a stale copy of what the vault holds: it goes
+            left.delete()
     return [p.secret.label for p, _ in pending]
+
+
+@dataclass
+class Leftover:
+    """An old copy of a secret the vault holds and ships.toml reads from it: a 0600
+    file at its default place, or an OS keyring item of the same name."""
+
+    secret: Secret
+    where: str  # for messages
+    same: bool  # holds exactly what the vault holds
+    delete: Any  # () -> None
+
+
+def leftovers(inv, os_keyring: Any) -> list[Leftover]:
+    found: list[Leftover] = []
+    try:
+        backend = vault.backend()
+        names = set(backend.item_names(secret_store.SERVICE))
+    except FleetError:
+        return []
+    for placed in named(inv):
+        secret = placed.secret
+        if placed.store != "keyring" or secret.item not in names:
+            continue
+        value = backend.get_password(secret_store.SERVICE, secret.item)
+        path = secret.default_file()
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                text = None
+            found.append(Leftover(secret, paths.tilde(path), text == value,
+                                  lambda path=path: path.unlink(missing_ok=True)))
+        if os_keyring is not None:
+            try:
+                there = os_keyring.get_password(secret_store.SERVICE, secret.item)
+            except Exception:  # noqa: BLE001 - a locked or gone keyring: nothing to say
+                there = None
+            if there is not None:
+                found.append(Leftover(
+                    secret, f"your OS keyring ({secret.item})", there.strip() == value,
+                    lambda item=secret.item: _delete_old(Placed(Secret("", "", item),
+                                                                "keyring", None),
+                                                         os_keyring)))
+    return found
 
 
 class _Source:
@@ -317,16 +386,21 @@ def move_out(app, store, store_kind: str) -> list[str]:
         with store.edit() as ed:
             point_at(ed, moving, store_kind)
         return [p.secret.label for p, _ in moving]
-    # Written and read back first, then pointed at; anything failing on the way (the
-    # pointing too) takes the files back, so no secret is left in a file while the
-    # vault, unchanged, still holds them all.
+    # Written and read back first, then pointed at; anything failing on the way takes
+    # the files back, so no secret is left in a file while the vault, unchanged, still
+    # holds them all. Once ships.toml may name the files, they stay (it reads them).
+    # A file already holding the very value (an earlier vault off cut short) is kept
+    # as it is, so vault off can always run again.
     written: list[Path] = []
+    pointed = False
     try:
         for placed, value in moving:
             target = placed.secret.default_file()
             if target.exists():
-                raise ConfigError(f"{paths.tilde(target)} is there already; not writing over "
-                                  "it. Nothing was changed.")
+                if _holds(target, value):
+                    continue
+                raise ConfigError(f"{paths.tilde(target)} is there already, holding something "
+                                  "else; not writing over it. Nothing was changed.")
             paths.private_dir(target.parent)
             paths.write_private(target, (value + "\n").encode("utf-8"))
             written.append(target)
@@ -334,9 +408,13 @@ def move_out(app, store, store_kind: str) -> list[str]:
                 raise ConfigError(f"{target} did not keep {placed.secret.label}.")
         with store.edit() as ed:
             point_at(ed, moving, store_kind)
+            pointed = True  # ships.toml is written as this block ends: it may land
     except BaseException as exc:
-        for target in written:
-            target.unlink(missing_ok=True)
+        # ships.toml's write is atomic: it named the files, or it did not. Only if it
+        # did must they stay.
+        if not (pointed and _names_files(store)):
+            for target in written:
+                target.unlink(missing_ok=True)
         if isinstance(exc, OSError):
             raise ConfigError(f"Could not write the secrets to files ({exc.strerror}); the "
                               "vault is unchanged and still holds them.") from None
@@ -419,8 +497,7 @@ def vault_init(args, app, store) -> int:
     from fleetledger.concierge import audit
 
     if vault.is_on():
-        raise FleetError(f"A vault is on here already ({paths.tilde(vault.vault_path())}).",
-                         hint="ship-fleet vault status")
+        return _finish_init(app, store)
     vault.check_ram()
     if store.exists():  # every secret must be readable before anything changes
         gather(store.load(), _Source(secret_store.os_backend()[0]))
@@ -430,9 +507,11 @@ def vault_init(args, app, store) -> int:
             "you choose. It locks at every boot; unlock it once with ship-fleet unlock or in "
             "the web UI. Until then FleetLedger is read-only; your Ships keep running.")
     passphrase = _new_passphrase(app)
-    code = vault.create(passphrase)
     progress = Progress()
     try:
+        # Inside the take-back: an interrupt after vault.json lands, before the move
+        # begins, must not leave an empty vault that every reader now looks in.
+        code = vault.create(passphrase)
         moved = move_in(app, store, progress)
     except BaseException as exc:
         if progress.pointing:
@@ -461,6 +540,29 @@ def vault_init(args, app, store) -> int:
     return 0
 
 
+def _finish_init(app, store) -> int:
+    """vault init on a vault that is on already: finish what an interrupted one left
+    (secrets not moved in yet, old copies left behind), or say nothing is left."""
+    if vault.state() == "locked":
+        raise FleetError("A vault is on here already, and locked.", hint=vault.UNLOCK_HINT)
+    before = leftovers(store.load(), secret_store.os_backend()[0]) if store.exists() else []
+    moved = move_in(app, store)
+    after = leftovers(store.load(), secret_store.os_backend()[0]) if store.exists() else []
+    gone = len(before) - len(after)
+    if not moved and not gone and not after:
+        app.say(f"The vault is on already ({paths.tilde(vault.vault_path())}), and every "
+                "secret ships.toml names is in it; nothing was left behind.")
+        return 0
+    app.say("The vault is on already; finished what an interrupted vault init left:"
+            + (f" moved in {', '.join(moved)};" if moved else "")
+            + (f" deleted {gone} old cop{'y' if gone == 1 else 'ies'} left behind." if gone
+               else ""))
+    for left in after:
+        app.say(f"  {left.secret.label}: an old copy at {left.where} differs from the vault's; "
+                "left as it is: delete it once you know which is right.")
+    return 0
+
+
 def vault_status(args, app, store) -> int:
     state = vault.state()
     if state == "off":
@@ -483,10 +585,22 @@ def vault_status(args, app, store) -> int:
         return 1
     app.say(f"It holds {len(names)} secret(s).")
     if store.exists():
-        for placed in named(store.load()):
-            here = placed.store == "keyring" and placed.secret.item in names
-            app.say(f"  {placed.secret.label}: "
-                    + ("in the vault" if here else f"NOT in the vault ({placed.store})"))
+        inv = store.load()
+        for placed in named(inv):
+            held = placed.secret.item in names
+            if placed.store == "keyring":
+                said = "in the vault" if held else "NOT in the vault"
+            elif held:  # an interrupted vault init: stored, not yet pointed at
+                said = (f"in the vault, but read from its {placed.store} still (ship-fleet "
+                        "vault init finishes the move)")
+            else:
+                said = f"NOT in the vault ({placed.store})"
+            app.say(f"  {placed.secret.label}: {said}")
+        for left in leftovers(inv, secret_store.os_backend()[0]):
+            app.say(f"  {left.secret.label}: an old copy is left behind at {left.where}"
+                    + (" (ship-fleet vault init deletes it)" if left.same
+                       else " and differs from the vault's: delete it once you know which "
+                            "is right"))
     _warn_swap(app)
     return 0
 
@@ -547,8 +661,10 @@ def vault_off(args, app, store) -> int:
             raise FleetError("Nothing done.")
     moved = move_out(app, store, kind)
     path = vault.vault_path()
-    path.unlink()
-    vault.lock()
+    try:
+        path.unlink()
+    finally:
+        vault.lock()  # its RAM key opens nothing now
     if store.exists():
         _check_back(store)  # now through the OS keyring or the files
     audit.record("-", "vault-off", "vault", kind)

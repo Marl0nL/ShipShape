@@ -138,7 +138,9 @@ What the vault does not cover, on purpose:
   recovery code stay as they were. Backups taken before still open with the old
   passphrase.
 - **The recovery code:** `ship-fleet vault recovery` (asks for the passphrase) shows a
-  new one once. The old one stops working, in this `vault.json` only.
+  new one once. The old one stops working, in this `vault.json` only. If it (or `vault
+  init`) is cut short before the code is shown, the passphrase still works but you have
+  no code you know of: run `ship-fleet vault recovery` again.
 - **The secrets themselves:** if the passphrase leaked together with a backup, or the
   machine was compromised while unlocked, a new passphrase does not help. Rotate what
   the vault guards:
@@ -191,8 +193,10 @@ to be activated, unretired or wiped must be able to open its vault first.
 7. only then deletes the old copies (the OS keyring items, the files). If anything
    fails, or you press Ctrl-C, before `ships.toml` is written, the new vault is taken
    back: nothing changed, and `vault init` can simply run again. From that write on,
-   the vault stays (it already holds every secret, and may be the only copy of some);
-   at worst an old copy is left behind, which `vault status` shows;
+   the vault stays (it already holds every secret, and may be the only copy of some),
+   and old copies may be left behind: `vault status` lists them, and `vault init`
+   again finishes the move (it moves in what is not in yet, and deletes each old copy
+   that holds exactly what the vault does; one that differs is only reported);
 8. shows the **recovery code** once, and asks you to type its last group to show you
    have it.
 
@@ -203,8 +207,11 @@ While the vault is on, a secret never goes to a `0600` file: setup, overlay setu
 `migrate --store file` refuse, and a secret setup finds in a `0600` file (one you put
 there by hand) goes into the vault, and the file goes. `ship-fleet vault off
 [--store keyring|file]` moves everything back out, in the same order: read, write and
-read back, point, delete. A write that fails takes back what it wrote and leaves the
-vault as it was. The vault must be unlocked for that.
+read back, point, delete. A write that fails before `ships.toml` names the files
+takes back what it wrote and leaves the vault as it was; from that write on the files
+stay, since `ships.toml` reads them. A file already holding the very value is kept as
+it is, so a `vault off` cut short at any point can simply run again. The vault must be
+unlocked for that.
 
 `ships.toml` says `keyring` for a secret in the vault, because the vault is this
 computer's keyring for FleetLedger. Which keyring that is, is a fact about the
