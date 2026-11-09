@@ -1519,7 +1519,9 @@ def test_a_backup_with_a_half_made_ship_that_never_answers_still_restores_and_ac
     b.app.ask_secret = lambda prompt: "correct horse battery staple"
     code, out, err = b.run("migrate", "import", str(made), "--store", "file")
     assert code == migrate.VERIFIED, out + err
-    assert "not enrolled yet and not answering" in out and "FAIL" not in out
+    assert "not enrolled yet, not answering" in out and "FAIL" not in out
+    assert "reached every enrolled Ship (not ship-02: still being made" in out
+    assert "reached every Ship;" not in out
     code, out, err = b.run("migrate", "activate", "--yes")
     assert code == 0 and "now the active one" in out, out + err
     # An enrolled Ship that does not answer still fails the check, as ever.
@@ -1544,3 +1546,27 @@ def test_doctor_says_when_backups_are_stale_or_not_made_yet(home, tmp_path, monk
     later = time.mktime((2026, 1, 4, 3, 30, 0, 0, 0, 0))
     [item] = firstrun.backup_items(now=later)
     assert item.state == "warn" and "over two days ago" in item.detail
+
+
+def test_a_half_made_ship_answering_with_another_host_key_still_blocks_activate(
+        computers, monkeypatch, vaults, tmp_path):
+    """Only a half-made Ship that does not answer (or is still provisioning) is a mere
+    warning: one answering with another key than its pin says something is wrong."""
+    from fleetledger import vaultcmd
+
+    a, b, world = computers
+    vaults.create("correct horse battery staple")
+    vaultcmd.move_in(a.app, a.store)
+    other = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    with a.store.edit() as ed:
+        ed.set_field("ship-02", "enrolled", None)
+        ed.set_field("ship-02", "host_key", other)  # it answers with its real key instead
+    assert a.run("backup", "now", "--same-disk", "--to", str(tmp_path / "saved"))[0] == 0
+    [made] = list((tmp_path / "saved").iterdir())
+    b.use(monkeypatch)
+    b.app.ask_secret = lambda prompt: "correct horse battery staple"
+    code, out, err = b.run("migrate", "import", str(made), "--store", "file")
+    assert code == migrate.UNVERIFIED, out + err
+    assert "FAIL  ship-02" in out and "not enrolled yet, not answering" not in out
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 1 and "Not made active" in err

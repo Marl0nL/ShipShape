@@ -76,6 +76,8 @@ MAX_SECRET = 512
 CHUNK = 1024 * 1024
 STAGING = ".migrate-"  # the receiving side's own folder in the data dir, while it works
 
+HALF_MADE = "not enrolled yet"  # a Ship's check, when it was being made as the fleet left
+
 # Exit codes: received and verified; nothing written; written but not verified; the
 # old copy retired but the new one not made active (no copy acts on the fleet).
 VERIFIED, REFUSED, UNVERIFIED, NOT_ACTIVATED = 0, 1, 5, 6
@@ -749,8 +751,9 @@ def push(app, host: str, *, store_kind: str | None = None, with_images: bool = F
         if code == VERIFIED and cutover:
             return _cut_over(app, store, host, handover.epoch(inv) + 1, options, ship_fleet)
     if code == VERIFIED:
-        app.say(f"\n{host} has the fleet on standby and reached every Ship; this copy is still "
-                "the active one. To move for real, push again (it replaces the copy on standby).")
+        app.say(f"\n{host} has the fleet on standby and its checks passed (any WARN is above); "
+                "this copy is still the active one. To move for real, push again (it "
+                "replaces the copy on standby).")
     elif code == UNVERIFIED:
         app.note(f"\n{host} has the fleet on standby, but could not check all of it (see "
                  "above), so this copy is still the active one. Fix that there, then push "
@@ -1339,8 +1342,12 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
                f"computer, ship-fleet migrate retire --to {me}; then here, ship-fleet migrate "
                "activate.")
     if ok:
-        app.say("\nThis computer has the fleet on standby and reached every Ship; nothing on "
-                "any Ship changed." + by_hand)
+        unfinished = [c.name for c in checks if c.state == "warn"
+                      and c.detail.startswith(f"{HALF_MADE}, ")]  # _ship_checks' own
+        reached = ("reached every enrolled Ship (not " + ", ".join(unfinished)
+                   + ": still being made, WARN above)" if unfinished else "reached every Ship")
+        app.say(f"\nThis computer has the fleet on standby and {reached}; nothing on any Ship "
+                "changed." + by_hand)
         return VERIFIED
     app.say("\nThe fleet is here on standby, but not everything checks out yet (FAIL above). "
             "Fix that, then run ship-fleet migrate verify." + by_hand)
@@ -1502,13 +1509,15 @@ def _oauth_check(app, inv) -> list[Check]:
 
 def _ship_checks(cfg, view, krl: bytes | None) -> list[Check]:
     name = view.ship.name
-    if view.status is None and view.ship.enrolled is None:
+    if view.status is None and view.unenrolled and view.problem in (None, "unreachable"):
         # Half-made when the fleet left (a backup takes it along): it may never have come
-        # up, and the copy must still become active to finish or destroy it.
-        return [Check("warn", name, f"not enrolled yet and not answering "
-                                    f"({view.message or view.state}): once this copy is "
-                                    f"active, finish it (ship-fleet status {name} --wait) or "
-                                    f"destroy it")]
+        # up, or still be provisioning, and the copy must still become active to finish
+        # or destroy it. Anything else (another host key, another identity, an error) is
+        # still a failure: it says something is wrong, not just unfinished.
+        how = "not answering" if view.problem == "unreachable" else "still provisioning"
+        return [Check("warn", name, f"{HALF_MADE}, {how} ({view.message or view.state}): "
+                                    f"once this copy is active, finish it (ship-fleet status "
+                                    f"{name} --wait) or destroy it")]
     if view.status is None:
         return [Check("fail", name, f"no status: {view.message or view.state}")]
     out = [Check("ok", name, f"answers on its pinned host key ({view.host})")]
