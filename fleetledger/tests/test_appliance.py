@@ -96,6 +96,8 @@ def test_the_seed_makes_a_locked_down_vm_and_records_it_as_self(store, home, che
     you = (home / "keys" / "you.pub").read_text().strip()
     assert user["ssh_authorized_keys"] == admin["ssh_authorized_keys"] == [you]
     assert doc["ssh_pwauth"] is False and doc["disable_root"] is True
+    # The image's own host keys go, and only the pinned ed25519 one is made.
+    assert doc["ssh_deletekeys"] is True and doc["ssh_genkeytypes"] == ["ed25519"]
     entry = store.load().doc["fleet"]["self"]
     assert entry["name"] == "fleetledger" and entry["vmid"] == 120
     assert entry["names"] == ["fleetledger.local"]
@@ -112,7 +114,7 @@ def test_the_seed_makes_a_locked_down_vm_and_records_it_as_self(store, home, che
     drop_in = {f["path"]: f["content"] for f in doc["write_files"]}
     # Its name sorts after Ubuntu's timeout.conf (TimeoutStopSec=5), or it would lose.
     assert drop_in["/etc/systemd/system/user@.service.d/zz-fleetledger-drain.conf"] == \
-        "[Service]\nTimeoutStopSec=45min\n"
+        "[Service]\nTimeoutStopSec=28min\n"
     assert "AllowUsers fleetledger vmadmin" in \
         drop_in["/etc/ssh/sshd_config.d/10-fleetledger.conf"]
     assert "libnss-mdns" in doc["packages"]
@@ -129,10 +131,13 @@ def test_the_seed_makes_a_locked_down_vm_and_records_it_as_self(store, home, che
 @pytest.mark.parametrize("argv, why", [
     (["--vmid", "9150"], "in the Ships' range"),
     (["--vmid", "120", "--name", "ship-01"], "is a Ship's name"),
+    (["--vmid", "130"], "is a Ship's"),
     (["--vmid", "120", "--repo", "git@example.com:you/ShipShape.git"], "over https"),
 ])
 def test_the_seed_refuses_what_would_clash(store, home, checkout, argv, why):
     with_proxmox(store)
+    with store.edit() as ed:
+        ed.set_nested("ship-02", "driver_ref", "vmid", 130)
     app, out = app_for(store, checkout)
     assert cli.main(["appliance", "seed", *argv], app) == 1
     assert why in out.getvalue()
@@ -260,6 +265,7 @@ def test_its_pin_is_used_for_migrate_push_and_never_weakened(store, home):
 
     pinned = appliance.push_options(inv, "fleetledger@fleetledger.local")
     assert f"HostKeyAlias={appliance.ALIAS}" in pinned
+    assert "GlobalKnownHostsFile=/dev/null" in pinned  # no system-wide entry can stand in
     assert appliance.push_options(inv, "you@desktop.example") == []
     argv = migrate.ssh_argv("fleetledger.local", "x", [*pinned, "UserKnownHostsFile=/dev/null"])
     options = [argv[i + 1] for i, a in enumerate(argv) if a == "-o"]
@@ -428,3 +434,113 @@ def test_an_image_built_on_a_retired_desktop_is_imported_on_the_vm(store, home, 
     app, out = app_for(vm_store, checkout)
     assert cli.main(["image", "import", str(built)], app) == 1
     assert "does not match its manifest's sha256" in out.getvalue()
+
+
+
+# --- the review's fixes -----------------------------------------------------------------------
+
+
+def test_the_drain_ends_inside_the_thirty_minutes_a_reboot_allows():
+    """reboot.target and poweroff.target force the reboot after 30 minutes
+    (JobTimeoutSec, then reboot-force): every limit of ours stays inside that."""
+    import re
+
+    from fleetledger.web import server
+
+    from fleetledger import service
+
+    unit = service.render_unit("/usr/bin/ship-fleet", 8765, 30.0, [])
+    stop = int(re.search(r"^TimeoutStopSec=(\d+)min$", unit, re.M).group(1)) * 60
+    manager = int(re.search(r"TimeoutStopSec=(\d+)min", service.REBOOT_DROP_IN).group(1)) * 60
+    assert server.DRAIN_TIMEOUT < stop < manager == service.DRAIN_FOR < 30 * 60
+    doc = yaml.safe_load(appliance.user_data(
+        "fleetledger", type("K", (), {"private": "x", "public": "ssh-ed25519 AAAA k"})(),
+        ["ssh-ed25519 AAAA you"], ORIGIN, "0" * 40, 8765))
+    assert service.REBOOT_DROP_IN in [f["content"] for f in doc["write_files"]]
+    assert "TimeoutStopSec=28min" in service.reboot_drop_in()
+
+
+def test_new_and_adopt_refuse_the_vm_plainly_and_record_no_attempt(store, home):
+    from fleetledger import attempts
+
+    _self(store)
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, store_factory=lambda: store, stdin_isatty=lambda: False)
+    assert cli.main(["new", "fleetledger", "--driver", "manual"], app) == 1
+    said = out.getvalue()
+    assert "belongs to FleetLedger's own VM" in said and "inconsistent" not in said
+    assert attempts.get("fleetledger") is None and "try again" not in said.lower()
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, store_factory=lambda: store, stdin_isatty=lambda: False)
+    assert cli.main(["new", "ship-09", "--driver", "manual", "--vmid", "120"], app) == 1
+    assert "Vm id 120 belongs" in out.getvalue() or "VM id 120" in out.getvalue()
+    assert attempts.get("ship-09") is None
+    key = store.load().doc["fleet"]["self"]["host_key"]
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, store_factory=lambda: store, stdin_isatty=lambda: False,
+                  keyscan=lambda host: key)
+    assert cli.main(["adopt", "ship-09", "--fingerprint", "SHA256:x"], app) == 1
+    assert "that host key belongs to fleetledger's own vm" in out.getvalue().lower()
+
+
+def test_the_driver_refuses_its_own_vm_on_create_and_status_without_asking():
+    from fleetledger.drivers.base import SeedFile
+    from fleetledger.inventory import Ship
+
+    api = FakeAPI(visible={120})
+    driver = ProxmoxDriver(PX, api=api, protected=120)
+    ship = Ship(name="other", id="x", driver="proxmox", names=("a",), host_key="k",
+                driver_ref={"vmid": 120})
+    with pytest.raises(FleetError, match="FleetLedger's own VM"):
+        driver.status(ship)
+    seed = SeedFile(path=None, instance_id="i")
+    with pytest.raises(FleetError, match="FleetLedger's own VM"):
+        driver.create(ship, seed, {"cores": 2, "memory_mb": 2048, "disk_gb": 20})
+    assert api.calls == []
+
+
+def test_appliance_here_records_the_new_vm_after_a_restore(store, home, tmp_path, monkeypatch):
+    import socket
+
+    _self(store, vmid=120)
+    key = tmp_path / "ssh_host_ed25519_key.pub"
+    key.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG5ld3ZtbmV3dm1uZXd2bW5ld3ZtbmV3dm1uZXd2"
+                   " root@fleetledger\n")
+    monkeypatch.setattr(appliance, "HOST_KEY_PUB", key)
+    monkeypatch.setattr(socket, "gethostname", lambda: "fleetledger")
+    with_proxmox(store)
+    out = io.StringIO()
+    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    assert cli.main(["appliance", "here", "--vmid", "9150"], app) == 1  # in the Ships' range
+    assert cli.main(["appliance", "here", "--vmid", "121"], app) == 0, out.getvalue()
+    entry = store.load().doc["fleet"]["self"]
+    assert entry["vmid"] == 121 and entry["host_key"].endswith("ZXd2")
+    assert "in place of fleetledger (VM id 120)" in out.getvalue()
+    from fleetledger.drivers import get_driver
+
+    assert get_driver(store.load(), "proxmox").protected == 121
+
+
+def test_self_update_keeps_a_branch_and_ignores_untracked_files(store, home, fetchable,
+                                                               tmp_path):
+    target = _advance(fetchable, tmp_path, "newer")
+    (fetchable.root / "notes.txt").write_text("mine, untracked\n")
+    app, out = app_for(store, fetchable)
+    app.run_install = lambda root: 0
+    assert cli.main(["self-update", "--no-restart"], app) == 0, out.getvalue()
+    assert git(fetchable.root, "rev-parse", "HEAD") == target
+    assert git(fetchable.root, "symbolic-ref", "--short", "HEAD") == "main"  # still on it
+    assert (fetchable.root / "notes.txt").exists()
+
+
+def test_self_update_goes_back_when_the_install_fails(store, home, fetchable, tmp_path):
+    first = git(fetchable.root, "rev-parse", "HEAD")
+    _advance(fetchable, tmp_path, "newinstall", "fleetledger/install.sh")
+    installs = []
+    app, out = app_for(store, fetchable)
+    app.run_install = lambda root: installs.append(root) or 1
+    assert cli.main(["self-update", "--no-restart"], app) == 2
+    assert installs  # install.sh changed: it ran
+    assert "back at" in out.getvalue()
+    assert git(fetchable.root, "rev-parse", "HEAD") == first
+    assert git(fetchable.root, "symbolic-ref", "--short", "HEAD") == "main"

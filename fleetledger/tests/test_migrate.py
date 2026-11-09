@@ -1303,7 +1303,7 @@ def test_a_backup_is_sealed_under_the_vault_and_restores_on_another_computer(
     vaultcmd.move_in(a.app, a.store)
     secrets_ = list(vaults.backend()._items()["fleetledger"].values())
     folder = tmp_path / "backups"
-    code_, out, err = a.run("backup", "now", "--to", str(folder), "--keep", "2")
+    code_, out, err = a.run("backup", "now", "--same-disk", "--to", str(folder), "--keep", "2")
     assert code_ == 0, out + err
     [made] = list(folder.iterdir())
     assert stat.S_IMODE(made.stat().st_mode) == 0o600
@@ -1333,17 +1333,17 @@ def test_a_backup_is_sealed_under_the_vault_and_restores_on_another_computer(
     # Older ones go; never an unencrypted backup (the vault off, or locked).
     a.use(monkeypatch)
     for _ in range(2):
-        assert a.run("backup", "now", "--to", str(folder), "--keep", "2")[0] == 0
+        assert a.run("backup", "now", "--same-disk", "--to", str(folder), "--keep", "2")[0] == 0
     kept = sorted(f.name for f in folder.iterdir())
     assert len(kept) == 2 and made.name not in kept  # the oldest went
     vaults.lock()
-    code_, out, err = a.run("backup", "now", "--to", str(folder))
-    assert code_ == 1 and "vault is locked" in err
+    code_, out, err = a.run("backup", "now", "--same-disk", "--to", str(folder))
+    assert code_ == 2 and "vault is locked" in err
 
 
 def test_no_backup_without_the_vault(computers, monkeypatch, tmp_path):
     a, b, world = computers
-    code, out, err = a.run("backup", "now", "--to", str(tmp_path / "backups"))
+    code, out, err = a.run("backup", "now", "--same-disk", "--to", str(tmp_path / "backups"))
     assert code == 1 and "there is never an unencrypted backup" in err
     assert not (tmp_path / "backups").exists()
 
@@ -1359,7 +1359,7 @@ def test_a_backup_runs_beside_the_running_service(computers, monkeypatch, vaults
 
     vaultcmd.move_in(a.app, a.store)
     with inuse.using(a.store):  # what a running ship-fleet ui holds
-        code, out, err = a.run("backup", "now", "--to", str(tmp_path / "b"))
+        code, out, err = a.run("backup", "now", "--same-disk", "--to", str(tmp_path / "b"))
     assert code == 0, out + err
 
 
@@ -1376,12 +1376,125 @@ def test_a_scheduled_backup_is_a_daily_user_timer(computers, monkeypatch, vaults
     system = FakeSystem()
     a.app.system = system
     code, out, err = a.run("backup", "schedule", "--to", str(tmp_path / "nas"), "--at", "04:15",
-                           "--keep", "7", "--ship-fleet", str(ship_fleet))
+                           "--keep", "7", "--ship-fleet", str(ship_fleet), "--same-disk")
     assert code == 0, out + err
     units = tmp_path / "xdg" / "systemd" / "user"
     service_text = (units / "fleetledger-backup.service").read_text()
-    assert f"ExecStart={ship_fleet} backup now --to {tmp_path / 'nas'} --keep 7" in service_text
+    assert f"ExecStart={ship_fleet} backup now --to {tmp_path / 'nas'} --keep 7 --same-disk" in \
+        service_text
+    assert f"RequiresMountsFor={tmp_path / 'nas'}" in service_text
+    assert "LimitCORE=0" in service_text
+    assert "Persistent=true" in (units / "fleetledger-backup.timer").read_text()
     assert "OnCalendar=*-*-* 04:15:00" in (units / "fleetledger-backup.timer").read_text()
     assert ["enable", "--now", "fleetledger-backup.timer"] in system.verbs()
     code, out, err = a.run("backup", "unschedule")
     assert code == 0 and not (units / "fleetledger-backup.timer").exists()
+
+
+def test_push_to_fleetledgers_own_vm_checks_its_pin_before_any_option_of_yours(
+        computers, monkeypatch):
+    """The pin's options come before any -o you give (ssh keeps the first), so a later
+    UserKnownHostsFile or HostKeyAlias cannot replace it."""
+    import tomlkit
+
+    a, b, world = computers
+    pin = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHNlbGZzZWxmc2VsZnNlbGZzZWxmc2VsZnNlbGZzZWxm"
+    with a.store.edit() as ed:
+        entry = tomlkit.inline_table()
+        entry.update({"name": "fleetledger", "vmid": 120, "names": ["fleetledger.local"],
+                      "host_key": pin})
+        ed.doc["fleet"]["self"] = entry
+    procs = []
+
+    def popen(argv, stdin=None, **kw):
+        procs.append(FakeSSHProcess(argv, 255, b"", stdin))
+        return procs[-1]
+
+    a.app.popen = popen
+    a.run("migrate", "push", "fleetledger@fleetledger.local", "-o", "UserKnownHostsFile=/dev/null",
+          "-o", "HostKeyAlias=elsewhere", "-o", "GlobalKnownHostsFile=/etc/ssh/ssh_known_hosts")
+    opts = [procs[0].argv[i + 1] for i, x in enumerate(procs[0].argv) if x == "-o"]
+    first = {}
+    for opt in opts:
+        key, value = opt.split("=", 1)
+        first.setdefault(key, value)
+    assert first["StrictHostKeyChecking"] == "yes"
+    assert first["HostKeyAlias"] == "fleetledger-self"
+    assert first["GlobalKnownHostsFile"] == "/dev/null"
+    known = Path(first["UserKnownHostsFile"])
+    assert f"fleetledger-self {pin}" in known.read_text()
+
+
+def test_a_backup_leaves_out_what_only_stops_a_move_and_says_so(computers, monkeypatch, vaults,
+                                                               tmp_path):
+    from fleetledger import backup, firstrun, vaultcmd
+
+    a, b, world = computers
+    vaults.create("correct horse battery staple")
+    vaultcmd.move_in(a.app, a.store)
+    (a.root / "data" / "stray.txt").write_text("a file FleetLedger does not know\n")
+    seeds = a.root / "data" / "seeds"
+    seeds.mkdir(exist_ok=True)
+    (seeds / "appliance-fleetledger.iso").write_bytes(b"its private host key")
+    code, out, err = a.run("backup", "now", "--same-disk", "--to", str(tmp_path / "b"))
+    assert code == 0, out + err
+    assert "Left out (it would stop a move, not a backup)" in out
+    assert "stray.txt" in out and "appliance-fleetledger.iso" in out
+    assert "FleetLedger's own VM's seed holds that VM's private host key" in out
+    last = backup.last()
+    assert last["ok"] and len(last["left_out"]) == 2
+    assert [i.state for i in firstrun.backup_items()] == ["ok"]
+    # A handed-over copy still refuses, and doctor says the last one failed, and why.
+    assert a.run("migrate", "retire", "--to", "vm", "--yes")[0] == 0
+    from fleetledger import handover
+
+    with pytest.raises(FleetError, match="retired"):
+        backup.seal(a.app)
+    handover.clear(a.store, "retired")
+    vaults.lock()
+    code, out, err = a.run("backup", "now", "--same-disk", "--to", str(tmp_path / "b"))
+    assert code == 2 and "vault is locked" in err
+    items = firstrun.backup_items()
+    assert items[0].state == "warn" and "vault is locked" in items[0].detail
+
+
+def test_a_backup_never_goes_to_this_computers_own_disk_unasked(computers, monkeypatch, vaults,
+                                                               tmp_path):
+    from fleetledger import backup, vaultcmd
+
+    a, b, world = computers
+    vaults.create("correct horse battery staple")
+    vaultcmd.move_in(a.app, a.store)
+    folder = tmp_path / "mnt" / "nas"  # a share that is not mounted: just a folder here
+    code, out, err = a.run("backup", "now", "--to", str(folder))
+    assert code == 1 and "on this computer's own disk" in err and "--same-disk" in err
+    assert not folder.exists()
+    assert backup.last()["ok"] is False
+    monkeypatch.setattr(backup, "on_this_disk", lambda folder: False)  # mounted elsewhere
+    assert a.run("backup", "now", "--to", str(folder))[0] == 0
+
+
+def test_prune_touches_only_fleetledgers_own_backups(tmp_path):
+    from fleetledger import backup
+
+    for name in ("fleetledger-20261101-000000-000001-e1.flbackup",
+                 "fleetledger-20261102-000000-000001-e1.flbackup",
+                 "fleetledger-20261103-000000-000001-e1.flbackup", "holiday.jpg",
+                 "fleetledger-notes.txt"):
+        (tmp_path / name).write_text("x")
+    gone = backup.prune(tmp_path, 1)
+    assert sorted(f.name for f in gone) == ["fleetledger-20261101-000000-000001-e1.flbackup",
+                                            "fleetledger-20261102-000000-000001-e1.flbackup"]
+    assert (tmp_path / "holiday.jpg").exists() and (tmp_path / "fleetledger-notes.txt").exists()
+
+
+def test_a_backup_asking_for_a_huge_scrypt_cost_is_refused_unrun(monkeypatch):
+    from fleetledger import backup, vault
+
+    header = {"schema": backup.SCHEMA, "slots": [{"kind": "passphrase", "kdf": "scrypt",
+                                                   "n": 2 ** 30, "r": 8, "p": 1,
+                                                   "salt": "AAAAAAAAAAAAAAAAAAAAAA==",
+                                                   "key": "x"}]}
+    monkeypatch.setattr(vault, "derive", lambda *a: pytest.fail("scrypt must not run"))
+    with pytest.raises(FleetError, match="no passphrase slot FleetLedger can open"):
+        backup.open_backup(json.dumps(header).encode() + b"\ntoken", "a passphrase")

@@ -48,6 +48,7 @@ MAX_HEADER = 64 * 1024
 TIMER = "fleetledger-backup.timer"
 UNIT = "fleetledger-backup.service"
 HEADER = "# Written by ship-fleet backup schedule"
+LAST = "backup-last.json"  # in the data folder: the last result (migrate.BACKUP_LAST)
 AT_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
@@ -68,7 +69,7 @@ def seal(app: Any) -> tuple[bytes, dict[str, Any]]:
         raise ConfigError(f"No inventory at {store.path}: there is no fleet to back up.")
     with store.held() as text:
         inv = store.load()
-        plan = migrate.build_plan(app, text, inv)
+        plan = migrate.build_plan(app, text, inv, for_backup=True)
         if plan.blockers:
             raise FleetError("Not backing up now: " + "; ".join(f"{what}: {why}" for what, why
                                                                in plan.blockers) + ".")
@@ -76,6 +77,7 @@ def seal(app: Any) -> tuple[bytes, dict[str, Any]]:
         migrate.write_stream(plan, stream)
     header = {"schema": SCHEMA, "made": handover.now(), "epoch": handover.epoch(inv),
               "commit": plan.commit, "fleet": migrate.summary(inv), "slots": slots}
+    header["left_out"] = [f"{what}: {why}" for what, why in plan.skipped]
     token = Fernet(key).encrypt(stream.getvalue())
     return json.dumps(header, separators=(",", ":")).encode("utf-8") + b"\n" + token, header
 
@@ -135,24 +137,76 @@ def prune(folder: Path, keep: int) -> list[Path]:
     return gone
 
 
+def _nearest(path: Path) -> Path:
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return path
+
+
+def on_this_disk(folder: Path) -> bool:
+    """Is folder (or where it would be made) on the same file system as FleetLedger's
+    own data? Then the backup goes with this computer's disk: a NAS mount that is not
+    mounted just now looks exactly like this."""
+    try:
+        return _nearest(folder).stat().st_dev == _nearest(paths.data_dir()).stat().st_dev
+    except OSError:
+        return True
+
+
+def last() -> dict[str, Any] | None:
+    """The last backup's result here (doctor shows it), or None."""
+    try:
+        doc = json.loads((paths.data_dir() / LAST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _note(ok: bool, folder: Path, why: str | None = None, file: str | None = None,
+          left_out: list[str] | None = None) -> None:
+    from fleetledger import handover
+
+    doc = {"at": handover.now(), "ok": ok, "to": str(folder), "why": why, "file": file,
+           "left_out": left_out or []}
+    try:
+        folder_ = paths.private_dir(paths.data_dir())
+        paths.write_private(folder_ / LAST, (json.dumps(doc, indent=1) + "\n").encode("utf-8"))
+    except OSError:
+        pass  # the result is a convenience; the backup's own outcome is what counts
+
+
 def cmd_now(args: Any, app: Any) -> int:
     from fleetledger.concierge import audit
 
     folder = paths.expand(args.to)
-    data, header = seal(app)
-    paths.private_dir(folder)
-    target = folder / file_name(header)
-    paths.write_private(target, data)
+    try:
+        if on_this_disk(folder) and not args.same_disk:
+            raise FleetError(f"{folder} is on this computer's own disk, so a backup there goes "
+                             "with it (a NAS share that is not mounted just now looks like "
+                             "this too). Nothing was written.",
+                             hint="Mount it, or add --same-disk to keep backups here anyway.")
+        data, header = seal(app)
+        paths.private_dir(folder)
+        target = folder / file_name(header)
+        paths.write_private(target, data)
+    except (FleetError, OSError) as exc:
+        why = exc.message if isinstance(exc, FleetError) else exc.strerror
+        _note(False, folder, why)
+        audit.record("-", "backup", "backup", "failed")
+        raise
     gone = prune(folder, args.keep)
+    _note(True, folder, file=target.name, left_out=header["left_out"])
     audit.record("-", "backup", "backup", "ok")
     app.say(f"Backed up {header['fleet']} (epoch {header['epoch']}) to {paths.tilde(target)}: "
             "sealed under the vault, so it opens with its passphrase or recovery code only."
             + (f" Removed {len(gone)} older one(s) (keeping {args.keep})." if gone else ""))
+    for item in header["left_out"]:
+        app.say(f"  Left out (it would stop a move, not a backup): {item}")
     return 0
 
 
 def _units(ship_fleet: str, folder: Path, keep: int, at: str,
-           env: list[tuple[str, str]]) -> tuple[str, str]:
+           env: list[tuple[str, str]], same_disk: bool = False) -> tuple[str, str]:
     from fleetledger import service
 
     path = f"{Path(ship_fleet).parent}:{service.SYSTEM_PATH}"
@@ -160,14 +214,20 @@ def _units(ship_fleet: str, folder: Path, keep: int, at: str,
         f"{HEADER} ({service.RUNBOOK}).",
         "[Unit]",
         "Description=FleetLedger: an encrypted backup of the fleet",
+        f"RequiresMountsFor={folder}",  # a NAS share: mounted first, or no backup
         "",
         "[Service]",
         "Type=oneshot",
-        f"ExecStart={ship_fleet} backup now --to {folder} --keep {keep}",
+        f"ExecStart={ship_fleet} backup now --to {folder} --keep {keep}"
+        + (" --same-disk" if same_disk else ""),
         f"Environment=PATH={path}",
         *(f"Environment={name}={value}" for name, value in env),
         "UMask=0077",
         "NoNewPrivileges=yes",
+        "LimitCORE=0",  # a core dump would hold the unlocked vault's key
+        "LockPersonality=yes",
+        "RestrictRealtime=yes",
+        "SystemCallArchitectures=native",
         "",
     ])
     timer = "\n".join([
@@ -202,7 +262,12 @@ def cmd_schedule(args: Any, app: Any) -> int:
         raise FleetError("Backups are sealed with FleetLedger's vault, and it is off here.",
                          hint="Turn it on first: ship-fleet vault init.")
     ship_fleet = service.ship_fleet_path(args.ship_fleet)
-    unit, timer = _units(ship_fleet, folder, args.keep, args.at, service.carried_environment())
+    if on_this_disk(folder) and not args.same_disk:
+        raise FleetError(f"{folder} is on this computer's own disk, so the backups would go "
+                         "with it (or the NAS share is not mounted just now).",
+                         hint="Mount it first, or add --same-disk to keep them here anyway.")
+    unit, timer = _units(ship_fleet, folder, args.keep, args.at, service.carried_environment(),
+                         args.same_disk)
     service._check_systemd(app)
     base = service.unit_dir()
     for name in (UNIT, TIMER):
@@ -255,11 +320,15 @@ def add_parsers(sub, add) -> None:
     now = verbs.add_parser("now", help="one backup, now")
     now.add_argument("--to", required=True, metavar="DIR", help="the folder to write it in")
     now.add_argument("--keep", type=int, default=14, help="keep the newest N there (default 14)")
+    now.add_argument("--same-disk", action="store_true",
+                     help="allow a folder on this computer's own disk (it goes with the disk)")
     sc = verbs.add_parser("schedule", help="a daily backup (a systemd user timer)")
     sc.add_argument("--to", required=True, metavar="DIR", help="the folder to write them in")
     sc.add_argument("--at", default="03:30", metavar="HH:MM", help="when (default 03:30)")
     sc.add_argument("--keep", type=int, default=14, help="keep the newest N (default 14)")
     sc.add_argument("--ship-fleet", metavar="PATH", help="the ship-fleet command to run")
+    sc.add_argument("--same-disk", action="store_true",
+                    help="allow a folder on this computer's own disk (it goes with the disk)")
     verbs.add_parser("unschedule", help="no more scheduled backups")
 
 

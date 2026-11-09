@@ -677,9 +677,10 @@ def _handed_over(args, app) -> None:
 
 # What still runs while FleetLedger's vault is locked (vault.py): unlocking it, the
 # vault itself, doctor, the web UI (read-only, with its Unlock page) and the service
-# that runs it, updating FleetLedger's own checkout; and any read from the caches alone
-# (--offline).
-LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update")
+# that runs it, updating FleetLedger's own checkout, and backup (it reads the vault,
+# which refuses while locked, so its result, failed, is kept for doctor); and any read
+# from the caches alone (--offline).
+LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup")
 
 
 def _vault_locked(args, app) -> None:

@@ -10,9 +10,17 @@ FleetLedger is moving the checkout, and only that:
 3. refuse a commit that is not ahead of this one, unless --force: going back would
    take FleetLedger back too, and with it the tooling the next `update` puts on Ships
    (the same rule `update` keeps for Ships);
-4. check it out, and run fleetledger/install.sh again only if the install itself
-   changed (fleetledger/pyproject.toml or install.sh);
-5. restart the service, if FleetLedger runs as one: it lets running jobs finish first.
+4. move to it: a branch checked out (a desktop on main) is fast-forwarded, so git
+   pull keeps working; otherwise (the VM's detached checkout, or --force back) it is
+   checked out detached;
+5. run fleetledger/install.sh again only if the install itself changed
+   (fleetledger/pyproject.toml or install.sh); if that fails, the checkout goes back
+   to where it was, so a running FleetLedger keeps code that matches its install;
+6. restart the service, if FleetLedger runs as one: it lets running jobs finish first.
+
+FleetLedger is installed editable, so between moving the checkout and the restart a
+running service may load a module or two from the new commit: the restart follows at
+once (and --no-restart says what that leaves).
 
 No Ship changes: rolling the new tooling out stays a separate `ship-fleet update`.
 """
@@ -72,7 +80,11 @@ def cmd_self_update(args: Any, app: Any) -> int:
                          "ship-fleet update puts on Ships.",
                          hint="Sure? Add --force.")
     changed = _git(root, "diff", "--name-only", here, target, "--", *INSTALL_FILES).stdout.split()
-    _git(root, "checkout", "--quiet", "--detach", target)
+    branch = _git(root, "symbolic-ref", "--short", "-q", "HEAD", check=False).stdout.strip()
+    if branch and ahead:
+        _git(root, "merge", "--ff-only", "--quiet", target)  # the branch moves with it
+    else:
+        _git(root, "checkout", "--quiet", "--detach", target)
     audit.record("-", "self-update", "fleetledger", f"{here[:12]}..{target[:12]}"
                  + (" forced" if not ahead else ""))
     app.say(f"FleetLedger is now at {ref} ({target[:12]}; it was {here[:12]}).")
@@ -80,11 +92,20 @@ def cmd_self_update(args: Any, app: Any) -> int:
         app.say("Its install changed (" + ", ".join(changed) + "): running fleetledger/install.sh.")
         runner = getattr(app, "run_install", None) or run_install
         if runner(root) != 0:
-            raise ConfigError("fleetledger/install.sh failed; FleetLedger may not start.",
-                              hint=f"Run it by hand: {root}/fleetledger/install.sh (or go back: "
-                                   f"ship-fleet self-update --to {here[:12]} --force).")
+            # Back to where it was: the installed code and the checkout match again.
+            if branch and ahead:
+                _git(root, "reset", "--keep", "--quiet", here)
+            elif branch:  # it was left where it was; just back onto it
+                _git(root, "checkout", "--quiet", branch)
+            else:
+                _git(root, "checkout", "--quiet", "--detach", here)
+            raise ConfigError(f"fleetledger/install.sh failed, so FleetLedger is back at "
+                              f"{here[:12]}, as it was; nothing was restarted.",
+                              hint=f"See its output above; then ship-fleet self-update "
+                                   f"--to {ref} again.")
     if args.no_restart:
-        app.say("Not restarted (--no-restart): ship-fleet service restart when you are ready.")
+        app.say("Not restarted (--no-restart): a running FleetLedger may now load parts of "
+                "the new code beside the old; ship-fleet service restart soon.")
     elif service.unit_path().is_file():
         service.cmd_restart(args, app)
     else:

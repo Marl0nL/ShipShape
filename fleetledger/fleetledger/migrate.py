@@ -93,6 +93,7 @@ MEMBER = re.compile(r"^(manifest\.json|secrets\.json|config/ships\.toml|"
                     r"data/[^\x00]{1,1000}|images/[^/\x00]{1,200})$")
 # What may sit in the receiving computer's data dir (data/<top>/...).
 DATA_TOPS = ("audit.log", "status", "history.sqlite3", "attempts.json", "net", "ca", "trust")
+BACKUP_LAST = "backup-last.json"  # the last ship-fleet backup's result (backup.py)
 # The remote web UI's paired browsers and pairing links (web/devices.py): they stay.
 WEB_FILES = ("web/devices.json", "web/pairings.json", "web/.lock")
 HOST_RE = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]{0,63}@)?[A-Za-z0-9_][A-Za-z0-9_.:-]{0,252}$")
@@ -125,8 +126,20 @@ class Plan:
     commit: str = "unknown"
     krl_sha256: str | None = None
 
+    lenient: bool = False  # a backup (backup.py): what only stops a move is left out
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (what, why), lenient
+
     def block(self, what: str, why: str) -> None:
         self.blockers.append((what, why))
+
+    def skip(self, what: str, why: str) -> None:
+        """Stops a move; a backup leaves it out instead (a half-made Ship, a seed, a
+        file FleetLedger does not know): it is still a good backup without it."""
+        if self.lenient:
+            self.skipped.append((what, why))
+            self.left_out.append((what, why))
+        else:
+            self.block(what, why)
 
     def leave(self, path: Path | str, why: str) -> None:
         self.left_out.append((paths.tilde(path) if isinstance(path, Path) else path, why))
@@ -164,10 +177,12 @@ def summary(inv) -> str:
     return ", ".join(parts)
 
 
-def build_plan(app, text: str, inv, *, with_images: bool = False) -> Plan:
+def build_plan(app, text: str, inv, *, with_images: bool = False,
+               for_backup: bool = False) -> Plan:
     """Everything that moves, stays or stops the move. Reads only (secrets included:
-    each is read now, so a locked keyring stops the move before anything is sent)."""
-    plan = Plan(inv, text)
+    each is read now, so a locked keyring stops the move before anything is sent).
+    for_backup: what only stops a move is left out instead (Plan.skip)."""
+    plan = Plan(inv, text, lenient=for_backup)
     store = app.store_factory()
     plan.moves.append(Move("config/ships.toml", store.path, f"inventory: {summary(inv)}"))
     here = handover.marker(store)
@@ -177,7 +192,7 @@ def build_plan(app, text: str, inv, *, with_images: bool = False) -> Plan:
     _plan_checkout(plan, app)
     for ship in inv.ships():
         if ship.enrolled is None:
-            plan.block(f"Ship {ship.name}", "is not enrolled yet, and its seed holds its private "
+            plan.skip(f"Ship {ship.name}", "is not enrolled yet, and its seed holds its private "
                        f"host key: finish it (ship-fleet status {ship.name} --wait) or destroy "
                        "it first")
     managed_names = _plan_keys(plan, inv, moving)
@@ -379,7 +394,7 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
         elif _temp(f.name):
             plan.leave(f, "a leftover of a write that was cut short")
         else:
-            plan.block(paths.tilde(f), "FleetLedger does not know this file, so migrate will not "
+            plan.skip(paths.tilde(f), "FleetLedger does not know this file, so migrate will not "
                        "guess whether it matters: move it out of the folder first")
 
 
@@ -392,10 +407,10 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
         if f.resolve() in moving:
             continue
         if top == "seeds" and f.name.startswith("appliance-"):
-            plan.block(paths.tilde(f), "FleetLedger's own VM's seed holds that VM's private "
+            plan.skip(paths.tilde(f), "FleetLedger's own VM's seed holds that VM's private "
                        "host key: delete it once the VM has booted (and from Proxmox's storage)")
         elif top == "seeds":
-            plan.block(paths.tilde(f), "a seed holds a Ship's private host key: finish enrolling "
+            plan.skip(paths.tilde(f), "a seed holds a Ship's private host key: finish enrolling "
                        "that Ship, or remove the seed of one that is gone")
         elif paths.tilde(f) in listed:
             continue  # said already (a baked image's file)
@@ -405,6 +420,8 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
                        "(--with-images moves the inventory's images)")
         elif top == "inbox-spool":
             plan.leave(f, "a file half-way to a Ship's inbox")
+        elif rel == BACKUP_LAST:
+            plan.leave(f, "this computer's last backup result (ship-fleet backup)")
         elif rel in WEB_FILES:
             plan.leave(f, "the remote web UI's paired browsers and pairing links: bound to "
                        "this computer's address; pair each device again with the new computer "
@@ -417,7 +434,7 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
             plan.leave(f, "a leftover of a write that was cut short")
         elif top not in DATA_TOPS or (top == "ca" and rel not in (
                 "ca/revoked-keys.krl", "ca/revoked-keys.spec-sha256")) or f.is_symlink():
-            plan.block(paths.tilde(f), "FleetLedger does not know this file, so migrate will not "
+            plan.skip(paths.tilde(f), "FleetLedger does not know this file, so migrate will not "
                        "guess whether it matters: move it out of the folder first")
         elif not all(SEGMENT.match(s) and s not in (".", "..") for s in rel.split("/")):
             plan.block(paths.tilde(f), "an unexpected file name")
@@ -1645,7 +1662,16 @@ def import_backup(app, file: str | None, *, store_kind: str | None = None,
     stream, header = backup.open_backup(data, secret, recovery=recovery)
     app.say(f"Opened the backup of {header.get('fleet', 'a fleet')} made {header.get('made')} "
             f"(epoch {header.get('epoch')}, commit {str(header.get('commit'))[:12]}).")
-    return receive(app, io.BytesIO(stream), store_kind=store_kind)
+    code = receive(app, io.BytesIO(stream), store_kind=store_kind)
+    from fleetledger.overlay import secret_store
+
+    store = app.store_factory()
+    if store.exists() and not secret_store.vault_on() and \
+            keys.managed(store.load())[0] == "file":
+        app.note("Note: the secrets went to 0600 files here. On an always-on computer, turn "
+                 "the vault on (ship-fleet vault init moves them into it), as before the "
+                 "restore would have been best (docs/runbooks/fleetledger-vm.md).")
+    return code
 
 
 # --- handing over: activate, retire, unretire, wipe -------------------------------------------

@@ -184,6 +184,9 @@ class ProxmoxDriver(Driver):
                              f"{self.node}.", hint=f"Publish it again: ship-fleet image publish "
                              f"{image.id}")
         vmid = int(ship.driver_ref["vmid"]) if "vmid" in ship.driver_ref else self.allocate_vmid()
+        from fleetledger.appliance import refuse_self
+
+        refuse_self(vmid, self.protected)  # before the clone: never onto its own VM id
         volume = seed_volume(cfg["seed_storage"], seed.instance_id)
         messages: list[str] = []
         uploaded = clone_asked = False

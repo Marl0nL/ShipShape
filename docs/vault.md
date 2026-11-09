@@ -73,7 +73,8 @@ are. FleetLedger adds no cipher, mode or padding of its own. Why these:
   and revoking devices). The poller stops polling Ships, since it cannot log in to
   them.
 - On the command line, every command but `unlock`, `vault`, `doctor`, `ui`,
-  `service` and `self-update` refuses and says to unlock. `--offline` reads
+  `service`, `self-update` and `backup` (which then fails, and says so in `doctor`)
+  refuses and says to unlock. `--offline` reads
   (`ship-fleet ls --offline`) still work, and so does `ship-fleet migrate retire`: a
   copy that comes back after the fleet was restored elsewhere must step aside
   without being unlocked.

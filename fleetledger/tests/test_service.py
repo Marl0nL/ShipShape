@@ -363,7 +363,7 @@ def test_install_writes_a_user_unit_and_starts_it(store, home, units, ship_fleet
     # The folders of the shell it was installed from: the service shares them.
     assert f"Environment=FLEETLEDGER_CONFIG_DIR={home / 'config'}\n" in text
     assert f"Environment=FLEETLEDGER_DATA_DIR={home / 'data'}\n" in text
-    for line in ("KillMode=mixed", "TimeoutStopSec=45min", "Restart=on-failure", "UMask=0077",
+    for line in ("KillMode=mixed", "TimeoutStopSec=27min", "Restart=on-failure", "UMask=0077",
                  "NoNewPrivileges=yes", "WantedBy=default.target", "StartLimitIntervalSec=0",
                  "RestartPreventExitStatus=2", "LockPersonality=yes", "LimitCORE=0",
                  "SystemCallArchitectures=native"):
@@ -380,14 +380,14 @@ def test_install_writes_a_user_unit_and_starts_it(store, home, units, ship_fleet
     assert "A reboot cuts running jobs short: it gives this user's systemd manager 5 seconds" \
         in said
     assert f"/etc/systemd/system/user@{os.getuid()}.service.d/zz-fleetledger-drain.conf" in said
-    assert "TimeoutStopSec=45min" in said
+    assert "TimeoutStopSec=28min" in said
     # systemd orders drop-ins by name across folders: it must come after Ubuntu's.
     assert service.DROP_IN > "timeout.conf"
 
 
 def test_install_says_a_reboot_drains_once_root_allowed_it(store, home, units, ship_fleet):
     system = FakeSystem()
-    system.reboot_stop = "45min"
+    system.reboot_stop = "28min"
     app, out = app_with(store, system)
     assert cli.main(["service", "install", "--ship-fleet", str(ship_fleet)], app) == 0
     assert "A reboot also lets running jobs finish first" in out.getvalue()

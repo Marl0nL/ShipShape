@@ -82,6 +82,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.local/share/fleetledger/trust/<machine>/` | the last bundle made for a trusted machine (0600) |
 | `~/.local/share/fleetledger/images/` | baked images and their manifests (0600); `base/` caches Ubuntu's verified cloud image |
 | `$XDG_RUNTIME_DIR/fleetledger/ui.sock` | a running web UI's control socket (0600, in a 0700 folder; gone when it stops): `ship-fleet ui link --local` and `ship-fleet service status` ask it |
+| `~/.local/share/fleetledger/backup-last.json` | the last `ship-fleet backup`'s result (when, where, ok or why not), for `doctor` and Settings ▸ Health |
 | `~/.config/systemd/user/fleetledger-backup.service`, `.timer` | the daily encrypted backup `ship-fleet backup schedule` sets up (0600) |
 | `~/.config/systemd/user/fleetledger.service` | the systemd user unit `ship-fleet service install` writes, outside FleetLedger's own folders (0600) |
 

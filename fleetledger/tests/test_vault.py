@@ -413,7 +413,7 @@ def test_locked_every_command_that_acts_refuses_before_it_starts(store, home):
         assert "locked" in out.getvalue()
     allowed = {c for c in cli.COMMANDS if c in cli.LOCKED_ALLOWED}
     assert allowed == {"unlock", "vault", "doctor", "ui"} | (
-        {"service", "self-update"} & set(cli.COMMANDS))
+        {"service", "self-update", "backup"} & set(cli.COMMANDS))
 
 
 def test_nothing_changes_for_an_owner_who_never_turns_it_on(store, home, ring):

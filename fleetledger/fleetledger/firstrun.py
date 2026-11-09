@@ -376,8 +376,42 @@ def vault_items() -> list[Item]:
     return out
 
 
+def backup_items(now: float | None = None) -> list[Item]:
+    """The last ship-fleet backup here, when there has been one or one is scheduled:
+    a failing scheduled backup shows here (and in Settings, Health), not only in the
+    journal."""
+    import time
+    from datetime import UTC, datetime
+
+    from fleetledger import backup, service
+
+    last = backup.last()
+    scheduled = (service.unit_dir() / backup.TIMER).is_file()
+    if last is None:
+        return [Item("computer", "backups", "info", "scheduled; none made yet",
+                     "ship-fleet backup now --to DIR")] if scheduled else []
+    when = str(last.get("at") or "")
+    try:
+        age = (now or time.time()) - datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=UTC).timestamp()
+    except ValueError:
+        age = None
+    if not last.get("ok"):
+        return [Item("computer", "backups", "warn",
+                     f"the last backup failed ({when[:16].replace('T', ' ')} UTC): "
+                     f"{last.get('why') or 'no reason given'}",
+                     f"fix that, then: ship-fleet backup now --to {last.get('to')}")]
+    left = last.get("left_out") or []
+    said = (f"last one {when[:16].replace('T', ' ')} UTC, to {last.get('to')}"
+            + (f"; it left out {len(left)} item(s) a move would not take" if left else ""))
+    if age is not None and age > 2 * 86400:
+        return [Item("computer", "backups", "warn", said + ": over two days ago",
+                     "journalctl --user -u fleetledger-backup says why")]
+    return [Item("computer", "backups", "ok", said)]
+
+
 def everything(app, *, offline: bool = False) -> list[Item]:
-    items = computer(app) + vault_items()
+    items = computer(app) + vault_items() + backup_items()
     fleet_items, inv = fleet(app)
     items += fleet_items
     if inv is not None:

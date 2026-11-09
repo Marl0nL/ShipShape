@@ -41,7 +41,8 @@ There are no passwords and root logins are off. The seed:
   computers on the same commit) and installs it;
 - installs the service unit, without starting it;
 - turns lingering on, so the service starts at boot;
-- lets a reboot wait for running jobs;
+- lets a reboot wait for running jobs (up to 25 minutes, inside the 30 systemd gives a
+  reboot before forcing it; [fleetledger-service.md](fleetledger-service.md));
 - turns swap off.
 
 **Outside the Ship pool.** The `qm` steps put the VM in **no pool**. FleetLedger's
@@ -224,24 +225,61 @@ unlocked.
 
   Each backup is the whole fleet (what `migrate` would move), sealed under the vault:
   it opens with the vault's passphrase or recovery code as they were when it was made,
-  and nothing else. It runs only while the vault is unlocked, and says so in the
-  journal when it cannot (`journalctl --user -u fleetledger-backup`). Keep the folder
-  off the VM's own disk: a NAS mount, or pull the files to your desktop
-  (`scp fleetledger@fleetledger:/path/*.flbackup ~/fleetledger-backups/`).
+  and nothing else. It runs only while the vault is unlocked.
 
-**Disaster: the VM is gone.** On any computer with a ShipShape checkout at the
-backup's commit and no FleetLedger:
+  The folder must be off the VM's own disk, a NAS mount say: a backup on the same disk
+  goes with it. `backup` refuses a folder on this computer's own disk, which is also
+  what an unmounted share looks like, so a share that failed to mount gets no backup
+  rather than a misleading one. The timer's unit waits for the mount
+  (`RequiresMountsFor`). `--same-disk` keeps them here anyway, if you pull the files to
+  your desktop yourself (`scp fleetledger@fleetledger:/path/*.flbackup
+  ~/fleetledger-backups/`).
+
+  Every backup's result is kept: `ship-fleet doctor` and Settings ▸ Health show the
+  last one, and warn when it failed or is over two days old. A backup skips what would
+  only stop a move (a Ship still being made and its seed, a file FleetLedger does not
+  know) and lists it; it still refuses on a handed-over copy, a secret it cannot read,
+  or uncommitted changes in the checkout (a restore needs a commit to match).
+
+**Disaster: the VM is gone.** Restore the latest backup onto a new VM. The backup must
+match a ShipShape commit you can check out; the seed clones the commit you run it from.
+
+1. **A seed for the new VM.** Your desktop's copy is retired, so it makes no seed for
+   the fleet; make one from an empty FleetLedger home on it (it records nothing):
+
+   ```sh
+   FLEETLEDGER_CONFIG_DIR=$(mktemp -d) FLEETLEDGER_DATA_DIR=$(mktemp -d) \
+     ship-fleet appliance seed --name fleetledger --vmid 121 --key ~/.ssh/id_ed25519.pub
+   ```
+
+   Then steps 2 and 3 above: the `qm` steps, the first boot, deleting the seed,
+   Tailscale.
+2. **The vault first**, on the new VM, so the secrets land in it and not in 0600 files
+   on its disk: `ship-fleet vault init` (it starts empty).
+3. **Restore**, on the new VM:
+
+   ```sh
+   ship-fleet migrate import fleetledger-<when>-e<epoch>.flbackup     # asks the vault passphrase the backup was made with
+   ship-fleet migrate activate
+   ship-fleet appliance here --vmid 121       # the restored inventory still names the old VM
+   systemctl --user start fleetledger
+   ```
+
+   `import` checks every Ship read-only before anything acts, exactly as `receive`
+   does. `activate` raises the epoch, so an older state is refused here. `appliance
+   here` records this VM (its hostname, its own sshd host key, the VM id you give) as
+   `[fleet] self`, in place of the old one.
+
+On your desktop instead (no new VM): the same `migrate import` and `activate` in a
+home with no FleetLedger; its OS keyring takes the secrets.
+
+**If the old VM comes back**, it is locked (it rebooted), and must step aside before
+anyone unlocks it. On it, as `fleetledger`:
 
 ```sh
-ship-fleet migrate import fleetledger-<when>-e<epoch>.flbackup     # asks the passphrase
-ship-fleet migrate activate
+systemctl --user stop fleetledger      # its service started at boot and holds FleetLedger's lock
+ship-fleet migrate retire --to <the new VM> --yes      # works while locked
 ```
-
-`import` checks every Ship read-only before anything acts, exactly as `receive` does.
-`activate` raises the epoch, so an older state is refused here. The old VM, if it
-comes back, is locked (it rebooted): retire it **before** anyone unlocks it, which
-works while it is locked: `ship-fleet migrate retire --to <the new computer> --yes`
-there.
 
 ## Updates
 
@@ -283,7 +321,7 @@ CI cannot run a VM managing its own host, so once, after the move:
 3. Reboot the VM (`sudo reboot` as `vmadmin`). Afterwards the web UI says FleetLedger is
    locked, every page still shows the fleet, and `ship-fleet ls --offline` works. Then
    unlock from the web UI: Ships are checked again within a minute.
-4. `ship-fleet backup now --to /tmp/check`, then on your desktop, in an empty
+4. `ship-fleet backup now --to /tmp/check --same-disk`, then on your desktop, in an empty
    FleetLedger home (`FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` set to empty
    folders), `ship-fleet migrate import` it with the passphrase: every Ship verified,
    on standby. Delete that home afterwards.

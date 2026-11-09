@@ -35,7 +35,7 @@ from typing import Any
 
 from fleetledger import paths
 from fleetledger.errors import ConfigError, FleetError
-from fleetledger.service import DROP_IN
+from fleetledger.service import DROP_IN, REBOOT_DROP_IN
 
 USER = "fleetledger"
 TAG = "tag:fleetledger"
@@ -46,7 +46,6 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._/~-]+$")
 SIZE = {"cores": 2, "memory_mb": 4096, "disk_gb": 40}
-REBOOT_DROP_IN = "[Service]\nTimeoutStopSec=45min\n"
 # Not "admin": that name is taken on Ubuntu (cloud-init cannot create it).
 ADMIN = "vmadmin"
 SSHD = ("# FleetLedger's VM: keys only, its two users only.\nPasswordAuthentication no\n"
@@ -92,6 +91,28 @@ def clashes(doc: Any) -> list[str]:
             out.append(f"Ship '{name}' has {' and '.join(why)} of FleetLedger's own VM "
                        "([fleet] self): FleetLedger never manages itself")
     return out
+
+
+def refuse_as_ship(inv: Any, *, name: str | None = None, vmid: Any = None,
+                   host_key: str | None = None) -> None:
+    """A Ship about to be made or adopted that would be FleetLedger's own VM: refused
+    plainly, before anything is written or recorded (the inventory would refuse it too,
+    but as a broken file)."""
+    entry = fleet_self(inv)
+    if not entry:
+        return
+    what = []
+    if name is not None and name == entry.get("name"):
+        what.append(f"the name {name}")
+    if vmid is not None and entry.get("vmid") is not None and str(vmid) == str(entry["vmid"]):
+        what.append(f"VM id {vmid}")
+    if host_key and entry.get("host_key") and _blob(host_key) == _blob(entry["host_key"]):
+        what.append("that host key")
+    if what:
+        raise FleetError(f"{' and '.join(what).capitalize()} belong{'s' if len(what) == 1 else ''}"
+                         " to FleetLedger's own VM ([fleet] self): it is never a Ship.",
+                         hint="Choose another name or VM id; ship-fleet appliance show says "
+                              "what the VM uses.")
 
 
 def refuse_self(vmid: Any, protected: Any) -> None:
@@ -150,6 +171,7 @@ def user_data(name: str, host_key: Any, login_keys: list[str], repo_url: str, co
         "ssh_pwauth": False,
         "disable_root": True,
         "ssh_deletekeys": True,
+        "ssh_genkeytypes": ["ed25519"],  # no unpinned rsa or ecdsa keys beside the pinned one
         "ssh_keys": {"ed25519_private": host_key.private, "ed25519_public": host_key.public},
         "users": [
             {"name": USER, "gecos": "FleetLedger", "shell": "/bin/bash",
@@ -326,6 +348,51 @@ def cmd_show(args: Any, app: Any) -> int:
     return 0
 
 
+HOST_KEY_PUB = Path("/etc/ssh/ssh_host_ed25519_key.pub")  # this computer's own (public)
+
+
+def cmd_here(args: Any, app: Any) -> int:
+    """Record the computer this runs on as FleetLedger's own VM: after a backup was
+    restored onto a new VM, whose inventory still names the old one."""
+    import socket
+
+    store = app.store_factory()
+    if not store.exists():
+        raise FleetError("There is no fleet here to record it in.")
+    inv = store.load()
+    name = socket.gethostname().split(".")[0].lower()
+    if not NAME_RE.match(name):
+        raise FleetError(f"This computer's hostname ({name}) is not one a VM name can be.")
+    try:
+        key = " ".join(HOST_KEY_PUB.read_text(encoding="ascii").split()[:2])
+    except (OSError, UnicodeDecodeError) as exc:
+        raise FleetError(f"Cannot read this computer's host key ({HOST_KEY_PUB}).") from exc
+    if not key.startswith("ssh-ed25519 "):
+        raise FleetError(f"{HOST_KEY_PUB} is not an ed25519 host key.")
+    names = list(dict.fromkeys(args.host or [f"{name}.local"]))
+    if not all(HOST_RE.match(h) for h in names):
+        raise FleetError("--host: a name to reach the VM by, as a Ship's names are.")
+    for ship in inv.ships():
+        if ship.name == name or str(ship.driver_ref.get("vmid")) == str(args.vmid) or \
+                _blob(ship.host_key) == key:
+            raise FleetError(f"Ship {ship.name} has this computer's name, VM id or host key; "
+                             "this computer cannot be FleetLedger's own VM and that Ship too.")
+    first, last = (inv.driver_config("proxmox") or {}).get("vmid_range") or [None, None]
+    if first is not None and first <= args.vmid <= last:
+        raise FleetError(f"VM id {args.vmid} is in the Ships' range ({first}-{last}).")
+    old = fleet_self(inv)
+    entry = {"name": name, "vmid": args.vmid, "names": names, "host_key": key}
+    record_self(store, entry)
+    from fleetledger.concierge import audit
+
+    audit.record("-", "appliance-here", "appliance", "ok")
+    app.say(f"Recorded this computer ({name}, VM id {args.vmid}) as FleetLedger's own VM"
+            + (f", in place of {old['name']} (VM id {old.get('vmid')})" if old else "")
+            + ": FleetLedger never acts on it.")
+    app.say(f"For ssh to it from your computers, the known_hosts line:\n  {pinned_line(entry)}")
+    return 0
+
+
 def cmd_forget(args: Any, app: Any) -> int:
     store = app.store_factory()
     if not store.exists() or fleet_self(store.load()) is None:
@@ -343,6 +410,7 @@ def add_parsers(sub, add) -> None:
             "cloud image, the VM recorded as [fleet] self (FleetLedger never acts on it),\n"
             f"and the Proxmox steps. See {RUNBOOK}.\n\n"
             "  ship-fleet appliance seed --name fleetledger --vmid 120\n"
+            "  ship-fleet appliance here --vmid 121     on a new VM, after a restore\n"
             "  ship-fleet appliance show\n"
             "  ship-fleet appliance forget")
     verbs = p.add_subparsers(dest="appliance_command", metavar="<action>", title="actions")
@@ -359,13 +427,19 @@ def add_parsers(sub, add) -> None:
                    help="https address to clone ShipShape from (default: this checkout's origin)")
     s.add_argument("--port", type=int, default=PORT, help=f"the web UI's port (default {PORT})")
     s.add_argument("--force", action="store_true", help="replace the recorded VM")
+    h = verbs.add_parser("here", help="record this computer as FleetLedger's own VM (after "
+                                      "a backup is restored onto a new one)")
+    h.add_argument("--vmid", type=int, required=True, help="its Proxmox VM id")
+    h.add_argument("--host", action="append", default=[],
+                   help="a name to reach it by (repeatable; default NAME.local)")
     verbs.add_parser("show", help="what [fleet] self says")
     verbs.add_parser("forget", help="drop [fleet] self (the VM is gone)")
 
 
 def cmd_appliance(args: Any, app: Any) -> int:
     verb = getattr(args, "appliance_command", None) or "show"
-    return {"seed": cmd_seed, "show": cmd_show, "forget": cmd_forget}[verb](args, app)
+    return {"seed": cmd_seed, "show": cmd_show, "forget": cmd_forget,
+            "here": cmd_here}[verb](args, app)
 
 
 def policy_with_self(text: str) -> str:
