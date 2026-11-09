@@ -674,6 +674,23 @@ def test_status(env):
     assert code == 1 and "unreachable" in out
 
 
+def test_status_shows_recorded_agents_that_are_not_running(env):
+    doc = copy.deepcopy(RUNNING)
+    stamp = "2026-01-02T00:00:00Z"
+    doc["agent_record"] = {"runtime": "herdr", "agents": [
+        {"name": "main", "cwd": "/home/agent/work/main", "mode": "auto", "autostart": True,
+         "state": "running", "relaunch_failures": 0, "created_at": stamp, "updated_at": stamp},
+        {"name": "helper", "cwd": "/home/agent/work/side", "mode": "plan", "autostart": False,
+         "state": "failed", "relaunch_failures": 3, "last_error": "agent_not_ready",
+         "created_at": stamp, "updated_at": stamp}],
+        "resume": {"at": stamp, "method": "ship-ctl", "resumed": 2, "failed": 1}}
+    env.ship.status_override["ship-01"] = doc
+    code, out, _ = env.run("status", "ship-01")
+    assert code == 0
+    assert "  helper       failed   plan  (not running)" in out
+    assert "last resume 2026-01-02T00:00:00Z (2 resumed, 1 failed)" in out
+
+
 def test_status_wait_enrols(env):
     with env.store.edit() as ed:
         ed.set_field("ship-01", "driver", "proxmox")

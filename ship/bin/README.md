@@ -47,17 +47,21 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 - `herdr-restart-pending`: status compares the inode of each running
   `herdr server` (agent's processes only, `/proc/<pid>/exe`) with
   `/usr/local/bin/herdr`.
-- After a reboot autostart waits until `ship-resume` has recorded this boot (or
-  10 minutes of uptime), so it never races herdr's own resume. It recognises an
-  agent herdr resumed by its name, or by the Claude session or pane it recorded,
-  and puts the name back if herdr lost it.
+- Agents: `record.py` is the agent record (`/var/lib/shipshape/agents.json`,
+  `contracts/agent-record.schema.json`) and the resume, the crash policy and the
+  pick-up of agents started by hand (`upkeep`, run by every status refresh, by
+  autostart and, as `capture`, by apply). `runtime.py` is the only code that runs
+  `herdr`: every other module goes through it, so another runtime (herdr-core) is a
+  second class there. A lock (`agents.lock`) keeps one ship-ctl at a time starting
+  or stopping agents.
 
 Internal state (not a contract; may change): `/var/lib/shipshape/provision.json`
-(written by ship-provision), `tools.json`, `autostart.json`, `autostart-repos.json`,
-`profiles.json`, `overlay.json`, `net/state.json`; the previous sign-in states in
-`/run/shipshape/`; agent-side
-`~/.local/state/shipshape/last-resume.json` (written by ship-resume) and the mode
-ledger.
+(written by ship-provision), `tools.json`, `autostart-repos.json`, `profiles.json`,
+`overlay.json`, `net/state.json`, `agents.lock`; the previous sign-in states in
+`/run/shipshape/`; agent-side, the mode ledger. Older tooling's `autostart.json` is
+imported into the agent record once and removed; its
+`~/.local/state/shipshape/last-resume.json` (ship-resume's) is read only until the
+Ship's first boot on this tooling.
 
 ## Files in the agent's home
 

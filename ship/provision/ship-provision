@@ -164,6 +164,15 @@ put_dir() { # DIR MODE [OWNER]
   fi
 }
 
+# drop_file PATH: remove a file or link an older release installed.
+drop_file() {
+  local real=$ROOT$1
+  not_in_home "$1"
+  [ -e "$real" ] || [ -L "$real" ] || return 1
+  changed "removed $1"
+  [ "$DRY" = 1 ] || rm -f "$real"
+}
+
 put_link() { # TARGET LINK
   local real=$ROOT$2
   not_in_home "$2"
@@ -470,7 +479,8 @@ step_claude() {
         "$(v claude.release_key)" "$(v claude.minimum_version)" "$platform"
     fi
   fi
-  # herdr's Claude integration reports sessions, so herdr can resume them.
+  # herdr's Claude integration reports each agent's session and state, which
+  # ship-ctl's agent record follows (it resumes agents itself, ship/lib/shipctl/record.py).
   if ! as_agent herdr integration status 2>/dev/null | grep -q '^claude: current'; then
     changed "herdr Claude integration"
     [ "$DRY" = 1 ] || as_agent herdr integration install claude
@@ -480,7 +490,11 @@ step_claude() {
 # --- ShipShape's own files -----------------------------------------------------------
 step_shipshape_files() {
   put_dir /opt/shipshape 0755
-  put_file "$FILES/shim/claude.py" /opt/shipshape/shim/claude 0755
+  # The resume shim of releases before the agent record: ship-ctl now launches
+  # every resumed agent with its mode flag itself, and herdr resumes nothing.
+  if drop_file /opt/shipshape/shim/claude && [ "$DRY" = 0 ]; then
+    rmdir "$ROOT/opt/shipshape/shim" 2>/dev/null || true
+  fi
   put_file "$FILES/hooks/mode_ledger.py" /opt/shipshape/hooks/mode-ledger 0755
   put_link /opt/shipshape/current/bin/ship-ctl /usr/local/bin/ship-ctl
   if [ -e "$BUNDLE/axi/bin/ship-axi.js" ]; then
@@ -518,10 +532,12 @@ step_units() {
     put_file "$FILES/systemd/system/$unit" "/etc/systemd/system/$unit" 0644
     [ "$CHANGED" = 0 ] || system_changed=1
   done
-  for unit in herdr.service ship-resume.service; do
-    put_file "$FILES/systemd/user/$unit" "/etc/systemd/user/$unit" 0644
-    [ "$CHANGED" = 0 ] || user_changed=1
-  done
+  put_file "$FILES/systemd/user/herdr.service" /etc/systemd/user/herdr.service 0644
+  [ "$CHANGED" = 0 ] || user_changed=1
+  # ship-resume (a hidden herdr client that let herdr resume its agents) is gone:
+  # the status refresh resumes agents from the agent record.
+  drop_file /etc/systemd/user/default.target.wants/ship-resume.service && user_changed=1
+  drop_file /etc/systemd/user/ship-resume.service && user_changed=1
   [ "$system_changed" = 0 ] || sys systemctl daemon-reload
 
   # Enabled through symlinks, so the check works in --root mode too, where
@@ -529,11 +545,9 @@ step_units() {
   if [ ! -L "$ROOT/etc/systemd/system/timers.target.wants/ship-status.timer" ]; then
     enable_unit "ship-status.timer" ship-status.timer
   fi
-  for unit in herdr.service ship-resume.service; do
-    if [ ! -L "$ROOT/etc/systemd/user/default.target.wants/$unit" ]; then
-      enable_unit "$unit for $AGENT" --global "$unit"
-    fi
-  done
+  if [ ! -L "$ROOT/etc/systemd/user/default.target.wants/herdr.service" ]; then
+    enable_unit "herdr.service for $AGENT" --global herdr.service
+  fi
   if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
     systemctl is-active --quiet ship-status.timer || systemctl start ship-status.timer
     systemctl enable --now qemu-guest-agent >/dev/null 2>&1 || true
@@ -599,8 +613,7 @@ step_first_boot() {
   done
   as_agent systemctl --user daemon-reload
   as_agent systemctl --user start herdr.service
-  # Nothing to resume yet, but its record tells autostart this boot's resume is done.
-  as_agent systemctl --user start ship-resume.service || log "ship-resume did not finish"
+  # The first status refresh records this boot's (empty) resume, then autostarts.
   log "herdr started (after ${i}s)"
 }
 

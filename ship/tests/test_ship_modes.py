@@ -1,4 +1,4 @@
-"""The mode-ledger hook and the resume shim (contracts/settings.md, permission modes)."""
+"""The mode-ledger hook (contracts/settings.md, "Permission modes across reboots")."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 FILES = Path(__file__).resolve().parents[1] / "files"
 
@@ -22,7 +20,6 @@ def load(name: str, path: Path):
 
 
 ledger = load("mode_ledger", FILES / "hooks/mode_ledger.py")
-shim = load("claude_shim", FILES / "shim/claude.py")
 
 
 # --- ledger -----------------------------------------------------------------------
@@ -121,89 +118,35 @@ def test_hook_script_is_silent_and_never_fails(tmp_path):
     assert doc["sessions"]["a"]["mode"] == "auto"
 
 
-# --- shim -------------------------------------------------------------------------
-@pytest.fixture
-def files(tmp_path):
-    led = tmp_path / "modes.json"
-    led.write_text(
-        json.dumps(
-            {
-                "schema": "shipshape.modes/1",
-                "sessions": {
-                    "byp": {"mode": "bypassPermissions", "updated_at": "2026-01-01T00:00:00Z"},
-                    "aut": {"mode": "auto", "updated_at": "2026-01-01T00:00:00Z"},
-                },
-            }
-        )
-    )
-    toml = tmp_path / "ship.toml"
-    toml.write_text("schema = 1\n[claude]\nallow_bypass = true\n")
-    return str(led), toml
+def test_session_end_is_recorded_until_the_session_runs_again(tmp_path):
+    """How a session ended tells an agent someone exited from one that died."""
+    d = str(tmp_path / "state")
+    ledger.handle({"session_id": "s1", "hook_event_name": "UserPromptSubmit",
+                   "permission_mode": "auto"}, d)
+    assert ledger.handle({"session_id": "s1", "hook_event_name": "SessionEnd",
+                          "reason": "prompt_input_exit"}, d) == "prompt_input_exit"
+    entry = json.loads((tmp_path / "state/modes.json").read_text())["sessions"]["s1"]
+    assert entry["mode"] == "auto"  # the mode stays: it is resumed in it
+    assert entry["ended"]["reason"] == "prompt_input_exit" and entry["ended"]["at"].endswith("Z")
+    # Resumed (a launch without mode flags): it runs again, so it no longer counts as ended.
+    ledger.handle({"session_id": "s1", "hook_event_name": "SessionStart"}, d, str(tmp_path))
+    entry = json.loads((tmp_path / "state/modes.json").read_text())["sessions"]["s1"]
+    assert "ended" not in entry and entry["mode"] == "auto"
 
 
-def test_shim_restores_bypass_on_resume(files):
-    led, toml = files
-    args, note = shim.decide(["--resume", "byp"], led, str(toml))
-    assert args == ["--dangerously-skip-permissions", "--resume", "byp"]
-    assert "restored" in note
-
-
-def test_shim_restores_any_ledger_mode_on_resume(files):
-    # After `ship-ctl agent restart` the ledger may know a mode the transcript does not.
-    led, toml = files
-    args, note = shim.decide(["--resume", "aut"], led, str(toml))
-    assert args == ["--permission-mode", "auto", "--resume", "aut"]
-    assert "auto restored" in note
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["--resume", "unknown"],
-        ["--resume", "aut", "--permission-mode", "plan"],
-        ["--resume", "byp", "--permission-mode", "plan"],
-        ["--resume", "byp", "--dangerously-skip-permissions"],
-        ["-p", "hello"],
-        [],
-    ],
-)
-def test_shim_passes_everything_else_through(files, argv):
-    led, toml = files
-    assert shim.decide(argv, led, str(toml))[0] == argv
-
-
-def test_shim_respects_allow_bypass(files):
-    led, toml = files
-    toml.write_text("schema = 1\n[claude]\nallow_bypass = false\n")
-    assert shim.decide(["--resume", "byp"], led, str(toml))[0] == ["--resume", "byp"]
-    toml.unlink()
-    assert shim.decide(["--resume", "byp"], led, str(toml))[0] == ["--resume", "byp"]
-
-
-def test_shim_execs_the_real_launcher(tmp_path, files):
-    led, _ = files
-    home = tmp_path / "home"
-    real = home / ".local/bin/claude"
-    real.parent.mkdir(parents=True)
-    real.write_text('#!/bin/sh\necho "real: $*"\n')
-    real.chmod(0o755)
-    state = home / ".local/state/shipshape"
-    state.mkdir(parents=True)
-    Path(led).rename(state / "modes.json")
-    root = tmp_path / "root"
-    (root / "etc/shipshape").mkdir(parents=True)
-    (root / "etc/shipshape/ship.toml").write_text("schema = 1\n[claude]\nallow_bypass = true\n")
-    env = {"HOME": str(home), "PATH": "/usr/bin:/bin", "SHIPSHAPE_ROOT": str(root)}
-    r = subprocess.run(
-        [sys.executable, str(FILES / "shim/claude.py"), "--resume", "byp"],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert r.stdout == "real: --dangerously-skip-permissions --resume byp\n"
-    assert "bypass restored" in (state / "shim.log").read_text()
-    real.unlink()
-    r = subprocess.run(
-        [sys.executable, str(FILES / "shim/claude.py")], env=env, capture_output=True, text=True
-    )
-    assert r.returncode == 127
+def test_session_end_of_an_unknown_session_and_odd_reasons(tmp_path):
+    d = str(tmp_path / "state")
+    assert ledger.handle({"session_id": "s2", "hook_event_name": "SessionEnd",
+                          "reason": "Weird Reason!"}, d) == "other"
+    entry = json.loads((tmp_path / "state/modes.json").read_text())["sessions"]["s2"]
+    assert "mode" not in entry and entry["ended"]["reason"] == "other"
+    # A start without flags records no mode, but that the session started under these
+    # hooks (so its end will be recorded too).
+    ledger.handle({"session_id": "s3", "hook_event_name": "SessionStart"}, d, str(tmp_path))
+    entry = json.loads((tmp_path / "state/modes.json").read_text())["sessions"]["s3"]
+    assert "mode" not in entry and entry["started_at"].endswith("Z")
+    # A prompt of a session the ledger never saw start (it predates the hooks) does not.
+    ledger.handle({"session_id": "s4", "hook_event_name": "UserPromptSubmit",
+                   "permission_mode": "plan"}, d)
+    assert "started_at" not in json.loads(
+        (tmp_path / "state/modes.json").read_text())["sessions"]["s4"]

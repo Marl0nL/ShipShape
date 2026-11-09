@@ -1,33 +1,29 @@
 """`ship-ctl autostart`: start every [[autostart]] agent that is not running.
 
-An agent counts as running when herdr lists a live agent that is the same one:
-the same herdr name, or the Claude session or pane autostart recorded for it last
-time. The last two matter after a reboot: herdr restores and resumes the pane, but
-the name may not come back, so autostart re-attaches the name instead of starting
-a second copy.
-
-At boot, autostart waits for ship-resume to finish (its record carries the boot
-id), so it never races herdr's own resume.
+The agent record (record.py) decides what is running. First the record is
+brought up to date, and the agents it keeps running that are not (after a boot,
+all of them) are started again, continuing their sessions: that is the resume.
+Then each [[autostart]] entry that is still not running, and not one the record is
+starting again, starts afresh in its own workspace, in its mode, with its first
+prompt, and goes into the record.
 """
 
 from __future__ import annotations
 
 import json
 
-from . import naming
+from . import naming, record
 from .apply import expand_cwd
-from .context import Context, utc_now
+from .context import Context
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
+from .runtime import for_ship, mode_args
 from .shiptoml import ShipToml
-from .status import boot_id, herdr_agents
 
 # Sent to an agent whose [[autostart]] entry has no prompt: a deliberate default,
 # so every autostart agent starts by getting its bearings. (Its mode is recorded
 # either way: the ledger hook reads it from claude's flags at SessionStart.)
 DEFAULT_PROMPT = "Get oriented and ready to work."
-RESUME_GRACE_S = 600  # after this much uptime, stop waiting for ship-resume
-START_TIMEOUT_MS = 120000
 
 
 # Clones an [[autostart]] entry's repo into its folder, as the agent: once, and only
@@ -128,78 +124,6 @@ def waiting_for_github(ctx: Context, ship: ShipToml) -> set[str]:
             if rec.get("state") == "waiting-github"}
 
 
-def mode_args(mode: str) -> list[str]:
-    if mode == "bypassPermissions":
-        return ["--dangerously-skip-permissions"]
-    return ["--permission-mode", mode]
-
-
-def resume_pending(ctx: Context) -> bool:
-    rec = ctx.read_home_json(ctx.paths.last_resume, {})
-    if isinstance(rec, dict) and rec.get("boot_id") == boot_id(ctx):
-        return False
-    try:
-        uptime = float((ctx.paths.proc / "uptime").read_text().split()[0])
-    except (OSError, ValueError, IndexError):
-        return False
-    return uptime < RESUME_GRACE_S
-
-
-def _session(raw: dict) -> str | None:
-    s = raw.get("agent_session")
-    return s.get("value") if isinstance(s, dict) else None
-
-
-def find_live(entry_name: str, record: dict, live: list[dict]) -> dict | None:
-    for a in live:
-        if a.get("name") == entry_name:
-            return a
-    rec = record.get(entry_name) or {}
-    if rec.get("session"):
-        for a in live:
-            if _session(a) == rec["session"]:
-                return a
-    if rec.get("pane"):
-        for a in live:
-            if a.get("pane_id") == rec["pane"] and a.get("agent") == "claude":
-                return a
-    return None
-
-
-def remember(ctx: Context, ship: ShipToml, live: list[dict]) -> None:
-    """Record pane and session for every named autostart agent that is live."""
-    path = ctx.paths.state / "autostart.json"
-    record = read_json(path, {})
-    record = record if isinstance(record, dict) else {}
-    before = json.dumps(record, sort_keys=True)
-    for entry in ship.autostart:
-        a = find_live(entry["name"], record, live)
-        if a is None:
-            continue
-        rec = record.setdefault(entry["name"], {})
-        if a.get("pane_id"):
-            rec["pane"] = a["pane_id"]
-        if _session(a):
-            rec["session"] = _session(a)
-    if json.dumps(record, sort_keys=True) != before:
-        write_atomic(path, json.dumps(record, indent=2) + "\n", 0o644)
-
-
-def _herdr_json(ctx: Context, argv: list[str], timeout: float) -> tuple[dict | None, str]:
-    r = ctx.runner.run(["herdr", *argv], timeout=timeout, agent=True)
-    if not r.ok:
-        try:
-            err = json.loads(r.err).get("error", {})
-            reason = err.get("code") or err.get("message") or f"exit {r.rc}"
-        except (ValueError, AttributeError):
-            reason = f"exit {r.rc}"
-        return None, str(reason)[:200]
-    try:
-        return json.loads(r.out), ""
-    except ValueError:
-        return {}, ""
-
-
 def run(ctx: Context, ship: ShipToml, state: str,
         only: set[str] | None = None) -> tuple[dict, list[str], list[str]]:
     """Returns (data, changed, messages). `state` is the Ship's current status state.
@@ -216,76 +140,75 @@ def run(ctx: Context, ship: ShipToml, state: str,
         skipped = [{"name": e["name"], "reason": state} for e in entries]
         return {"started": [], "skipped": skipped}, [], []
 
-    server, live, _ = herdr_agents(ctx)
+    rt = for_ship(ctx)
+    server, live, _ = rt.agents()
     if server != "running" or live is None:
         raise CtlError("herdr-unavailable", "the herdr server is not answering")
-    if resume_pending(ctx):
-        skipped = [{"name": e["name"], "reason": "resume-pending"} for e in entries]
-        return {"started": [], "skipped": skipped}, [], []
+    with record.held(ctx):
+        doc = record.load(ctx)
+        live, notes, _ = record.upkeep(ctx, ship, rt, doc, live, state)
+        messages += notes
+        if record.resume_pending(ctx, doc):
+            record.save(ctx, doc)
+            skipped = [{"name": e["name"], "reason": "resume-pending"} for e in entries]
+            return {"started": [], "skipped": skipped}, [], messages
+        found = record.match(doc, live)
+        agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
+        failures = 0
+        named = None  # whether claude takes --name; asked once, only if something starts
+        repos = _repo_states(ctx, ship)
 
-    remember(ctx, ship, live)
-    record = read_json(ctx.paths.state / "autostart.json", {})
-    record = record if isinstance(record, dict) else {}
-    live_names = {a.get("name") for a in live if a.get("name")}
-    default_mode = ship.claude["default_mode"]
-    agent_home = ctx.paths.agent_path(ctx.paths.agent_home)
-    failures = 0
-    named = None  # whether claude takes --name; asked once, only if something starts
-    repos = _repo_states(ctx, ship)
+        for entry in entries:
+            name = entry["name"]
+            rec = doc["agents"].get(name)
+            if name in found or (rec is None and any(a["name"] == name for a in live)):
+                skipped.append({"name": name, "reason": "running"})
+                continue
+            if rec is not None and rec["want"] == "running":
+                # The record starts it again, continuing its session, at each refresh,
+                # and gives up after record.MAX_TRIES (attention agent-relaunch-failed).
+                gave_up = record.tries_this_boot(ctx, rec) >= record.MAX_TRIES
+                skipped.append({"name": name, "reason": "relaunch-failed" if gave_up
+                                else "resuming"})
+                continue
 
-    for entry in entries:
-        name = entry["name"]
-        match = find_live(name, record, live)
-        if match is not None:
-            if match.get("name") != name and name not in live_names and match.get("pane_id"):
-                _herdr_json(ctx, ["agent", "rename", match["pane_id"], name], 10)
-            skipped.append({"name": name, "reason": "running"})
-            continue
-
-        cwd = expand_cwd(entry["cwd"], agent_home)
-        if entry.get("repo"):
-            repo_state, why = ensure_repo(ctx, entry["repo"], cwd)
-            repos[name] = {"repo": entry["repo"], "state": repo_state, "message": why}
-            if repo_state != "cloned":
+            cwd = expand_cwd(entry["cwd"], agent_home)
+            if entry.get("repo"):
+                repo_state, why = ensure_repo(ctx, entry["repo"], cwd)
+                repos[name] = {"repo": entry["repo"], "state": repo_state, "message": why}
+                if repo_state != "cloned":
+                    skipped.append({"name": name, "reason": why})
+                    continue
+            if not ctx.paths.sandbox:
+                ctx.runner.run(["mkdir", "-p", cwd], timeout=10, agent=True)
+            else:
+                ensure_dir(ctx.paths.p(cwd))
+            pane, workspace, why = rt.new_place(cwd, name)
+            if not pane:
+                failures += 1
                 skipped.append({"name": name, "reason": why})
                 continue
-        if not ctx.paths.sandbox:
-            ctx.runner.run(["mkdir", "-p", cwd], timeout=10, agent=True)
-        else:
-            ensure_dir(ctx.paths.p(cwd))
-        ws, why = _herdr_json(
-            ctx, ["workspace", "create", "--cwd", cwd, "--label", name, "--no-focus"], 15
-        )
-        pane = (((ws or {}).get("result") or {}).get("root_pane") or {}).get("pane_id")
-        if not pane:
-            failures += 1
-            skipped.append({"name": name, "reason": f"workspace create failed: {why or 'no pane'}"})
-            continue
-        mode = entry.get("mode") or default_mode
-        session = naming.session_name(ship, name)
-        argv = ["agent", "start", name, "--kind", "claude", "--pane", pane]
-        argv += ["--timeout", str(START_TIMEOUT_MS), "--", *mode_args(mode)]
-        if named is None:
-            named = naming.name_flag_supported(ctx)
-        argv += naming.launch_args(session, named)
-        out, why = _herdr_json(ctx, argv, START_TIMEOUT_MS / 1000 + 15)
-        if out is None:
-            failures += 1
-            skipped.append({"name": name, "reason": f"agent start failed: {why}"})
-            continue
-        started.append(name)
-        record[name] = {
-            "pane": pane,
-            "mode": mode,
-            "session_name": session,
-            "started_at": utc_now(),
-        }
-        prompt = entry.get("prompt") or DEFAULT_PROMPT
-        sent, why = _herdr_json(ctx, ["agent", "prompt", name, prompt], 30)
-        if sent is None:
-            messages.append(f"{name}: started, but the first prompt was not sent ({why}).")
+            mode = entry.get("mode") or ship.claude["default_mode"]
+            session = naming.session_name(ship, name)
+            if named is None:
+                named = naming.name_flag_supported(ctx)
+            ok, why = rt.start(name, pane, [*mode_args(mode), *naming.launch_args(session, named)])
+            if not ok:
+                failures += 1
+                skipped.append({"name": name, "reason": f"agent start failed: {why}"})
+                continue
+            started.append(name)
+            prompt = entry.get("prompt") or DEFAULT_PROMPT
+            back = rt.in_place(pane, name) or {}
+            record.launched(ctx, rt, doc, name, cwd=cwd, place=pane,
+                            workspace=back.get("workspace") or workspace,
+                            session=back.get("session"), mode=mode, origin="autostart",
+                            prompt=prompt, session_name=session)
+            sent, why = rt.prompt(name, prompt)
+            if not sent:
+                messages.append(f"{name}: started, but the first prompt was not sent ({why}).")
 
-    write_atomic(ctx.paths.state / "autostart.json", json.dumps(record, indent=2) + "\n", 0o644)
+        record.save(ctx, doc)
     write_atomic(ctx.paths.state / REPOS_STATE, json.dumps(repos, indent=2) + "\n", 0o644)
     if failures:
         data = {"started": started, "skipped": skipped}

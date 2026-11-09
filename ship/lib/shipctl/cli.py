@@ -32,6 +32,7 @@ from . import (
     status,
     tools,
 )
+from . import record as agent_record
 from .context import Context
 from .errors import CtlError
 from .fsutil import read_json, write_atomic
@@ -109,13 +110,15 @@ def build_parser() -> Parser:
     st.add_argument("pairs", nargs="*", metavar="KEY=VALUE")
     st.add_argument("--file", metavar="-", help="read a complete replacement ship.toml from stdin")
     cmd("autostart", "Start the [[autostart]] agents that are not running.")
-    ag = cmd("agent", "Restart running Claude agents in place, in a new permission mode.")
-    ag.add_argument("action", choices=["restart"])
-    ag.add_argument("names", nargs="*", metavar="NAME", help="herdr agent names")
+    ag = cmd("agent", "Restart Claude agents in place (in a new permission mode), or forget "
+                      "stopped ones.")
+    ag.add_argument("action", choices=["restart", "forget"])
+    ag.add_argument("names", nargs="*", metavar="NAME", help="agent names (the agent record's)")
     ag.add_argument("--all", dest="everyone", action="store_true",
                     help="every named Claude agent")
     ag.add_argument("--mode", choices=PERMISSION_MODES,
-                    help="default: its [[autostart]] mode, else claude.default_mode")
+                    help="default: its [[autostart]] mode, else claude.default_mode; for one "
+                         "not running, the mode it was in")
     ag.add_argument("--fresh", action="store_true",
                     help="start a new conversation instead of continuing it")
     ag.add_argument("--force", action="store_true",
@@ -342,6 +345,11 @@ def cmd_autostart(ctx: Context, args) -> dict:
 
 def cmd_agent(ctx: Context, args) -> dict:
     ship = shiptoml.load(ctx.paths)
+    if args.action == "forget":
+        if args.everyone or args.mode or args.fresh or args.force:
+            raise CtlError("usage", "agent forget takes only names")
+        data, changed, messages = agents.forget(ctx, args.names)
+        return result("agent", changed=changed, messages=messages, data=data)
     data, changed, messages = agents.restart(ctx, ship, args.names, everyone=args.everyone,
                                              mode=args.mode, fresh=args.fresh,
                                              force=args.force)
@@ -429,7 +437,8 @@ def cmd_refresh(ctx: Context, args) -> dict:
     A service whose state changed to ok since the previous refresh releases the
     tools waiting on it; Claude changing to ok runs autostart once. The previous
     states live in /run (cleared at boot), so the first refresh after a boot
-    compares against "not signed in".
+    compares against "not signed in". Then the agent record's upkeep: after a boot,
+    that resumes the recorded agents; later, it starts again one that crashed.
     """
     ship = shiptoml.load(ctx.paths)
     doc = status.build(ctx, ship)
@@ -459,24 +468,30 @@ def cmd_refresh(ctx: Context, args) -> dict:
     if any(e.get("repo") for e in ship.autostart):  # a public repo clones at once
         messages += autostart.prepare_repos(ctx, ship, retry="github" in newly_ok)
     repo_waiting = bool(waited)
+    upkept: list[str] = []  # what the agent record's upkeep did (resumes, restarts)
     if ("claude" in newly_ok or repo_waiting) and ship.autostart:
         state = doc["state"]
         if "claude" in newly_ok and state in ("needs-sign-in", "unknown"):
             state = "ready"  # Claude is signed in now; a GitHub sign-in alone never starts
         try:
-            data, _, _ = autostart.run(ctx, ship, state,
-                                       None if "claude" in newly_ok else waited)
+            data, _, notes = autostart.run(ctx, ship, state,
+                                           None if "claude" in newly_ok else waited)
+            upkept += [m for m in notes if m.startswith(agent_record.LOG_TAG)]
             if any(s["reason"] == "resume-pending" for s in data["skipped"]):
                 record["claude"] = prev.get("claude", "missing")  # try again next refresh
             elif data["started"]:
                 messages.append(f"autostart: started {', '.join(data['started'])}")
         except CtlError as exc:
             messages.append(f"autostart: {exc.message}")
+            upkept += [m for m in exc.messages if m.startswith(agent_record.LOG_TAG)]
             record["claude"] = prev.get("claude", "missing")
-    if doc["herdr"]["server"] == "running" and ship.autostart:
-        _, live, _ = status.herdr_agents(ctx)
-        if live:
-            autostart.remember(ctx, ship, live)
+    if doc["herdr"]["server"] == "running":
+        # The agent record: pick up agents started by hand, start again what should
+        # run and does not (after a boot, every recorded agent: the resume).
+        upkept += agent_record.refresh(ctx, ship, doc["state"])
+    messages += upkept
+    if upkept or any(m.startswith("autostart: started") for m in messages):
+        status.write_cache(ctx.paths.status_cache, status.build(ctx, ship))
     write_atomic(prev_path, json.dumps(record) + "\n", 0o644)
     for m in messages:
         ctx.log(m)

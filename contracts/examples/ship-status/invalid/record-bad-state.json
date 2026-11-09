@@ -1,0 +1,175 @@
+{
+  "schema": "shipshape.ship-status/1",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "ship": {
+    "name": "ship-01",
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "tags": [
+      "work"
+    ],
+    "tooling": "0.1.0",
+    "bundle_commit": "0123456789ab"
+  },
+  "state": "running",
+  "attention": [
+    {
+      "code": "agent-waiting",
+      "message": "Agent 'main' is waiting for you.",
+      "subject": "main"
+    },
+    {
+      "code": "agent-relaunch-failed",
+      "message": "Agent 'helper' stopped and did not start again after 3 tries: agent_not_ready. Restart it (ship-ctl agent restart helper, --fresh for a new conversation) or forget it (ship-ctl agent forget helper).",
+      "subject": "helper"
+    }
+  ],
+  "host": {
+    "uptime_s": 86400,
+    "load1": 0.4,
+    "cpus": 4,
+    "mem_total_mb": 7951,
+    "mem_used_pct": 41.2,
+    "disk_total_gb": 38.6,
+    "disk_used_pct": 22.0,
+    "reboot_required": false,
+    "updates_pending": 3
+  },
+  "provision": {
+    "cloud_init": "done",
+    "last_run": "2026-01-01T00:00:00Z",
+    "result": "ok"
+  },
+  "herdr": {
+    "version": "0.9.5",
+    "server": "running",
+    "agents": [
+      {
+        "name": "main",
+        "kind": "claude",
+        "state": "blocked",
+        "mode": "auto",
+        "pane": "w1:p2",
+        "workspace": "w1",
+        "cwd": "/home/agent/work/main"
+      },
+      {
+        "name": "builder",
+        "kind": "claude",
+        "state": "working",
+        "mode": "bypassPermissions",
+        "pane": "w2:p1",
+        "workspace": "w2"
+      }
+    ],
+    "last_resume": {
+      "at": "2026-01-02T08:00:40Z",
+      "method": "api-fallback",
+      "resumed": 1,
+      "failed": 1
+    }
+  },
+  "claude": {
+    "version": "2.1.300",
+    "channel": "latest",
+    "remote_control": "on",
+    "default_mode": "auto",
+    "allow_bypass": false
+  },
+  "auth": {
+    "claude": {
+      "state": "ok",
+      "account": "work@example.com",
+      "detail": "max",
+      "expires_at": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "gcloud": {
+      "state": "ok",
+      "account": "work@example.com",
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "gcloud_adc": {
+      "state": "missing",
+      "account": null,
+      "checked_at": "2026-01-01T00:00:00Z"
+    },
+    "github": {
+      "state": "ok",
+      "account": "example-work",
+      "checked_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  "tools": {
+    "example-cli": {
+      "state": "ok",
+      "version": "1.2.3"
+    }
+  },
+  "net": {
+    "window_h": 24,
+    "rx_mb": 812.4,
+    "tx_mb": 96.1,
+    "new_destinations": [
+      "new-service.example.net"
+    ],
+    "collector": "running",
+    "source": "ebpf",
+    "destinations": 14,
+    "connections": 602
+  },
+  "errors": [],
+  "ssh": {
+    "host_certificate": {
+      "serial": 4242,
+      "key_id": "ship-01 host 2026-01-01",
+      "principals": [
+        "ship-01",
+        "ship-01.local"
+      ],
+      "valid_after": "2026-01-01T00:00:00Z",
+      "valid_before": "2026-04-01T00:00:00Z",
+      "ca_fingerprint": "SHA256:LRWV3VmUaaQ+EBYpxzFshXCPq6cirxpNo4d/zu3VYo0"
+    },
+    "user_ca": [
+      "SHA256:ThpAygeOWe12NxeBWorXpfTGxDLvQu7WlOGmO8gBe34"
+    ],
+    "agent_principals": [
+      "agent:all",
+      "agent:tag:work",
+      "agent:ship:ship-01"
+    ],
+    "revoked_keys_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  },
+  "agent_record": {
+    "runtime": "herdr",
+    "agents": [
+      {
+        "name": "main",
+        "cwd": "/home/agent/work/main",
+        "mode": "auto",
+        "autostart": true,
+        "state": "resuming",
+        "relaunch_failures": 0,
+        "created_at": "2026-01-01T09:00:00Z",
+        "updated_at": "2026-01-02T08:00:40Z"
+      },
+      {
+        "name": "helper",
+        "cwd": "/home/agent/work/side",
+        "mode": "bypassPermissions",
+        "autostart": false,
+        "state": "failed",
+        "relaunch_failures": 3,
+        "last_error": "agent_not_ready",
+        "created_at": "2026-01-01T12:00:00Z",
+        "updated_at": "2026-01-02T08:01:40Z"
+      }
+    ],
+    "resume": {
+      "at": "2026-01-02T08:00:40Z",
+      "method": "ship-ctl",
+      "resumed": 1,
+      "failed": 1
+    }
+  }
+}

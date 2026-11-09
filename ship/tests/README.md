@@ -11,3 +11,11 @@ command ship-ctl runs (`herdr`, `claude`, `gh`, `gcloud`, `apt-get`, `npm`, ...)
 A test sets the fakes' behaviour with `ship.set(...)` and reads what they were
 asked to do with `ship.calls(...)`. Every JSON document is checked against the
 contract schemas with `jsonschema`.
+
+The fake herdr keeps panes as well as agents, refuses to start an agent in a pane
+that is missing or busy, and runs the real mode-ledger hook for each launch
+(SessionStart) and `/exit` (SessionEnd). `ship.reboot()` is a new boot as ship-ctl
+sees it (herdr back with every pane restored empty under its old id),
+`ship.crash(name)` kills an agent's claude, and `ship.exit(name)` exits it.
+`test_ship_record.py` covers the agent record, resume, the crash policy and
+moving a Ship from older tooling onto the record.

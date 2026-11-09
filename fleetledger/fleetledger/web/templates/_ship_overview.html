@@ -66,7 +66,7 @@
     <h2>Agents</h2>
     {% set claude_auth = doc.auth.claude %}
     {% set signed_in = claude_auth and claude_auth.state in ("ok", "expiring") %}
-    {% set running = workspaces.values()|sum(start=[])|selectattr("kind", "equalto", "claude")|list %}
+    {% set running = doc.herdr.agents|selectattr("kind", "equalto", "claude")|list %}
     {% if running and signed_in and doc.claude.remote_control == "on" %}
     <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
       with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
@@ -107,12 +107,12 @@
             <summary>Restart in mode&hellip;</summary>
             <form method="post" action="/ships/{{ ship.name }}/agents/restart"
               data-confirm-title="Restart {{ a.name }} on {{ ship.name }}?"
-              data-confirm="{{ a.name }} exits and starts again in the same pane and folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation. Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if a.state == 'working' %} It is working now: unless you ticked Interrupt it, it is left alone.{% elif a.state == 'blocked' %} It is waiting for an answer: that question is dismissed.{% endif %}"
+              data-confirm="{% if ws == 'not running' %}{{ a.name }} is not running: it starts again in its folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation.{% else %}{{ a.name }} exits and starts again in the same pane and folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation.{% endif %} Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if a.state == 'working' %} It is working now: unless you ticked Interrupt it, it is left alone.{% elif a.state == 'blocked' %} It is waiting for an answer: that question is dismissed.{% endif %}"
               data-confirm-action="Restart {{ a.name }}">
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <input type="hidden" name="agent" value="{{ a.name }}">
               <label>Mode <select name="mode">
-                <option value="">the mode it starts in{% if r.start_mode %} ({{ r.start_mode }}){% endif %}</option>
+                <option value="">{{ r.default_label or "the mode it starts in" }}{% if r.start_mode %} ({{ r.start_mode }}){% endif %}</option>
                 {% for m in MODES %}{% if m != "bypassPermissions" or bypass_ok %}<option value="{{ m }}">{{ m }}</option>{% endif %}{% endfor %}
               </select></label>
               <label><input type="checkbox" name="fresh" value="yes"> New conversation</label>
@@ -135,7 +135,8 @@
       bypassPermissions is not allowed on {{ ship.name }} (Settings).{% endif %}</p>{% endif %}
     <p class="hint">
       herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
-      {% if doc.herdr.last_resume %}Last resume {{ doc.herdr.last_resume.at }} ({{ doc.herdr.last_resume.method }}): {{ doc.herdr.last_resume.resumed }} resumed{% if doc.herdr.last_resume.failed %}, {{ doc.herdr.last_resume.failed }} failed{% endif %}.{% endif %}
+      {% set resume = (doc.agent_record.resume if doc.agent_record else none) or doc.herdr.last_resume %}
+      {% if resume %}Last resume {{ resume.at }} ({{ "by ShipShape, from its agent record" if resume.method in ("ship-ctl", "api-fallback") else resume.method }}): {{ resume.resumed }} resumed{% if resume.failed %}, {{ resume.failed }} failed{% endif %}.{% endif %}
     </p>
     <form method="post" action="/ships/{{ ship.name }}/agents" class="inline">
       <input type="hidden" name="csrf" value="{{ csrf }}">

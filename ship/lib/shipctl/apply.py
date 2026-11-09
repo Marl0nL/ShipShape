@@ -3,6 +3,10 @@
 Writes only what changed and returns the paths it wrote. Files in the agent's home
 are merged key by key: herdr's integration, Claude Code and the agents edit them
 too, so ship-ctl touches only the keys it owns.
+
+It also records every running agent in the agent record (record.py) first. A
+converge runs the new release's apply, so a Ship updated from tooling where herdr
+resumed its agents has them recorded before herdr's own resume is turned off here.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import languard, overlay, shiptoml, sshtrust, tomlw
+from . import languard, overlay, record, shiptoml, sshtrust, tomlw
 from .context import Context
 from .errors import CtlError
 from .fsutil import remove, write_atomic
@@ -22,12 +26,14 @@ from .homefs import UnsafePath
 from .paths import Paths
 from .shiptoml import ShipToml
 
-LEDGER_EVENTS = ("UserPromptSubmit", "SessionStart")
+LEDGER_EVENTS = ("UserPromptSubmit", "SessionStart", "SessionEnd")
 SUDOERS_LINE = "agent ALL=(ALL:ALL) NOPASSWD: ALL\n"
 HERDR_KEYS = {
     ("", "onboarding"): False,
     ("update", "version_check"): False,
-    ("session", "resume_agents_on_restore"): True,
+    # ship-ctl resumes agents from its own record (record.py); herdr restores only
+    # its layout, so the two never start one agent twice.
+    ("session", "resume_agents_on_restore"): False,
 }
 
 
@@ -235,6 +241,8 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
     paths: Paths = ctx.paths
     changed: list[str] = []
     messages: list[str] = []
+    if not dry_run:
+        messages += record.capture(ctx, ship)
 
     def note(path: Path, did: bool) -> None:
         if did:

@@ -446,6 +446,26 @@ def test_tag_filter(web):
     assert web.client.get("/?tag=BAD!").status_code == 200  # ignored, not an error
 
 
+def test_ship_page_lists_recorded_agents_that_are_not_running(web):
+    doc = copy.deepcopy(RUNNING)
+    stamp = "2026-01-02T00:00:00Z"
+    doc["agent_record"] = {"runtime": "herdr", "agents": [
+        {"name": "helper", "cwd": "/home/agent/work/side", "mode": "plan", "autostart": False,
+         "state": "failed", "relaunch_failures": 3, "created_at": stamp, "updated_at": stamp}],
+        "resume": {"at": stamp, "method": "ship-ctl", "resumed": 2, "failed": 1}}
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    row = page[page.index("<td>not running</td>"):]
+    row = row[:row.index("</tr>")]
+    assert "<td>helper</td>" in row and "failed" in row and "/home/agent/work/side" in row
+    assert 'name="agent" value="helper"' in row and "helper is not running" in row
+    assert '<option value="">the mode it was in (plan)</option>' in row  # not the default
+    assert "Last resume 2026-01-02T00:00:00Z (by ShipShape, from its agent record)" in page
+    assert "2 Claude agents running" in page  # a recorded one not running is not counted
+
+
 def test_ship_text_is_escaped(web):
     doc = copy.deepcopy(RUNNING)
     doc["attention"] = [{"code": "agent-waiting", "subject": "x",

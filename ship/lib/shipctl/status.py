@@ -169,25 +169,9 @@ def read_ledger(ctx: Context) -> dict[str, str]:
     return out
 
 
-def herdr_agents(ctx: Context) -> tuple[str, list[dict] | None, list[str]]:
-    """(server state, raw herdr AgentInfo list or None, errors)."""
-    r = ctx.runner.run(["herdr", "agent", "list"], timeout=PROBE_TIMEOUT, agent=True)
-    if r.rc == NOT_FOUND_RC:
-        return "unknown", None, ["herdr: not installed"]
-    if r.rc == TIMEOUT_RC:
-        return "unknown", None, ["herdr agent list: timed out"]
-    if not r.ok:
-        return "stopped", None, ["herdr: server not answering"]
-    try:
-        agents = json.loads(r.out)["result"]["agents"]
-        if not isinstance(agents, list):
-            raise TypeError
-    except (ValueError, KeyError, TypeError):
-        return "running", None, ["herdr agent list: unreadable output"]
-    return "running", [a for a in agents if isinstance(a, dict)], []
-
-
 def agent_entry(raw: dict, ledger: dict[str, str]) -> dict:
+    """One herdr.agents item; mode from the mode ledger (build() falls back to the
+    agent record's)."""
     kind = raw.get("agent") or "unknown"
     state = raw.get("agent_status")
     session = raw.get("agent_session") or {}
@@ -205,15 +189,22 @@ def agent_entry(raw: dict, ledger: dict[str, str]) -> dict:
 
 
 def last_resume(ctx: Context) -> dict | None:
+    """herdr.last_resume: this Ship's last resume after a boot. ship-ctl resumes
+    agents from its agent record through herdr's API ("api-fallback", a name the
+    contract had for that already); until a Ship's first boot on that tooling, the
+    record ship-resume wrote ("hidden-client") is reported."""
+    from .record import load
+
+    resume = load(ctx)["resume"]
+    if resume is not None:
+        return {"at": resume["at"], "method": "api-fallback", "resumed": resume["resumed"],
+                "failed": resume["failed"]}
     rec = ctx.read_home_json(ctx.paths.last_resume, None)
     if not isinstance(rec, dict):
         return None
     at, method = rec.get("at"), rec.get("method")
     resumed = rec.get("resumed")
-    if not (isinstance(at, str) and TIMESTAMP.match(at)) or method not in (
-        "hidden-client",
-        "api-fallback",
-    ):
+    if not (isinstance(at, str) and TIMESTAMP.match(at)) or method != "hidden-client":
         return None
     if not isinstance(resumed, int) or isinstance(resumed, bool) or resumed < 0:
         return None
@@ -224,22 +215,24 @@ def last_resume(ctx: Context) -> dict | None:
     return out
 
 
-def probe_herdr(ctx: Context) -> tuple[dict, list[str]]:
+def probe_herdr(ctx: Context) -> tuple[dict, list[str], list[dict] | None]:
+    """(the herdr block, errors, the live agents as runtime.py describes them)."""
+    from .runtime import for_ship
+
+    rt = for_ship(ctx)
     errors: list[str] = []
-    version = None
-    r = ctx.runner.run(["herdr", "--version"], timeout=PROBE_TIMEOUT, agent=True)
-    if r.ok and r.out.split():
-        version = r.out.split()[-1]
-    server, raw, errs = herdr_agents(ctx)
+    version = rt.version(PROBE_TIMEOUT)
+    server, raw, errs = rt.raw_agents(PROBE_TIMEOUT)
     errors += errs
     ledger = read_ledger(ctx)
     agents = [agent_entry(a, ledger) for a in raw or []]
+    live = None if raw is None else [rt.view(a) for a in raw]
     return {
         "version": version,
         "server": server,
         "agents": agents,
         "last_resume": last_resume(ctx),
-    }, errors
+    }, errors, live
 
 
 HERDR_BIN = "/usr/local/bin/herdr"
@@ -601,7 +594,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         errors += e
         cloud_init, e = f_cloud.result()
         errors += e
-        herdr, e = f_herdr.result()
+        herdr, e, live = f_herdr.result()
         errors += e
         claude_version, e = f_claude.result()
         errors += e
@@ -654,12 +647,21 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         "settings": settings_section(ship),
         "errors": [],
     }
+    from . import record  # record and autostart import this module
+    from .autostart import repo_attention
+
+    doc["agent_record"], found = record.view(ctx, ship, live)
+    recorded = {a["name"]: a["mode"] for a in doc["agent_record"]["agents"]}
+    modes = {id(a): recorded.get(n) for n, a in found.items()}
+    # herdr.agents and live come from the same list, in its order.
+    for entry, agent in zip(herdr["agents"], live or [], strict=False):
+        if entry["mode"] is None and entry["kind"] == "claude":
+            entry["mode"] = modes.get(id(agent))
     doc["state"] = derive_state(doc)
     doc["attention"] = attention_for(doc, failed_units, f_pending.result())
-    from .autostart import repo_attention  # autostart imports this module
-
     doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
-                         for code, message, who in repo_attention(ctx, ship)]
+                         for code, message, who in [*record.attention(doc["agent_record"]),
+                                                    *repo_attention(ctx, ship)]]
     elapsed = time.monotonic() - started
     if elapsed > 12:
         errors.append(f"status took {elapsed:.0f}s")

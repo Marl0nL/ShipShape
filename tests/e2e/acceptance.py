@@ -387,6 +387,21 @@ def run(fleet: Fleet, name: str) -> None:
     step("Remote Control reconnects after the reboot",
          ask(f"In the Claude app, are the '{name}' sessions connected again (three now)?"))
 
+    # The crash policy: a recorded agent killed (not exited) is started again by the
+    # next status refresh, in its pane, continuing its session in its mode.
+    record = json.loads(fleet.ssh(name, "sudo", "-n", "cat",
+                                  "/var/lib/shipshape/agents.json").text)
+    session = record["agents"]["grinder"]["session"]
+    fleet.ssh(name, "bash", "-c", f"sudo -n pkill -KILL -u agent -f -- '--resume {session}' "
+              "|| true")
+    back = fleet.wait_for(
+        "grinder started again after it was killed",
+        lambda: [p for p in agent_processes(fleet, name) if f"--resume {session}" in p],
+        timeout=180,
+    )
+    step("A killed agent is started again by the next status refresh, in its mode",
+         bool(back) and "--dangerously-skip-permissions" in back[0], f"{back}")
+
     run_phase2(fleet, name, trio)
 
     fleet.cli("set", name, "remote_control=off")

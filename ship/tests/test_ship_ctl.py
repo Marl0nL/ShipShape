@@ -78,7 +78,8 @@ def test_status_running_ship_validates(ship):
     }
     assert doc["auth"]["github"]["account"] == "example-user"
     assert doc["auth"]["gcloud_adc"]["state"] == "ok"
-    assert doc["herdr"]["last_resume"]["method"] == "hidden-client"
+    assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
+    assert doc["agent_record"] == {"runtime": "herdr", "agents": [], "resume": None}
     assert {a["code"] for a in doc["attention"]} == {"agent-waiting"}
     assert doc["host"]["mem_used_pct"] == 50.0 and doc["host"]["uptime_s"] == 4000
 
@@ -187,7 +188,7 @@ def test_apply_writes_settings_and_is_idempotent(ship):
     }
     user = ship.json("/home/agent/.claude/settings.json")
     assert user["skipDangerousModePermissionPrompt"] is True
-    for event in ("UserPromptSubmit", "SessionStart"):
+    for event in ("UserPromptSubmit", "SessionStart", "SessionEnd"):
         cmds = [h["command"] for e in user["hooks"][event] for h in e["hooks"]]
         assert cmds == ["/opt/shipshape/hooks/mode-ledger"]
     claude_json = ship.json("/home/agent/.claude.json")
@@ -197,7 +198,7 @@ def test_apply_writes_settings_and_is_idempotent(ship):
     assert herdr == {
         "onboarding": False,
         "update": {"version_check": False},
-        "session": {"resume_agents_on_restore": True},
+        "session": {"resume_agents_on_restore": False},  # ship-ctl resumes agents itself
     }
     assert not ship.p("/etc/sudoers.d/91-shipshape-agent").exists()
     avahi = ship.p("/etc/avahi/services/shipshape.service").read_text()

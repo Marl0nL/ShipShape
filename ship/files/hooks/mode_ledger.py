@@ -2,17 +2,23 @@
 """Mode ledger: a Claude Code hook that records each session's permission mode.
 
 Installed as /opt/shipshape/hooks/mode-ledger and registered by `ship-ctl apply`
-for UserPromptSubmit and SessionStart in the agent's ~/.claude/settings.json.
+for UserPromptSubmit, SessionStart and SessionEnd in the agent's
+~/.claude/settings.json.
 
-Claude Code restores a resumed session's mode except bypass, and herdr resumes
-with a bare `claude --resume <id>`. This ledger lets the resume shim put bypass
-back (contracts/settings.md, "Permission modes across reboots").
+ship-ctl reads it to know each session's mode (the status document, and the mode
+an agent is resumed in after a reboot: contracts/settings.md, "Permission modes
+across reboots"), and how a session ended, which tells an agent someone exited
+from one that died (ship-ctl's agent record).
 
 - UserPromptSubmit carries `permission_mode`: recorded as is.
 - SessionStart may not carry it; then the mode comes from the launching claude
   process's own flags (--dangerously-skip-permissions or --permission-mode), so an
   agent that was started but never prompted is still covered. A launch without
-  flags records nothing, keeping what an earlier prompt recorded.
+  flags records no mode, keeping what an earlier prompt recorded.
+- SessionEnd carries `reason` (clear, resume, logout, prompt_input_exit, other):
+  recorded as the session's `ended`, until the session starts again.
+- SessionStart also records `started_at`: this session runs under these hooks, so
+  its end will be recorded (Claude Code reads hooks when a session starts).
 
 The hook never prints (SessionStart output would be added to Claude's context)
 and always exits 0: a broken ledger must never block a prompt.
@@ -24,6 +30,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -71,7 +78,11 @@ def launch_mode(proc: str = "/proc", pid: int | None = None) -> str | None:
     return None
 
 
-def record(directory: str, session_id: str, mode: str, now: float | None = None) -> None:
+def record(directory: str, session_id: str, mode: str | None = None,
+           ended: str | None = None, started: bool = False, now: float | None = None) -> None:
+    """Set the session's mode (if given) and how it ended: `ended` given, or else
+    cleared, since any other event means the session runs (again). started: it has
+    just started (SessionStart)."""
     os.makedirs(directory, mode=0o700, exist_ok=True)
     path = os.path.join(directory, "modes.json")
     with open(os.path.join(directory, "modes.lock"), "w") as lock:
@@ -85,7 +96,21 @@ def record(directory: str, session_id: str, mode: str, now: float | None = None)
         except (OSError, ValueError):
             sessions = {}
         stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-        sessions[session_id] = {"mode": mode, "updated_at": stamp}
+        entry = sessions.get(session_id)
+        entry = dict(entry) if isinstance(entry, dict) else {}
+        before = dict(entry)
+        if mode is not None:
+            entry["mode"] = mode
+        if ended is not None:
+            entry["ended"] = {"reason": ended, "at": stamp}
+        else:
+            entry.pop("ended", None)
+        if started:
+            entry["started_at"] = stamp
+        if entry == before and mode is None:
+            return  # nothing to say
+        entry["updated_at"] = stamp
+        sessions[session_id] = entry
         if len(sessions) > MAX_SESSIONS:
             newest = sorted(sessions.items(), key=lambda kv: str(kv[1].get("updated_at")))
             sessions = dict(newest[-MAX_SESSIONS:])
@@ -101,17 +126,26 @@ def record(directory: str, session_id: str, mode: str, now: float | None = None)
             raise
 
 
+REASON = re.compile(r"^[a-z_]{1,40}$")
+
+
 def handle(event: dict, directory: str, proc: str = "/proc") -> str | None:
-    """Record the event's mode; returns the mode recorded, if any."""
+    """Record the event; returns the mode recorded, or for SessionEnd the reason."""
     sid = event.get("session_id")
     if not isinstance(sid, str) or not sid:
         return None
+    name = event.get("hook_event_name")
+    if name == "SessionEnd":
+        reason = event.get("reason")
+        reason = reason if isinstance(reason, str) and REASON.match(reason) else "other"
+        record(directory, sid, ended=reason)
+        return reason
     mode = event.get("permission_mode")
-    if mode not in MODES and event.get("hook_event_name") == "SessionStart":
+    if mode not in MODES and name == "SessionStart":
         mode = launch_mode(proc)
-    if mode not in MODES:
-        return None
-    record(directory, sid, mode)
+    mode = mode if mode in MODES else None
+    if mode is not None or name == "SessionStart":
+        record(directory, sid, mode, started=name == "SessionStart")
     return mode
 
 

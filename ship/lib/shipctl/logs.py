@@ -6,6 +6,7 @@ from collections import deque
 
 from .context import Context
 from .errors import CtlError
+from .record import LOG_TAG
 
 SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
 
@@ -34,13 +35,20 @@ def read(ctx: Context, source: str, lines: int) -> list[str]:
     # caller), so the agent's units are selected by explicit journal fields.
     ids = ctx.runner.agent_ids()
     agent = [f"_UID={ids[0]}"] if ids else []
+    if source == "resume":
+        # Agents are resumed (and started again after a crash) by the status refresh,
+        # from the agent record: its lines in that unit's journal.
+        base[-1] = str(min(10000, lines * 20))
     selector = {
         "herdr": ["_SYSTEMD_USER_UNIT=herdr.service", *agent],
-        "resume": ["_SYSTEMD_USER_UNIT=ship-resume.service", *agent],
+        "resume": ["-u", "ship-status.service"],
         "status": ["-u", "ship-status.service"],
         "system": [],
     }[source]
     r = ctx.runner.run([*base, *selector], timeout=15)
     if not r.ok:
         raise CtlError("internal", f"journalctl failed (exit {r.rc})")
-    return [line for line in r.out.splitlines() if not line.startswith("-- No entries --")]
+    out = [line for line in r.out.splitlines() if not line.startswith("-- No entries --")]
+    if source == "resume":
+        out = [line for line in out if f"ship-ctl: {LOG_TAG}:" in line][-lines:]
+    return out

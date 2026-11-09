@@ -26,20 +26,23 @@ What it does, in order (each step checks first and only counts real changes):
    Packages of the GitHub, Google Cloud and NodeSource repos are installed; Google
    Chrome comes from the chrome-devtools-axi recipe.
 3. herdr and uv, downloaded and checked against their pinned sha256.
-4. ShipShape files: the resume shim, the mode-ledger hook, `/usr/local/bin/ship-ctl`,
+4. ShipShape files: the mode-ledger hook, `/usr/local/bin/ship-ctl`,
    `/usr/local/bin/ship-axi`, `/etc/profile.d/shipshape.sh`; then ship-axi's Node
-   dependencies (`npm ci` from its lockfile).
+   dependencies (`npm ci` from its lockfile). The resume shim of older releases
+   (`/opt/shipshape/shim/claude`) is removed.
 5. The agent's home folders, its npm prefix (`~/.local`) and lingering.
 6. Claude Code with the native installer, as `agent` (`install-claude.sh`: the
    release manifest's signature and the binary's checksum are checked), once;
-   then it updates itself. herdr's Claude integration.
+   then it updates itself. herdr's Claude integration (it reports each agent's
+   session and state, which ship-ctl's agent record follows).
 7. The sshd, logind and journald drop-ins, then the units: `ship-status.timer`
    and the two `ship-lan-guard` units (system; `ship-ctl apply` turns the LAN
-   guard on or off), `herdr.service` and `ship-resume.service` (in
-   `/etc/systemd/user`, root-owned, `ConditionUser=agent`). Then
+   guard on or off), `herdr.service` (in `/etc/systemd/user`, root-owned,
+   `ConditionUser=agent`); older releases' `ship-resume.service` is disabled and
+   removed (ship-ctl resumes agents itself, from its agent record). Then
    `ship-netwatch.service`, which records which programs connect where.
-8. First boot only: `ship-ctl apply`, `ship-ctl tools run`, start herdr, then
-   `ship-resume` (nothing to resume yet, but its record lets autostart run at once).
+8. First boot only: `ship-ctl apply`, `ship-ctl tools run`, start herdr. The first
+   status refresh records this boot's (empty) resume and runs autostart.
 
 The result goes to `/var/lib/shipshape/provision.json`, which `ship-ctl status`
 reports as `provision.result`. Output goes to `/var/log/shipshape/provision.log`.
@@ -56,6 +59,9 @@ the pinned-key check). Real-VM runs happen through the phase 0 harness and W11.
 - First boot with socket-activated sshd: the drop-in is picked up
   (`try-reload-or-restart` does nothing while `ssh.service` is idle).
 - `InhibitDelayMaxSec=30` takes effect from the second boot (logind is not reloaded).
-- `ship-resume`'s detach keys; it falls back to ending tmux.
+- After a reboot, the first status refresh resumes every recorded agent into the
+  pane herdr restored for it (`herdr pane list` shows it under its old id, a shell
+  in its folder), with no duplicate workspace; then a crash (kill the claude
+  process) brings it back at the next refresh, and `/exit` does not.
 - Google Chrome's package adds its own apt source; check apt does not warn about a
   repository configured twice.

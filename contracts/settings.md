@@ -58,9 +58,9 @@ integration and agents edit these files too):
 
 | File | Keys |
 |---|---|
-| `~/.claude/settings.json` | `skipDangerousModePermissionPrompt` (true exactly when `allow_bypass` is true); the mode-ledger hook entries for `UserPromptSubmit` and `SessionStart` (command `/opt/shipshape/hooks/mode-ledger`) |
+| `~/.claude/settings.json` | `skipDangerousModePermissionPrompt` (true exactly when `allow_bypass` is true); the mode-ledger hook entries for `UserPromptSubmit`, `SessionStart` and `SessionEnd` (command `/opt/shipshape/hooks/mode-ledger`) |
 | `~/.claude.json` | `hasCompletedOnboarding = true` (no first-run screens in unattended launches); `projects["<cwd>"].hasTrustDialogAccepted = true` for every autostart `cwd` |
-| `~/.config/herdr/config.toml` | `onboarding = false`; `[update] version_check = false`; `[session] resume_agents_on_restore = true` |
+| `~/.config/herdr/config.toml` | `onboarding = false`; `[update] version_check = false`; `[session] resume_agents_on_restore = false` (ship-ctl resumes agents from its agent record, `ship-ctl.md`; herdr restores only its layout) |
 
 ### System
 
@@ -97,7 +97,7 @@ Ship's firewall is touched. `ship-ctl apply` loads or removes the table, keeps a
 copy in `/etc/shipshape/lan-guard.nft`, and enables or disables two boot units:
 
 - `ship-lan-guard-early.service` loads that copy before `network-pre.target`, so
-  the guard is in place before any interface comes up and before herdr resumes
+  the guard is in place before any interface comes up and before any agent resumes
   agents;
 - `ship-lan-guard.service` runs once the network is online, finds the gateways
   and DNS servers again and reloads the table (a Ship that moved networks has
@@ -122,41 +122,53 @@ with `ship-fleet set SHIP timezone=Europe/Berlin`.
 
 With `auto_reboot = false` (the default) a needed reboot shows as
 `reboot-required` attention, and `ship-fleet reboot` does it when you choose.
-An automatic reboot is a clean `shutdown -r`, so herdr saves its state and
-resumes every agent in its mode, as after any reboot.
+An automatic reboot is a clean `shutdown -r`; after it, the Ship resumes every
+recorded agent in its mode, as after any reboot (even an unclean one: the agent
+record and Claude's transcripts are on disk already).
 
 ## Permission modes across reboots
 
 Claude Code restores a resumed session's permission mode, except bypass, which it
-drops. herdr resumes each session with a bare `claude --resume <id>`. The Ship
-covers the gap:
+drops, and a session just restarted in a new mode may not have recorded that mode
+in its transcript yet. So ShipShape never relies on it: after a boot (or a crash)
+ship-ctl starts each agent of its agent record itself, with `claude --resume <id>`
+and that agent's mode flag (`ship-ctl.md`, "The agent record"):
 
 - A hook records the session's mode in `~/.local/state/shipshape/modes.json`. On
   `UserPromptSubmit` it records the `permission_mode` Claude reports. On
   `SessionStart` it reads the mode from the launching `claude` process's own flags
   (`--dangerously-skip-permissions` or `--permission-mode`), so an agent started in
-  bypass but never prompted is covered too; a launch without flags records nothing. The ledger:
+  bypass but never prompted is covered too; a launch without flags records no mode.
+  On `SessionEnd` it records how the session ended (Claude's `reason`: `clear`,
+  `resume`, `logout`, `prompt_input_exit`, `other`), until the session starts again;
+  that tells an agent someone exited from one that crashed. `SessionStart` also
+  records `started_at`: the session runs under these hooks, so its end will be
+  recorded (Claude Code reads its hooks when a session starts). The ledger:
 
   ```json
   { "schema": "shipshape.modes/1",
-    "sessions": { "<session id>": { "mode": "bypassPermissions", "updated_at": "2026-01-01T00:00:00Z" } } }
+    "sessions": { "<session id>": { "mode": "bypassPermissions", "updated_at": "2026-01-01T00:00:00Z",
+                                    "started_at": "2026-01-01T00:00:00Z",
+                                    "ended": { "reason": "prompt_input_exit", "at": "2026-01-01T00:00:00Z" } } } }
   ```
 
-- `/opt/shipshape/shim/claude`, first on herdr's PATH, passes every launch
-  straight to `~/.local/bin/claude`. The one exception is `--resume <id>` with no
-  mode flag, for a session the ledger knows: it adds that mode's flag, so the
-  session comes back in the mode the ledger (and the status document) says. For
+- The agent record keeps each agent's mode, following the ledger. An agent is
+  resumed in its session's mode from the ledger, else the record's: for
   `bypassPermissions` that is `--dangerously-skip-permissions`, and only on a Ship
-  with `allow_bypass = true`; for any other mode, `--permission-mode <mode>`
-  (Claude Code would restore the session's last mode itself, but a session just
-  restarted in a new mode may not have recorded it in its transcript yet).
-- The status document reports each agent's `mode` from the ledger.
+  with `allow_bypass = true` (elsewhere it comes back in `default_mode`); for any
+  other mode, `--permission-mode <mode>`.
+- The status document reports each agent's `mode` from the ledger, else the record.
 
 A running agent keeps its mode when `default_mode` changes: the new default
 applies to agents started afterwards, and a reboot resumes each agent in the mode
 it was in. `ship-ctl agent restart` (`ship-fleet agent restart`) swaps a running
 agent for one in the new mode, continuing its conversation, and records the new
-mode in the ledger (`ship-ctl.md`).
+mode in the ledger and the agent record (`ship-ctl.md`).
+
+Tooling before the agent record had herdr resume its own agents, through a hidden
+herdr client (`ship-resume.service`) and a `claude` shim that put the mode flag back
+on herdr's bare `claude --resume <id>`. A converge removes both, and records the
+running agents first.
 
 ## Extra GitHub scopes
 

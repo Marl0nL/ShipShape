@@ -142,7 +142,8 @@ def make_env() -> Environment:
         setting_now=shipsettings.current,
         setting_older=shipsettings.older_hint,
         restartable=shipsettings.restartable,
-        restartable_by_name=lambda view: {r["name"]: r for r in shipsettings.restartable(view)},
+        restartable_by_name=lambda view: {r["name"]: r for r in [
+            *shipsettings.restartable(view), *shipsettings.recorded_not_running(view)]},
         human_bytes=net.human_bytes,
         inbox_size=inbox.human,
         since=network.since,
@@ -439,6 +440,8 @@ def _ship_context(ui: UI, name: str, session: Session | None = None) -> dict[str
     workspaces: dict[str, list[dict[str, Any]]] = {}
     for agent in agents:
         workspaces.setdefault(agent.get("workspace") or "-", []).append(agent)
+    for agent in shipsettings.recorded_not_running(view):
+        workspaces.setdefault("not running", []).append(agent)
     return {
         "view": view,
         "ship": view.ship,

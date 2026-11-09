@@ -1,0 +1,85 @@
+{
+  "schema": "shipshape.agent-record/1",
+  "runtime": "herdr",
+  "agents": {
+    "main": {
+      "cwd": "/home/agent/work/main",
+      "session": "0f1e2d3c-4b5a-4968-8776-655443322110",
+      "mode": "auto",
+      "prompt": "Get oriented.",
+      "session_name": "ship-01-main",
+      "origin": "autostart",
+      "want": "paused",
+      "place": {
+        "runtime": "herdr",
+        "id": "w1:p1",
+        "workspace": "w1",
+        "boot_id": "0b6f7e0e-0000-4000-8000-000000000002"
+      },
+      "relaunch": {
+        "boot_id": "0b6f7e0e-0000-4000-8000-000000000002",
+        "failures": 0,
+        "last_error": null,
+        "last_at": null,
+        "counted_launch": null
+      },
+      "launched_at": "2026-01-02T08:00:40Z",
+      "stopped_at": null,
+      "created_at": "2026-01-01T09:00:00Z",
+      "updated_at": "2026-01-02T08:00:40Z"
+    },
+    "helper": {
+      "cwd": "/home/agent/work/side",
+      "session": "a1b2c3d4-e5f6-4789-8abc-def012345678",
+      "mode": "bypassPermissions",
+      "prompt": null,
+      "session_name": null,
+      "origin": "adopted",
+      "want": "running",
+      "place": {
+        "runtime": "herdr",
+        "id": "w3:p1",
+        "workspace": "w3",
+        "boot_id": "0b6f7e0e-0000-4000-8000-000000000001"
+      },
+      "relaunch": {
+        "boot_id": "0b6f7e0e-0000-4000-8000-000000000002",
+        "failures": 3,
+        "last_error": "agent_not_ready",
+        "last_at": "2026-01-02T08:01:40Z",
+        "counted_launch": null
+      },
+      "launched_at": "2026-01-01T12:00:00Z",
+      "stopped_at": null,
+      "created_at": "2026-01-01T12:00:00Z",
+      "updated_at": "2026-01-02T08:01:40Z"
+    },
+    "grinder": {
+      "cwd": "/home/agent/work/grinder",
+      "session": "11112222-3333-4444-8555-666677778888",
+      "mode": "dontAsk",
+      "prompt": "Get oriented and ready to work.",
+      "session_name": "ship-01-grinder",
+      "origin": "autostart",
+      "want": "stopped",
+      "place": null,
+      "relaunch": {
+        "boot_id": null,
+        "failures": 0,
+        "last_error": null,
+        "last_at": null,
+        "counted_launch": null
+      },
+      "launched_at": "2026-01-01T09:00:00Z",
+      "stopped_at": "2026-01-01T18:00:00Z",
+      "created_at": "2026-01-01T09:00:00Z",
+      "updated_at": "2026-01-01T18:00:00Z"
+    }
+  },
+  "resume": {
+    "boot_id": "0b6f7e0e-0000-4000-8000-000000000002",
+    "at": "2026-01-02T08:00:40Z",
+    "resumed": 1,
+    "failed": 1
+  }
+}

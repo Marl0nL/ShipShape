@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from ship_harness import assert_valid
 
 
@@ -50,29 +48,24 @@ def test_autostart_waits_while_signed_out(ship):
     assert not ship.calls("herdr") or all(c[1:3] != ["agent", "start"] for c in ship.calls("herdr"))
 
 
-def test_autostart_waits_for_resume_after_boot(ship):
-    ship.p("/home/agent/.local/state/shipshape/last-resume.json").write_text(
-        json.dumps(
-            {
-                "at": "2026-01-01T00:00:00Z",
-                "method": "hidden-client",
-                "resumed": 1,
-                "boot_id": "an-earlier-boot",
-            }
-        )
-    )
-    ship.p("/proc/uptime").write_text("30.0 1.0\n")
+def test_after_a_boot_autostart_resumes_its_agents_instead_of_starting_new_ones(ship):
+    ship.ctl("autostart", "--json")
+    ship.reboot()
     rc, doc, _ = ship.ctl("autostart", "--json")
-    assert rc == 0
-    assert {s["reason"] for s in doc["data"]["skipped"]} == {"resume-pending"}
-    # Long after boot, autostart stops waiting.
-    ship.p("/proc/uptime").write_text("900.0 1.0\n")
-    _, doc, _ = ship.ctl("autostart", "--json")
-    assert doc["data"]["started"] == ["main", "grinder"]
+    assert rc == 0, doc
+    assert doc["data"] == {"started": [], "skipped": [{"name": "main", "reason": "running"},
+                                                      {"name": "grinder", "reason": "running"}]}
+    assert started_args(ship) == {
+        "main": ["--permission-mode", "auto", "--resume", "sess-main"],
+        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder"],
+    }
+    assert len(ship.scenario()["herdr"]["workspaces"]) == 2  # back in their own panes
+    assert any("main started again, continuing its session." in m for m in doc["messages"])
 
 
-def test_autostart_reattaches_name_after_reboot(ship):
-    """herdr resumed the pane but not the name: match by recorded session, then rename."""
+def test_a_recorded_agent_that_lost_its_name_gets_it_back(ship):
+    """claude started again by hand in its pane (`claude --continue`): the same
+    session, but herdr has no name for it. The record knows it by its session."""
     ship.ctl("autostart", "--json")
     agents = ship.scenario()["herdr"]["agents"]
     for a in agents:
@@ -111,31 +104,29 @@ def test_refresh_runs_autostart_once_when_claude_signs_in(ship):
     ship.ctl("refresh")
     assert sorted(started_args(ship)) == ["grinder", "main"]
 
-    # Stop an agent by hand: the next refresh must not restart it.
-    s = ship.scenario()
-    s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a["name"] != "grinder"]
-    ship.set(herdr=s["herdr"])
+    # Exit an agent by hand (/exit): the next refresh must not start it again.
+    ship.exit("grinder")
     ship.ctl("refresh")
     assert sorted(started_args(ship)) == ["main"]
+    assert ship.record()["agents"]["grinder"]["want"] == "stopped"
 
 
-def test_refresh_retries_autostart_after_resume(ship):
-    ship.p("/home/agent/.local/state/shipshape/last-resume.json").unlink()
-    ship.p("/proc/uptime").write_text("20.0 1.0\n")
+def test_a_boot_while_signed_out_resumes_once_claude_signs_in(ship):
+    ship.ctl("refresh")  # signed in: main and grinder start
+    ship.set(claude={"logged_in": False})
+    ship.reboot()
     ship.ctl("refresh")
-    assert ship.scenario()["herdr"]["agents"] == []
-    ship.p("/home/agent/.local/state/shipshape/last-resume.json").write_text(
-        json.dumps(
-            {
-                "at": "2026-01-01T00:00:00Z",
-                "method": "hidden-client",
-                "resumed": 0,
-                "boot_id": ship.p("/proc/sys/kernel/random/boot_id").read_text().strip(),
-            }
-        )
-    )
+    assert ship.scenario()["herdr"]["agents"] == []  # nothing starts before the sign-in
+    assert ship.record()["resume"]["boot_id"] != ship.p(
+        "/proc/sys/kernel/random/boot_id").read_text().strip()
+    ship.set(claude={"logged_in": True, "email": "work@example.com"})
     ship.ctl("refresh")
-    assert sorted(started_args(ship)) == ["grinder", "main"]
+    assert started_args(ship) == {  # resumed, not started afresh
+        "main": ["--permission-mode", "auto", "--resume", "sess-main"],
+        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder"],
+    }
+    assert ship.scenario()["herdr"].get("prompts") == [
+        ["main", "Get oriented."], ["grinder", "Get oriented and ready to work."]]  # once
 
 
 def test_refresh_does_nothing_while_provisioning(ship):
@@ -148,7 +139,7 @@ def test_refresh_does_nothing_while_provisioning(ship):
 
 def test_autostart_records_session_names(ship):
     ship.ctl("autostart", "--json")
-    record = ship.json("/var/lib/shipshape/autostart.json")
+    record = ship.record()["agents"]
     assert record["main"]["session_name"] == "ship-01-main"
     assert record["grinder"]["session_name"] == "ship-01-grinder"
     ship.ctl("set", "claude.session_prefix=lab", "--json")
@@ -249,9 +240,7 @@ def test_a_github_sign_in_starts_only_the_agents_that_waited_for_it(ship):
     ship.set(git={"private": ["someone/agent-setup"]}, gh={"login": None})
     _with_repo_agent(ship)
     ship.ctl("refresh", "--json")  # the first after boot: main and grinder; setup waits
-    s = ship.scenario()
-    s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a["name"] != "main"]
-    ship.set(herdr=s["herdr"])  # then you stopped main
+    ship.exit("main")  # then you stopped main
     ship.set(gh={"login": "example-user"})
     ship.ctl("refresh", "--json")
     started = started_args(ship)

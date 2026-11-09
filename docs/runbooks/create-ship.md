@@ -142,7 +142,7 @@ The same command with `--replace` re-pins a Ship you rebuilt from a new seed.
 ## Stop and start it
 
 ```sh
-ship-fleet stop ship-01    # a clean shutdown: herdr saves every agent first
+ship-fleet stop ship-01    # a clean shutdown
 ship-fleet start ship-01   # its agents resume in their modes as it boots
 ```
 

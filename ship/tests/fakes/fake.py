@@ -33,6 +33,46 @@ def out(obj) -> None:
     print(json.dumps(obj) if not isinstance(obj, str) else obj)
 
 
+def ledger_hook(event: dict) -> None:
+    """What the mode-ledger hook does in a real agent: claude runs it at SessionStart
+    (mode from its launch flags) and SessionEnd. Run here as the real hook, in the
+    agent's environment (HOME is the agent's home)."""
+    hook = Path(__file__).resolve().parents[2] / "files/hooks/mode_ledger.py"
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mode_ledger", hook)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    directory = mod.ledger_dir()
+    sid = event["session_id"]
+    if event["hook_event_name"] == "SessionStart":
+        mode = mod.mode_from_argv(event.pop("argv"))
+        mod.record(directory, sid, mode if mode in mod.MODES else None, started=True)
+    else:
+        mod.record(directory, sid, ended=event["reason"])
+
+
+def end_session(ag: dict, reason: str = "prompt_input_exit") -> None:
+    sid = (ag.get("agent_session") or {}).get("value")
+    if sid:
+        ledger_hook({"hook_event_name": "SessionEnd", "session_id": sid, "reason": reason})
+
+
+def panes(h: dict) -> dict[str, dict]:
+    """Every pane: those workspace create made (or a test listed), and those live
+    agents sit in."""
+    out = {p["pane_id"]: dict(p) for p in h.get("panes", [])}
+    for ag in h.get("agents", []):
+        pid = ag.get("pane_id")
+        if pid and pid not in out:
+            out[pid] = {"pane_id": pid, "workspace_id": ag.get("workspace_id") or pid.split(":")[0],
+                        "cwd": ag.get("cwd")}
+    for p in out.values():
+        ag = next((x for x in h.get("agents", []) if x.get("pane_id") == p["pane_id"]), None)
+        p["agent"] = ag.get("agent") if ag else None
+    return out
+
+
 def herdr(s: dict, a: list[str]) -> int:
     h = s.setdefault("herdr", {})
     if a == ["--version"]:
@@ -57,10 +97,19 @@ def herdr(s: dict, a: list[str]) -> int:
         shown = [{k: v for k, v in ag.items() if k != "settle_in"} for ag in agents]
         out({"id": "cli", "result": {"type": "agent_list", "agents": shown}})
         return 0
+    if a[:2] == ["pane", "list"]:
+        if h.get("pane_list_fails"):
+            print(json.dumps({"error": {"code": "x", "message": "x"}}), file=sys.stderr)
+            return 1
+        out({"result": {"type": "pane_list", "panes": list(panes(h).values())}})
+        return 0
     if a[:2] == ["workspace", "create"]:
         n = h.get("next_ws", 1)
         h["next_ws"] = n + 1
         h.setdefault("workspaces", []).append({"id": f"w{n}", "args": a[2:]})
+        cwd = a[a.index("--cwd") + 1] if "--cwd" in a else None
+        h.setdefault("panes", []).append({"pane_id": f"w{n}:p1", "workspace_id": f"w{n}",
+                                          "cwd": cwd})
         save(s)
         out(
             {
@@ -79,7 +128,16 @@ def herdr(s: dict, a: list[str]) -> int:
                 json.dumps({"error": {"code": "agent_not_ready", "message": "x"}}), file=sys.stderr
             )
             return 1
+        here = panes(h).get(pane)
+        if here is None or here["agent"]:  # it must be a pane at its shell prompt
+            code = "pane_not_found" if here is None else "pane_not_at_shell"
+            print(json.dumps({"error": {"code": code, "message": "x"}}), file=sys.stderr)
+            return 1
         rest = a[a.index("--") + 1 :] if "--" in a else []
+        if "--resume" in rest and rest[rest.index("--resume") + 1] in h.get("lost_sessions", []):
+            print(json.dumps({"error": {"code": "agent_not_ready", "message": "claude exited: "
+                                        "No conversation found"}}), file=sys.stderr)
+            return 1
         # `claude --resume <id>` continues that session; anything else is a new one.
         session = rest[rest.index("--resume") + 1] if "--resume" in rest else f"sess-{name}"
         if "--resume" not in rest and any(ag.get("agent_session", {}).get("value") == session
@@ -104,9 +162,11 @@ def herdr(s: dict, a: list[str]) -> int:
                     "value": session,
                 },
                 "args": rest,
+                **({"cwd": here["cwd"]} if here.get("cwd") else {}),
             }
         )
         save(s)
+        ledger_hook({"hook_event_name": "SessionStart", "session_id": session, "argv": rest})
         out({"result": {"type": "agent_info"}})
         return 0
     def find(target: str) -> dict | None:
@@ -127,6 +187,7 @@ def herdr(s: dict, a: list[str]) -> int:
         if a[3:] == ["ctrl+c", "ctrl+c"] and ag.get("name") in h.get("exit_on_ctrl_c", []):
             agents.remove(ag)
             h.setdefault("exited", []).append(ag)
+            end_session(ag)
         save(s)
         out({"result": {}})
         return 0
@@ -140,6 +201,7 @@ def herdr(s: dict, a: list[str]) -> int:
         if ag.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
             agents.remove(ag)  # claude exits; herdr clears the name with it
             h.setdefault("exited", []).append(ag)
+            end_session(ag)
         save(s)
         out({"result": {}})
         return 0
@@ -509,6 +571,14 @@ def resize2fs(s: dict, a: list[str]) -> int:
     return 0
 
 
+def getent(s: dict, a: list[str]) -> int:
+    """`getent ahosts NAME`: answers unless the scenario says DNS is not up yet."""
+    if not s.get("dns", True):
+        return 2
+    print(f"192.0.2.53      STREAM {a[-1]}")
+    return 0
+
+
 def useradd(s: dict, a: list[str]) -> int:
     """Adds the user to the sandbox's /etc/passwd, as the real one would."""
     name = a[-1]
@@ -545,6 +615,7 @@ HANDLERS = {
     "ip": ip,
     "timedatectl": timedatectl,
     "logger": logger,
+    "getent": getent,
 }
 
 

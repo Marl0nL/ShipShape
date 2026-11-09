@@ -651,7 +651,12 @@ def cmd_status(args, app) -> int:
     app.say("Agents:")
     for agent in doc["herdr"]["agents"] or []:
         app.say(f"  {agent['name'] or '-':<12} {agent['state']:<8} {agent['mode'] or ''}")
-    if not doc["herdr"]["agents"]:
+    idle = [a for a in (doc.get("agent_record") or {}).get("agents", [])
+            if a["state"] != "running"]
+    for agent in idle:  # recorded, not running: starting again, given up on, or exited
+        app.say(f"  {agent['name']:<12} {agent['state']:<8} {agent['mode'] or ''}"
+                "  (not running)")
+    if not doc["herdr"]["agents"] and not idle:
         app.say("  none")
     host = doc["host"]
     pending = host.get("updates_pending")
@@ -662,7 +667,7 @@ def cmd_status(args, app) -> int:
             f"default mode {doc['claude']['default_mode']}, "
             f"Remote Control {doc['claude']['remote_control']}")
     herdr = doc["herdr"]
-    resume = herdr["last_resume"]
+    resume = (doc.get("agent_record") or {}).get("resume") or herdr["last_resume"]
     resumed = (f"; last resume {resume['at']} ({resume['resumed']} resumed"
                + (f", {resume['failed']} failed" if resume.get("failed") else "") + ")"
                if resume else "")
