@@ -177,7 +177,11 @@ LEVELS_TEXT = (
 
 
 def _choose_store(app) -> str:
-    """Where to keep the secret: the OS keyring when a secure, unlocked one is there."""
+    """Where to keep the secret: the OS keyring when a secure, unlocked one is there;
+    FleetLedger's vault, always, when that is on."""
+    if secret_store.vault_on():
+        app.say("\nThe OAuth secret goes in FleetLedger's vault (it is on here).")
+        return "keyring"
     usable, why = secret_store.keyring_usable()
     app.say("\nWhere to keep the OAuth secret:\n"
             "  keyring  your OS keyring (GNOME Keyring or KWallet; Keychain on macOS):\n"
@@ -278,6 +282,12 @@ def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, stor
         raise FleetError("That does not look like an OAuth client id.")
     if not _plausible_secret(secret):
         raise FleetError("That does not look like an OAuth client secret.")
+    from_file = None
+    if store_kind != "keyring" and secret_store.vault_on():
+        if not reused:
+            secret_store.refuse_file("the OAuth secret")
+        # Found in a 0600 file, with the vault on: into the vault, and the file goes.
+        store_kind, reused, from_file = "keyring", False, paths.config_dir() / SECRET_FILE
     scopes, remove, manage = LEVELS[level]
     item = secret_store.oauth_item(client_id)
     # Where the secret goes, and the same place recorded in ships.toml (the file
@@ -319,7 +329,10 @@ def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, stor
         kept = f"in {secret_path} (0600), as it was"
     elif store_kind == "keyring":
         backend = secret_store.store_in_keyring(item, secret)
-        kept = f"in your OS keyring ({backend.rsplit('.', 2)[-2]})"
+        kept = ("in FleetLedger's vault" if secret_store.vault_on()
+                else f"in your OS keyring ({backend.rsplit('.', 2)[-2]})")
+        if from_file is not None:
+            from_file.unlink(missing_ok=True)
     else:
         paths.private_dir(secret_path.parent)
         paths.write_private(secret_path, (secret + "\n").encode("utf-8"))

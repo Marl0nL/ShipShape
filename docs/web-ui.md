@@ -118,6 +118,16 @@ checks each passphrase can be read. What this protects: a copy of the key files
 program running as you while the keyring is unlocked can read the passphrases,
 as it can use ssh-agent.
 
+On a computer with no desktop keyring (an always-on VM), turn on FleetLedger's own
+**vault** instead (`ship-fleet vault init`, [vault.md](vault.md)): the passphrases,
+the Proxmox token and the OAuth secret in one encrypted file, unlocked once after
+each boot. Everything above that says "keyring" then means the vault, and the setup
+page offers no file store. While it is locked, every page shows the last known
+state with a banner and an **Unlock** button (the Unlock page takes the passphrase,
+or the recovery code), every change but unlocking and managing paired devices is
+refused, and the poller does not poll. Settings ▸ Vault shows its state and offers
+**Lock now**.
+
 On a GNOME desktop, the ssh-agent (`gcr-ssh-agent`, or the older gnome-keyring
 one) lists every key in `~/.ssh` that has a `.pub`, whether it holds it or not,
 and asks for the passphrase in a pop-up when one is used. So FleetLedger never

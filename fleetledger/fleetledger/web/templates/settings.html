@@ -10,6 +10,7 @@
   <a href="#where">Where Ships run</a>
   <a href="#access">Access</a>
   <a href="#devices">Devices</a>
+  {% if vault_on %}<a href="#vault">Vault</a>{% endif %}
   <a href="#images">Images</a>
   <a href="#activity">Activity log</a>
 </nav>
@@ -60,7 +61,7 @@
     {% if proxmox.disk_storage %}<dt>Disks on</dt><dd>{{ proxmox.disk_storage }}</dd>{% endif %}
     {% if proxmox.bridge %}<dt>Network</dt><dd>{{ proxmox.bridge }}</dd>{% endif %}
     {% if proxmox.vmid_range %}<dt>VM ids</dt><dd>{{ proxmox.vmid_range[0] }} to {{ proxmox.vmid_range[1] }}</dd>{% endif %}
-    {% if proxmox.token_id %}<dt>API token</dt><dd><code>{{ proxmox.token_id }}</code>{% if proxmox.token_store %}, its secret kept in {{ "your OS keyring" if proxmox.token_store == "keyring" else "a file only you can read" }}{% endif %}</dd>{% endif %}
+    {% if proxmox.token_id %}<dt>API token</dt><dd><code>{{ proxmox.token_id }}</code>{% if proxmox.token_store %}, its secret kept in {{ keyring_label if proxmox.token_store == "keyring" else "a file only you can read" }}{% endif %}</dd>{% endif %}
   </dl>
   {% else %}
   <p>Manual: FleetLedger writes each Ship's first-boot ISO and prints the steps for your hypervisor.</p>
@@ -85,6 +86,30 @@
 </section>
 
 {% include "_settings_devices.html" %}
+
+{% if vault_on %}
+<section id="vault" class="setup-step settings-group">
+  <h2>Vault</h2>
+  <p>Every secret FleetLedger needs is in its vault, <code>{{ vault_path }}</code>, encrypted with
+    your passphrase. It is <strong>{{ vault_state }}</strong>{% if vault_state == "unlocked" %},
+    until the next boot{% endif %}.</p>
+  {% if vault_state == "unlocked" %}
+  <form method="post" action="/vault/lock" class="inline"
+    data-confirm-title="Lock FleetLedger now?"
+    data-confirm="FleetLedger stops acting on the fleet until someone unlocks it with the passphrase (here, or ship-fleet unlock over ssh). Your Ships keep running."
+    data-confirm-action="Lock now">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
+    <button type="submit" class="ghost small" title="ship-fleet vault lock">Lock now</button>
+  </form>
+  {% else %}
+  <p><a class="button small" href="/unlock" title="ship-fleet unlock">Unlock</a></p>
+  {% endif %}
+  <p class="hint">Change the passphrase or make a new recovery code over ssh, on the FleetLedger
+    computer: <code>ship-fleet vault passphrase</code>, <code>ship-fleet vault recovery</code>
+    (docs/vault.md).</p>
+</section>
+{% endif %}
 
 <section id="images" class="setup-step settings-group">
   <h2>Images</h2>

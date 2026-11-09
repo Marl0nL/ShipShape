@@ -103,6 +103,11 @@ sends first.
 
 ## Where the secrets go on the new computer
 
+If FleetLedger's vault is on there ([vault.md](../vault.md): `ship-fleet vault init`
+before `receive`, unlocked), every secret goes into it: that is the new computer's
+keyring, and `--store file` is refused. The old computer's vault, if it had one,
+never moves: its secrets travel as secrets and are stored again on arrival.
+
 Every secret is stored again in **the new computer's own store**, under names it
 works out itself: the OS keyring when one is unlocked there, else 0600 files in
 `~/.config/fleetledger/`. Choose with `--store keyring` or `--store file`
@@ -154,8 +159,10 @@ standby or active.
 
 ## A retired copy
 
-A retired copy refuses every command but `ship-fleet migrate`, `doctor` and `service`
-(which only installs or removes the systemd unit), the web UI included, with a line saying when it retired and where the fleet went. Its files
+A retired copy refuses every command but `ship-fleet migrate`, `doctor`, `service`
+(which only installs or removes the systemd unit) and its vault's (`unlock`, `vault`:
+one that locked at a reboot must open to be unretired or wiped), the web UI included,
+with a line saying when it retired and where the fleet went. Its files
 stay as they were, so you can roll back. Until it is wiped, the old computer is as
 sensitive as before: it still holds the admin and CA keys.
 

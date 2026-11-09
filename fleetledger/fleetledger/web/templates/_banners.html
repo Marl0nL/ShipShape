@@ -3,4 +3,11 @@
 {% if stopping %}
   <div class="warning stopping" role="status">FleetLedger is stopping (a restart or an update): the jobs running now finish first, and nothing new starts until it is back.</div>
 {% endif %}
+{% if vault_state == "locked" %}
+  <div class="warning vault-locked" role="status">
+    <strong>FleetLedger is locked.</strong> Its vault locks at every boot; until you unlock it,
+    FleetLedger shows the last known state and changes nothing. Your Ships keep running.
+    <a class="button small" href="/unlock" title="ship-fleet unlock">Unlock</a>
+  </div>
+{% endif %}
 </div>

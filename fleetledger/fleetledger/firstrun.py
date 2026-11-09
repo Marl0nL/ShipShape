@@ -307,8 +307,33 @@ def ships_items(inv) -> list[Item]:
     return out
 
 
+def vault_items() -> list[Item]:
+    """FleetLedger's vault, when it is on (vault.py): nothing when it is off."""
+    from fleetledger import vault
+
+    state = vault.state()
+    if state == "off":
+        return []
+    out = []
+    if state == "locked":
+        out.append(Item("computer", "vault", "warn", "locked (it locks at every boot): "
+                        "FleetLedger is read-only until it is unlocked", "ship-fleet unlock"))
+    else:
+        out.append(Item("computer", "vault", "ok", "unlocked, until the next boot"))
+    if not vault.in_ram(vault.runtime_folder()):
+        out.append(Item("computer", "vault key in RAM", "fail",
+                        f"{vault.runtime_folder()} is not on a tmpfs, so it cannot be unlocked "
+                        "here", "log in so XDG_RUNTIME_DIR is set, or set "
+                        "FLEETLEDGER_RUNTIME_DIR to a tmpfs folder"))
+    if vault.swap_on():
+        out.append(Item("computer", "swap", "info", "swap is on: the unlocked key in RAM "
+                        "could be written to it", "run without swap, or encrypt it "
+                        "(docs/vault.md)"))
+    return out
+
+
 def everything(app, *, offline: bool = False) -> list[Item]:
-    items = computer(app)
+    items = computer(app) + vault_items()
     fleet_items, inv = fleet(app)
     items += fleet_items
     if inv is not None:

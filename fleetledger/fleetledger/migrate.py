@@ -62,7 +62,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from fleetledger import __version__, ca, handover, inuse, keys, paths
+from fleetledger import __version__, ca, handover, inuse, keys, paths, vault
 from fleetledger.errors import ConfigError, FleetError
 
 SCHEMA = "fleetledger.migrate/1"
@@ -351,6 +351,9 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
             plan.leave(f, "a lock")
         elif rel in (handover.STANDBY, handover.RETIRED):
             continue  # this copy's own marker: it stops the move ("this copy", above)
+        elif rel == vault.FILE:
+            plan.leave(f, "this computer's vault: the secrets in it move as secrets, stored "
+                       "again in the new computer's own store")
         elif rel == "known_hosts":
             plan.leave(f, "FleetLedger's known_hosts: rebuilt from the inventory's pins")
         elif rel == trustcmd.THIS_COMPUTER:
@@ -764,7 +767,9 @@ def existing_state(store) -> list[Path]:
     leaves and an earlier receive's leftover folder do not count): receive never
     writes over a FleetLedger."""
     found = []
-    markers = {store.path.with_name(handover.STANDBY), store.path.with_name(handover.RETIRED)}
+    # This computer's own vault is its keyring, not a FleetLedger: receive stores into it.
+    markers = {store.path.with_name(handover.STANDBY), store.path.with_name(handover.RETIRED),
+               vault.vault_path()}
     for base in (paths.config_dir(), paths.data_dir(), store.path.parent):
         for f in _files(base):
             rel = f.relative_to(base).as_posix()
@@ -786,6 +791,8 @@ def choose_store(store_kind: str | None) -> str:
         return keys.default_store()
     if store_kind not in STORES:
         raise FleetError(f"--store: keyring or file, not {store_kind!r}.")
+    if store_kind == "file":
+        secret_store.refuse_file("every secret")
     if store_kind == "keyring":
         usable, why = secret_store.keyring_usable()
         if not usable:
@@ -1152,6 +1159,7 @@ def _store_secret(kind: str, where: str, value: str, store_kind: str,
     elif kind == "keyring":
         keyring(where, lambda: secret_store.store_in_keyring(where, value))
     else:
+        secret_store.refuse_file(kind)
         path = Path(where)
         paths.private_dir(path.parent)
         paths.write_private(path, (value + "\n").encode("utf-8"))

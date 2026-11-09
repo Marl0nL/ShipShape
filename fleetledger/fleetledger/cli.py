@@ -25,13 +25,14 @@ COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
     "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
-    "image", "overlay", "put", "inbox", "migrate", "service",
+    "image", "overlay", "put", "inbox", "migrate", "service", "unlock", "vault",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
 EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
-                         "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service")
+                         "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service",
+                         "fleetledger.vaultcmd")
 
 
 @dataclass
@@ -659,7 +660,8 @@ def _in_use(args, app):
 
 def _handed_over(args, app) -> None:
     """A copy on standby or retired (ship-fleet migrate) does not act on the fleet:
-    every command but migrate's own, doctor and service refuses, the web UI included."""
+    every command but migrate's own, doctor, service, unlock and vault refuses, the web
+    UI included."""
     from fleetledger import handover
 
     if args.command in handover.ALLOWED:
@@ -667,6 +669,26 @@ def _handed_over(args, app) -> None:
     store = app.store_factory()
     if getattr(store, "path", None) is not None:
         handover.gate(args.command, store)
+
+
+# What still runs while FleetLedger's vault is locked (vault.py): unlocking it, the
+# vault itself, doctor, the web UI (read-only, with its Unlock page) and the service
+# that runs it; and any read from the caches alone (--offline).
+LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service")
+
+
+def _vault_locked(args, app) -> None:
+    """While the vault is locked FleetLedger is read-only: every other command refuses,
+    saying how to unlock, before it starts (rather than failing half-way at the first
+    secret it needs)."""
+    from fleetledger import vault
+
+    if args.command in LOCKED_ALLOWED or getattr(args, "offline", False) is True:
+        return
+    if vault.state() == "locked":
+        raise FleetError("FleetLedger's vault is locked, so FleetLedger is read-only: it "
+                         "changes nothing and reaches no Ship. Your Ships keep running.",
+                         hint=vault.UNLOCK_HINT + " Meanwhile: ship-fleet ls --offline.")
 
 
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
@@ -700,6 +722,7 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
                 # systemd should not start it again and again (service.REFUSED).
                 exc.exit_code = 2
             raise
+        _vault_locked(args, app)
         with _in_use(args, app):
             return handler(args, app) or 0
     except FleetError as exc:

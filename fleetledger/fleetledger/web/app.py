@@ -50,6 +50,7 @@ from fleetledger.web import (
     shipsettings,
     snapshots,
     trust,
+    vaultweb,
 )
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
@@ -215,9 +216,21 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         remote_on=ui.gate.remote is not None,
         machine_due=_machine_due(ui, session),
         stopping=ui.jobs.stopping,  # a service letting its running jobs finish before a stop
+        **_vault_context(),
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
+
+
+def _vault_context() -> dict[str, Any]:
+    """The vault's state for every page: its banner while locked, and what "the
+    keyring" is here (vault.py)."""
+    from fleetledger import paths, vault
+
+    state = vault.state()
+    return {"vault_state": state, "vault_on": state != "off",
+            "vault_path": paths.tilde(vault.vault_path()),
+            "keyring_label": "FleetLedger's vault" if state != "off" else "your OS keyring"}
 
 
 NOT_FROM_A_DEVICE = ("That sets up the FleetLedger computer itself, not this device: open the "
@@ -313,6 +326,7 @@ def _fleet_context(ui: UI, tag: str | None, session: Session | None = None) -> d
         "snap": snap,
         "can_renew": _has_ca(snap.inventory),
         "overlay_set": bool(snap.inventory is not None and snap.inventory.overlay),
+        "paused": not ui.fleet._may_poll(),  # the vault is locked: no Ship is checked
     }
 
 
@@ -385,7 +399,8 @@ async def home(request: Request) -> Response:
 
 async def banners_partial(request: Request) -> Response:
     """The notes at the top of every page that can change while it is open (polled)."""
-    return partial(request, "_banners.html", stopping=ui_of(request).jobs.stopping)
+    return partial(request, "_banners.html", stopping=ui_of(request).jobs.stopping,
+                   **_vault_context())
 
 
 async def fleet_partial(request: Request) -> Response:
@@ -1418,6 +1433,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         *trust.routes(),
         *fleetactions.routes(),
         *overlayweb.routes(),
+        *vaultweb.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
     web = Starlette(routes=routes)
@@ -1425,4 +1441,5 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
                       jobs=jobs or Jobs(app, on_finished=lambda ships: fleet.poll(ships)),
                       env=make_env(),
                       setups=setup.Setups(), start_page=start_page)
-    return GateMiddleware(web, gate)
+    # The gate first (who you are), then the vault (locked: read-only).
+    return GateMiddleware(vaultweb.VaultGuard(web, web.state.ui), gate)

@@ -11,6 +11,10 @@ partials can answer 204 (nothing new) cheaply.
 
 With a `history` (fleetledger.history.History), every poll is also sampled for
 the dashboard's charts.
+
+While FleetLedger's vault is locked (vault.py) it does not poll at all: nothing can
+log in to a Ship, and the pages show the last known state. It polls again as soon
+as the vault is unlocked.
 """
 
 from __future__ import annotations
@@ -108,6 +112,7 @@ class Fleet:
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
         history: Any = None,  # fleetledger.history.History, or None: keep no history
+        ready: Callable[[], bool] | None = None,  # may it poll now? (default: not locked)
     ) -> None:
         self.app = app
         self.interval = interval
@@ -115,6 +120,7 @@ class Fleet:
         self.clock = clock
         self.wall = wall
         self.history = history
+        self.ready = ready or _vault_open
         self._lock = threading.Lock()
         self._poll_lock = threading.Lock()
         self._wake = threading.Event()
@@ -216,16 +222,27 @@ class Fleet:
     def _due(self) -> bool:
         return self._last_poll is None or self.clock() - self._last_poll >= self.interval
 
+    def wake(self) -> None:
+        """Poll every Ship at once (after an unlock, say), not at the next interval."""
+        self._last_poll = None
+        self._wake.set()
+
     def run(self) -> None:
         """The polling loop (runs in its own thread until stop())."""
         while not self._stop.is_set():
-            if self.active() and self._due():
+            if self.active() and self._due() and self._may_poll():
                 try:
                     self.poll()
                 except Exception:  # noqa: BLE001 - keep polling; the next try may work
                     self._last_poll = self.clock()
             self._wake.wait(timeout=1.0)
             self._wake.clear()
+
+    def _may_poll(self) -> bool:
+        try:
+            return bool(self.ready())
+        except Exception:  # noqa: BLE001 - unsure: do not poll
+            return False
 
     def start(self) -> None:
         self.load_cached()
@@ -237,3 +254,10 @@ class Fleet:
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+
+
+def _vault_open() -> bool:
+    """Not while FleetLedger's vault is locked (off or unlocked: yes)."""
+    from fleetledger import vault
+
+    return vault.state() != "locked"

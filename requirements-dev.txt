@@ -5,6 +5,8 @@ jsonschema==4.26.0
 # The OS keyring for the overlay's OAuth secret (tests use a fake backend).
 keyring==25.7.0
 # FleetLedger's runtime dependencies (fleetledger/pyproject.toml), pinned for its tests.
+# cryptography: the vault's scrypt and Fernet (fleetledger/vault.py).
+cryptography==50.0.2
 # zeroconf is left out: the tests replace mDNS browsing with a fake.
 pexpect==4.9.0
 pycdlib==1.22.0

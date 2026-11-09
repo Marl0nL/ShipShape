@@ -168,9 +168,13 @@
 </figure>
 {% endmacro %}
 
-{% macro store_radios(usable) %}
+{% macro store_radios(usable, vault_on=false) %}
+{% if vault_on %}
+<input type="hidden" name="store" value="keyring"><p class="hint">The secret goes in FleetLedger's vault (it is on here).</p>
+{% else %}
 <label><input type="radio" name="store" value="keyring"{% if usable %} checked{% else %} disabled{% endif %}> keep the secret in your OS keyring</label>
 <label><input type="radio" name="store" value="file"{% if not usable %} checked{% endif %}> in a file only you can read (0600)</label>
+{% endif %}
 {% endmacro %}
 
 {% macro sparkline(s, label, value, cls) %}

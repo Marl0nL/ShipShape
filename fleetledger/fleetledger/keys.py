@@ -84,7 +84,10 @@ def _check_name(key: Path) -> None:
 
 
 def default_store() -> str:
-    """keyring when a secure, unlocked one is here; otherwise file."""
+    """keyring when a secure, unlocked one is here, or FleetLedger's vault is on (locked
+    or not: it never falls back to a file); otherwise file."""
+    if secret_store.vault_on():
+        return "keyring"
     usable, _why = secret_store.keyring_usable()
     return "keyring" if usable else "file"
 
@@ -93,6 +96,7 @@ def store_passphrase(key: Path, passphrase: str, store: str) -> None:
     if store == "keyring":
         secret_store.store_in_keyring(item(key), passphrase, SWITCH_HINT)
         return
+    secret_store.refuse_file(f"the passphrase for {key.name}")
     target = passphrase_file(key)
     paths.private_dir(target.parent)
     paths.write_private(target, (passphrase + "\n").encode("utf-8"))
@@ -452,6 +456,29 @@ def ensure_loaded(inventory, wanted: Iterable[Path] | None = None) -> list[str]:
     return loaded
 
 
+def forget_loaded(inventory) -> None:
+    """Take the managed keys out of ssh-agent (best effort): when the vault locks, so
+    FleetLedger cannot log in to Ships with keys loaded before."""
+    _store, keys = managed(inventory)
+    agents = {os.environ.get("SSH_AUTH_SOCK") or ""}
+    try:
+        own = _agent_socket()
+        if own.exists():
+            agents.add(str(own))  # FleetLedger's own (the service's, say)
+    except FleetError:
+        pass
+    pubs = [str(k.with_name(k.name + ".pub")) for k in keys
+            if k.with_name(k.name + ".pub").is_file()]
+    for sock in sorted(a for a in agents if a):
+        for pub in pubs:
+            try:
+                subprocess.run(["ssh-add", "-d", pub], capture_output=True, timeout=10,
+                               env={**os.environ, "SSH_AUTH_SOCK": sock}, check=False)
+            except (OSError, subprocess.SubprocessError):
+                pass
+    _ADDED.clear()
+
+
 def record(editor, store: str, new_keys: Iterable[str]) -> None:
     """Add keys (path strings as written in ships.toml) to [fleet.managed_keys]."""
     import tomlkit
@@ -473,5 +500,5 @@ def record(editor, store: str, new_keys: Iterable[str]) -> None:
 
 def describe(store: str) -> str:
     if store == "keyring":
-        return "your OS keyring"
+        return secret_store.keyring_label()
     return f"0600 files in {paths.config_dir() / PASSPHRASE_DIR}"

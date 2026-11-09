@@ -61,6 +61,8 @@ the web UI's Inbox tab),
 `ship-fleet service install`),
 [move FleetLedger to another computer](docs/runbooks/move-fleetledger.md) (`ship-fleet
 migrate`: the Ships keep working, nothing adopted again),
+[the vault](docs/vault.md) (every secret in one encrypted file, unlocked once per boot:
+`ship-fleet vault init`, `ship-fleet unlock`),
 [retire the old stack](docs/runbooks/retire-old-stack.md).
 
 ## Layout
