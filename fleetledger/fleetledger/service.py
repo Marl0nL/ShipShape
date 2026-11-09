@@ -227,12 +227,17 @@ def _seconds(text: str) -> float | None:
     return total if text and total else None
 
 
+# systemd applies drop-ins in file-name order across every folder, so this one must sort
+# after Ubuntu's own user@.service.d/timeout.conf (TimeoutStopSec=5), or it loses to it.
+DROP_IN = "zz-fleetledger-drain.conf"
+
+
 def reboot_drop_in() -> str:
     """The root command that lets a reboot wait for running jobs too."""
     uid = os.getuid()
     folder = f"/etc/systemd/system/user@{uid}.service.d"
     return (f"sudo mkdir -p {folder} && printf '[Service]\\nTimeoutStopSec=45min\\n' | "
-            f"sudo tee {folder}/fleetledger-drain.conf >/dev/null && sudo systemctl "
+            f"sudo tee {folder}/{DROP_IN} >/dev/null && sudo systemctl "
             "daemon-reload")
 
 

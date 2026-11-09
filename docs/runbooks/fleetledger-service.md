@@ -46,11 +46,14 @@ four differences:
 
   ```sh
   sudo mkdir -p /etc/systemd/system/user@$(id -u).service.d
-  printf '[Service]\nTimeoutStopSec=45min\n' | sudo tee /etc/systemd/system/user@$(id -u).service.d/fleetledger-drain.conf
+  printf '[Service]\nTimeoutStopSec=45min\n' | sudo tee /etc/systemd/system/user@$(id -u).service.d/zz-fleetledger-drain.conf
   sudo systemctl daemon-reload
+  systemctl show user@$(id -u).service -p TimeoutStopUSec     # 45min
   ```
 
-  A reboot then waits as long as the jobs need, up to 45 minutes.
+  A reboot then waits as long as the jobs need, up to 45 minutes. The file's name must
+  sort after Ubuntu's own `timeout.conf`: systemd applies drop-ins in name order, and
+  a plain `fleetledger-drain.conf` would lose to it.
 
 Restarting it (or stopping it) cancels any sign-in still open in the web UI, as
 stopping `ship-fleet ui` always has: the Ship is unchanged; start the sign-in again.

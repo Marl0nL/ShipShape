@@ -379,8 +379,10 @@ def test_install_writes_a_user_unit_and_starts_it(store, home, units, ship_fleet
     # Ubuntu gives the user manager 5 seconds at a reboot: said, with the root fix.
     assert "A reboot cuts running jobs short: it gives this user's systemd manager 5 seconds" \
         in said
-    assert f"/etc/systemd/system/user@{os.getuid()}.service.d" in said
+    assert f"/etc/systemd/system/user@{os.getuid()}.service.d/zz-fleetledger-drain.conf" in said
     assert "TimeoutStopSec=45min" in said
+    # systemd orders drop-ins by name across folders: it must come after Ubuntu's.
+    assert service.DROP_IN > "timeout.conf"
 
 
 def test_install_says_a_reboot_drains_once_root_allowed_it(store, home, units, ship_fleet):
