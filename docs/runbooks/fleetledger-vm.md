@@ -266,7 +266,9 @@ match a ShipShape commit you can check out; the seed clones the commit you run i
    ```
 
    `import` checks every Ship read-only before anything acts, exactly as `receive`
-   does. `activate` raises the epoch, so an older state is refused here. `appliance
+   does. A Ship that was still being made when the backup ran (its seed is not in the
+   backup) and never came up is a warning, not a failure: once this copy is active,
+   finish it (`ship-fleet status NAME --wait`) or destroy it. `activate` raises the epoch, so an older state is refused here. `appliance
    here` records this VM (its hostname, its own sshd host key, the VM id you give) as
    `[fleet] self`, in place of the old one.
 

@@ -549,6 +549,10 @@ def _finish_init(app, store) -> int:
     moved = move_in(app, store)
     after = leftovers(store.load(), secret_store.os_backend()[0]) if store.exists() else []
     gone = len(before) - len(after)
+    if moved or gone:
+        from fleetledger.concierge import audit
+
+        audit.record("-", "vault-init", "vault", "finished")
     if not moved and not gone and not after:
         app.say(f"The vault is on already ({paths.tilde(vault.vault_path())}), and every "
                 "secret ships.toml names is in it; nothing was left behind.")
@@ -664,7 +668,8 @@ def vault_off(args, app, store) -> int:
     try:
         path.unlink()
     finally:
-        vault.lock()  # its RAM key opens nothing now
+        if not path.exists():  # gone: its RAM key opens nothing now. Still there (cut
+            vault.lock()       # short before the delete): it stays unlocked, to run again
     if store.exists():
         _check_back(store)  # now through the OS keyring or the files
     audit.record("-", "vault-off", "vault", kind)
