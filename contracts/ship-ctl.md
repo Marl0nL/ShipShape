@@ -248,8 +248,9 @@ layout, each pane a shell in its folder under its old id.
   step at every status refresh: a live Claude agent that reports a session and is
   not recorded (started by hand, or by a firstmate) is picked up, named after its
   folder if it has no herdr name (`herdr agent rename`); a recorded one whose
-  session changed (`/clear`, or a hand restart in its pane) is followed, and its
-  mode follows the mode ledger. `ship-ctl apply` (so every converge) records what
+  session changed (`/clear`, or a hand restart in its pane and folder) is followed,
+  and its mode follows the mode ledger. A Claude started by hand in its pane but in
+  another folder is another agent, picked up under its own name. `ship-ctl apply` (so every converge) records what
   runs too, which is how a Ship updated from tooling before the record keeps its
   agents across the reboot that follows: they come back in the modes they ran in.
 - **Resume after a boot:** the first status refresh of a boot (once Claude is

@@ -241,10 +241,15 @@ def ledger_sessions(ctx: Context) -> dict[str, dict]:
 
 
 # --- matching the record to what runs -------------------------------------------------
+def same_folder(a: str | None, b: str | None) -> bool:
+    return bool(a and b) and os.path.normpath(a) == os.path.normpath(b)
+
+
 def match(doc: dict, live: list[dict]) -> dict[str, dict]:
     """{record name: the live agent that is it}. A live Claude agent is a recorded
-    one if it has its name; else, having no name, if it runs its session or sits
-    in its place."""
+    one if it has its name; else, having no name, if it runs its session, or sits
+    in its place in its folder (claude started again by hand there). One started
+    by hand in that pane but in another folder is another agent."""
     claude = [a for a in live if a["kind"] == "claude"]
     out: dict[str, dict] = {}
     taken: set[int] = set()
@@ -263,7 +268,8 @@ def match(doc: dict, live: list[dict]) -> dict[str, dict]:
             claim(name, lambda a, s=e["session"]: a["name"] is None and a["session"] == s)
     for name, e in agents.items():
         if name not in out and e["place"]:
-            claim(name, lambda a, p=e["place"]["id"]: a["name"] is None and a["place"] == p)
+            claim(name, lambda a, p=e["place"]["id"], c=e["cwd"]: a["name"] is None
+                  and a["place"] == p and same_folder(a["cwd"], c))
     return out
 
 
@@ -411,7 +417,7 @@ def _stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
         return "its pane was closed"
     if here["agent"]:
         return f"another agent ({here['agent']}) is in its pane"
-    if here["cwd"] and os.path.normpath(here["cwd"]) != os.path.normpath(e["cwd"]):
+    if here["cwd"] and not same_folder(here["cwd"], e["cwd"]):
         return f"its pane is in another folder now ({here['cwd']})"
     return None
 
@@ -463,8 +469,7 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
         tries = [old]
     elif old and places is None:
         tries = [old, None]  # herdr did not list its panes: its own first, if it is there
-    elif old and spot and spot["usable"] and os.path.normpath(spot["cwd"] or "") == (
-            os.path.normpath(cwd)):
+    elif old and spot and spot["usable"] and same_folder(spot["cwd"], cwd):
         tries = [old, None]
     else:
         tries = [None]
