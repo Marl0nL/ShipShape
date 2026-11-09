@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Unlock · FleetLedger{% endblock %}
+{% block body %}
+<h1>Unlock FleetLedger</h1>
+{% if state == "off" %}
+<p>FleetLedger's vault is off on this computer, so there is nothing to unlock: its secrets are
+  kept in your OS keyring or private files. <a href="/">Back to the fleet</a>.</p>
+{% elif state == "unlocked" %}
+<p>The vault is unlocked, until the next boot (or until it is locked). <a href="/">Back to the fleet</a>.</p>
+{% else %}
+<p>FleetLedger keeps every secret it needs (its keys' passphrases, the Proxmox token, the
+  Tailscale OAuth secret) in one vault, which locks at every boot. Unlock it once, with its
+  passphrase, for every secret and until the next boot. Until then FleetLedger only shows the
+  last known state; your Ships keep running.</p>
+{% if waiting %}<p class="flash bad" role="status">Too many wrong tries: the next may be made in {{ waiting }} seconds.</p>{% endif %}
+<section class="setup-step">
+  <h2>With the passphrase</h2>
+  <form method="post" action="/unlock" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="with" value="passphrase">
+    <label>Vault passphrase
+      <input type="password" name="passphrase" required autofocus autocomplete="off"
+        spellcheck="false" maxlength="1024"></label>
+    <button type="submit" title="ship-fleet unlock">Unlock</button>
+  </form>
+  <p class="hint">Or over ssh: <code>ssh -t HOST ship-fleet unlock</code>. The passphrase goes to this
+    FleetLedger only, in this form's body; it is never shown, logged or kept.</p>
+</section>
+<details class="advanced">
+  <summary>Lost the passphrase? Use the recovery code</summary>
+  <form method="post" action="/unlock" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="with" value="recovery">
+    <label>Recovery code (shown once, when the vault was made)
+      <input type="password" name="code" required autocomplete="off" spellcheck="false"
+        maxlength="64" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></label>
+    <button type="submit" class="ghost" title="ship-fleet unlock --recovery">Unlock with the recovery code</button>
+  </form>
+  <p class="hint">Then set a new passphrase over ssh: <code>ship-fleet vault passphrase --recovery</code>.</p>
+</details>
+{% endif %}
+{% if swap %}<p class="hint">Swap is on here, so the unlocked key in RAM could be written to it.
+  An always-on FleetLedger computer is best run without swap.</p>{% endif %}
+{% endblock %}

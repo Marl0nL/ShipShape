@@ -29,12 +29,12 @@
     for its passphrase{% if desktop_agent %}, in a desktop pop-up from your keyring, each
     time{% endif %}. Let FleetLedger look after them instead and you are not asked again:
     type each current passphrase once, and it re-encrypts the key file with a passphrase it
-    keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys
+    keeps in {{ keyring_label if keyring_usable else 'a private file' }}. The keys
     themselves stay the same (Ships, certificates and trusted machines keep working); the
     old passphrase no longer opens the file. Nothing changes unless you tick the boxes.</p>
   <form method="post" action="/setup/fleet/adopt" autocomplete="off"
     data-confirm-title="Hand {n} key{s} over to FleetLedger?"
-    data-confirm="FleetLedger checks each passphrase, then re-encrypts the ticked key file{s} with passphrases it keeps in {{ 'your OS keyring' if keyring_usable else 'a private file' }}. The keys stay the same (Ships, certificates and trusted machines keep working), but the old passphrases no longer open them."
+    data-confirm="FleetLedger checks each passphrase, then re-encrypts the ticked key file{s} with passphrases it keeps in {{ keyring_label if keyring_usable else 'a private file' }}. The keys stay the same (Ships, certificates and trusted machines keep working), but the old passphrases no longer open them."
     data-confirm-count="input[name^='take_']"
     data-confirm-none="Tick the keys FleetLedger should look after first."
     data-confirm-action="Hand over {n} key{s}" data-confirm-danger>

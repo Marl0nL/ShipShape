@@ -26,7 +26,7 @@
     <h3>New fleet <span class="pill good">recommended</span></h3>
     <p>FleetLedger creates every key it needs (its own login key for Ships and a small
       certificate authority) and looks after them: they are locked with passphrases only
-      FleetLedger knows, kept in {{ 'your OS keyring' if keyring_usable else 'a private file' }},
+      FleetLedger knows, kept in {{ keyring_label if keyring_usable else 'a private file' }},
       and loaded into ssh-agent when needed. You never see, name or type them.</p>
     <form method="post" action="/setup/fleet/new">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -44,9 +44,9 @@
         <fieldset>
           <legend>Where the key passphrases are kept</legend>
           <label><input type="radio" name="store" value="keyring"{% if keyring_usable %} checked{% else %} disabled{% endif %}>
-            your OS keyring: encrypted, unlocked with your login{% if not keyring_usable %} (not usable here: {{ keyring_why }}){% endif %}</label>
-          <label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}>
-            a file only you can read (0600)</label>
+            {% if vault_on %}FleetLedger's vault: encrypted, unlocked once after each boot{% else %}your OS keyring: encrypted, unlocked with your login{% endif %}{% if not keyring_usable %} (not usable here: {{ keyring_why }}){% endif %}</label>
+          {% if not vault_on %}<label><input type="radio" name="store" value="file"{% if not keyring_usable %} checked{% endif %}>
+            a file only you can read (0600)</label>{% endif %}
           <p class="hint">Either way, any program running as you can read them while you are
             logged in, as it can use ssh-agent; the keyring also protects them on a lost or
             copied disk.</p>
@@ -68,7 +68,7 @@
     <form method="post" action="/setup/fleet/import" autocomplete="off"
       data-confirm-when="input[name='protect'][value='yes']:checked"
       data-confirm-title="Hand {n} key{s} over to FleetLedger?"
-      data-confirm="FleetLedger checks each passphrase, then re-encrypts the key file{s} with passphrases it keeps in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}. The keys stay the same, but their old passphrases no longer open them."
+      data-confirm="FleetLedger checks each passphrase, then re-encrypts the key file{s} with passphrases it keeps in {{ keyring_label if keyring_usable else 'a file only you can read' }}. The keys stay the same, but their old passphrases no longer open them."
       data-confirm-count="input[name='admin_key'], input[name='host_ca_key'], input[name='user_ca_key']"
       data-confirm-action="Hand over {n} key{s}" data-confirm-danger>
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -90,7 +90,7 @@
           <strong>FleetLedger</strong> <span class="pill good">recommended: no prompts</span><br>
           <span class="hint">Type each key's passphrase once, below. FleetLedger checks each
             one, then re-encrypts the key files here with passphrases it keeps in
-            {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}, and
+            {{ keyring_label if keyring_usable else 'a file only you can read' }}, and
             loads them into ssh-agent itself whenever it needs them: you are never asked
             for them again. The keys stay the same (Ships and certificates keep working);
             their old passphrases no longer open these files (copies on other computers
@@ -193,9 +193,10 @@
     <p class="hint">A Proxmox API token that may manage one pool of VMs, and nothing else.
       FleetLedger uses it to create, start and remove Ships. It is checked against the API
       (through the pinned certificate) before it is kept, in
-      {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
+      {{ keyring_label if keyring_usable else 'a file only you can read' }}.
       {% if not (px_here.in_keyring or px_here.file) %}If its secret is already stored
-      (in your keyring, or in <code>~/.config/fleetledger/proxmox-token</code>), leave the
+      ({% if vault_on %}in FleetLedger's vault{% else %}in your keyring, or in
+      <code>~/.config/fleetledger/proxmox-token</code>{% endif %}), leave the
       secret empty.{% endif %}</p>
     <details class="advanced"><summary>No token yet?</summary>
       <p>Run these as root on the Proxmox host (they make the user, its roles and a token
@@ -205,7 +206,7 @@
       <button type="button" class="ghost" data-copy="{{ token_commands|join('\n') }}">Copy</button>
     </details>
     <details class="advanced"><summary>Advanced</summary>
-      {{ store_radios(keyring_usable) }}
+      {{ store_radios(keyring_usable, vault_on) }}
     </details>
     <button type="submit">Check the token</button>
   </form>
@@ -342,14 +343,14 @@
     <label class="field">OAuth client id <input name="client_id" value="{{ overlay_here.client_id }}" placeholder="e.g. kExample123CNTRL" list="known-client-ids" required></label>
     {% if overlay_here.client_ids %}<datalist id="known-client-ids">{% for c in overlay_here.client_ids %}<option value="{{ c }}">{% endfor %}</datalist>{% endif %}
     <label class="field">Client secret <input type="password" name="secret" autocomplete="off"{% if overlay_here.client_ids or overlay_here.file %} placeholder="already stored: leave empty"{% endif %}></label>
-    <p class="hint">Kept in {{ 'your OS keyring' if keyring_usable else 'a file only you can read' }}.
+    <p class="hint">Kept in {{ keyring_label if keyring_usable else 'a file only you can read' }}.
       {% if not (overlay_here.client_ids or overlay_here.file) %}If you already put it in
       your keyring (service <code>fleetledger</code>, item
       <code>tailscale-oauth:&lt;client id&gt;</code>), leave this empty.{% endif %}</p>
     <details class="advanced"><summary>Advanced</summary>
       <label><input type="radio" name="level" value="keys" checked> keys only (Auth Keys: Write)</label>
       <label><input type="radio" name="level" value="devices"> also remove destroyed Ships' devices (adds devices:core, which can change any device in your tailnet)</label>
-      {{ store_radios(keyring_usable) }}
+      {{ store_radios(keyring_usable, vault_on) }}
       <p class="hint">Headscale, pasted keys and the policy level: <code>ship-fleet overlay setup</code>.</p>
     </details>
     <button type="submit">Check and save</button>

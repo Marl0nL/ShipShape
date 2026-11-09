@@ -49,7 +49,7 @@
           "properties": {
             "store": {
               "enum": ["keyring", "file"],
-              "description": "Where the passphrases are kept. keyring: the OS keyring, service \"fleetledger\", item key-passphrase:<name>. file: ~/.config/fleetledger/key-passphrases/<name>, mode 0600. <name> is the key's file name, a dash and the first 8 hex digits of the SHA-256 of its full path, so two keys with the same file name in different folders never share a passphrase (a moved key file needs taking over again)."
+              "description": "Where the passphrases are kept. keyring: this computer's keyring (the OS one, or FleetLedger's vault when it is on there: docs/vault.md), service \"fleetledger\", item key-passphrase:<name>. file: ~/.config/fleetledger/key-passphrases/<name>, mode 0600. <name> is the key's file name, a dash and the first 8 hex digits of the SHA-256 of its full path, so two keys with the same file name in different folders never share a passphrase (a moved key file needs taking over again)."
             },
             "keys": {
               "type": "array",
@@ -345,7 +345,7 @@
             "secret_store": {
               "enum": ["keyring", "file"],
               "default": "file",
-              "description": "Where the OAuth client secret is kept. keyring: the OS keyring (Secret Service on Linux, Keychain on macOS), item keyring_item under the service \"fleetledger\"; protects it at rest, but an unlocked keyring is readable by any process of the same user. file: oauth_secret_file, mode 0600. ships.toml never holds the secret itself."
+              "description": "Where the OAuth client secret is kept. keyring: this computer's keyring, the OS one (Secret Service on Linux, Keychain on macOS) or FleetLedger's vault when it is on there (docs/vault.md), item keyring_item under the service \"fleetledger\"; protects it at rest, but an unlocked keyring is readable by any process of the same user. file: oauth_secret_file, mode 0600. ships.toml never holds the secret itself."
             },
             "keyring_item": {
               "type": "string",
@@ -492,7 +492,7 @@
         "token_store": {
           "enum": ["keyring", "file"],
           "default": "file",
-          "description": "Where the token secret is kept. keyring: the OS keyring (Secret Service on Linux, Keychain on macOS), item keyring_item under the service \"fleetledger\"; protects it at rest, but an unlocked keyring is readable by any process of the same user. file: token_file, mode 0600. ships.toml never holds the secret itself."
+          "description": "Where the token secret is kept. keyring: this computer's keyring, the OS one (Secret Service on Linux, Keychain on macOS) or FleetLedger's vault when it is on there (docs/vault.md), item keyring_item under the service \"fleetledger\"; protects it at rest, but an unlocked keyring is readable by any process of the same user. file: token_file, mode 0600. ships.toml never holds the secret itself."
         },
         "keyring_item": {
           "type": "string",

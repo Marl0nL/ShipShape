@@ -40,6 +40,7 @@ from fleetledger.drivers.base import (  # noqa: E402 - after the path is set
 
 # Ships on the in-memory demo hypervisor (DemoDriver, as "proxmox"); the rest are manual.
 ON_DEMO_DRIVER = {"ship-01", "ship-02", "ship-03", "ship-04"}
+DEMO_PASSPHRASE = "correct horse battery staple"  # the demo vault's (--vault), made up
 DEMO_FINGERPRINT = ":".join(["AB", "CD", "EF", "01", "23", "45", "67", "89"] * 4)  # made up
 
 SHIPS = {
@@ -743,6 +744,9 @@ def main() -> int:
                              "printed (ship-fleet ui link --local, with this home's "
                              "FLEETLEDGER_RUNTIME_DIR set to its run/ folder, gives one), and "
                              "a stop lets running jobs finish first")
+    parser.add_argument("--vault", action="store_true",
+                        help="turn FleetLedger's vault on in the demo home, locked (its "
+                             "made-up passphrase is printed)")
     args = parser.parse_args()
     base = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="fleetledger-demo-"))
     home(base)
@@ -767,6 +771,14 @@ def main() -> int:
     extra = {"remote": seed_remote(args.port)} if args.remote else {}
     if args.service:
         extra["service"] = True
+    if args.vault:
+        from fleetledger import vault
+
+        # The demo's runtime folder is a temporary one, likely on disk: allowed here only.
+        vault.in_ram = lambda path: True
+        vault.create(DEMO_PASSPHRASE)
+        vault.lock()
+        print(f"Demo vault, locked; its passphrase: {DEMO_PASSPHRASE}", flush=True)
     return server.serve(app, port=args.port, open_browser=False, interval=10, **extra)
 
 

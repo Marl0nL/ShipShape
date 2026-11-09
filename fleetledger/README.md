@@ -50,6 +50,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/net.py`, `netcmd.py` | phase 3 | network visibility: fetch and cache Ships' summaries, first-seen ledger, the Network tab's data, `ship-fleet net` (`docs/network.md`) |
 | `fleetledger/inbox.py`, `web/inboxweb.py` | | the file inbox: `ship-fleet put`, `ship-fleet inbox ls\|rm`, and the web UI's Inbox tab (drop zone, upload spool, the send job) ([send-files.md](../docs/runbooks/send-files.md)) |
 | `fleetledger/migrate.py`, `inuse.py`, `handover.py` | | moving FleetLedger to another computer: `ship-fleet migrate check\|push\|send\|receive\|verify` (one checked stream over SSH; secrets stored again in the new computer's store; a read-only check of every Ship), the in-use lock every command holds, so a move never copies a fleet mid-change, and the hand-over: standby, active and retired copies, the epoch, `activate\|retire\|unretire\|wipe` ([move-fleetledger.md](../docs/runbooks/move-fleetledger.md)) |
+| `fleetledger/vault.py`, `vaultcmd.py`, `web/vaultweb.py` | | the vault: every secret in one encrypted file (scrypt and Fernet), unlocked once per boot into RAM; FleetLedger's keyring backend when on; `ship-fleet unlock`, `vault init\|status\|lock\|passphrase\|recovery\|off`, the web UI's Unlock page and read-only guard ([docs/vault.md](../docs/vault.md)) |
 | `fleetledger/ca.py`, `trustcmd.py` | phase 3 | the SSH certificate authority: host and user certificates, revocation list, trust bundles; `ship-fleet ca`, `trust`, `untrust` (`docs/runbooks/trust-machines.md`) |
 
 Tests live in `fleetledger/tests/` (pytest; `pytest.ini` lists the folder). They
@@ -66,6 +67,7 @@ Nothing personal lives in the repo (`docs/hygiene.md`). FleetLedger keeps:
 | `~/.config/fleetledger/known_hosts` | FleetLedger's own known-hosts file, written from the inventory |
 | `~/.config/fleetledger/key-passphrases/` | passphrases of the keys FleetLedger looks after, when there is no usable keyring (0600) |
 | `~/.config/fleetledger/proxmox-token`, `tailscale-oauth` | the Proxmox API token and Tailscale OAuth secret, when kept in a file rather than the keyring (0600) |
+| `~/.config/fleetledger/vault.json` | FleetLedger's vault, when you turn it on: every secret, encrypted under your passphrase (0600); unlocked, its key lives only in `$XDG_RUNTIME_DIR/fleetledger/vault/` (RAM) until the next boot ([docs/vault.md](../docs/vault.md)) |
 | `~/.config/fleetledger/agent-keys/` | the `.pub` of your keys for Ships, on a computer FleetLedger was moved to (`ship-fleet migrate`): their private halves stay on your machines |
 | `~/.config/fleetledger/standby.json`, `retired.json` | after a move (`ship-fleet migrate`): this copy is on standby (received, not active yet) or retired (handed the fleet on; after a wipe, only this file stays). Either way it refuses to act on the fleet (0600) |
 | `~/.config/fleetledger/ships.toml.lock` | guards each change to the inventory. Every `ship-fleet` also holds a shared lock (flock) on the folder itself while it runs, and `migrate` holds it alone, so a move never copies a fleet mid-change |

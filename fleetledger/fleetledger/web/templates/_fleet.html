@@ -63,7 +63,7 @@
 {% endif %}
 
 <section class="ships">
-  <h2>Ships <span class="when">{% if snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status; checking now…{% endif %}</span></h2>
+  <h2>Ships <span class="when">{% if paused %}last known status; not checked while FleetLedger is locked{% elif snap.polled_at %}checked {{ clock(snap.polled_at) }}{% else %}last known status; checking now…{% endif %}</span></h2>
   {% if snap.error %}<p class="flash bad">{{ snap.error }}</p>{% endif %}
   {% if not views %}
   <p class="quiet">No Ships{% if tag %} with tag {{ tag }}{% endif %} yet.

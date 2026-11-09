@@ -86,11 +86,12 @@ commands: the passphrases of the keys FleetLedger looks after, the Proxmox token
 the Tailscale OAuth secret. On a desktop they are in your OS keyring, which is
 unlocked only while you are logged in, so a service that runs while you are logged
 out (lingering, below) cannot read them then: its jobs and renewals fail until you
-log in again. On a computer with no desktop session (an always-on VM), keep them in
-the file store instead (setup chooses it by itself where no keyring is usable;
-`ship-fleet migrate receive --store file` when you move the fleet there): `0600` files in
-`~/.config/fleetledger/`, readable by the service at any time, but on the same disk as
-the keys, so a copy of that disk holds the whole fleet.
+log in again. On a computer with no desktop session (an always-on VM), turn on
+FleetLedger's vault ([../vault.md](../vault.md)): every secret in one encrypted file,
+unlocked once after each boot (`ship-fleet unlock`, or the web UI), for the service
+and your commands alike, and a copy of the disk opens nothing. Without it, the file
+store works too (`0600` files in `~/.config/fleetledger/`), but they sit on the same
+disk as the keys, so a copy of that disk holds the whole fleet.
 
 **At boot, and while you are logged out.** A user unit runs while you are logged in.
 For it to start at boot and keep running after you log out, turn on lingering for your

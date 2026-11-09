@@ -12,6 +12,11 @@ ships.toml records which store and where (overlay.api.secret_store with
 keyring_item, or oauth_secret_file), never the secret. A read never falls back
 from one store to the other: a locked or missing keyring is an error that says
 how to unlock it or switch stores.
+
+"The keyring" is this computer's: the OS keyring, or, once you turn it on,
+FleetLedger's own vault (vault.py), which then takes every keyring item under the
+same names and never falls back to the OS keyring. While the vault is on, no secret
+goes to a file (refuse_file).
 """
 
 from __future__ import annotations
@@ -21,7 +26,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from fleetledger import paths
-from fleetledger.errors import ConfigError
+from fleetledger.errors import ConfigError, FleetError
 
 # Stable names: people may store the secret by hand before running setup
 # (service fleetledger, item tailscale-oauth:<client id>), and setup reuses it.
@@ -51,6 +56,8 @@ SECURE_BACKENDS = {
     "keyring.backends.Windows.WinVaultKeyring",
 }
 
+BACKEND_VAULT = "fleetledger.vault.Backend"
+
 SWITCH_HINT = ("Or keep the secret in a 0600 file instead: ship-fleet overlay setup --force "
                "(choose the file store).")
 
@@ -71,7 +78,38 @@ def _name(backend: Any) -> str:
 
 
 def secure_backend() -> tuple[Any | None, str]:
-    """The keyring backend to use, or None and why not."""
+    """The keyring backend to use, or None and why not: FleetLedger's vault when it is
+    on here (locked or not), else the OS keyring's."""
+    from fleetledger import vault
+
+    if vault.is_on():
+        return vault.backend(), vault.BACKEND_NAME
+    return os_backend()
+
+
+def vault_on() -> bool:
+    from fleetledger import vault
+
+    return vault.is_on()
+
+
+def keyring_label() -> str:
+    """What "the keyring" is here, for messages."""
+    return "FleetLedger's vault" if vault_on() else "your OS keyring"
+
+
+def refuse_file(what: str) -> None:
+    """While the vault is on, no secret goes to a 0600 file (the vault would then
+    protect less than it says)."""
+    if vault_on():
+        raise ConfigError(f"FleetLedger's vault is on here, so {what} goes in it, never in "
+                          "a file.", hint="Choose the keyring store (with the vault on, "
+                          "that is the vault), or turn the vault off first: ship-fleet "
+                          "vault off.")
+
+
+def os_backend() -> tuple[Any | None, str]:
+    """The OS keyring's backend, or None and why not (whether or not the vault is on)."""
     try:
         backend = get_keyring()
     except Exception as exc:  # no keyring library, no D-Bus, ...
@@ -92,6 +130,8 @@ def keyring_usable() -> tuple[bool, str]:
     try:
         backend.get_password(SERVICE, "fleetledger-probe")  # an unlock check, nothing read
     except Exception as exc:
+        if why == BACKEND_VAULT:
+            return False, "FleetLedger's vault is locked (ship-fleet unlock)"
         return False, f"the keyring is not usable: {_describe(exc)}"
     return True, why
 
@@ -137,6 +177,8 @@ def stored_names(prefix: str) -> list[str] | None:
 
 def _item_names(backend: Any) -> list[str] | None:
     kind = _name(backend)
+    if kind == BACKEND_VAULT:
+        return backend.item_names(SERVICE)
     if kind == "keyring.backends.SecretService.Keyring":
         username = backend.schemes[backend.scheme]["username"]
         collection = backend.get_preferred_collection()
@@ -162,6 +204,8 @@ def store_in_keyring(item: str, secret: str, switch_hint: str = SWITCH_HINT) -> 
         raise ConfigError(f"Cannot use the keyring: {why}.", hint=switch_hint)
     try:
         backend.set_password(SERVICE, item, secret)
+    except FleetError:  # the vault's own (locked, full ...): it says what to do
+        raise
     except Exception as exc:
         raise ConfigError(f"Could not store the secret in the keyring: {_describe(exc)}.",
                           hint=switch_hint) from None
@@ -174,6 +218,8 @@ def delete_from_keyring(item: str) -> None:
         raise ConfigError(f"Cannot use the keyring: {why}.")
     try:
         backend.delete_password(SERVICE, item)
+    except FleetError:
+        raise
     except Exception as exc:
         raise ConfigError(f"Could not remove {item} from the keyring: {_describe(exc)}.") \
             from None
@@ -198,6 +244,8 @@ def read_file(path_value: str, what: str = "the OAuth client secret") -> str:
 
 def where(api: Mapping[str, Any]) -> str:
     if api.get("secret_store", "file") == "keyring":
+        if vault_on():
+            return f"FleetLedger's vault (item {api.get('keyring_item')})"
         return f"the keyring (service {SERVICE}, item {api.get('keyring_item')})"
     return str(api.get("oauth_secret_file"))
 
@@ -212,13 +260,23 @@ def read_keyring(item: str, what: str, switch_hint: str) -> str:
                           "(Keychain on macOS). " + switch_hint)
     try:
         secret = backend.get_password(SERVICE, item)
+    except FleetError as exc:  # the vault: locked, or its file unreadable (says which)
+        if why == BACKEND_VAULT:
+            from fleetledger import vault
+
+            if isinstance(exc, vault.Locked):
+                raise vault.Locked(f"the {what}") from None
+        raise
     except Exception as exc:
         raise ConfigError(
             f"The keyring holding the {what} is locked or unavailable: {_describe(exc)}.",
             hint="Unlock it (log in to your desktop session, or open your keyring app and "
             "unlock the login keyring), then try again. " + switch_hint) from None
     if not secret or not secret.strip():
-        raise ConfigError(f"The {what} is not in the keyring (service {SERVICE}, item {item}).",
+        where = ("FleetLedger's vault" if why == BACKEND_VAULT
+                 else f"the keyring (service {SERVICE}")
+        raise ConfigError(f"The {what} is not in {where}"
+                          + (f" (item {item})." if why == BACKEND_VAULT else f", item {item})."),
                           hint=switch_hint)
     return secret.strip()
 

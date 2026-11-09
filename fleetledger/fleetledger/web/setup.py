@@ -322,6 +322,10 @@ def _tilde(path) -> str:
 
 
 def _store_choice(fields) -> str:
+    from fleetledger.overlay import secret_store
+
+    if secret_store.vault_on():
+        return "keyring"  # the vault: never a file while it is on
     chosen = _one(fields, "store")
     if chosen in ("keyring", "file"):
         return chosen

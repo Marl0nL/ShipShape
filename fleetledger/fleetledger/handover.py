@@ -11,8 +11,8 @@ revocation list un-revokes machines. So `ship-fleet migrate` hands over in steps
   Retiring first means a cut-over cut short leaves no copy active, never two.
 
 A copy on standby or retired refuses every command but migrate's own, doctor and
-service (which only manages the systemd unit), the web UI included, saying why and
-what to do. The **epoch** ([fleet] epoch in
+service (which only manages the systemd unit) and its vault's (unlock, vault), the
+web UI included, saying why and what to do. The **epoch** ([fleet] epoch in
 ships.toml, 0 when absent) goes up at every activation. A retired copy remembers
 the epoch it handed over to, so a later receive refuses a fleet older than one this
 computer already handed on (an old backup, a forgotten copy).
@@ -34,15 +34,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths
+from fleetledger import paths, vault
 from fleetledger.errors import FleetError
 
 STANDBY, RETIRED = "standby.json", "retired.json"
 SCHEMA = "fleetledger.copy/1"
 WIPE_AFTER = timedelta(days=14)  # keep a retired copy this long, for a rollback
 # What a copy on standby or retired may still run (each checks for itself). service
-# only installs, shows or removes the systemd unit; the UI it runs refuses as ever.
-ALLOWED = ("migrate", "doctor", "service")
+# only installs, shows or removes the systemd unit (the UI it runs refuses as ever);
+# unlock and vault act on no fleet, and a copy whose vault locked at a reboot must be
+# able to open it to be activated, unretired or wiped.
+ALLOWED = ("migrate", "doctor", "service", "unlock", "vault")
 
 
 @dataclass(frozen=True)
@@ -262,13 +264,20 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
         elif table.get(file_key) and paths.expand(table[file_key]).exists():
             gone.append(Gone(label, str(paths.expand(table[file_key]))))
     listed = {Path(g.where).resolve() for g in gone if not g.keyring}
+    if staying and kind == "keyring" and vault.is_on():
+        # The vault keeps your own key's passphrase: only the fleet's items leave it.
+        staying.add(vault.vault_path().resolve())
+        kept.append((paths.tilde(vault.vault_path()), "FleetLedger's vault: it still holds "
+                     "your own key's passphrase (the fleet's secrets are deleted from it); "
+                     "ship-fleet vault off moves that out, then delete it"))
     for base in (paths.config_dir(), paths.data_dir()):
         for f in _files(base):
             if f.name in (STANDBY, RETIRED) and f.parent == store.path.parent:
                 continue
             if f.resolve() in staying or f.resolve() in listed:
                 continue
-            gone.append(Gone("FleetLedger's own file", str(f)))
+            gone.append(Gone("the vault (every secret in it)" if f == vault.vault_path()
+                             else "FleetLedger's own file", str(f)))
     return gone, kept
 
 
@@ -287,6 +296,8 @@ def wipe(store, gone: list[Gone]) -> None:
             secret_store.delete_from_keyring(g.where)
     for g in dict.fromkeys(g.where for g in gone if not g.keyring):
         Path(g).unlink(missing_ok=True)
+    if not vault.is_on():
+        vault.lock()  # its unlocked key has nothing left to open
     for base in (paths.config_dir(), paths.data_dir()):
         if base.is_dir():
             folders = sorted((d for d in base.rglob("*") if d.is_dir()), reverse=True)

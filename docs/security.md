@@ -160,10 +160,11 @@ your other machines without forwarding router ports
 | Ship host private key | the Ship: `/etc/ssh`; briefly the seed ISO | generated into the seed; FleetLedger keeps only the public half |
 | Fleet admin key | your computer: `~/.ssh`, encrypted; by default with a random passphrase FleetLedger keeps in the OS keyring (or a 0600 file) and types into `ssh-add` itself, else a passphrase you chose; held by ssh-agent | `ship-fleet setup` (or `init`) |
 | Host and user CA keys | the same as the admin key (FleetLedger signs through the agent and never reads them) | `ship-fleet setup` (or `ca init`) |
-| Managed keys' passphrases | the OS keyring (`fleetledger` / `key-passphrase:<key file name>-<hash of its path>`), or `~/.config/fleetledger/key-passphrases/` (0600) | random, made with the key; typed by FleetLedger into a terminal it drives, never on a command line |
+| Managed keys' passphrases | the OS keyring (`fleetledger` / `key-passphrase:<key file name>-<hash of its path>`), or FleetLedger's vault when it is on there (same item names), or `~/.config/fleetledger/key-passphrases/` (0600) | random, made with the key; typed by FleetLedger into a terminal it drives, never on a command line |
 | A trusted machine's key | that machine only; FleetLedger gets the public half | made there; `ship-fleet trust` certifies it |
-| Proxmox API token | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you on the host; `ship-fleet setup` checks it, then stores it |
-| Overlay OAuth client secret (optional) | your computer: the OS keyring, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |
+| Proxmox API token | your computer: the OS keyring, or the vault, or `~/.config/fleetledger/` (0600) | made once by you on the host; `ship-fleet setup` checks it, then stores it |
+| Overlay OAuth client secret (optional) | your computer: the OS keyring, or the vault, or `~/.config/fleetledger/` (0600) | made once by you; by default it can only mint `tag:ship` keys |
+| The vault's data key (when the vault is on) | `vault.json` beside `ships.toml`, encrypted under your passphrase (scrypt, Fernet) and again under a recovery code; unlocked, only in RAM (`$XDG_RUNTIME_DIR`, tmpfs) until the next boot | `ship-fleet vault init`; unlocked with `ship-fleet unlock` or the web UI ([vault.md](vault.md)) |
 | Overlay join key | nowhere for long: the Ship's `/run` (tmpfs, root-only) while it joins | pasted, or minted per join; single use, minutes |
 | Ship's overlay node key | the Ship: Tailscale's state in `/var/lib/tailscale` (root) | `tailscale up` |
 | Your own key | your machines | public half put on `agent` by the seed |
@@ -209,7 +210,8 @@ secret, the inventory) to another computer, so:
   never a file at rest, and the copies it streams from sit in FleetLedger's
   private runtime folder for the moment of sending;
 - the keys move as they are (still encrypted); each secret is stored again in the
-  new computer's own keyring or 0600 files, and is never printed;
+  new computer's own keyring (its vault, when that is on there) or 0600 files, and
+  is never printed;
 - `receive` checks the whole stream against the SHA-256 sums its manifest sends
   first, before it writes anything; it writes only into FleetLedger's folders and
   `~/.ssh`, never over a file already there, and takes back what it wrote if a
@@ -219,12 +221,31 @@ secret, the inventory) to another computer, so:
 
 Only one copy acts on the fleet: the new one waits on standby until it has checked
 every Ship, then the old one retires (it refuses every command but `migrate`,
-`doctor` and `service`, the web UI included) before the new one activates, so a hand-over cut
+`doctor`, `service`, `unlock` and `vault`, the web UI included) before the new one activates, so a hand-over cut
 short leaves no copy acting, never two. An epoch in `ships.toml` goes up at every
 hand-over, and a computer that handed the fleet on refuses an older state (an old
 backup). The retired copy keeps its keys for a two-week rollback window, so until
 `ship-fleet migrate wipe` it is as sensitive as before. Details:
 [move-fleetledger.md](runbooks/move-fleetledger.md).
+
+### Without a desktop keyring: the vault
+
+An always-on FleetLedger computer has no desktop session, so no OS keyring. Until
+now its secrets went to 0600 files beside the encrypted keys, and a copy of its disk
+(a Proxmox backup or snapshot) opened the whole fleet. **FleetLedger's vault**
+(`ship-fleet vault init`, off unless you turn it on) keeps every secret in one
+file:
+
+- encrypted with a random data key (Fernet, from the `cryptography` package);
+- that key encrypted under your passphrase (scrypt) and, separately, under a
+  recovery code shown once.
+
+It is unlocked once after each boot (`ship-fleet unlock`, over ssh, or the web UI's
+Unlock page), for every secret and every FleetLedger process. The unlocked key
+lives only in RAM (`$XDG_RUNTIME_DIR`, a tmpfs), so a reboot locks it again and a
+copy of the disk opens nothing. Locked, FleetLedger is read-only and the Ships keep
+running. While it is on, no secret goes to a file. Its design, threat model,
+rotation and recovery: [vault.md](vault.md).
 
 ## The login concierge
 
@@ -291,7 +312,8 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | A device of yours that can open the remote web UI (when it is on), unpaired | nothing: a 403 or a "pair it once" page | off unless you turn it on; Serve on the tailnet only (never Funnel), and your access rules; requests without an allowed Tailscale login refused before anything; one-time pairing links, made only on the FleetLedger computer or from a freshly paired device |
 | Someone with a paired browser session (a stolen unlocked laptop, a compromised phone) | everything the UI does, so the whole fleet and the Proxmox pool | the session works only with the login that paired it; lapses after 12 hours unused and 30 days after pairing; destroy, rollback, trusting machines, setup's keys and pairing another device need a pairing younger than 4 hours; **Revoke** (Settings ▸ Devices, `ship-fleet ui revoke`) takes effect at the next request; typed confirmations for destroy and rollback |
 | A local program on the FleetLedger computer | forge Serve's identity headers to `127.0.0.1` | headers are a filter, never a sign-in: a device's random session id is still needed, and `devices.json` holds only its hash |
-| Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal |
+| Your computer is compromised | full control of the fleet and the Proxmox pool | passphrase-protected admin and CA keys in ssh-agent; scoped Proxmox token; no service tokens to steal. With the vault on and locked (after a boot), nothing until you unlock it there |
+| A backup or snapshot of the FleetLedger computer's disk (an always-on VM's Proxmox backup, say) | without the vault: everything, since 0600 secret files sit beside the encrypted keys. With it: nothing usable | the vault: every secret encrypted under your passphrase (scrypt, Fernet); the unlocked key only ever in RAM; snapshots taken without RAM; no swap ([vault.md](vault.md), threat model) |
 | Two FleetLedgers acting on one fleet (an old copy opened out of habit, a restored backup) | an older checkout rolls Ships back; a stale inventory's revocation list un-revokes machines; each undoes the other's changes | a retired or standby copy refuses to act, the web UI included; the hand-over retires the old copy before the new one activates; the epoch makes a computer refuse an older state; `migrate wipe` removes the old copy's keys |
 | A move of FleetLedger intercepted or redirected | every key and secret above | one stream inside SSH to a host key you checked first; never a file at rest; each member checked by SHA-256 before anything is written; your own key never moves |
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |

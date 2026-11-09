@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 # Keep in step with the pins in the repo's requirements-dev.txt, which CI tests with.
 dependencies = [
+  # The vault (vault.py): scrypt and Fernet, nothing hand-made.
+  "cryptography>=43,<51",
   "Jinja2>=3.1.6,<4",
   "jsonschema>=4.26,<5",
   "keyring>=25.7,<26",

@@ -1153,3 +1153,136 @@ def test_the_remote_command_quotes_a_path_under_home():
         "sh -lc 'exec \"$HOME\"/.local/bin/ship-fleet migrate receive'"
     assert migrate.remote_command("/opt/x y/ship-fleet", ["migrate", "activate"]) == \
         "sh -lc 'exec '\"'\"'/opt/x y/ship-fleet'\"'\"' migrate activate'"
+
+
+# --- FleetLedger's vault (vault.py) on either computer ---------------------------------------
+
+
+@pytest.fixture
+def vaults(monkeypatch):
+    """The vault, quick (a lower scrypt cost) and allowed in these temporary folders."""
+    from fleetledger import vault
+
+    monkeypatch.setattr(vault, "SCRYPT_N", 2 ** 10)
+    monkeypatch.setattr(vault, "in_ram", lambda path: True)
+    return vault
+
+
+def _with_hypervisor_secrets(a: Computer, monkeypatch) -> tuple[str, str]:
+    a.use(monkeypatch)
+    token_item = secret_store.proxmox_item("fleet@pve!ledger")
+    oauth_item = secret_store.oauth_item("k123EXAMPLE")
+    a.ring.set_password("fleetledger", token_item, "11111111-2222-3333-4444-555555555555")
+    a.ring.set_password("fleetledger", oauth_item, "tskey-client-k123EXAMPLE-SECRET")
+    with a.store.edit() as ed:
+        ed.set_driver("proxmox", {
+            "api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
+            "pool": "shipshape", "template_vmid": 9000, "seed_storage": "local",
+            "disk_storage": "local-lvm", "bridge": "vmbr0", "token_id": "fleet@pve!ledger",
+            "token_store": "keyring", "keyring_item": token_item,
+            "tls_fingerprint": ":".join(["AB"] * 32)})
+        ed.set_overlay({"provider": "tailscale", "tags": ["tag:ship"],
+                        "key_source": "tailscale-api",
+                        "api": {"tailnet": "-", "oauth_client_id": "k123EXAMPLE",
+                                "secret_store": "keyring", "keyring_item": oauth_item}})
+    return token_item, oauth_item
+
+
+class _PVE:
+    def __init__(self, config):
+        proxmox_api.token_secret(config)
+
+    def get(self, path):
+        return {"version": "8.2"}
+
+
+class _Tailnet:
+    granted = frozenset({"auth_keys"})
+
+    def __init__(self, api):
+        secret_store.load(api)
+
+    def token(self):
+        return "t"
+
+
+def test_onto_a_computer_whose_vault_is_on_every_secret_goes_in_it(computers, monkeypatch,
+                                                                   vaults):
+    """The appliance's way: its vault first (empty, unlocked), then the fleet. Nothing
+    lands in a 0600 file or an OS keyring, and a copy of its disk opens nothing."""
+    a, b, world = computers
+    token_item, oauth_item = _with_hypervisor_secrets(a, monkeypatch)
+    secrets_ = [v for (_s, _i), v in a.ring.items.items()]
+    stream = send_bytes(a, monkeypatch)
+    ships_before = world.state()
+    b.use(monkeypatch)
+    vaults.create("correct horse battery staple")
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    code = receive(b, monkeypatch, stream)  # no --store: the vault, as this computer's keyring
+    assert code == migrate.VERIFIED, b.out.getvalue() + b.err.getvalue()
+    assert world.state() == ships_before
+    assert b.ring.sets == []  # not one item in the OS keyring
+    doc = tomllib.loads(b.store.path.read_text())
+    assert doc["fleet"]["managed_keys"]["store"] == "keyring"
+    assert doc["drivers"]["proxmox"]["token_store"] == "keyring"
+    assert doc["overlay"]["api"]["secret_store"] == "keyring"
+    assert not (b.root / "config" / keys.PASSPHRASE_DIR).exists()
+    names = vaults.backend().item_names("fleetledger")
+    assert token_item in names and oauth_item in names
+    assert keys.item(b.home / ".ssh" / "shipshape_fleet_ed25519") in names
+    # A backup of B: every file it keeps on disk (the runtime folder is RAM).
+    disk = b"".join(f.read_bytes() for f in sorted(b.root.rglob("*")) if f.is_file())
+    assert secrets_ and not any(s.encode() in disk for s in secrets_)
+
+    # Locked (a reboot), B is read-only; unlocked, it acts again with nothing else asked.
+    assert b.run("migrate", "activate", "--yes")[0] == 0
+    vaults.lock()
+    code, out, err = b.run("ls")
+    assert code == 1 and "vault is locked" in err
+    assert b.run("ls", "--offline")[0] == 0
+    vaults.unlock("correct horse battery staple")
+    monkeypatch.setattr(keys, "_ADDED", {})
+    code, out, err = b.run("ls")
+    assert code == 0 and "ship-01" in out, err
+    assert world.state() == ships_before
+
+    # With the vault on, --store file is refused rather than writing a secret to disk.
+    with pytest.raises(FleetError, match="never in a file"):
+        migrate.choose_store("file")
+
+
+@pytest.mark.parametrize("own_key", [True, False])
+def test_a_copy_with_its_vault_on_moves_and_its_wipe_empties_the_vault(computers, monkeypatch,
+                                                                     vaults, own_key):
+    from fleetledger import vaultcmd
+
+    a, b, world = computers
+    _with_hypervisor_secrets(a, monkeypatch)
+    own = a.home / ".ssh" / "shipshape_ed25519"
+    if not own_key:  # your own key is yours to look after: the vault holds only the fleet's
+        with a.store.edit() as ed:
+            ed.doc["fleet"]["managed_keys"]["keys"].remove("~/.ssh/shipshape_ed25519")
+        a.ring.delete_password("fleetledger", keys.item(own))
+    vaults.create("correct horse battery staple")
+    moved = vaultcmd.move_in(a.app, a.store)
+    assert len(moved) == (6 if own_key else 5) and not a.ring.items
+    code, out, err = a.run("migrate", "check")
+    assert code == 0 and "this computer's vault: the secrets in it move as secrets" in out, \
+        out + err
+    stream = send_bytes(a, monkeypatch)
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    assert b.ring.items  # B has no vault: its OS keyring, as before
+    a.use(monkeypatch)
+    assert a.run("migrate", "retire", "--to", "vm", "--yes")[0] == 0
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    if own_key:  # it still opens your own key, which wipe keeps: only the fleet's items go
+        assert "it still holds your own key's passphrase" in out
+        assert vaults.backend().item_names("fleetledger") == [keys.item(own)]
+        assert keys.public_of(own, keys.read_passphrase(own, "keyring")) == \
+            keys.public_line(own)
+        return
+    assert "the vault (every secret in it)" in out
+    assert not vaults.vault_path().exists() and not vaults.key_path().exists()
+    assert vaults.state() == "off"

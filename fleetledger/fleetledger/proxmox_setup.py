@@ -366,14 +366,24 @@ def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused:
     """Store a checked token secret (unless reused from there) and record where in
     config. Returns where, in words."""
     item = secret_store.proxmox_item(config["token_id"])
+    from_file = None
+    if store_kind != "keyring" and reused and secret_store.vault_on():
+        # Found in a 0600 file, with the vault on: into the vault, and the file goes.
+        if not KEYRING_ITEM_RE.match(item):
+            secret_store.refuse_file("the Proxmox token")
+        store_kind, reused = "keyring", False
+        from_file = secret_path or paths.config_dir() / SECRET_FILE
     if store_kind == "keyring":
         if not reused:
             secret_store.store_in_keyring(item, secret, proxmox_api.TOKEN_SWITCH_HINT)
         config.update(token_store="keyring", keyring_item=item)
         config.pop("token_file", None)
-        return f"your OS keyring ({secret_store.SERVICE} / {item})"
+        if from_file is not None:
+            from_file.unlink(missing_ok=True)
+        return f"{secret_store.keyring_label()} ({secret_store.SERVICE} / {item})"
     path = secret_path or paths.config_dir() / SECRET_FILE
     if not reused:
+        secret_store.refuse_file("the Proxmox token")
         paths.private_dir(path.parent)
         paths.write_private(path, (secret + "\n").encode("utf-8"))
     config["token_file"] = paths.tilde(path)
@@ -488,6 +498,11 @@ def _plausible_token(secret: str) -> bool:
 
 
 def _choose_store(app, *, keyring_ok: bool = True) -> str:
+    if secret_store.vault_on():
+        if not keyring_ok:
+            secret_store.refuse_file("the Proxmox token")  # a token id no item can name
+        app.say("\nThe token secret goes in FleetLedger's vault (it is on here).")
+        return "keyring"
     if not keyring_ok:
         app.say("This token id cannot name a keyring item; keeping the secret in a 0600 file.")
         return "file"
