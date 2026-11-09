@@ -62,7 +62,9 @@ On the **old** computer, `ship-fleet migrate check` must say "Ready to move". It
 refuses while:
 
 - another `ship-fleet` runs there: the web UI, or a command in another terminal (a
-  sign-in, say). Stop it first; while a move runs, no other `ship-fleet` can start;
+  sign-in, say). Stop it first (the service: `systemctl --user stop fleetledger`,
+  [fleetledger-service.md](fleetledger-service.md)); while a move runs, no other
+  `ship-fleet` can start;
 - a Ship is not enrolled yet (its seed holds its private host key): finish it with
   `ship-fleet status <ship> --wait`, or destroy it;
 - a secret cannot be read (a locked keyring: unlock it);
@@ -152,8 +154,8 @@ standby or active.
 
 ## A retired copy
 
-A retired copy refuses every command but `ship-fleet migrate` and `doctor`, the web
-UI included, with a line saying when it retired and where the fleet went. Its files
+A retired copy refuses every command but `ship-fleet migrate`, `doctor` and `service`
+(which only installs or removes the systemd unit), the web UI included, with a line saying when it retired and where the fleet went. Its files
 stay as they were, so you can roll back. Until it is wiped, the old computer is as
 sensitive as before: it still holds the admin and CA keys.
 

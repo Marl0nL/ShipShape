@@ -214,6 +214,7 @@ def render(request: Request, template: str, status_code: int = 200, **context: A
         this_device=session.device,  # a paired browser on the remote address, else None
         remote_on=ui.gate.remote is not None,
         machine_due=_machine_due(ui, session),
+        stopping=ui.jobs.stopping,  # a service letting its running jobs finish before a stop
         **context,
     )
     return HTMLResponse(html, status_code=status_code)
@@ -380,6 +381,11 @@ async def home(request: Request) -> Response:
                   range=charts["range"], ranges=charts["ranges"], charts=charts["charts"],
                   charts_version=charts["charts_version"],
                   **_fleet_context(ui, tag, session_of(request)))
+
+
+async def banners_partial(request: Request) -> Response:
+    """The notes at the top of every page that can change while it is open (polled)."""
+    return partial(request, "_banners.html", stopping=ui_of(request).jobs.stopping)
 
 
 async def fleet_partial(request: Request) -> Response:
@@ -1365,6 +1371,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
     routes = [
         Route("/", home),
         Route("/partials/fleet", fleet_partial),
+        Route("/partials/banners", banners_partial),
         Route("/partials/signins", signins_partial),
         Route("/partials/charts", charts_partial),
         Route("/ships/{name}", ship_page),

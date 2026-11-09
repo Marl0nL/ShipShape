@@ -57,6 +57,8 @@ permission mode: `ship-fleet agent restart`),
 [send files to its agents](docs/runbooks/send-files.md) (`ship-fleet put`, or drop them on
 the web UI's Inbox tab),
 [the web UI](docs/web-ui.md),
+[run it as a service](docs/runbooks/fleetledger-service.md) (always on, no terminal:
+`ship-fleet service install`),
 [move FleetLedger to another computer](docs/runbooks/move-fleetledger.md) (`ship-fleet
 migrate`: the Ships keep working, nothing adopted again),
 [retire the old stack](docs/runbooks/retire-old-stack.md).

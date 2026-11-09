@@ -738,6 +738,11 @@ def main() -> int:
     parser.add_argument("--remote", action="store_true",
                         help="show the remote web UI as on (Settings, Devices), with made-up "
                              "paired devices; never through a real Tailscale")
+    parser.add_argument("--service", action="store_true",
+                        help="run as the service does (ship-fleet ui --service): no link "
+                             "printed (ship-fleet ui link --local, with this home's "
+                             "FLEETLEDGER_RUNTIME_DIR set to its run/ folder, gives one), and "
+                             "a stop lets running jobs finish first")
     args = parser.parse_args()
     base = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="fleetledger-demo-"))
     home(base)
@@ -760,6 +765,8 @@ def main() -> int:
     app.signer = ca.Signer(agent_keys=lambda: set())  # the demo CA's keys; never ssh-agent
     print(f"Demo FleetLedger home: {base}", flush=True)
     extra = {"remote": seed_remote(args.port)} if args.remote else {}
+    if args.service:
+        extra["service"] = True
     return server.serve(app, port=args.port, open_browser=False, interval=10, **extra)
 
 

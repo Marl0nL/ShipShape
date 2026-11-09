@@ -115,6 +115,9 @@ Then run the UI as usual, in a terminal that stays open (a `tmux` session, say):
 ship-fleet ui --no-browser
 ```
 
+Or as a service, always on with no terminal: `ship-fleet service install` (it uses
+the remote UI's port; [fleetledger-service.md](fleetledger-service.md)).
+
 It now uses port 8765, runs the same check at every start, and refuses to start if
 anything is off, saying what and how to fix it. `ship-fleet ui --local` starts it for
 this computer only, without the check.

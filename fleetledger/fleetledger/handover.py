@@ -10,8 +10,9 @@ revocation list un-revokes machines. So `ship-fleet migrate` hands over in steps
   **retires** itself first, then the new copy **activates** with the next epoch.
   Retiring first means a cut-over cut short leaves no copy active, never two.
 
-A copy on standby or retired refuses every command but migrate's own and doctor
-(the web UI included), saying why and what to do. The **epoch** ([fleet] epoch in
+A copy on standby or retired refuses every command but migrate's own, doctor and
+service (which only manages the systemd unit), the web UI included, saying why and
+what to do. The **epoch** ([fleet] epoch in
 ships.toml, 0 when absent) goes up at every activation. A retired copy remembers
 the epoch it handed over to, so a later receive refuses a fleet older than one this
 computer already handed on (an old backup, a forgotten copy).
@@ -39,8 +40,9 @@ from fleetledger.errors import FleetError
 STANDBY, RETIRED = "standby.json", "retired.json"
 SCHEMA = "fleetledger.copy/1"
 WIPE_AFTER = timedelta(days=14)  # keep a retired copy this long, for a rollback
-# What a copy on standby or retired may still run (each checks for itself).
-ALLOWED = ("migrate", "doctor")
+# What a copy on standby or retired may still run (each checks for itself). service
+# only installs, shows or removes the systemd unit; the UI it runs refuses as ever.
+ALLOWED = ("migrate", "doctor", "service")
 
 
 @dataclass(frozen=True)

@@ -61,4 +61,5 @@ def exclusive(store):
     return _held(store, fcntl.LOCK_EX, FleetError(
         "Another ship-fleet is running on this computer (the web UI, or a command in another "
         "terminal): a job, sign-in or change in it could alter the fleet while it is copied.",
-        hint="Stop it first (Ctrl-C in its terminal), then try again."))
+        hint="Stop it first (Ctrl-C in its terminal; the service: systemctl --user stop "
+             "fleetledger), then try again."))

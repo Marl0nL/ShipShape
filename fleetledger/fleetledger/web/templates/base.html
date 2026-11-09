@@ -31,6 +31,7 @@
   {% endif %}
 </header>
 <main>
+{% include "_banners.html" %}
 {% if machine_due %}
   <div class="warning machine-due">
     <form method="post" action="/settings/machines/bundle" class="inline">

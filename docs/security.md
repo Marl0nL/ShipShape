@@ -218,8 +218,8 @@ secret, the inventory) to another computer, so:
   moves), so the new computer never attaches as you.
 
 Only one copy acts on the fleet: the new one waits on standby until it has checked
-every Ship, then the old one retires (it refuses every command but `migrate` and
-`doctor`, the web UI included) before the new one activates, so a hand-over cut
+every Ship, then the old one retires (it refuses every command but `migrate`,
+`doctor` and `service`, the web UI included) before the new one activates, so a hand-over cut
 short leaves no copy acting, never two. An epoch in `ships.toml` goes up at every
 hand-over, and a computer that handed the fleet on refuses an older state (an old
 backup). The retired copy keeps its keys for a two-week rollback window, so until
@@ -257,7 +257,11 @@ a hash, that lapses after 12 hours unused or 30 days, and needs a pairing younge
 than 4 hours for destroy, rollback, trusting machines, setup's keys and pairing
 another device ([runbooks/remote-ui.md](runbooks/remote-ui.md)). A paired device never sets up the FleetLedger computer's own ssh (not from Access, Settings or a new Ship's enrolment); it gets its own machine's attach commands, and that machine's bundle, and no other, as a download (a renewed certificate, no secret, audited). The setup page takes secrets (the Proxmox token, an OAuth client
 secret, a key's current passphrase) only in POST bodies, sends each straight to
-its check and store, and never echoes, logs or audits them. Details:
+its check and store, and never echoes, logs or audits them. Run as a service
+(`ship-fleet service install`), it prints no sign-in link at all (its output goes to
+the journal): `ship-fleet ui link --local` asks it for one over a Unix socket that is
+`0600` in a `0700` folder and answers only callers with your own user id
+([runbooks/fleetledger-service.md](runbooks/fleetledger-service.md)). Details:
 [web-ui.md](web-ui.md#security).
 
 Files sent to a Ship's inbox (`ship-fleet put`, the Inbox tab) travel over the

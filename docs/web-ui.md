@@ -142,6 +142,14 @@ that terminal for a new link (for a second browser, or after restarting the
 browser). Stopping the UI ends every session on this computer (paired remote devices
 stay signed in) and cancels any sign-in still open.
 
+Another terminal on this computer (or ssh to it) can ask a running UI for a new link:
+`ship-fleet ui link --local`.
+
+Always on, with no terminal: `ship-fleet service install` runs the UI as a systemd
+user service, with the poller always on and a stop that lets running jobs finish
+first; `ship-fleet ui link --local` gives the sign-in link
+([runbooks/fleetledger-service.md](runbooks/fleetledger-service.md)).
+
 From your laptop or phone: `ship-fleet ui remote https://NAME --port 8765 --login
 you@example.com`, after `tailscale serve --bg 127.0.0.1:8765`; then pair each device
 once with `ship-fleet ui link --name laptop` (over ssh is fine) or Settings ▸ Devices ▸
@@ -352,7 +360,12 @@ Following Jupyter's model, adapted to "one person, one computer":
   after 15 minutes. It is printed only to the terminal running `ship-fleet ui`.
   To open the browser, FleetLedger writes a private (0600) local page that
   refreshes to the link, because a browser's command line is visible to every
-  process on the computer; the page is deleted on exit.
+  process on the computer; the page is deleted on exit. `ship-fleet ui link
+  --local` gets a new link from the running UI over its control socket
+  (`$XDG_RUNTIME_DIR/fleetledger/ui.sock`: `0600` in a `0700` folder; a caller
+  whose user id is not yours gets no answer; one line of JSON per request). As a
+  service (`ship-fleet ui --service`) the UI prints no link at all, since its
+  output goes to the journal; that command is the only way to one.
 - **DNS rebinding.** Every request must carry `Host: 127.0.0.1:<port>` or
   `localhost:<port>`; anything else gets 400.
 - **CSRF.** Every change (any method but GET and HEAD) needs the session's CSRF

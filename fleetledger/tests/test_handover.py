@@ -427,7 +427,7 @@ def test_the_epoch_is_part_of_the_inventory_contract(store):
 def test_every_command_but_migrate_and_doctor_is_refused_when_handed_over(store, home):
     handover.write(store, handover.Marker("retired", handover.now(), "vm.example", 1))
     allowed = {c for c in cli.COMMANDS if c in handover.ALLOWED}
-    assert allowed == {"migrate", "doctor"}
+    assert allowed == {"migrate", "doctor", "service"}
     for command in cli.COMMANDS:
         if command in allowed:
             continue
