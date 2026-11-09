@@ -995,3 +995,57 @@ def test_off_cut_short_before_the_vault_is_deleted_runs_again(store, home, ring,
     assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 0, out.getvalue()
     assert not vault.is_on() and not vault.key_path().exists()
     _readable(store, managed, passphrases)
+
+
+# --- the second re-check's notes -----------------------------------------------------------
+
+
+def test_the_finisher_leaves_a_line_in_the_audit_log(store, home, ring):
+    from fleetledger.concierge import audit
+
+    secrets_fleet(store, home, ring, kind="file")
+    vault.create(PASS)
+    vaultcmd.move_in(cli.App(), store)
+    stale = home / "config" / "proxmox-token"
+    stale.write_text(TOKEN + "\n")
+    stale.chmod(0o600)
+    assert cli.main(["vault", "init"], app_for(store)[0]) == 0
+    assert ("vault-init", "finished") in [(e["action"], e["outcome"]) for e in audit.read()]
+
+
+def test_a_differing_os_keyring_copy_is_reported_and_kept(store, home, ring):
+    secrets_fleet(store, home, ring, kind="keyring")
+    vault.create(PASS)
+    vaultcmd.move_in(cli.App(), store)
+    item = secret_store.proxmox_item("fleet@pve!x")
+    ring.set_password("fleetledger", item, "an older token, not the vault's")
+    app, out = app_for(store)
+    cli.main(["vault", "status"], app)
+    assert f"your OS keyring ({item}) and differs from the vault's" in out.getvalue()
+    assert cli.main(["vault", "init"], app_for(store)[0]) == 0
+    assert ring.items[("fleetledger", item)] == "an older token, not the vault's"  # kept
+
+
+def test_off_cut_short_right_before_the_delete_stays_unlocked_and_runs_again(store, home, ring,
+                                                                           monkeypatch):
+    from pathlib import Path
+
+    managed = secrets_fleet(store, home, ring, kind="file")
+    passphrases = [keys.read_passphrase(k, "file") for k in managed]
+    vault.create(PASS)
+    vaultcmd.move_in(cli.App(), store)
+    real_unlink = Path.unlink
+
+    def interrupted(self, missing_ok=False):
+        if self.name == "vault.json":
+            raise KeyboardInterrupt
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", interrupted)
+    assert cli.main(["vault", "off", "--store", "file", "--yes"], app_for(store)[0]) == 130
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    assert vault.state() == "unlocked"  # not locked by the take-back: no unlock needed
+    app, out = app_for(store)
+    assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 0, out.getvalue()
+    assert vault.state() == "off" and not vault.key_path().exists()
+    _readable(store, managed, passphrases)

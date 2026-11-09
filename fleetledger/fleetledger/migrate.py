@@ -1502,6 +1502,13 @@ def _oauth_check(app, inv) -> list[Check]:
 
 def _ship_checks(cfg, view, krl: bytes | None) -> list[Check]:
     name = view.ship.name
+    if view.status is None and view.ship.enrolled is None:
+        # Half-made when the fleet left (a backup takes it along): it may never have come
+        # up, and the copy must still become active to finish or destroy it.
+        return [Check("warn", name, f"not enrolled yet and not answering "
+                                    f"({view.message or view.state}): once this copy is "
+                                    f"active, finish it (ship-fleet status {name} --wait) or "
+                                    f"destroy it")]
     if view.status is None:
         return [Check("fail", name, f"no status: {view.message or view.state}")]
     out = [Check("ok", name, f"answers on its pinned host key ({view.host})")]

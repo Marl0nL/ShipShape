@@ -243,7 +243,8 @@ def reboot_drop_in() -> str:
     """The root command that lets a reboot wait for running jobs too."""
     uid = os.getuid()
     folder = f"/etc/systemd/system/user@{uid}.service.d"
-    return (f"sudo mkdir -p {folder} && printf '[Service]\\nTimeoutStopSec=28min\\n' | "
+    line = REBOOT_DROP_IN.replace("\n", "\\n")
+    return (f"sudo mkdir -p {folder} && printf '{line}' | "
             f"sudo tee {folder}/{DROP_IN} >/dev/null && sudo systemctl "
             "daemon-reload")
 
@@ -251,8 +252,8 @@ def reboot_drop_in() -> str:
 def _say_reboot(app: Any) -> None:
     allowed = reboot_stop_seconds(app)
     if allowed is not None and allowed >= DRAIN_FOR:
-        app.say("A reboot also lets running jobs finish first (this user's systemd manager "
-                "may take as long as they need).")
+        app.say("A reboot also lets running jobs finish first, for up to 25 minutes (inside "
+                "the 30 a reboot allows before it is forced).")
         return
     app.say("A reboot cuts running jobs short: it gives this user's systemd manager "
             + (f"{allowed:g} seconds" if allowed is not None else "only a few seconds")

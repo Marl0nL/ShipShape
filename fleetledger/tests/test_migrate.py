@@ -1498,3 +1498,49 @@ def test_a_backup_asking_for_a_huge_scrypt_cost_is_refused_unrun(monkeypatch):
     monkeypatch.setattr(vault, "derive", lambda *a: pytest.fail("scrypt must not run"))
     with pytest.raises(FleetError, match="no passphrase slot FleetLedger can open"):
         backup.open_backup(json.dumps(header).encode() + b"\ntoken", "a passphrase")
+
+
+def test_a_backup_with_a_half_made_ship_that_never_answers_still_restores_and_activates(
+        computers, monkeypatch, vaults, tmp_path):
+    """The Ship was being made when the backup ran (its seed left out), and never came
+    up: the restored copy says so, and can still become active to finish or destroy it."""
+    from fleetledger import vaultcmd
+
+    a, b, world = computers
+    vaults.create("correct horse battery staple")
+    vaultcmd.move_in(a.app, a.store)
+    with a.store.edit() as ed:
+        ed.set_field("ship-02", "enrolled", None)
+    world.down.add("ship-02")
+    code, out, err = a.run("backup", "now", "--same-disk", "--to", str(tmp_path / "saved"))
+    assert code == 0 and "Ship ship-02: is not enrolled yet" in out, out + err
+    [made] = list((tmp_path / "saved").iterdir())
+    b.use(monkeypatch)
+    b.app.ask_secret = lambda prompt: "correct horse battery staple"
+    code, out, err = b.run("migrate", "import", str(made), "--store", "file")
+    assert code == migrate.VERIFIED, out + err
+    assert "not enrolled yet and not answering" in out and "FAIL" not in out
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0 and "now the active one" in out, out + err
+    # An enrolled Ship that does not answer still fails the check, as ever.
+    world.down.add("ship-01")
+    checks = migrate.verify(b.app)
+    assert any(c.state == "fail" and c.name == "ship-01" for c in checks)
+
+
+def test_doctor_says_when_backups_are_stale_or_not_made_yet(home, tmp_path, monkeypatch):
+    import time
+
+    from fleetledger import backup, firstrun
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert firstrun.backup_items() == []  # none scheduled, none made: nothing to say
+    units = tmp_path / "xdg" / "systemd" / "user"
+    units.mkdir(parents=True)
+    (units / backup.TIMER).write_text("# Written by ship-fleet backup schedule\n")
+    assert [i.detail for i in firstrun.backup_items()] == ["scheduled; none made yet"]
+    (home / "data" / backup.LAST).write_text(json.dumps(
+        {"at": "2026-01-01T03:30:00Z", "ok": True, "to": "/mnt/nas", "left_out": []}))
+    later = time.mktime((2026, 1, 4, 3, 30, 0, 0, 0, 0))
+    [item] = firstrun.backup_items(now=later)
+    assert item.state == "warn" and "over two days ago" in item.detail
