@@ -28,6 +28,14 @@ CLAUDE_DEFAULTS = {
 }
 
 
+WAKE_TEXT = (
+    "Your Ship rebooted {delay} ago. Make sure you've resumed any background processes or "
+    "work that you should be doing, and review whether subagents or crews may have been "
+    "interrupted by the reboot too."
+)
+WAKE_DEFAULTS = {"after_boot": False, "delay_minutes": 10, "text": WAKE_TEXT}
+
+
 @dataclass
 class ShipToml:
     doc: dict
@@ -74,6 +82,14 @@ class ShipToml:
         """OS update policy with defaults filled in (settings.md, "OS updates")."""
         out = {"auto_reboot": False, "reboot_time": "04:00"}
         out.update(self.doc.get("updates", {}))
+        return out
+
+    @property
+    def wake(self) -> dict:
+        """The message to the primary agent after a boot, defaults filled in
+        (settings.md, "Waking the primary agent after a boot")."""
+        out = dict(WAKE_DEFAULTS)
+        out.update(self.doc.get("wake", {}))
         return out
 
     @property

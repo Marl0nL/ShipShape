@@ -1,0 +1,14 @@
+# Wake the Ship's primary agent some minutes after each boot (contracts/settings.md,
+# "Waking the primary agent after a boot"). `ship-ctl apply` enables it only while
+# ship.toml wake.after_boot is on, and sets OnBootSec to wake.delay_minutes in
+# ship-wake.timer.d/50-shipshape.conf. It runs once per boot: ship-ctl wake keeps
+# the boot id of its last run.
+[Unit]
+Description=Wake the ShipShape primary agent after a boot
+
+[Timer]
+OnBootSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

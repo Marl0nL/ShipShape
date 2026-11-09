@@ -31,6 +31,7 @@ from . import (
     sshtrust,
     status,
     tools,
+    wake,
 )
 from . import record as agent_record
 from .context import Context
@@ -56,6 +57,9 @@ SET_KEYS = {
     "owner.name": "str",
     "owner.keys": "list",
     "github.scopes": "list",
+    "wake.after_boot": "bool",
+    "wake.delay_minutes": "int",
+    "wake.text": "str",
 }
 RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart: "
@@ -110,9 +114,9 @@ def build_parser() -> Parser:
     st.add_argument("pairs", nargs="*", metavar="KEY=VALUE")
     st.add_argument("--file", metavar="-", help="read a complete replacement ship.toml from stdin")
     cmd("autostart", "Start the [[autostart]] agents that are not running.")
-    ag = cmd("agent", "Restart Claude agents in place (in a new permission mode), or forget "
-                      "stopped ones.")
-    ag.add_argument("action", choices=["restart", "forget"])
+    ag = cmd("agent", "Restart Claude agents in place (in a new permission mode), forget "
+                      "stopped ones, or mark the primary agent.")
+    ag.add_argument("action", choices=["restart", "forget", "primary"])
     ag.add_argument("names", nargs="*", metavar="NAME", help="agent names (the agent record's)")
     ag.add_argument("--all", dest="everyone", action="store_true",
                     help="every named Claude agent")
@@ -123,6 +127,8 @@ def build_parser() -> Parser:
                     help="start a new conversation instead of continuing it")
     ag.add_argument("--force", action="store_true",
                     help="also restart an agent that is working (interrupts its turn)")
+    ag.add_argument("--clear", action="store_true",
+                    help="primary: unmark it (the first autostart agent is the primary)")
     ns = cmd("notify-signin", "Tell the [[autostart]] agents that a sign-in has completed.")
     ns.add_argument("service", choices=sorted(notice.SERVICES))
     c = cmd("converge", "Apply a tooling bundle.")
@@ -153,6 +159,7 @@ def build_parser() -> Parser:
     r.add_argument("--json", action="store_true")
     g = sub.add_parser("lan-guard", help="(internal) reload the LAN guard rules (boot unit)")
     g.add_argument("--json", action="store_true")
+    cmd("wake", "Wake the primary agent after a boot, once per boot (ship-wake.timer).")
     return p
 
 
@@ -191,6 +198,11 @@ def _coerce(key: str, kind: str, raw: str) -> object:
         return raw == "true"
     if kind in ("tags", "list"):
         return [t.strip() for t in raw.split(",") if t.strip()]
+    if kind == "int":
+        try:
+            return int(raw)
+        except ValueError:
+            raise CtlError("usage", f"{key} must be a whole number") from None
     return raw
 
 
@@ -243,6 +255,9 @@ def cmd_set(ctx: Context, args) -> dict:
                 raise CtlError("usage", f"cannot set {key!r}; keys: "
                                f"{', '.join([*SET_KEYS, *AUTOSTART_KEYS])}")
             table, field = key.split(".")
+            if key == "wake.text" and not raw.strip():
+                new.get("wake", {}).pop("text", None)  # empty: back to the default line
+                continue
             new.setdefault(table, {})[field] = _coerce(key, SET_KEYS[key], raw)
         errors = shiptoml.check(new, ctx.paths)
         if errors:
@@ -345,6 +360,16 @@ def cmd_autostart(ctx: Context, args) -> dict:
 
 def cmd_agent(ctx: Context, args) -> dict:
     ship = shiptoml.load(ctx.paths)
+    if args.action == "primary":
+        if args.everyone or args.mode or args.fresh or args.force:
+            raise CtlError("usage", "agent primary takes one name, or --clear")
+        if args.clear == bool(args.names) or len(args.names) > 1:
+            raise CtlError("usage", "agent primary takes one name, or --clear")
+        data, changed, messages = agent_record.mark_primary(
+            ctx, ship, None if args.clear else args.names[0])
+        return result("agent", changed=changed, messages=messages, data=data)
+    if args.clear:
+        raise CtlError("usage", "--clear goes with agent primary")
     if args.action == "forget":
         if args.everyone or args.mode or args.fresh or args.force:
             raise CtlError("usage", "agent forget takes only names")
@@ -360,6 +385,12 @@ def cmd_notify_signin(ctx: Context, args) -> dict:
     ship = shiptoml.load(ctx.paths)
     data, messages = notice.notify(ctx, ship, args.service)
     return result("notify-signin", messages=messages, data=data)
+
+
+def cmd_wake(ctx: Context, args) -> dict:
+    """Run by ship-wake.service after a boot: the line to the primary agent."""
+    data, messages = wake.run(ctx, shiptoml.load(ctx.paths))
+    return result("wake", messages=messages, data=data)
 
 
 def cmd_converge(ctx: Context, args) -> dict:
@@ -553,6 +584,7 @@ COMMANDS = {
     "ssh-trust": cmd_ssh_trust,
     "net": cmd_net,
     "lan-guard": cmd_lan_guard,
+    "wake": cmd_wake,
 }
 
 

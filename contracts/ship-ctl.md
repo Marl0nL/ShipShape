@@ -108,8 +108,10 @@ atomically, then runs `apply`.
   `network.lan_guard_allow` (comma-separated; empty clears it),
   `updates.auto_reboot`, `updates.reboot_time`, `network.ssh_listen`, `owner.name`,
   `owner.keys` (comma-separated public keys), `github.scopes` (comma-separated, from
-  the catalogue; empty for none: `settings.md`, "Extra GitHub scopes"). Booleans are
-  `true` or `false`.
+  the catalogue; empty for none: `settings.md`, "Extra GitHub scopes"),
+  `wake.after_boot`, `wake.delay_minutes` (whole minutes, 1 to 1440), `wake.text`
+  (empty: the default line; `settings.md`, "Waking the primary agent after a boot").
+  Booleans are `true` or `false`.
 - `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
   that name), and `autostart.add=NAME:github:OWNER/REPO[:MODE]` adds one that works
   in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it; a running
@@ -233,6 +235,27 @@ agent is refused (`invalid-input`): exit it, and it leaves the record by itself 
 removing it from `[[autostart]]` lets it go). While herdr does not answer nothing
 is forgotten (`herdr-unavailable`): whether the agent runs is not known.
 `data`: `{ "forgotten": [names] }`.
+
+### `ship-ctl agent primary (NAME | --clear) [--json]`
+
+Marks a recorded agent as the Ship's primary agent, the one woken after a boot
+(`settings.md`, "Waking the primary agent after a boot"). At most one is marked: the
+record (`primary`) holds one name, so marking another moves it. `--clear` removes
+the mark; then the first `[[autostart]]` agent the record has that should run is the
+primary. An agent that leaves the record loses the mark. A name not in the record
+is refused (`invalid-input`). `data`: `{ "primary": name or null, "marked": bool }`
+(the primary now).
+
+### `ship-ctl wake [--json]`
+
+Run by `ship-wake.service` after a boot, while `wake.after_boot` is on: types
+`wake.text` into the primary agent, once per boot, under the notice rules of
+`notify-signin`, trying again every minute (six tries) while it cannot. `data`:
+`{ "outcome": ..., "agent": name or null, "tries": n, "reason": why not or null }`;
+outcome `sent`, `gave-up`, `no-primary`, `late` (more than 30 minutes past its
+time), each recorded for this boot so it is not tried again, or `off`, `too-early`,
+`already-done`, `busy` (another `ship-ctl wake` is running), `no-boot-id`, which
+change nothing.
 
 ### The agent record
 

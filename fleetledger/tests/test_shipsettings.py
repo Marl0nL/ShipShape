@@ -20,6 +20,7 @@ REPORTED = {  # a status `settings` block, as ship-ctl status reports it (ui-6s)
     "network": {"lan_guard": True, "lan_guard_allow": ["192.0.2.0/24", "198.51.100.7"],
                 "ssh_listen": "any"},
     "updates": {"auto_reboot": False, "reboot_time": "04:00"},
+    "wake": {"after_boot": False, "delay_minutes": 10, "text": "Back up {delay} ago."},
     "owner": None,
     "autostart": [],
 }
@@ -91,6 +92,8 @@ def test_for_an_older_ship_only_what_was_chosen_is_sent():
     (posted(timezone="not a zone"), "IANA"),
     (posted(session_prefix="-bad"), "session_prefix"),
     (posted(lan_guard_allow="not-an-address"), "addresses or CIDRs"),
+    (posted(wake_delay_minutes="0"), "wake_delay_minutes"),
+    (posted(wake_text="two\nlines"), "one line"),
 ])
 def test_bad_values_are_refused_before_anything_is_sent(fields, message):
     with pytest.raises(FleetError, match=message):
@@ -124,3 +127,14 @@ def test_an_agent_starts_in_its_own_autostart_mode_else_the_default():
     # An older Ship: the default from its claude block.
     older = View(status={"herdr": {"agents": agents[:1]}, "claude": {"default_mode": "auto"}})
     assert shipsettings.restartable(older)[0]["start_mode"] == "auto"
+
+
+def test_the_wake_after_a_reboot_fields():
+    view = View(status={}, settings=REPORTED)
+    now = {k: shipsettings.current(view, f) for k, f in shipsettings.FIELDS.items()}
+    assert now["wake_after_boot"] == "false" and now["wake_delay_minutes"] == "10"
+    fields = posted(wake_after_boot="true", wake_delay_minutes="15", wake_text="")
+    assert shipsettings.assignments(fields, view) == [
+        "wake_after_boot=true", "wake_delay_minutes=15", "wake_text="]  # empty: the default
+    assert ops.parse_assignments(["wake_after_boot=true", "wake_text=Hi {delay}."]) == [
+        "wake.after_boot=true", "wake.text=Hi {delay}."]

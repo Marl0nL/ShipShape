@@ -368,6 +368,17 @@
             "scopes": { "type": "array", "items": { "type": "string" } }
           }
         },
+        "wake": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["after_boot", "delay_minutes", "text"],
+          "description": "The message to the primary agent after a boot (ship.toml [wake], defaults filled in). Optional: Ships with older tooling leave it out.",
+          "properties": {
+            "after_boot": { "type": "boolean" },
+            "delay_minutes": { "type": "integer", "minimum": 1 },
+            "text": { "type": "string" }
+          }
+        },
         "owner": {
           "type": ["string", "null"],
           "description": "The owner login's name, or null without one."
@@ -419,6 +430,21 @@
               "updated_at": { "$ref": "#/$defs/timestamp" }
             }
           }
+        },
+        "primary": {
+          "description": "The Ship's primary agent (the one woken after a boot): the one marked with `ship-ctl agent primary` (marked true), else the first [[autostart]] agent the record has that should run (marked false), else null. Optional: Ships with older tooling leave it out.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "marked"],
+              "properties": {
+                "name": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$" },
+                "marked": { "type": "boolean" }
+              }
+            }
+          ]
         },
         "resume": {
           "oneOf": [

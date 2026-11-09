@@ -165,6 +165,7 @@
         "updated_at": "2026-01-02T08:01:40Z"
       }
     ],
+    "primary": { "name": "main", "marked": false },
     "resume": {
       "at": "2026-01-02T08:00:40Z",
       "method": "ship-ctl",

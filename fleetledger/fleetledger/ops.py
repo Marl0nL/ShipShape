@@ -63,6 +63,9 @@ SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
     "tags": ("ship.tags", None),
     "timezone": ("ship.timezone", None),
     "github_scopes": ("github.scopes", None),
+    "wake_after_boot": ("wake.after_boot", ("true", "false")),
+    "wake_delay_minutes": ("wake.delay_minutes", None),
+    "wake_text": ("wake.text", None),
 }
 
 # Severity of each attention code, for sorting the Needs attention list.
@@ -727,6 +730,11 @@ def parse_assignments(values: Iterable[str]) -> list[str]:
                              f"'{val}'.")
         if full == "updates.reboot_time" and not TIME_RE.match(val):
             raise FleetError(f"reboot_time is HH:MM on a 24-hour clock, not '{val}'.")
+        if full == "wake.delay_minutes" and not (val.isdigit() and 1 <= int(val) <= 1440):
+            raise FleetError(f"wake_delay_minutes is a number of minutes, 1 to 1440, not '{val}'.")
+        if full == "wake.text" and (len(val) > 1000 or any(ord(c) < 32 or ord(c) == 127
+                                                           for c in val)):
+            raise FleetError("wake_text is one line of at most 1000 characters.")
         if full == "ship.timezone" and not TIMEZONE_RE.match(val):
             raise FleetError(f"timezone is an IANA zone name such as Europe/Berlin, not '{val}'.")
         if full == "claude.session_prefix" and not PREFIX_RE.match(val):

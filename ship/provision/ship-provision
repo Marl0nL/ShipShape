@@ -526,9 +526,10 @@ step_system_config() {
 
 step_units() {
   local unit system_changed=0 user_changed=0
-  # The two ship-lan-guard units are enabled or disabled by `ship-ctl apply` (lan_guard).
+  # The two ship-lan-guard units are enabled or disabled by `ship-ctl apply` (lan_guard),
+  # ship-wake.timer by `ship-ctl apply` too (wake.after_boot).
   for unit in ship-status.service ship-status.timer ship-lan-guard-early.service \
-      ship-lan-guard.service; do
+      ship-lan-guard.service ship-wake.service ship-wake.timer; do
     put_file "$FILES/systemd/system/$unit" "/etc/systemd/system/$unit" 0644
     [ "$CHANGED" = 0 ] || system_changed=1
   done

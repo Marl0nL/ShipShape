@@ -160,6 +160,7 @@
     {% endif %}{% endset %}
   {{ setting_group("Network", groups["Network"], ssh_form) }}
   {{ setting_group("Updates", groups["Updates"]) }}
+  {{ setting_group("After a reboot", groups["After a reboot"]) }}
   <section>
     <h2>Size</h2>
     {% set size = snap.inventory.effective_size(ship) %}

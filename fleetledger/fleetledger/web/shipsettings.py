@@ -63,6 +63,12 @@ GROUPS: tuple[tuple[str, tuple[Field, ...]], ...] = (
         Field("reboot_time", "Reboot time (HH:MM)"),
         Field("timezone", "Time zone", hint="an IANA name such as Europe/Berlin"),
     )),
+    ("After a reboot", (
+        Field("wake_after_boot", "Message the primary agent", BOOL,
+              hint="so it brings back the background work the reboot ended"),
+        Field("wake_delay_minutes", "Minutes after the boot"),
+        Field("wake_text", "Message", hint="one line; {delay} is the delay; empty: the default"),
+    )),
 )
 FIELDS = {f.key: f for _, fields in GROUPS for f in fields}
 SSH_LISTEN = Field("ssh_listen", "SSH listens", (("any", "on every network"),

@@ -163,6 +163,11 @@
       "reboot_time": "04:00"
     },
     "github": { "scopes": ["workflow"] },
+    "wake": {
+      "after_boot": true,
+      "delay_minutes": 10,
+      "text": "Your Ship rebooted {delay} ago. Make sure you've resumed any background processes or work that you should be doing, and review whether subagents or crews may have been interrupted by the reboot too."
+    },
     "owner": "human",
     "autostart": [
       {
