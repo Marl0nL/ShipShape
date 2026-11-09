@@ -32,7 +32,7 @@ four differences:
   it keeps is bounded as ever (7 days of samples).
 - **A stop lets running jobs finish.** On `systemctl --user stop fleetledger` (or
   `ship-fleet service restart`) it first stops taking new jobs, lets the running ones
-  (an update, a new Ship, an image bake ...) finish, for up to 40 minutes, and only
+  (an update, a new Ship, an image bake ...) finish, for up to 25 minutes, and only
   then stops. The pages keep answering meanwhile and say "FleetLedger is stopping".
   To stop it at once instead, cutting the jobs short (as a second Ctrl-C does in a
   terminal), send it a second signal: `systemctl --user kill -s TERM fleetledger`
@@ -46,12 +46,16 @@ four differences:
 
   ```sh
   sudo mkdir -p /etc/systemd/system/user@$(id -u).service.d
-  printf '[Service]\nTimeoutStopSec=45min\n' | sudo tee /etc/systemd/system/user@$(id -u).service.d/zz-fleetledger-drain.conf
+  printf '[Service]\nTimeoutStopSec=28min\n' | sudo tee /etc/systemd/system/user@$(id -u).service.d/zz-fleetledger-drain.conf
   sudo systemctl daemon-reload
-  systemctl show user@$(id -u).service -p TimeoutStopUSec     # 45min
+  systemctl show user@$(id -u).service -p TimeoutStopUSec     # 28min
   ```
 
-  A reboot then waits as long as the jobs need, up to 45 minutes. The file's name must
+  A reboot then waits as long as the jobs need, up to the drain's 25 minutes. Not
+  longer: systemd gives a whole reboot 30 minutes (`reboot.target`'s `JobTimeoutSec`)
+  and then forces it, without unmounting cleanly, so every limit here stays inside
+  that (the drain 25, the unit 27, your user manager 28). A job that needs longer (a
+  slow image bake) is cut short at a reboot: start it when none is due. The file's name must
   sort after Ubuntu's own `timeout.conf`: systemd applies drop-ins in name order, and
   a plain `fleetledger-drain.conf` would lose to it.
 
@@ -91,7 +95,8 @@ FleetLedger's vault ([../vault.md](../vault.md)): every secret in one encrypted 
 unlocked once after each boot (`ship-fleet unlock`, or the web UI), for the service
 and your commands alike, and a copy of the disk opens nothing. Without it, the file
 store works too (`0600` files in `~/.config/fleetledger/`), but they sit on the same
-disk as the keys, so a copy of that disk holds the whole fleet.
+disk as the keys, so a copy of that disk holds the whole fleet. FleetLedger on its own
+VM, from the seed to the move: [fleetledger-vm.md](fleetledger-vm.md).
 
 **At boot, and while you are logged out.** A user unit runs while you are logged in.
 For it to start at boot and keep running after you log out, turn on lingering for your
@@ -153,6 +158,13 @@ To stop it for a while: `systemctl --user stop fleetledger` (running jobs finish
 first), and `systemctl --user start fleetledger` again. Moving FleetLedger to another
 computer (`ship-fleet migrate`) needs it stopped: migrate refuses while anything else
 runs here, the service included.
+
+**One runtime folder for everything.** The service and your ssh sessions as the same
+user both use `$XDG_RUNTIME_DIR` (`/run/user/<uid>`, set by your login and by systemd
+for a user unit), so one `ship-fleet unlock` over ssh is seen by the service at once.
+If you set `FLEETLEDGER_RUNTIME_DIR`, set it the same in both (`ship-fleet service
+install` carries it into the unit). The unit also sets `LimitCORE=0`: a core dump of
+the service would hold the unlocked vault's key.
 
 ## The control socket
 

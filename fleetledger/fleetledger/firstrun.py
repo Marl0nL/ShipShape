@@ -268,7 +268,51 @@ def hypervisor(app, inv, *, offline: bool = False) -> list[Item]:
     except FleetError as exc:
         out.append(Item("hypervisor", "template", "fail", exc.message,
                         "make it: docs/runbooks/proxmox-setup.md, step 2"))
+    out += self_hidden(api, config, inv)
     return out
+
+
+def self_hidden(api, config, inv) -> list[Item]:
+    """FleetLedger's own VM ([fleet] self) must be invisible to the token (outside the
+    pool): a 403 for its config is the healthy answer."""
+    from fleetledger import appliance
+    from fleetledger.drivers.proxmox_api import ProxmoxError
+
+    vmid = appliance.self_vmid(inv)
+    if vmid is None:
+        return []
+    try:
+        api.get(f"/nodes/{config['node']}/qemu/{vmid}/config")
+    except ProxmoxError as exc:
+        if exc.status == 403:
+            return [Item("hypervisor", "FleetLedger's own VM", "ok",
+                         f"VM {vmid} is out of the token's reach (not in the pool)")]
+        return [Item("hypervisor", "FleetLedger's own VM", "info",
+                     f"VM {vmid}: Proxmox answered {exc.status}", "")]
+    except FleetError as exc:
+        return [Item("hypervisor", "FleetLedger's own VM", "info", exc.message, "")]
+    return [Item("hypervisor", "FleetLedger's own VM", "fail",
+                 f"the API token can see VM {vmid}, FleetLedger's own: it is in the pool",
+                 f"move it out of the pool on Proxmox (Datacenter, Pools, {config['pool']}, "
+                 "Members: remove it)")]
+
+
+def appliance_items(inv) -> list[Item]:
+    """On FleetLedger's own VM: can image builds use KVM here (nested virtualisation)?"""
+    import socket
+
+    from fleetledger import appliance
+
+    entry = appliance.fleet_self(inv) if inv is not None else None
+    if not entry or socket.gethostname().split(".")[0] != entry["name"]:
+        return []
+    if os.access("/dev/kvm", os.R_OK | os.W_OK):
+        return [Item("computer", "image builds", "ok", "KVM here: ship-fleet image build is "
+                     "quick on this VM")]
+    return [Item("computer", "image builds", "info", "no KVM here (no nested virtualisation, "
+                 "or not in the kvm group): image builds would be very slow",
+                 "give the VM CPU type host on a host with nested virtualisation, or build "
+                 "images on your desktop (docs/runbooks/fleetledger-vm.md)")]
 
 
 # --- the overlay and the Ships ------------------------------------------------------------
@@ -332,11 +376,46 @@ def vault_items() -> list[Item]:
     return out
 
 
+def backup_items(now: float | None = None) -> list[Item]:
+    """The last ship-fleet backup here, when there has been one or one is scheduled:
+    a failing scheduled backup shows here (and in Settings, Health), not only in the
+    journal."""
+    import time
+    from datetime import UTC, datetime
+
+    from fleetledger import backup, service
+
+    last = backup.last()
+    scheduled = (service.unit_dir() / backup.TIMER).is_file()
+    if last is None:
+        return [Item("computer", "backups", "info", "scheduled; none made yet",
+                     "ship-fleet backup now --to DIR")] if scheduled else []
+    when = str(last.get("at") or "")
+    try:
+        age = (now or time.time()) - datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=UTC).timestamp()
+    except ValueError:
+        age = None
+    if not last.get("ok"):
+        return [Item("computer", "backups", "warn",
+                     f"the last backup failed ({when[:16].replace('T', ' ')} UTC): "
+                     f"{last.get('why') or 'no reason given'}",
+                     f"fix that, then: ship-fleet backup now --to {last.get('to')}")]
+    left = last.get("left_out") or []
+    said = (f"last one {when[:16].replace('T', ' ')} UTC, to {last.get('to')}"
+            + (f"; it left out {len(left)} item(s) a move would not take" if left else ""))
+    if age is not None and age > 2 * 86400:
+        return [Item("computer", "backups", "warn", said + ": over two days ago",
+                     "journalctl --user -u fleetledger-backup says why")]
+    return [Item("computer", "backups", "ok", said)]
+
+
 def everything(app, *, offline: bool = False) -> list[Item]:
-    items = computer(app) + vault_items()
+    items = computer(app) + vault_items() + backup_items()
     fleet_items, inv = fleet(app)
     items += fleet_items
     if inv is not None:
+        items += appliance_items(inv)
         items += hypervisor(app, inv, offline=offline)
         items += overlay_items(app, inv)
         items += ships_items(inv)

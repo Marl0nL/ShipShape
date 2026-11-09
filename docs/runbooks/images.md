@@ -115,3 +115,18 @@ on Proxmox VE 9.2 (phase 4 rights, a QEMU-backend bake) gave:
   comes back on its pinned key. (Checked.)
 - `destroy` and `image rm` leave nothing in the pool or either storage.
   (Checked.)
+
+## FleetLedger on a VM without nested virtualisation
+
+Building needs KVM to be quick. When FleetLedger runs on its own VM and the host does
+not give it nested virtualisation, build on your desktop instead (its retired copy may
+still build an image file, and nothing else), then import it on the VM:
+
+```sh
+ship-fleet image build --out ~/images                     # on the desktop
+scp ~/images/<id>.qcow2 ~/images/<id>.json fleetledger@fleetledger:
+ship-fleet image import <id>.qcow2                         # on the VM
+```
+
+`import` checks the file against its manifest's sha256 and records it as if it were
+built there ([fleetledger-vm.md](fleetledger-vm.md)).

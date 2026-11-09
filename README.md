@@ -59,6 +59,8 @@ the web UI's Inbox tab),
 [the web UI](docs/web-ui.md),
 [run it as a service](docs/runbooks/fleetledger-service.md) (always on, no terminal:
 `ship-fleet service install`),
+[FleetLedger on its own VM](docs/runbooks/fleetledger-vm.md) (`ship-fleet appliance
+seed`, encrypted backups, `self-update`),
 [move FleetLedger to another computer](docs/runbooks/move-fleetledger.md) (`ship-fleet
 migrate`: the Ships keep working, nothing adopted again),
 [the vault](docs/vault.md) (every secret in one encrypted file, unlocked once per boot:

@@ -95,6 +95,7 @@ Start here: [guide/your-own-fleet.md](guide/your-own-fleet.md). More:
 [the web UI from your other devices](runbooks/remote-ui.md),
 [FleetLedger as a service](runbooks/fleetledger-service.md),
 [the vault](vault.md),
+[FleetLedger on its own VM](runbooks/fleetledger-vm.md),
 [signing in](runbooks/sign-in.md),
 [updating the fleet](runbooks/update-fleet.md),
 [SSH certificates and attaching from other machines](runbooks/trust-machines.md),

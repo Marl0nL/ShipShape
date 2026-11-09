@@ -81,6 +81,9 @@ def known_hosts_text(inventory: Inventory) -> str:
     lines = ["# Written by FleetLedger from ships.toml; edits are overwritten."]
     for ship in inventory.ships():
         lines.append(f"{ship.name} {ship.host_key_type_and_blob}")
+    from fleetledger import appliance
+
+    lines += appliance.known_hosts_lines(inventory)  # FleetLedger's own VM (migrate push)
     return "\n".join(lines) + "\n"
 
 

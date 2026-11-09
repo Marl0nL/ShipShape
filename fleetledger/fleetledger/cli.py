@@ -26,13 +26,15 @@ COMMANDS = (
     "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
     "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
     "image", "overlay", "put", "inbox", "migrate", "service", "unlock", "vault",
+    "appliance", "backup", "self-update",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
 # and cmd_<name> handlers.
 EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
                          "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service",
-                         "fleetledger.vaultcmd")
+                         "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
+                         "fleetledger.selfupdate")
 
 
 @dataclass
@@ -666,6 +668,8 @@ def _handed_over(args, app) -> None:
 
     if args.command in handover.ALLOWED:
         return
+    if args.command == "image" and args.action == "build" and getattr(args, "out", None):
+        return  # an image file for another computer's FleetLedger touches no fleet here
     store = app.store_factory()
     if getattr(store, "path", None) is not None:
         handover.gate(args.command, store)
@@ -673,8 +677,10 @@ def _handed_over(args, app) -> None:
 
 # What still runs while FleetLedger's vault is locked (vault.py): unlocking it, the
 # vault itself, doctor, the web UI (read-only, with its Unlock page) and the service
-# that runs it; and any read from the caches alone (--offline).
-LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service")
+# that runs it, updating FleetLedger's own checkout, and backup (it reads the vault,
+# which refuses while locked, so its result, failed, is kept for doctor); and any read
+# from the caches alone (--offline).
+LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup")
 
 
 def _vault_locked(args, app) -> None:
@@ -685,6 +691,8 @@ def _vault_locked(args, app) -> None:
 
     if args.command in LOCKED_ALLOWED or getattr(args, "offline", False) is True:
         return
+    if args.command == "migrate" and getattr(args, "action", None) == "retire":
+        return  # stepping aside needs no secret, and must not wait for an unlock
     if vault.state() == "locked":
         raise FleetError("FleetLedger's vault is locked, so FleetLedger is read-only: it "
                          "changes nothing and reaches no Ship. Your Ships keep running.",

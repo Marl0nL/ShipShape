@@ -18,7 +18,7 @@ Use generic values in examples, docs and tests:
 | Tags | `work`, `personal` |
 | IP addresses | `192.0.2.x`, `198.51.100.x`, `203.0.113.x` (RFC 5737) |
 | Domains and emails | `example.com`, `example.org`, `example.net`, `*.example`, `*.test` |
-| Paths | `~/...`, or the Ship's own users: `/home/agent`, `/home/fleet` |
+| Paths | `~/...`, or the Ship's own users: `/home/agent`, `/home/fleet` (and FleetLedger's own VM's, `/home/fleetledger`) |
 | Accounts | `you@example.com`, `example-user` |
 
 Anything personal (accounts, repository URLs, Proxmox node, storage and bridge

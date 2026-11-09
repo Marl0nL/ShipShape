@@ -38,6 +38,9 @@ in steps:
 Retiring comes before activating, so a hand-over cut short (the network drops)
 leaves no copy acting, never two. Nothing changes on any Ship at any step.
 
+Onto FleetLedger's own small VM, from its seed to the first unlock:
+[fleetledger-vm.md](fleetledger-vm.md).
+
 ## Before you start
 
 On the **new** computer:

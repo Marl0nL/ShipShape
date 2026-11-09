@@ -44,7 +44,10 @@ from fleetledger import paths
 from fleetledger.errors import FleetError
 
 HOST = "127.0.0.1"
-DRAIN_TIMEOUT = 40 * 60  # an image bake's own limit; the unit's TimeoutStopSec is longer
+# How long a stop lets running jobs finish. A reboot gives everything at most 30
+# minutes (reboot.target's JobTimeoutSec, then a forced reboot), so the drain ends well
+# inside it; the unit's TimeoutStopSec (service.py) sits between the two.
+DRAIN_TIMEOUT = 25 * 60
 # A second stop signal under systemd (a second systemctl stop is merged into the first).
 STOP_NOW = "systemctl --user kill -s TERM fleetledger"
 

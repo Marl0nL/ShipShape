@@ -41,6 +41,22 @@
           "default": 0,
           "description": "Goes up by one each time a copy of this FleetLedger becomes the active one (ship-fleet migrate: activate, unretire), so a move can refuse an older state. Written by FleetLedger; never edit it."
         },
+        "self": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "host_key"],
+          "description": "FleetLedger's own VM, when it runs on one (ship-fleet appliance seed; docs/runbooks/fleetledger-vm.md). Never a Ship: no Ship may have its name, VM id or host key, and no driver call touches its VM id, so FleetLedger can never destroy, resize, stop, snapshot or update itself. Its host key is pinned for ssh to it (ship-fleet migrate push).",
+          "properties": {
+            "name": { "$ref": "#/$defs/shipName", "description": "Its hostname." },
+            "vmid": { "type": "integer", "minimum": 100, "maximum": 999999999, "description": "Its Proxmox VM id, outside drivers.proxmox.vmid_range and outside the Ships' pool." },
+            "names": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$" },
+              "description": "Names to reach it by over ssh (its LAN or tailnet name)."
+            },
+            "host_key": { "$ref": "#/$defs/sshPublicKey", "description": "Its ed25519 host public key, made with its seed." }
+          }
+        },
         "managed_keys": {
           "type": "object",
           "additionalProperties": false,

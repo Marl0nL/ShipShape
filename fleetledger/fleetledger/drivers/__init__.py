@@ -29,11 +29,14 @@ __all__ = [
 
 
 def get_driver(inventory: Inventory, driver_id: str, *, ubuntu_release: str = "26.04") -> Driver:
+    from fleetledger import appliance
+
     proxmox = inventory.driver_config("proxmox")
+    protected = appliance.self_vmid(inventory)  # FleetLedger's own VM: never touched
     if driver_id == "manual":
         from fleetledger.drivers.manual import ManualDriver
 
-        return ManualDriver(proxmox, ubuntu_release=ubuntu_release)
+        return ManualDriver(proxmox, ubuntu_release=ubuntu_release, protected=protected)
     if driver_id == "proxmox":
         if not proxmox:
             raise ConfigError(
@@ -42,5 +45,5 @@ def get_driver(inventory: Inventory, driver_id: str, *, ubuntu_release: str = "2
             )
         from fleetledger.drivers.proxmox import ProxmoxDriver
 
-        return ProxmoxDriver(proxmox)
+        return ProxmoxDriver(proxmox, protected=protected)
     raise ConfigError(f"Unknown driver '{driver_id}'.")

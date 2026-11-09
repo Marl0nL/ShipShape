@@ -117,8 +117,12 @@ class ProxmoxDriver(Driver):
         *,
         api: ProxmoxAPI | None = None,
         read_seed: Callable[[SeedFile], bytes] = lambda seed: seed.path.read_bytes(),
+        protected: int | None = None,
     ) -> None:
         self.config = config
+        # FleetLedger's own VM id ([fleet] self): every call on it is refused, even if
+        # the token could see it (it should not: the VM is outside the pool).
+        self.protected = protected
         self.api = api or ProxmoxAPI(config)
         self.node = config["node"]
         self._read_seed = read_seed
@@ -128,10 +132,14 @@ class ProxmoxDriver(Driver):
         return f"/nodes/{self.node}/qemu/{vmid}"
 
     def _vmid(self, ship: Ship) -> int:
+        from fleetledger.appliance import refuse_self
+
         try:
-            return int(ship.driver_ref["vmid"])
+            vmid = int(ship.driver_ref["vmid"])
         except (KeyError, ValueError) as exc:
             raise FleetError(f"{ship.name} has no Proxmox vmid in ships.toml driver_ref.") from exc
+        refuse_self(vmid, self.protected)
+        return vmid
 
     def _task(self, upid: Any, timeout: float = 600) -> None:
         if isinstance(upid, str) and upid.startswith("UPID:"):
@@ -143,6 +151,8 @@ class ProxmoxDriver(Driver):
         if first is None:
             return int(self.api.get("/cluster/nextid"))
         for vmid in range(first, last + 1):
+            if self.protected is not None and vmid == self.protected:
+                continue
             try:
                 self.api.get("/cluster/nextid", vmid=vmid)
             except ProxmoxError as exc:
@@ -174,6 +184,9 @@ class ProxmoxDriver(Driver):
                              f"{self.node}.", hint=f"Publish it again: ship-fleet image publish "
                              f"{image.id}")
         vmid = int(ship.driver_ref["vmid"]) if "vmid" in ship.driver_ref else self.allocate_vmid()
+        from fleetledger.appliance import refuse_self
+
+        refuse_self(vmid, self.protected)  # before the clone: never onto its own VM id
         volume = seed_volume(cfg["seed_storage"], seed.instance_id)
         messages: list[str] = []
         uploaded = clone_asked = False
@@ -456,8 +469,12 @@ class ProxmoxDriver(Driver):
         VMIDs are reused once freed, so a VMID recorded earlier may now belong to
         another VM. Anything that changes, removes or clones a VM checks its name
         (and whether it is a template) first, and refuses a VM with another name,
-        the wrong kind, or one the token cannot see.
+        the wrong kind, or one the token cannot see. FleetLedger's own VM is refused
+        before anything is asked.
         """
+        from fleetledger.appliance import refuse_self
+
+        refuse_self(vmid, self.protected)
         try:
             config = self.api.get(self._vm(vmid) + "/config")
         except ProxmoxError as exc:

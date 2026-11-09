@@ -53,6 +53,9 @@ def semantic_errors(doc: Mapping[str, Any]) -> list[str]:
         other = seen_keys.setdefault(key, ship_name)
         if other != ship_name:
             problems.append(f"ship.{ship_name}.host_key: same host key as {other}")
+    from fleetledger import appliance
+
+    problems += appliance.clashes(doc)  # no Ship may be FleetLedger's own VM
     return problems
 
 

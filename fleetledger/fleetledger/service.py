@@ -55,7 +55,13 @@ SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 HEADER = "# Written by ship-fleet service install"
 REFUSED = 2  # ui --service exits with it when only a person can fix what stops it
 STOP_NOW = "systemctl --user kill -s TERM fleetledger"
-DRAIN_FOR = 45 * 60  # seconds a stop may take (the unit's TimeoutStopSec)
+# A stop drains for up to 25 minutes (web/server.py DRAIN_TIMEOUT). The unit allows 27,
+# this user's systemd manager 28 at a reboot (REBOOT_DROP_IN): all inside the 30 minutes
+# after which reboot.target and poweroff.target force the reboot (JobTimeoutSec, then
+# reboot-force, with no clean unmount), so a drain never meets that.
+STOP_TIMEOUT = "27min"
+DRAIN_FOR = 28 * 60  # seconds a reboot gives the user manager, with REBOOT_DROP_IN
+REBOOT_DROP_IN = "[Service]\nTimeoutStopSec=28min\n"
 
 
 def unit_dir() -> Path:
@@ -149,6 +155,7 @@ def render_unit(ship_fleet: str, port: int, interval: float,
         "WorkingDirectory=%h",
         "UMask=0077",
         "NoNewPrivileges=yes",
+        "LimitCORE=0",  # a core dump would hold the unlocked vault's key and secrets
         "LockPersonality=yes",
         "RestrictRealtime=yes",
         "SystemCallArchitectures=native",
@@ -158,7 +165,7 @@ def render_unit(ship_fleet: str, port: int, interval: float,
         "RestartSteps=6",
         "RestartMaxDelaySec=15min",
         "KillMode=mixed",
-        "TimeoutStopSec=45min",
+        f"TimeoutStopSec={STOP_TIMEOUT}",
         "",
         "[Install]",
         "WantedBy=default.target",
@@ -236,7 +243,7 @@ def reboot_drop_in() -> str:
     """The root command that lets a reboot wait for running jobs too."""
     uid = os.getuid()
     folder = f"/etc/systemd/system/user@{uid}.service.d"
-    return (f"sudo mkdir -p {folder} && printf '[Service]\\nTimeoutStopSec=45min\\n' | "
+    return (f"sudo mkdir -p {folder} && printf '[Service]\\nTimeoutStopSec=28min\\n' | "
             f"sudo tee {folder}/{DROP_IN} >/dev/null && sudo systemctl "
             "daemon-reload")
 

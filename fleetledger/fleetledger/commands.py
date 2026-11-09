@@ -278,6 +278,9 @@ def _new(args, app, progress: dict[str, Any]) -> int:
     name = args.name
     if not NAME_RE.match(name):
         raise FleetError(f"'{name}' is not a valid Ship name (a-z, 0-9 and -, up to 31).")
+    from fleetledger import appliance
+
+    appliance.refuse_as_ship(inv, name=name, vmid=args.vmid)  # before any attempt is saved
     previous = attempts.get(name)
     if inv.has_ship(name):
         said = previous is not None and attempts.blocker(inv, previous)
@@ -484,8 +487,12 @@ def cmd_adopt(args, app) -> int:
     if inv.has_ship(name) and not args.replace:
         raise FleetError(f"{name} is already in the inventory.",
                          hint="Use --replace to re-pin a rebuilt Ship.")
+    from fleetledger import appliance
+
+    appliance.refuse_as_ship(inv, name=name)
     host = args.host or (inv.ship(name).names[0] if inv.has_ship(name) else f"{name}.local")
     key = app.keyscan(host)
+    appliance.refuse_as_ship(inv, host_key=key)
     fingerprint = hostkey.fingerprint(key)
     app.say(f"{host} presents host key {fingerprint}")
     if args.fingerprint:
