@@ -40,6 +40,21 @@ sha256 = "14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d"
 url = "https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64"
 sha256 = "17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c"
 
+# herdr-core (`herdr-core`, also `hc`), installed beside herdr while Ships move to it.
+# No GitHub releases: assets come from releases.herdr.dev/core/<version>/manifest.json,
+# which is unsigned, so the sha256 pinned here is the guarantee. Each asset is a
+# tar.gz holding the herdr-core binary.
+[herdr_core]
+version = "0.1.19"
+
+[herdr_core.assets.x86_64]
+url = "https://releases.herdr.dev/core/0.1.19/herdr-core-linux-x86_64.tar.gz"
+sha256 = "4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424"
+
+[herdr_core.assets.aarch64]
+url = "https://releases.herdr.dev/core/0.1.19/herdr-core-linux-aarch64.tar.gz"
+sha256 = "f95c34fd7177ed58807d74fe4ee78bb3dc73eb37f21c69496064000a21abcb10"
+
 [claude]
 # Native installer as the agent user; it then updates itself on the Ship's channel.
 install = "native"

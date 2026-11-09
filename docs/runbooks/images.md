@@ -2,7 +2,7 @@
 
 A baked image is Ubuntu's verified cloud image with the slow, shared part of
 provisioning already done (Ubuntu packages, the gh, gcloud, Node.js and Chrome
-apt repositories and packages, herdr, uv). A Ship made from it skips those steps
+apt repositories and packages, herdr, herdr-core, uv). A Ship made from it skips those steps
 at first boot, so it reaches `needs-sign-in` in minutes instead of about ten.
 Everything per-Ship still comes from its own seed: users, host key, settings,
 tooling, Claude Code, npm tools. The image holds no keys and no secrets

@@ -343,6 +343,43 @@ step_herdr() {
   rm -rf "$tmp"
 }
 
+# herdr-core sits beside herdr until Ships move to it. Root-owned on purpose: it
+# does not update itself from a folder it cannot write, so the pin stays the
+# version, and its remote launcher finds /usr/local/bin/herdr-core first.
+step_herdr_core() {
+  local arch url sum tmp
+  arch=$(machine)
+  url=$(v "herdr_core.assets.$arch.url")
+  sum=$(v "herdr_core.assets.$arch.sha256")
+  [ -n "$url" ] || die "versions.toml has no herdr-core build for $arch"
+  if [ "$SANDBOX" = 1 ]; then log "skipped (--root): herdr-core download"; return 0; fi
+  if [ -f /usr/local/bin/herdr-core ] && same_meta /usr/local/bin/herdr-core 0755 root:root &&
+    [ "$(cat /var/lib/shipshape/herdr-core.sha256 2>/dev/null)" = "$sum" ] &&
+    [ "$(readlink /usr/local/bin/hc 2>/dev/null)" = herdr-core ]; then
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then changed "/usr/local/bin/herdr-core $(v herdr_core.version)"; return 0; fi
+  tmp=$(mktemp -d)
+  fetch -o "$tmp/herdr-core.tar.gz" "$url"
+  install_herdr_core "$tmp/herdr-core.tar.gz" "$sum"
+  rm -rf "$tmp"
+}
+
+# install_herdr_core ARCHIVE SHA256: check the archive, then install its binary
+# as /usr/local/bin/herdr-core (0755, root) with /usr/local/bin/hc beside it.
+install_herdr_core() {
+  local archive=$1 sum=$2 dir
+  echo "$sum  $archive" | sha256sum -c --quiet - || die "herdr-core checksum mismatch"
+  dir=$(mktemp -d)
+  tar -xzf "$archive" -C "$dir" --no-same-owner herdr-core || die "herdr-core archive has no herdr-core binary"
+  [ -f "$dir/herdr-core" ] && [ ! -L "$dir/herdr-core" ] || die "herdr-core archive has no herdr-core binary"
+  put_file "$dir/herdr-core" /usr/local/bin/herdr-core 0755
+  put_link herdr-core /usr/local/bin/hc
+  # The archive's checksum, so a re-run knows the installed binary is the pinned one.
+  echo "$sum" | put_text /var/lib/shipshape/herdr-core.sha256 0644
+  rm -rf "$dir"
+}
+
 step_uv() {
   local arch url sum tmp version
   arch=$(machine)
@@ -698,6 +735,7 @@ main() {
   step_apt_repos
   step_core_packages
   step_herdr
+  step_herdr_core
   step_uv
   if [ "$MODE" = bake ]; then
     step_bake_recipes

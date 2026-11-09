@@ -6,6 +6,9 @@ changed pin out. This module does the careful part of changing one:
 - herdr and uv: every pinned asset (one per architecture) is downloaded and
   hashed here, and the hash must equal the SHA-256 digest GitHub publishes for
   that release asset. Both are written to versions.toml only if they agree.
+- herdr-core: no GitHub releases; releases.herdr.dev publishes a manifest per
+  version with each target's URL and sha256. Each pinned archive is downloaded
+  and hashed here and must match the manifest.
 - npm tools: the exact version must exist in the npm registry.
 - The Ubuntu cloud image: SHA256SUMS and its signature are fetched for the new
   build, the signature is checked with gpgv against the pinned signing key alone
@@ -46,6 +49,9 @@ GITHUB_ASSET_RE = re.compile(
 KEYSERVER = "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x{fingerprint}"
 GITHUB_API = "https://api.github.com/repos/{repo}/releases/{which}"
 NPM_REGISTRY = "https://registry.npmjs.org/{package}/{version}"
+HERDR_CORE = "https://releases.herdr.dev/core/{which}"
+# versions.toml arch -> the manifest's target name.
+HERDR_CORE_TARGETS = {"x86_64": "linux-x86_64", "aarch64": "linux-aarch64"}
 MAX_ASSET = 512 * 1024 * 1024
 
 
@@ -129,6 +135,10 @@ def latest_github(http: Http, repo_name: str) -> str:
     return tag[1:] if tag.startswith("v") else tag
 
 
+def latest_herdr_core(http: Http) -> str:
+    return str(http.json(HERDR_CORE.format(which="latest.json"))["version"])
+
+
 def latest_npm(http: Http, package: str) -> str:
     return str(http.json(NPM_REGISTRY.format(package=package, version="latest"))["version"])
 
@@ -164,6 +174,7 @@ def check(repo: Repo, http: Http | None = None,
         section = doc[pin]
         repo_name = next(iter(_github_assets(section).values()))[0]
         probe(pin, str(section["version"]), lambda r=repo_name: latest_github(http, r))
+    probe("herdr_core", str(doc["herdr_core"]["version"]), lambda: latest_herdr_core(http))
     base_url = str(doc["ubuntu"]["base_url"])
     probe("ubuntu", str(doc["ubuntu"]["build"]), lambda: latest_ubuntu_build(http, base_url),
           "new Ships only; existing Ships update in place")
@@ -223,6 +234,47 @@ def set_github_pin(repo: Repo, pin: str, version: str, http: Http | None = None)
     section["version"] = version
     _save(repo, doc)
     return Change(pin, old, version, details)
+
+
+def set_herdr_core_pin(repo: Repo, version: str, http: Http | None = None) -> Change:
+    """Move herdr-core to `version`, from its releases.herdr.dev manifest.
+
+    The manifest is not signed: it says which archive to fetch and what it should
+    hash to, and a download must match it, but what makes an install safe is the
+    sha256 written into versions.toml here, which every Ship checks. Review it.
+    """
+    if not VERSION_RE.match(version):
+        raise FleetError(f"'{version}' is not a version (like 1.2.3).")
+    http = http or Http()
+    doc = _load(repo)
+    section = doc["herdr_core"]
+    old = str(section["version"])
+    manifest = http.json(HERDR_CORE.format(which=f"{version}/manifest.json"))
+    if not isinstance(manifest, dict) or str(manifest.get("version")) != version:
+        raise FleetError(f"The herdr-core manifest for {version} is for another version.")
+    targets = manifest.get("targets") or {}
+    prefix = HERDR_CORE.format(which=f"{version}/")
+    details = []
+    for arch in section["assets"]:
+        target = targets.get(HERDR_CORE_TARGETS.get(str(arch), ""))
+        if not isinstance(target, dict):
+            raise FleetError(f"The herdr-core {version} manifest has no build for {arch}.")
+        url, want = str(target.get("url", "")), str(target.get("sha256", "")).lower()
+        if not url.startswith(prefix) or not url.endswith(".tar.gz"):
+            raise FleetError(f"Unexpected herdr-core {arch} URL in the manifest: {url}")
+        if not re.fullmatch(r"[0-9a-f]{64}", want):
+            raise FleetError(f"The herdr-core manifest gives no SHA-256 for {arch}.")
+        data = http.get(url)
+        sha = hashlib.sha256(data).hexdigest()
+        if sha != want:
+            raise FleetError(f"{url}: the download hashes to {sha}, but the manifest says "
+                             f"{want}. Not pinning it.")
+        section["assets"][arch]["url"] = url
+        section["assets"][arch]["sha256"] = sha
+        details.append(f"{arch}: {sha} ({len(data) // 1024} KiB, matches the manifest)")
+    section["version"] = version
+    _save(repo, doc)
+    return Change("herdr_core", old, version, details)
 
 
 def set_npm_pin(repo: Repo, package: str, version: str, http: Http | None = None) -> Change:
@@ -361,9 +413,11 @@ def set_ubuntu_build(repo: Repo, build: str, http: Http | None = None) -> Change
 
 
 def set_pin(repo: Repo, pin: str, value: str, http: Http | None = None) -> Change:
-    """`ship-fleet pins set PIN VALUE`; PIN is herdr, uv, ubuntu or an npm package."""
+    """`ship-fleet pins set PIN VALUE`; PIN is herdr, herdr_core, uv, ubuntu or an npm package."""
     if pin in ("herdr", "uv"):
         return set_github_pin(repo, pin, value, http)
+    if pin in ("herdr_core", "herdr-core"):
+        return set_herdr_core_pin(repo, value, http)
     if pin == "ubuntu":
         return set_ubuntu_build(repo, value, http)
     return set_npm_pin(repo, pin.removeprefix("npm:"), value, http)

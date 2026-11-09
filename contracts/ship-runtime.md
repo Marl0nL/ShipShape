@@ -69,6 +69,7 @@ exactly as in phase 1.
 | `/usr/local/bin/ship-axi` | symlink or wrapper | The ship-axi command (W7). |
 | `/opt/shipshape/hooks/mode-ledger` | root, 0755 | Mode-ledger Claude hook (`settings.md`). |
 | `/usr/local/bin/herdr` | root, 0755 | Pinned herdr from `versions.toml`. |
+| `/usr/local/bin/herdr-core`, `/usr/local/bin/hc` (symlink) | root, 0755 | Pinned herdr-core from `versions.toml`, installed beside herdr; root-owned so it cannot update itself past the pin. Nothing runs it yet. |
 | `/var/lib/shipshape/` | root, 0755 | Ship state. Contents are internal, except the reserved names below. |
 | `/var/lib/shipshape/bundle.tar.gz` | root, 0600 | The last bundle applied. |
 | `/var/lib/shipshape/agents.json` | root, 0644 | The agent record: the Claude agents the Ship keeps running and resumes after a boot (`agent-record.schema.json`, `ship-ctl.md` "The agent record"). Written only by ship-ctl. |

@@ -442,6 +442,7 @@ def check_pages():
     return {
         "https://api.github.com/repos/herdrdev/herdr/releases/latest": {"tag_name": "v0.9.6"},
         "https://api.github.com/repos/astral-sh/uv/releases/latest": {"tag_name": "0.13.6"},
+        "https://releases.herdr.dev/core/latest.json": {"version": "0.1.20"},
         f"{BASE}/": b'<a href="release-20261016/">x</a> <a href="release-20261101/">y</a>',
         **{f"https://registry.npmjs.org/{p}/latest": {"version": "0.1.47"}
            for p in ("gh-axi", "quota-axi", "chrome-devtools-axi", "chrome-devtools-mcp",
@@ -453,6 +454,7 @@ def test_check_reports_newer_releases(fake_repo):
     rows = {r.pin: r for r in pins.check(fake_repo, FakeWeb(check_pages()))}
     assert rows["herdr"].behind and rows["herdr"].latest == "0.9.6"
     assert not rows["uv"].behind
+    assert rows["herdr_core"].latest == "0.1.20" and rows["herdr_core"].behind
     assert rows["ubuntu"].latest == "20261101" and rows["ubuntu"].behind
     assert rows["npm gh-axi"].latest == "0.1.47" and not rows["npm gh-axi"].behind
 
@@ -497,3 +499,58 @@ def test_cli_pins_check_and_set(run, fake_repo):
     assert versions(fake_repo)["herdr"]["version"] == "0.9.6"
     code, _, err = run("pins", "set", "herdr")
     assert code == 1 and "Usage" in err
+
+
+# --- herdr-core (releases.herdr.dev manifest) ------------------------------------------
+
+CORE = "https://releases.herdr.dev/core/0.1.20"
+CORE_DATA = {t: f"herdr-core 0.1.20 {t}".encode() for t in ("linux-x86_64", "linux-aarch64")}
+
+
+def core_pages(**override):
+    targets = {t: {"url": f"{CORE}/herdr-core-{t}.tar.gz", "sha256": sha(d)}
+               for t, d in CORE_DATA.items()}
+    targets["macos-aarch64"] = {"url": f"{CORE}/herdr-core-macos-aarch64.tar.gz",
+                                "sha256": "b" * 64}
+    for t, fields in override.items():
+        targets[t.replace("_", "-", 1)].update(fields)
+    return {
+        f"{CORE}/manifest.json": {"version": "0.1.20", "generation": 1, "targets": targets},
+        **{f"{CORE}/herdr-core-{t}.tar.gz": d for t, d in CORE_DATA.items()},
+    }
+
+
+def test_set_herdr_core_from_the_manifest(fake_repo):
+    before = tomllib.loads(fake_repo.versions_path.read_text())
+    change = pins.set_pin(fake_repo, "herdr_core", "0.1.20", FakeWeb(core_pages()))
+    v = versions(fake_repo)
+    assert (change.old, change.new) == ("0.1.19", "0.1.20")
+    assert v["herdr_core"]["version"] == "0.1.20"
+    assert v["herdr_core"]["assets"]["aarch64"] == {
+        "url": f"{CORE}/herdr-core-linux-aarch64.tar.gz",
+        "sha256": sha(CORE_DATA["linux-aarch64"])}
+    assert {k: x for k, x in before.items() if k != "herdr_core"} == {
+        k: x for k, x in v.items() if k != "herdr_core"}
+
+
+@pytest.mark.parametrize("override, why", [
+    ({"linux_aarch64": {"sha256": "0" * 64}}, "Not pinning it"),
+    ({"linux_x86_64": {"url": "https://example.invalid/herdr-core.tar.gz"}}, "Unexpected"),
+    ({"linux_x86_64": {"sha256": ""}}, "no SHA-256"),
+])
+def test_set_herdr_core_refuses_what_the_manifest_does_not_back(fake_repo, override, why):
+    before = fake_repo.versions_path.read_text()
+    with pytest.raises(FleetError, match=why):
+        pins.set_pin(fake_repo, "herdr_core", "0.1.20", FakeWeb(core_pages(**override)))
+    assert fake_repo.versions_path.read_text() == before
+
+
+def test_set_herdr_core_refuses_a_missing_target_or_another_version(fake_repo):
+    pages = core_pages()
+    del pages[f"{CORE}/manifest.json"]["targets"]["linux-aarch64"]
+    with pytest.raises(FleetError, match="no build for aarch64"):
+        pins.set_pin(fake_repo, "herdr_core", "0.1.20", FakeWeb(pages))
+    pages = core_pages()
+    pages[f"{CORE}/manifest.json"]["version"] = "0.1.19"
+    with pytest.raises(FleetError, match="another version"):
+        pins.set_pin(fake_repo, "herdr_core", "0.1.20", FakeWeb(pages))
