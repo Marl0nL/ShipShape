@@ -535,6 +535,9 @@ step_shipshape_files() {
     rmdir "$ROOT/opt/shipshape/shim" 2>/dev/null || true
   fi
   put_file "$FILES/hooks/mode_ledger.py" /opt/shipshape/hooks/mode-ledger 0755
+  # Every agent on a herdr-core Ship starts through it, with the Ship's environment.
+  put_dir /opt/shipshape/bin 0755
+  put_file "$FILES/bin/agent-launch" /opt/shipshape/bin/agent-launch 0755
   put_link /opt/shipshape/current/bin/ship-ctl /usr/local/bin/ship-ctl
   if [ -e "$BUNDLE/axi/bin/ship-axi.js" ]; then
     put_link /opt/shipshape/current/axi/bin/ship-axi.js /usr/local/bin/ship-axi
@@ -563,8 +566,17 @@ step_system_config() {
   [ "$CHANGED" = 0 ] || sys systemctl restart systemd-journald
 }
 
+# What runs the agents (ship.toml runtime): herdr's server unless it says core.
+agent_runtime() {
+  local runtime
+  runtime=$(cfg "$ROOT/etc/shipshape/ship.toml" runtime 2>/dev/null || true)
+  if [ "$runtime" = core ]; then echo core; else echo herdr; fi
+}
+
+runtime_unit() { if [ "$(agent_runtime)" = core ]; then echo ship-core.service; else echo herdr.service; fi; }
+
 step_units() {
-  local unit system_changed=0 user_changed=0
+  local unit system_changed=0 user_changed=0 want other
   # The two ship-lan-guard units are enabled or disabled by `ship-ctl apply` (lan_guard),
   # ship-wake.timer by `ship-ctl apply` too (wake.after_boot).
   for unit in ship-status.service ship-status.timer ship-lan-guard-early.service \
@@ -572,8 +584,10 @@ step_units() {
     put_file "$FILES/systemd/system/$unit" "/etc/systemd/system/$unit" 0644
     [ "$CHANGED" = 0 ] || system_changed=1
   done
-  put_file "$FILES/systemd/user/herdr.service" /etc/systemd/user/herdr.service 0644
-  [ "$CHANGED" = 0 ] || user_changed=1
+  for unit in herdr.service ship-core.service; do
+    put_file "$FILES/systemd/user/$unit" "/etc/systemd/user/$unit" 0644
+    [ "$CHANGED" = 0 ] || user_changed=1
+  done
   # ship-resume (a hidden herdr client that let herdr resume its agents) is gone:
   # the status refresh resumes agents from the agent record.
   drop_file /etc/systemd/user/default.target.wants/ship-resume.service && user_changed=1
@@ -585,9 +599,14 @@ step_units() {
   if [ ! -L "$ROOT/etc/systemd/system/timers.target.wants/ship-status.timer" ]; then
     enable_unit "ship-status.timer" ship-status.timer
   fi
-  if [ ! -L "$ROOT/etc/systemd/user/default.target.wants/herdr.service" ]; then
-    enable_unit "herdr.service for $AGENT" --global herdr.service
+  # One runtime starts at boot: herdr's server, or herdr-core on a core Ship. Only the
+  # boot-time link changes here; nothing running is stopped (both stay installed).
+  want=$(runtime_unit)
+  if [ "$want" = herdr.service ]; then other=ship-core.service; else other=herdr.service; fi
+  if [ ! -L "$ROOT/etc/systemd/user/default.target.wants/$want" ]; then
+    enable_unit "$want for $AGENT" --global "$want"
   fi
+  drop_file "/etc/systemd/user/default.target.wants/$other" && user_changed=1
   if [ "$SANDBOX" = 0 ] && [ "$DRY" = 0 ]; then
     systemctl is-active --quiet ship-status.timer || systemctl start ship-status.timer
     systemctl enable --now qemu-guest-agent >/dev/null 2>&1 || true
@@ -652,9 +671,9 @@ step_first_boot() {
     sleep 1
   done
   as_agent systemctl --user daemon-reload
-  as_agent systemctl --user start herdr.service
+  as_agent systemctl --user start "$(runtime_unit)"
   # The first status refresh records this boot's (empty) resume, then autostarts.
-  log "herdr started (after ${i}s)"
+  log "$(agent_runtime) started (after ${i}s)"
 }
 
 # --- bake: the apt packages of the recipes marked bake ----------------------------

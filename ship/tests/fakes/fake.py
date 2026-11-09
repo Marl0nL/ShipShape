@@ -590,8 +590,221 @@ def useradd(s: dict, a: list[str]) -> int:
     return 0
 
 
+# --- herdr-core (hc) ----------------------------------------------------------------
+LAUNCHER = "/opt/shipshape/bin/agent-launch"
+SHELLS = ("sh", "bash", "zsh", "fish", "nu", "dash", "ksh", "tcsh")
+
+
+def hc_error(kind: str, message: str = "x") -> int:
+    """hc's error line on stderr, and its exit code for that kind."""
+    print(json.dumps({"error": {"kind": kind, "message": message, "hint": ""}}), file=sys.stderr)
+    return {"not_found": 3, "unavailable": 5, "invalid_params": 6, "blocked": 9,
+            "finished": 11}.get(kind, 1)
+
+
+def hc_short(t: dict) -> dict:
+    """A terminal as `hc ls --json` and `hc run --bg --json` give it."""
+    out = {k: t[k] for k in ("address", "name", "state", "exit_code", "reason", "cwd", "turn")
+           if t.get(k) is not None}
+    if isinstance(t.get("status"), dict):
+        out["status"] = t["status"]["state"]
+    out["agent"] = (t.get("status") or {}).get("app") or os.path.basename(t["argv"][0])
+    return out
+
+
+def hc_find(h: dict, target: str, live_only: bool = False) -> dict | None:
+    """By address, else by name (a live terminal first)."""
+    terms = h.get("terminals", [])
+    hit = next((t for t in terms if t["address"] == target), None)
+    if hit is None:
+        named = [t for t in terms if t.get("name") == target]
+        hit = next((t for t in named if t["state"] == "live"), None) or (
+            None if live_only else next(iter(named), None))
+    return hit
+
+
+def hc_tick(t: dict) -> None:
+    """A poll of a terminal: a lost kept one gets its shell after recover_in polls; an
+    Escape takes effect after settle_in."""
+    if t["state"] == "live" and t.get("foreground") is None and "recover_in" in t:
+        t["recover_in"] -= 1
+        if t["recover_in"] <= 0:
+            del t["recover_in"]
+            t["foreground"] = {"pid": 4242, "name": "bash", "argv": ["bash"], "cwd": t["cwd"]}
+    if "settle_in" in t:
+        t["settle_in"] -= 1
+        if t["settle_in"] <= 0:
+            del t["settle_in"]
+            t["status"] = {"app": "claude-code", "state": "idle"}
+
+
+def hc_claude(s: dict, h: dict, t: dict, argv: list[str]) -> None:
+    """claude starts in t through the launcher with argv: `--resume X` continues X,
+    `--session-id X` is a new session X; a lost session ends it at once."""
+    rest = argv[1:]
+    sid = None
+    for flag in ("--resume", "--session-id"):
+        if flag in rest:
+            sid = rest[rest.index(flag) + 1]
+    if "--resume" in rest and sid in h.get("lost_sessions", []):
+        t.update(state="finished", exit_code=1, reason="exited", foreground=None, status=None)
+        return
+    sid = sid or f"sess-{t.get('name')}"
+    t["foreground"] = {"pid": 4343, "name": "claude", "argv": ["claude", *rest], "cwd": t["cwd"]}
+    t["status"] = {"app": "claude-code", "state": "idle"}
+    t["claude_args"] = rest
+    t["session"] = sid  # what claude really runs (the label is what ShipShape said)
+    ledger_hook({"hook_event_name": "SessionStart", "session_id": sid, "argv": rest})
+
+
+def hc_end(t: dict, code: int = 0) -> None:
+    sid = t.get("session")
+    t.update(state="finished", exit_code=code, reason="exited", foreground=None, status=None)
+    if sid and code == 0:
+        ledger_hook({"hook_event_name": "SessionEnd", "session_id": sid,
+                     "reason": "prompt_input_exit"})
+
+
+def hc(s: dict, a: list[str]) -> int:
+    h = s.setdefault("hc", {})
+    terms = h.setdefault("terminals", [])
+    if a in (["--version"], ["-V"]):
+        out(f"herdr-core {h.get('version', '0.1.19')}")
+        return 0
+    cmd, rest = a[0], [x for x in a[1:] if x != "--json"]
+    if cmd in ("kill",) or a[:2] == ["server", "stop"]:
+        h.setdefault("forbidden", []).append(a)  # tests check ShipShape never does these
+        save(s)
+        return 0
+    if a[:2] == ["server", "start"]:
+        h["server"] = True
+        save(s)
+        out({"version": h.get("version", "0.1.19"), "pid": 1320, "uptime_ms": 9})
+        return 0
+    if not h.get("server", True):
+        return hc_error("unavailable", "cannot start the core")
+    if cmd == "ls":
+        shown = [t for t in terms if t["state"] == "live" or "--all" in rest]
+        for t in shown:
+            hc_tick(t)
+        save(s)
+        out({"terminals": [hc_short(t) for t in shown],
+             "hidden_finished": sum(t["state"] != "live" for t in terms) if "--all" not in rest
+             else 0})
+        return 0
+    if cmd == "get":
+        t = hc_find(h, rest[0])
+        if t is None:
+            return hc_error("not_found")
+        hc_tick(t)
+        save(s)
+        out({k: v for k, v in t.items() if k not in ("recover_in", "settle_in", "claude_args",
+                                                     "session")})
+        return 0
+    if cmd == "run":
+        argv = rest[rest.index("--") + 1:]
+        opts = rest[:rest.index("--")]
+        name = opts[opts.index("--name") + 1] if "--name" in opts else None
+        labels = dict(opts[i + 1].split("=", 1) for i, x in enumerate(opts) if x == "--label")
+        if name in h.get("race_run", []):  # another ship-ctl started it a moment before
+            h["race_run"].remove(name)
+            hc(s, ["run", "--json", *opts, "--", *argv])
+            s = load()
+            h = s["hc"]
+        if name and any(t.get("name") == name and t["state"] == "live" for t in h["terminals"]):
+            return hc_error("name_taken", f"{name} is taken")
+        if name in h.get("fail_run", []):
+            return hc_error("spawn_failed", 'cannot start "x"')
+        record = Path(os.environ.get("SHIPSHAPE_ROOT", "/")) / "var/lib/shipshape/agents.json"
+        if name and record.is_file():  # what the agent record says as the agent starts
+            entry = json.loads(record.read_text()).get("agents", {}).get(name) or {}
+            h.setdefault("recorded_at_run", {})[name] = entry.get("session")
+        n = h.get("next", 1)
+        h["next"] = n + 1
+        t = {"address": f"t{n}", "name": name, "argv": argv, "labels": labels,
+             "cwd": opts[opts.index("--cwd") + 1] if "--cwd" in opts else "/home/agent",
+             "state": "live", "keep": "--keep" in opts, "created_ms": 1, "screen": "exact",
+             "cols": 80, "rows": 24, "status": None, "turn": 0, "exit_code": None,
+             "reason": None, "foreground": {"pid": 4141, "name": os.path.basename(argv[0]),
+                                            "argv": argv, "cwd": None}}
+        t["foreground"]["cwd"] = t["cwd"]
+        h["terminals"].append(t)
+        h.setdefault("runs", []).append(a)
+        if argv[:1] == [LAUNCHER]:
+            hc_claude(s, h, t, argv)
+        save(s)
+        out(hc_short(t))
+        return 0
+    t = hc_find(h, rest[0], live_only=True) if rest else None
+    if cmd in ("send", "keys", "label", "rm") and t is None:
+        t = hc_find(h, rest[0]) if rest else None
+        if t is None:
+            return hc_error("not_found")
+    if cmd == "rm":
+        if t["state"] == "live":
+            return hc_error("live", f"{t['address']} is live")
+        h["terminals"].remove(t)
+        h.setdefault("removed", []).append(t["address"])
+        save(s)
+        out({"removed": t["address"]})
+        return 0
+    if cmd == "label":
+        for kv in rest[1:]:
+            k, _, v = kv.partition("=")
+            if v:
+                t["labels"][k] = v
+            else:
+                t["labels"].pop(k, None)
+        save(s)
+        out(t)
+        return 0
+    if t["state"] != "live":
+        return hc_error("finished", f"{t['address']} has finished")
+    if cmd == "keys":
+        keys = rest[1:]
+        h.setdefault("keys", []).append([t["address"], *keys])
+        status = t.get("status") or {}
+        if "esc" in keys and status.get("state") in ("working", "blocked"):
+            if t.get("name") in h.get("slow_esc", []):
+                t["settle_in"] = h.get("slow_esc_polls", 2)
+            else:
+                t["status"] = {"app": "claude-code", "state": "idle"}
+        if keys == ["ctrl+c", "ctrl+c"] and t.get("name") in h.get("exit_on_ctrl_c", []):
+            hc_end(t)
+        save(s)
+        out({"turn": 0, "status": (t.get("status") or {}).get("state")})
+        return 0
+    if cmd == "send":
+        if "--force" in rest:
+            h.setdefault("forbidden", []).append(a)
+        text = rest[rest.index("--") + 1] if "--" in rest else rest[-1]
+        if t.get("foreground") is None:
+            return hc_error("unavailable", f"{t['address']} is waiting for its new shell")
+        if (t.get("status") or {}).get("state") == "blocked" and "--force" not in rest:
+            return hc_error("blocked", f"{t['address']} is blocked")
+        if t.get("name") in h.get("fail_send", []):
+            return hc_error("unavailable")
+        h.setdefault("sent", []).append([t["address"], text])
+        fg = t["foreground"]["name"]
+        if fg in SHELLS and text.startswith("exec "):
+            import shlex
+
+            argv = shlex.split(text)[1:]
+            t["argv_typed"] = argv
+            if argv[:1] == [LAUNCHER]:
+                hc_claude(s, h, t, argv)
+        elif text == "/exit" and fg == "claude":
+            if t.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
+                hc_end(t)
+        save(s)
+        out({"turn": 1, "status": (t.get("status") or {}).get("state"), "started": None})
+        return 0
+    return 2
+
+
 HANDLERS = {
     "herdr": herdr,
+    "hc": hc,
     "claude": claude,
     "gcloud": gcloud,
     "gh": gh,

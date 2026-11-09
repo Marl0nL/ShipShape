@@ -169,22 +169,14 @@ def read_ledger(ctx: Context) -> dict[str, str]:
     return out
 
 
-def agent_entry(raw: dict, ledger: dict[str, str]) -> dict:
-    """One herdr.agents item; mode from the mode ledger (build() falls back to the
-    agent record's)."""
-    kind = raw.get("agent") or "unknown"
-    state = raw.get("agent_status")
-    session = raw.get("agent_session") or {}
-    sid = session.get("value") if isinstance(session, dict) else None
-    entry: dict = {
-        "name": raw.get("name") if isinstance(raw.get("name"), str) else None,
-        "kind": str(kind),
-        "state": state if state in AGENT_STATES else "unknown",
-        "mode": ledger.get(sid) if kind == "claude" and sid else None,
-    }
-    for src, dst in (("pane_id", "pane"), ("workspace_id", "workspace"), ("cwd", "cwd")):
-        if isinstance(raw.get(src), str):
-            entry[dst] = raw[src]
+def agent_entry(raw: dict, ledger: dict[str, str], rt=None) -> dict:
+    """One herdr.agents item from what the runtime (rt, herdr's by default) lists;
+    mode from the mode ledger (build() falls back to the agent record's)."""
+    if rt is None:
+        from .runtime import Herdr as rt
+    entry = rt.report(raw)
+    sid = rt.view(raw)["session"]
+    entry["mode"] = ledger.get(sid) if entry["kind"] == "claude" and sid else None
     return entry
 
 
@@ -215,19 +207,22 @@ def last_resume(ctx: Context) -> dict | None:
     return out
 
 
-def probe_herdr(ctx: Context) -> tuple[dict, list[str], list[dict] | None]:
-    """(the herdr block, errors, the live agents as runtime.py describes them)."""
+def probe_herdr(ctx: Context, ship: ShipToml | None = None
+                ) -> tuple[dict, list[str], list[dict] | None]:
+    """(the herdr block, errors, the live agents as runtime.py describes them). The
+    block is the runtime's, herdr's server or herdr-core (`runtime` says which)."""
     from .runtime import for_ship
 
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)
     errors: list[str] = []
     version = rt.version(PROBE_TIMEOUT)
     server, raw, errs = rt.raw_agents(PROBE_TIMEOUT)
     errors += errs
     ledger = read_ledger(ctx)
-    agents = [agent_entry(a, ledger) for a in raw or []]
+    agents = [agent_entry(a, ledger, rt) for a in raw or []]
     live = None if raw is None else [rt.view(a) for a in raw]
     return {
+        "runtime": rt.kind,
         "version": version,
         "server": server,
         "agents": agents,
@@ -469,7 +464,11 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
     for agent in doc["herdr"]["agents"]:
         if agent["state"] == "blocked":
             who = agent["name"] or agent.get("pane") or "an agent"
-            add("agent-waiting", f"Agent '{who}' is waiting for you.", who)
+            # herdr-core says what it waits for, in Claude's own words.
+            what = {"permission": " to approve something", "question": " to answer a question",
+                    "auth": " to sign in"}.get(agent.get("blocked_kind") or "", "")
+            said = f": {agent['message']}" if agent.get("message") else "."
+            add("agent-waiting", f"Agent '{who}' is waiting for you{what}{said}", who)
     for svc, entry in doc["auth"].items():
         label = SERVICE_LABELS.get(svc, svc)
         if svc == "claude" and entry["state"] == "missing":
@@ -584,7 +583,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
     with ThreadPoolExecutor(max_workers=10) as pool:
         f_host = pool.submit(probe_host, ctx)
         f_cloud = pool.submit(probe_cloud_init, ctx)
-        f_herdr = pool.submit(probe_herdr, ctx)
+        f_herdr = pool.submit(probe_herdr, ctx, ship)
         f_claude = pool.submit(probe_claude_version, ctx)
         f_units = pool.submit(probe_failed_units, ctx)
         f_overlay = pool.submit(overlay.status, ctx, ship)

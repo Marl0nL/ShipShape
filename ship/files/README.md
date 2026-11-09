@@ -8,6 +8,8 @@ Files ship-provision installs (paths on the Ship: `contracts/ship-runtime.md`).
 | `libexec/ship_netwatch.py` | network visibility collector, run from the release by `ship-netwatch.service` (`docs/network.md`) |
 | `systemd/system/ship-netwatch.service` | installed to `/etc/systemd/system/`; root with four capabilities (eBPF, `ss -p`), `ProtectHome=yes`, observes only |
 | `systemd/user/herdr.service` | `/etc/systemd/user/`: the herdr server, for the agent user only |
+| `systemd/user/ship-core.service` | `/etc/systemd/user/`: starts herdr-core at boot instead, on Ships with ship.toml `runtime = "core"` |
+| `bin/agent-launch` | `/opt/shipshape/bin/agent-launch`: starts Claude Code with the Ship's environment; every herdr-core agent starts through it |
 | `systemd/system/ship-status.*` | `/etc/systemd/system/`: the 30-second status refresh |
 | `systemd/system/ship-lan-guard-early.service` | `/etc/systemd/system/`: loads the stored LAN guard rules before the network comes up |
 | `systemd/system/ship-lan-guard.service` | `/etc/systemd/system/`: refreshes the LAN guard's gateway and DNS once the network is online; `ship-ctl apply` enables both units only while `network.lan_guard` is on |

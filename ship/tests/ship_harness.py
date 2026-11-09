@@ -23,6 +23,7 @@ SHIP = REPO / "ship"
 FAKE = Path(__file__).resolve().parent / "fakes" / "fake.py"
 FAKE_COMMANDS = [
     "herdr",
+    "hc",
     "claude",
     "gcloud",
     "gh",
@@ -173,6 +174,83 @@ class Ship:
 
     def record(self) -> dict:
         return self.json("/var/lib/shipshape/agents.json")
+
+    # --- herdr-core (ship.toml runtime = "core") ---------------------------------------
+    def use_core(self) -> None:
+        """Make this Ship a herdr-core Ship (ship.toml runtime = "core")."""
+        text = self.p("/etc/shipshape/ship.toml").read_text()
+        self.write_toml(text.replace("schema = 1\n", 'schema = 1\nruntime = "core"\n', 1))
+        s = self.scenario()
+        s.setdefault("hc", {"server": True, "terminals": []})
+        self.set(hc=s["hc"])
+
+    def terminals(self, name: str | None = None) -> list[dict]:
+        terms = self.scenario().get("hc", {}).get("terminals", [])
+        return [t for t in terms if name is None or t.get("name") == name]
+
+    def terminal(self, name: str) -> dict:
+        """The live terminal by that name (else its last one)."""
+        terms = self.terminals(name)
+        return next((t for t in terms if t["state"] == "live"), terms[-1])
+
+    def _core_change(self, change) -> None:
+        s = self.scenario()
+        for t in s["hc"]["terminals"]:
+            change(t)
+        self.set(hc=s["hc"])
+
+    def core_status(self, name: str, state: str | None, kind: str | None = None,
+                    msg: str | None = None) -> None:
+        """Claude reports a state (OSC 7501); None: it has not reported yet."""
+        status = None if state is None else {"app": "claude-code", "state": state,
+                                             "kind": kind, **({"msg": msg} if msg else {})}
+
+        def change(t):
+            if t.get("name") == name and t["state"] == "live":
+                t["status"] = status
+        self._core_change(change)
+
+    def core_crash(self, name: str, how: str = "signal", recover_in: int = 1) -> None:
+        """claude dies in its terminal without a SessionEnd. signal (killed, out of
+        memory): the kept terminal loses its program and gets a shell after
+        recover_in polls. exit: claude ended with an exit code, which finishes its
+        terminal."""
+        def change(t):
+            if t.get("name") != name or t["state"] != "live":
+                return
+            if how == "exit":
+                t.update(state="finished", exit_code=1, reason="exited", foreground=None,
+                         status=None)
+            else:
+                t.update(foreground=None, status=None, recover_in=recover_in)
+        self._core_change(change)
+
+    def core_holder_lost(self, recover_in: int = 1) -> None:
+        """The one holder process dies: every kept terminal loses its program at once."""
+        def change(t):
+            if t["state"] == "live":
+                t.update(foreground=None, status=None, recover_in=recover_in)
+        self._core_change(change)
+
+    def core_reboot(self, uptime: float = 40.0, recover_in: int = 1) -> None:
+        """A new boot: the core starts again; every kept terminal comes back under its
+        address and name, without its program, and gets a shell after recover_in
+        polls; any other terminal has finished."""
+        def change(t):
+            if t["state"] != "live":
+                return
+            if t.get("keep"):
+                t.update(foreground=None, status=None, recover_in=recover_in)
+            else:
+                t.update(state="finished", reason="host_shutdown", foreground=None, status=None)
+        self._core_change(change)
+        boot = self.p("/proc/sys/kernel/random/boot_id")
+        n = int(boot.read_text().strip()[-4:], 16) + 1
+        boot.write_text(BOOT_ID[:-4] + f"{n:04x}\n")
+        self.p("/proc/uptime").write_text(f"{uptime} 1.0\n")
+        run = self.p("/run")
+        if run.exists():
+            shutil.rmtree(run)
 
     # --- files ----------------------------------------------------------------------
     def p(self, path: str) -> Path:

@@ -102,10 +102,15 @@
     "herdr": {
       "type": "object",
       "additionalProperties": false,
+      "description": "What runs the agents: herdr's server, or herdr-core on a Ship with ship.toml runtime = \"core\" (runtime says which).",
       "required": ["version", "server", "agents", "last_resume"],
       "properties": {
+        "runtime": {
+          "enum": ["herdr", "core"],
+          "description": "herdr: the herdr server (herdr --version, herdr agent list). core: herdr-core (hc --version, hc ls and hc get), whose agents report their own state. Absent from Ships with older tooling: herdr."
+        },
         "version": { "type": ["string", "null"] },
-        "server": { "enum": ["running", "stopped", "unknown"] },
+        "server": { "enum": ["running", "stopped", "unknown"], "description": "On herdr-core: the core." },
         "agents": {
           "type": "array",
           "items": {
@@ -120,9 +125,19 @@
                 "oneOf": [{ "$ref": "#/$defs/permissionMode" }, { "type": "null" }],
                 "description": "Claude permission mode from the mode ledger, else the agent record's; null if unknown or not Claude."
               },
-              "pane": { "type": "string", "description": "herdr pane id, e.g. w1:p2." },
-              "workspace": { "type": "string" },
-              "cwd": { "type": "string" }
+              "pane": { "type": "string", "description": "herdr pane id, e.g. w1:p2; on herdr-core the terminal's address, e.g. t3." },
+              "workspace": { "type": "string", "description": "On herdr-core the terminal's herdr.space label (shipshape for the agents ShipShape starts)." },
+              "cwd": { "type": "string" },
+              "blocked_kind": {
+                "type": "string",
+                "maxLength": 40,
+                "description": "herdr-core, while blocked: what the agent waits for, in its own word (permission, question, auth)."
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 500,
+                "description": "herdr-core, while blocked: what the agent says it waits for (e.g. the command to approve, or the question)."
+              }
             }
           }
         },

@@ -68,6 +68,7 @@ exactly as in phase 1.
 | `/usr/local/bin/ship-ctl` | symlink | `-> /opt/shipshape/current/bin/ship-ctl` |
 | `/usr/local/bin/ship-axi` | symlink or wrapper | The ship-axi command (W7). |
 | `/opt/shipshape/hooks/mode-ledger` | root, 0755 | Mode-ledger Claude hook (`settings.md`). |
+| `/opt/shipshape/bin/agent-launch` | root, 0755 | Starts Claude Code with the Ship's PATH, npm prefix and catalogue environment; every agent on a herdr-core Ship starts through it (`ship-ctl.md`, "On herdr-core Ships"). |
 | `/usr/local/bin/herdr` | root, 0755 | Pinned herdr from `versions.toml`. |
 | `/usr/local/bin/herdr-core`, `/usr/local/bin/hc` (symlink) | root, 0755 | Pinned herdr-core from `versions.toml`, installed beside herdr; root-owned so it cannot update itself past the pin. Nothing runs it yet. |
 | `/var/lib/shipshape/` | root, 0755 | Ship state. Contents are internal, except the reserved names below. |
@@ -115,7 +116,8 @@ FleetLedger over SSH).
 
 | Unit | Scope | Purpose |
 |---|---|---|
-| `herdr.service` | agent user | `herdr server`, restarted on failure. Its PATH starts with `~/.local/bin`. It restores its layout at start and resumes no agent itself. |
+| `herdr.service` | agent user | `herdr server`, restarted on failure. Its PATH starts with `~/.local/bin`. It restores its layout at start and resumes no agent itself. Enabled unless ship.toml says `runtime = "core"`. |
+| `ship-core.service` | agent user | On Ships with `runtime = "core"`, instead of `herdr.service`: runs `hc server start` once at boot, with the Ship's environment. The core then runs as a user unit of its own; the status refresh relaunches the recorded agents. |
 | `ship-status.timer`, `ship-status.service` | system | Refresh `/run/shipshape/status.json` every 30 seconds, and react to sign-ins: run tools waiting on a newly signed-in service, and `ship-ctl autostart` once Claude becomes signed in (`ship-ctl.md`). Each refresh also keeps the agent record in step: the first of a boot resumes every recorded agent, later ones start again an agent that crashed. |
 | `ship-netwatch.service` | system | Network visibility collector (phase 3): records outbound connections and the DNS names they came from into `/var/lib/shipshape/net/`. Root, with `ProtectHome=yes`, so it cannot read or write any home folder. Observes only; blocks nothing. |
 | `vnstat.service` | system | Ubuntu's vnstat daemon: per-interface byte counters for the totals. |

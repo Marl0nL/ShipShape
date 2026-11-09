@@ -53,6 +53,11 @@ class ShipToml:
         return list(self.doc["ship"].get("tags", []))
 
     @property
+    def runtime(self) -> str:
+        """What runs the agents: herdr (the default) or core (herdr-core)."""
+        return self.doc.get("runtime", "herdr")
+
+    @property
     def claude(self) -> dict:
         """Claude settings with defaults filled in (settings.md)."""
         out = dict(CLAUDE_DEFAULTS)

@@ -1,0 +1,24 @@
+#!/bin/sh
+# ShipShape's agent launcher (/opt/shipshape/bin/agent-launch): every agent on a
+# herdr-core Ship (ship.toml runtime = "core") starts and restarts through it.
+#
+# A program in a herdr-core terminal gets the environment of whoever started the
+# core, which may be a laptop's `hc` over a bare SSH login (no ~/.local/bin, no
+# catalogue tools). So nothing relies on it: this sets the Ship's own PATH and npm
+# prefix, as herdr.service and /etc/profile.d/shipshape.sh do, loads the catalogue
+# tools' environment, then runs Claude Code with the arguments given.
+set -u
+if [ -z "${HOME:-}" ]; then
+  HOME=$(getent passwd "$(id -un)" | cut -d: -f6)
+  export HOME
+fi
+PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+npm_config_prefix="$HOME/.local"
+export PATH npm_config_prefix
+if [ -r "$HOME/.config/shipshape/env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.config/shipshape/env"
+  set +a
+fi
+exec claude "$@"

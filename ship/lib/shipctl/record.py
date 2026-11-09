@@ -33,6 +33,7 @@ import json
 import os
 import re
 import time
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -41,7 +42,7 @@ from . import PERMISSION_MODES
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
-from .runtime import Herdr, for_ship, mode_args, wait_budget
+from .runtime import Herdr, Runtime, for_ship, mode_args, wait_budget
 from .shiptoml import ShipToml
 from .status import boot_id, read_ledger
 
@@ -292,8 +293,25 @@ def tries_this_boot(ctx: Context, e: dict) -> int:
     return e["relaunch"]["failures"] if e["relaunch"]["boot_id"] == boot_id(ctx) else 0
 
 
-def _place(rt: Herdr, ctx: Context, place: str, workspace: str | None) -> dict:
+def _place(rt: Runtime, ctx: Context, place: str, workspace: str | None) -> dict:
     return {"runtime": rt.kind, "id": place, "workspace": workspace, "boot_id": boot_id(ctx)}
+
+
+def own_place(rt: Runtime, e: dict) -> str | None:
+    """Where entry e last ran, if that was in this runtime (a place of the other
+    one, from before the Ship's runtime changed, is no place here)."""
+    place = e["place"] or {}
+    return place.get("id") if place.get("runtime") == rt.kind else None
+
+
+def new_session(rt: Runtime) -> tuple[str | None, list[str]]:
+    """(the session id ShipShape gives a new conversation, its claude arguments):
+    on herdr-core ShipShape chooses it (`--session-id`), so the record has it
+    before the agent starts; herdr reports the one claude chose."""
+    if not rt.chooses_session:
+        return None, []
+    sid = str(uuid.uuid4())
+    return sid, ["--session-id", sid]
 
 
 def _new_name(cwd: str, taken: set[str]) -> str:
@@ -329,18 +347,19 @@ def new_entry(cwd: str, *, origin: str, session: str | None = None, mode: str | 
             "launched_at": now, "stopped_at": None, "created_at": now, "updated_at": now}
 
 
-def launched(ctx: Context, rt: Herdr, doc: dict, name: str, *, cwd: str, place: str,
+def launched(ctx: Context, rt: Runtime, doc: dict, name: str, *, cwd: str, place: str | None,
              workspace: str | None, session: str | None, mode: str | None,
              origin: str = "autostart", prompt: str | None = None,
              session_name: str | None = None, keep_tries: bool = False) -> dict:
     """Record that ship-ctl just started `name` (autostart, restart, or the crash
     policy, which keeps the boot's failed tries: they reset only once it has run
-    STABLE_S)."""
+    STABLE_S). place None: it is about to start, in a place not known yet."""
     e = doc["agents"].get(name)
     if e is None:
         e = doc["agents"][name] = new_entry(cwd, origin=origin)
     fields = {"cwd": cwd, "mode": mode, "want": "running", "stopped_at": None,
-              "launched_at": utc_now(), "place": _place(rt, ctx, place, workspace)}
+              "launched_at": utc_now(),
+              "place": _place(rt, ctx, place, workspace) if place else e["place"]}
     if not keep_tries:
         fields["relaunch"] = {"boot_id": boot_id(ctx), "failures": 0, "last_error": None,
                               "last_at": None, "counted_launch": None}
@@ -356,7 +375,7 @@ def launched(ctx: Context, rt: Herdr, doc: dict, name: str, *, cwd: str, place: 
     return e
 
 
-def sync(ctx: Context, rt: Herdr, doc: dict, live: list[dict], ledger: dict[str, str]) -> bool:
+def sync(ctx: Context, rt: Runtime, doc: dict, live: list[dict], ledger: dict[str, str]) -> bool:
     """Bring the record up to what runs (module docstring). True if it changed."""
     changed = False
     found = match(doc, live)
@@ -450,7 +469,7 @@ def _folder_exists(ctx: Context, cwd: str) -> bool:
     return (ctx.paths.p(cwd) if ctx.paths.sandbox else Path(cwd)).is_dir()
 
 
-def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
+def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
              places: dict | None, *, same_place: bool, mode: str | None = None,
              fresh: list[str] | None = None, keep_tries: bool = True) -> tuple[bool, str]:
     """Start recorded agent `name` again, continuing its session (or, with fresh,
@@ -466,8 +485,10 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
     cwd = e["cwd"]
     if not _folder_exists(ctx, cwd):
         return False, f"its folder {cwd} is not there"
-    args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]])]
-    old = (e["place"] or {}).get("id")
+    sid, chosen = new_session(rt) if fresh is not None else (None, [])
+    args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]]),
+            *chosen]
+    old = own_place(rt, e)
     spot = (places or {}).get(old or "")
     if same_place:
         tries = [old]
@@ -477,28 +498,31 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, name: str,
         tries = [old, None]
     else:
         tries = [None]
+    before = e["session"]
+    if sid:  # the record has the new conversation's id before it starts
+        e["session"] = sid
+        save(ctx, doc)
     why = ""
     for place in tries:
         workspace = (spot or {}).get("workspace") if place else None
-        if place is None:
-            place, workspace, why = rt.new_place(cwd, name)
-            if place is None:
-                continue
-        ok, why = rt.start_settled(name, place, args)
-        if ok:
+        done = rt.launch(name, cwd, args, place, workspace)
+        why = done["why"]
+        if done["ok"]:
+            place = done["place"]
             back = rt.in_place(place, name) or {}
             launched(ctx, rt, doc, name, cwd=cwd, place=place,
-                     workspace=back.get("workspace") or workspace,
-                     session=back.get("session") or (None if fresh is not None
-                                                     else e["session"]),
+                     workspace=back.get("workspace") or done["workspace"],
+                     session=back.get("session") or sid or (None if fresh is not None
+                                                            else e["session"]),
                      mode=mode, origin=e["origin"], keep_tries=keep_tries)
-            if fresh is not None and not back.get("session"):
+            if fresh is not None and not (back.get("session") or sid):
                 e["session"] = None  # a new conversation: the next sync learns its id
             return True, ""
+    e["session"] = before
     return False, why or "it did not start"
 
 
-def reconcile(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dict]
+def reconcile(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[dict]
               ) -> tuple[int, int, list[str]]:
     """Start again every agent that should run and does not (module docstring).
     Returns (started, failed, messages)."""
@@ -519,7 +543,7 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dic
         if r["boot_id"] != boot:  # a new boot: a fresh set of tries
             r.update(boot_id=boot, failures=0, last_error=None, last_at=None,
                      counted_launch=None)
-        this_boot = bool(e["place"]) and e["place"]["boot_id"] == boot
+        this_boot = bool(own_place(rt, e)) and e["place"]["boot_id"] == boot
         why = _stopped_on_purpose(e, sessions, places, since) if this_boot else None
         if why:
             _stop(doc, name, autostart)
@@ -588,11 +612,20 @@ def import_autostart(ctx: Context, doc: dict, live: list[dict]) -> bool:
     return True
 
 
-def upkeep(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dict], state: str
+def follow_runtime(rt: Runtime, doc: dict) -> bool:
+    """The record names the runtime its agents run in now."""
+    if doc["runtime"] == rt.kind:
+        return False
+    doc["runtime"] = rt.kind
+    return True
+
+
+def upkeep(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[dict], state: str
            ) -> tuple[list[dict], list[str], bool]:
     """Sync the record with what runs, then start what should run and does not.
     Call it with the lock held. Returns (live agents now, messages, changed)."""
     changed = import_autostart(ctx, doc, live)
+    changed |= follow_runtime(rt, doc)
     changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
     changed |= prune(doc, ship)
     if state in ("provisioning", "needs-sign-in"):
@@ -617,7 +650,7 @@ def upkeep(ctx: Context, ship: ShipToml, rt: Herdr, doc: dict, live: list[dict],
 
 def refresh(ctx: Context, ship: ShipToml, state: str) -> list[str]:
     """The status refresh's turn: upkeep, unless another ship-ctl holds the record."""
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)
     with locked(ctx, wait=False) as got:
         if not got:
             return []
@@ -635,7 +668,7 @@ def capture(ctx: Context, ship: ShipToml, timeout: float = 15) -> list[str]:
     """Record every running agent now (`ship-ctl apply`, so also every converge):
     a Ship updated from tooling before the record has its agents recorded before it
     next reboots, and comes back with them in their modes."""
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)
     with locked(ctx, wait=False) as got:
         if not got:
             return []  # a refresh is keeping the record in step this moment
@@ -647,6 +680,7 @@ def capture(ctx: Context, ship: ShipToml, timeout: float = 15) -> list[str]:
             return []  # herdr is not running yet (first boot): nothing to record
         doc = load(ctx)
         changed = import_autostart(ctx, doc, live)
+        changed |= follow_runtime(rt, doc)
         changed |= sync(ctx, rt, doc, live, read_ledger(ctx))
         changed |= prune(doc, ship)  # `set autostart.remove=` lets a stopped one go
         if changed:
@@ -745,7 +779,7 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
         agents.append(item)
     resume = doc["resume"]
     first, marked = primary(doc, ship)
-    block = {"runtime": doc["runtime"], "agents": agents,
+    block = {"runtime": ship.runtime, "agents": agents,
              "primary": None if first is None else {"name": first, "marked": marked},
              "resume": None if resume is None else {
                  "at": resume["at"], "method": "ship-ctl", "resumed": resume["resumed"],
