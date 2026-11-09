@@ -3,7 +3,7 @@
 - seed: a cloud-init seed ISO for a stock Ubuntu cloud image (the one versions.toml
   pins for Ships, checked by its sha256), reusing the Ship seed's ISO and host-key
   code. The VM gets a user `fleetledger` that runs FleetLedger (no sudo) and a user
-  `admin` for the system itself (Tailscale, updates; sudo), both for your keys only
+  `vmadmin` for the system itself (Tailscale, updates; sudo), both for your keys only
   (no passwords, root off), this ShipShape checkout cloned at this very commit and
   installed, the service unit installed but not started (`ship-fleet migrate`
   needs it stopped), lingering on, a reboot that lets running jobs finish, and no
@@ -46,9 +46,10 @@ HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._/~-]+$")
 SIZE = {"cores": 2, "memory_mb": 4096, "disk_gb": 40}
 REBOOT_DROP_IN = "[Service]\nTimeoutStopSec=45min\n"
-ADMIN = "admin"
+# Not "admin": that name is taken on Ubuntu (cloud-init cannot create it).
+ADMIN = "vmadmin"
 SSHD = ("# FleetLedger's VM: keys only, its two users only.\nPasswordAuthentication no\n"
-        "KbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers fleetledger admin\n")
+        "KbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers fleetledger vmadmin\n")
 
 
 # --- [fleet] self: the guard ------------------------------------------------------------------

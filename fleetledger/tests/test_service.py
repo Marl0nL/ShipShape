@@ -365,7 +365,7 @@ def test_install_writes_a_user_unit_and_starts_it(store, home, units, ship_fleet
     assert f"Environment=FLEETLEDGER_DATA_DIR={home / 'data'}\n" in text
     for line in ("KillMode=mixed", "TimeoutStopSec=45min", "Restart=on-failure", "UMask=0077",
                  "NoNewPrivileges=yes", "WantedBy=default.target", "StartLimitIntervalSec=0",
-                 "RestartPreventExitStatus=2", "LockPersonality=yes",
+                 "RestartPreventExitStatus=2", "LockPersonality=yes", "LimitCORE=0",
                  "SystemCallArchitectures=native"):
         assert line in text.splitlines()
     assert system.verbs() == [["show-environment"], ["daemon-reload"],

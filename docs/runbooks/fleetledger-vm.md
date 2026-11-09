@@ -18,7 +18,7 @@ The pieces this uses, each with its own page:
 # On the desktop (FleetLedger as it is today):
 ship-fleet appliance seed --name fleetledger --vmid 120
 # ... create the VM with the printed qm steps, then, once it has booted:
-ssh admin@fleetledger.local    # Tailscale: install, join as tag:fleetledger
+ssh vmadmin@fleetledger.local    # Tailscale: install, join as tag:fleetledger
 ssh fleetledger@fleetledger.local ship-fleet vault init
 ship-fleet migrate push fleetledger@fleetledger.local
 # On the VM, from then on:
@@ -33,7 +33,7 @@ and 40 GB of disk are plenty (more disk if you build images there). It has two u
 and your keys are the only way in to either:
 
 - `fleetledger` runs FleetLedger and has no sudo;
-- `admin` has sudo, for the system itself (Tailscale, updates).
+- `vmadmin` has sudo, for the system itself (Tailscale, updates).
 
 There are no passwords and root logins are off. The seed:
 
@@ -139,11 +139,11 @@ Delete the seed in both places: it holds the VM's private host key. `ship-fleet 
 refuses to move while it is still there.
 
 Add the printed line to `~/.ssh/known_hosts` on each computer you ssh from, then
-`ssh admin@fleetledger.local` must log in without asking about the host key.
+`ssh vmadmin@fleetledger.local` must log in without asking about the host key.
 
 ## 3. On the VM: Tailscale and the vault
 
-As `admin` (the documented installer, then join as the tag):
+As `vmadmin` (the documented installer, then join as the tag):
 
 ```sh
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -255,7 +255,7 @@ running jobs finish first. **No Ship changes:** FleetLedger's checkout is also t
 next Ship tooling, so roll it out when you choose, with `ship-fleet update`
 ([update-fleet.md](update-fleet.md)).
 
-System updates are `admin`'s: `sudo apt upgrade`, and a reboot when one is needed
+System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is needed
 (then unlock).
 
 **Testing unmerged ShipShape changes:**
@@ -280,7 +280,7 @@ CI cannot run a VM managing its own host, so once, after the move:
 1. `ship-fleet doctor` on the VM: every check ok, including "FleetLedger's own VM: out
    of the token's reach" and, with `--cpu host`, "image builds: KVM here".
 2. `ship-fleet appliance show`: the VM id and pinned host key are right.
-3. Reboot the VM (`sudo reboot` as `admin`). Afterwards the web UI says FleetLedger is
+3. Reboot the VM (`sudo reboot` as `vmadmin`). Afterwards the web UI says FleetLedger is
    locked, every page still shows the fleet, and `ship-fleet ls --offline` works. Then
    unlock from the web UI: Ships are checked again within a minute.
 4. `ship-fleet backup now --to /tmp/check`, then on your desktop, in an empty

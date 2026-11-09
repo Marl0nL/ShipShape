@@ -149,6 +149,7 @@ def render_unit(ship_fleet: str, port: int, interval: float,
         "WorkingDirectory=%h",
         "UMask=0077",
         "NoNewPrivileges=yes",
+        "LimitCORE=0",  # a core dump would hold the unlocked vault's key and secrets
         "LockPersonality=yes",
         "RestrictRealtime=yes",
         "SystemCallArchitectures=native",

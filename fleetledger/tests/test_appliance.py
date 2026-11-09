@@ -90,7 +90,7 @@ def test_the_seed_makes_a_locked_down_vm_and_records_it_as_self(store, home, che
     doc = yaml.safe_load(files["user-data"])
     # Your keys only, no passwords, root off: FleetLedger's user has no sudo; the system's
     # admin does. Its own host key, pinned here.
-    assert [u["name"] for u in doc["users"]] == ["fleetledger", "admin"]
+    assert [u["name"] for u in doc["users"]] == ["fleetledger", "vmadmin"]
     user, admin = doc["users"]
     assert "sudo" not in user and user["lock_passwd"] is True and admin["lock_passwd"] is True
     you = (home / "keys" / "you.pub").read_text().strip()
@@ -112,7 +112,7 @@ def test_the_seed_makes_a_locked_down_vm_and_records_it_as_self(store, home, che
     drop_in = {f["path"]: f["content"] for f in doc["write_files"]}
     assert drop_in["/etc/systemd/system/user@.service.d/fleetledger-drain.conf"] == \
         "[Service]\nTimeoutStopSec=45min\n"
-    assert "AllowUsers fleetledger admin" in \
+    assert "AllowUsers fleetledger vmadmin" in \
         drop_in["/etc/ssh/sshd_config.d/10-fleetledger.conf"]
     assert "libnss-mdns" in doc["packages"]
     # The steps: the pinned Ubuntu image checked by its sha256, and no pool.

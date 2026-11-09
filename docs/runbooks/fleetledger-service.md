@@ -155,6 +155,13 @@ first), and `systemctl --user start fleetledger` again. Moving FleetLedger to an
 computer (`ship-fleet migrate`) needs it stopped: migrate refuses while anything else
 runs here, the service included.
 
+**One runtime folder for everything.** The service and your ssh sessions as the same
+user both use `$XDG_RUNTIME_DIR` (`/run/user/<uid>`, set by your login and by systemd
+for a user unit), so one `ship-fleet unlock` over ssh is seen by the service at once.
+If you set `FLEETLEDGER_RUNTIME_DIR`, set it the same in both (`ship-fleet service
+install` carries it into the unit). The unit also sets `LimitCORE=0`: a core dump of
+the service would hold the unlocked vault's key.
+
 ## The control socket
 
 `ship-fleet ui` and the service listen on a Unix socket,
