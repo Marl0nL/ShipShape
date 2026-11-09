@@ -783,14 +783,31 @@ def _readable(store, managed, passphrases):
     assert secret_store.load(doc["overlay"]["api"]) == OAUTH
 
 
+def _old_copies(home, ring, managed):
+    """Old copies of the fleet's secrets outside the vault: 0600 files, OS keyring items."""
+    files = [p for p in (*(keys.passphrase_file(k) for k in managed),
+                         home / "config" / "proxmox-token", home / "config" / "tailscale-oauth")
+             if p.exists()]
+    return files + sorted(item for _service, item in ring.items)
+
+
 @pytest.mark.parametrize("origin", ["keyring", "file"])
-@pytest.mark.parametrize("step", ["store", "point", "write", "check", "delete"])
-def test_an_init_interrupted_at_any_step_loses_no_secret(store, home, ring, monkeypatch,
-                                                         origin, step):
-    """A Ctrl-C at each step of vault init. Before pointing, the vault is taken back and
-    every secret is where it was; from pointing on, the vault stays and holds them all."""
+@pytest.mark.parametrize("step", ["in-create", "create", "store", "point", "write", "check",
+                                  "delete"])
+def test_an_init_interrupted_at_any_step_loses_no_secret_and_can_be_finished(
+        store, home, ring, monkeypatch, origin, step):
+    """A Ctrl-C at each step of vault init. Before ships.toml is written, the vault is
+    taken back and every secret is where it was; from that write on, the vault stays and
+    holds them all. Either way, vault init again ends with every secret in the vault and
+    no old copy left behind."""
     managed = secrets_fleet(store, home, ring, kind=origin)
     passphrases = [keys.read_passphrase(k, origin) for k in managed]
+    patched = []
+
+    def patch(obj, name, value):
+        patched.append((obj, name, getattr(obj, name)))
+        monkeypatch.setattr(obj, name, value)
+
     calls = []
 
     def second_call_interrupts(real):
@@ -801,12 +818,23 @@ def test_an_init_interrupted_at_any_step_loses_no_secret(store, home, ring, monk
             return real(*args, **kwargs)
         return wrapped
 
-    if step == "store":
-        monkeypatch.setattr(vault.Backend, "set_password",
-                            second_call_interrupts(vault.Backend.set_password))
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    if step == "in-create":  # vault.json has landed; its RAM key not yet kept
+        patch(vault, "_keep", interrupt)
+    elif step == "create":  # created, the move not begun
+        real_create = vault.create
+
+        def created_then_interrupted(*args, **kwargs):
+            real_create(*args, **kwargs)
+            raise KeyboardInterrupt
+
+        patch(vault, "create", created_then_interrupted)
+    elif step == "store":
+        patch(vault.Backend, "set_password", second_call_interrupts(vault.Backend.set_password))
     elif step == "point":  # before anything is written
-        monkeypatch.setattr(vaultcmd, "point_at", lambda *a, **k: (_ for _ in ()).throw(
-            KeyboardInterrupt))
+        patch(vaultcmd, "point_at", interrupt)
     elif step == "write":  # in ships.toml's own write: it may or may not have landed
         from fleetledger import paths
 
@@ -817,24 +845,60 @@ def test_an_init_interrupted_at_any_step_loses_no_secret(store, home, ring, monk
                 raise KeyboardInterrupt
             return real_write(path, data)
 
-        monkeypatch.setattr(paths, "write_private", interrupted)
+        patch(paths, "write_private", interrupted)
     elif step == "check":
-        monkeypatch.setattr(vaultcmd, "_check_back", lambda store_: (_ for _ in ()).throw(
-            KeyboardInterrupt))
+        patch(vaultcmd, "_check_back", interrupt)
     elif origin == "keyring":  # a Ctrl-C during the OS keyring's own delete (D-Bus)
-        monkeypatch.setattr(ring, "delete_password",
-                            second_call_interrupts(ring.delete_password))
+        patch(ring, "delete_password", second_call_interrupts(ring.delete_password))
     else:
-        monkeypatch.setattr(vaultcmd, "_delete_old", second_call_interrupts(vaultcmd._delete_old))
+        patch(vaultcmd, "_delete_old", second_call_interrupts(vaultcmd._delete_old))
     app, out = app_for(store, PASS, PASS)
     assert cli.main(["vault", "init"], app) == 130, out.getvalue()
-    if step in ("store", "point"):
-        assert not vault.is_on()  # taken back: nothing named it yet
+    if step in ("in-create", "create", "store", "point"):
+        assert not vault.is_on() and not vault.key_path().exists()  # taken back
     else:
         assert vault.is_on() and vault.state() == "unlocked"
         names = vault.backend().item_names("fleetledger")
         assert len(names) == len(managed) + 2  # every secret is in it
     _readable(store, managed, passphrases)
+    if step == "write" and origin == "file":  # stored, but ships.toml never named it
+        app, out = app_for(store)
+        cli.main(["vault", "status"], app)
+        assert "in the vault, but read from its file still" in out.getvalue()
+        assert "an old copy" not in out.getvalue()
+
+    for obj, name, real in reversed(patched):  # the interrupt is over: run it again
+        monkeypatch.setattr(obj, name, real)
+    app, out = app_for(store, PASS, PASS)
+    assert cli.main(["vault", "init"], app) == 0, out.getvalue()
+    assert vault.is_on() and _old_copies(home, ring, managed) == []
+    assert len(vault.backend().item_names("fleetledger")) == len(managed) + 2
+    _readable(store, managed, passphrases)
+    app, out = app_for(store)
+    cli.main(["vault", "status"], app)
+    assert "old copy" not in out.getvalue() and "NOT in the vault" not in out.getvalue()
+
+
+def test_status_shows_old_copies_and_init_keeps_one_that_differs(store, home, ring):
+    managed = secrets_fleet(store, home, ring, kind="file")
+    vault.create(PASS)
+    vaultcmd.move_in(cli.App(), store)
+    stale = home / "config" / "proxmox-token"
+    stale.write_text(TOKEN + "\n")  # an old copy, as an interrupt would leave it
+    stale.chmod(0o600)
+    other = keys.passphrase_file(managed[0])
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("not the same passphrase\n")
+    other.chmod(0o600)
+    app, out = app_for(store)
+    cli.main(["vault", "status"], app)
+    said = out.getvalue()
+    assert "an old copy is left behind at ~/" in said or "an old copy is left behind at" in said
+    assert "(ship-fleet vault init deletes it)" in said and "differs from the vault's" in said
+    app, out = app_for(store)
+    assert cli.main(["vault", "init"], app) == 0, out.getvalue()
+    assert "deleted 1 old copy left behind" in out.getvalue()
+    assert not stale.exists() and other.exists()  # the one that differs is only reported
 
 
 def test_off_to_files_takes_them_back_when_ships_toml_cannot_be_written(store, home, ring,
@@ -873,3 +937,53 @@ def test_the_web_says_the_way_out_of_the_wait(web, monkeypatch):  # noqa: F811
     web.post("/unlock", {"with": "passphrase", "passphrase": PASS})
     page = web.client.get("/unlock").text
     assert "Too many wrong tries" in page and "ship-fleet ui revoke" in page
+
+
+def test_off_cut_short_after_ships_toml_names_the_files_keeps_them_and_runs_again(
+        store, home, ring, monkeypatch):
+    managed = secrets_fleet(store, home, ring, kind="file")
+    passphrases = [keys.read_passphrase(k, "file") for k in managed]
+    vault.create(PASS)
+    vaultcmd.move_in(cli.App(), store)
+    from fleetledger import paths
+
+    real = paths.write_private
+
+    def landed_then_interrupted(path, data):
+        real(path, data)
+        if path.name == "ships.toml":
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(paths, "write_private", landed_then_interrupted)
+    app, out = app_for(store)
+    assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 130
+    monkeypatch.setattr(paths, "write_private", real)
+    assert store.load().doc["fleet"]["managed_keys"]["store"] == "file"
+    _readable(store, managed, passphrases)  # ships.toml names the files, and they are there
+    app, out = app_for(store)
+    assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 0, out.getvalue()
+    assert not vault.is_on()
+    _readable(store, managed, passphrases)
+
+
+def test_off_cut_short_before_the_vault_is_deleted_runs_again(store, home, ring, monkeypatch):
+    managed = secrets_fleet(store, home, ring, kind="file")
+    passphrases = [keys.read_passphrase(k, "file") for k in managed]
+    vault.create(PASS)
+    vaultcmd.move_in(cli.App(), store)
+    real = vaultcmd.move_out
+
+    def moved_then_interrupted(*args, **kwargs):
+        real(*args, **kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(vaultcmd, "move_out", moved_then_interrupted)
+    app, out = app_for(store)
+    assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 130
+    monkeypatch.setattr(vaultcmd, "move_out", real)
+    assert vault.is_on()
+    _readable(store, managed, passphrases)
+    app, out = app_for(store)
+    assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 0, out.getvalue()
+    assert not vault.is_on() and not vault.key_path().exists()
+    _readable(store, managed, passphrases)

@@ -140,6 +140,13 @@ class Control:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._sock is not None and self.path is not None:
+            try:  # wake the accept loop now, rather than at its next one-second tick
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as poke:
+                    poke.settimeout(0.5)
+                    poke.connect(str(self.path))
+            except OSError:
+                pass
         if self._sock is not None:
             self._sock.close()
             self._sock = None
