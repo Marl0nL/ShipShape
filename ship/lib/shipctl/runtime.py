@@ -419,8 +419,8 @@ class Core:
             kind = "claude"
         elif program is None:
             kind = "lost"
-        elif program in SHELLS:
-            kind = "shell"
+        elif program in SHELLS and not any(LAUNCHER in str(x) for x in fg.get("argv") or []):
+            kind = "shell"  # (the launcher is a sh script: its terminal is not a free shell)
         elif session:
             kind = "claude"  # launched by ShipShape, before Claude's first report
         else:
@@ -554,9 +554,10 @@ class Core:
             return True, ""
         return False, f"claude is not running in {place} ({v['kind']} is)"
 
-    def _exec_in(self, place: str, name: str, args: list[str]) -> tuple[bool, str]:
+    def _exec_in(self, place: str, name: str, cwd: str, args: list[str]) -> tuple[bool, str]:
         """Type the launch into a kept terminal: once it has its shell, `exec` the
-        launcher there, so the terminal (and an app pane on it) keeps its address."""
+        launcher there, in the agent's folder (`--resume` finds a session by its
+        folder), so the terminal (and an app pane on it) keeps its address."""
         def shell() -> bool:
             raw = self.get(place)
             return raw is not None and self.view(raw)["kind"] == "shell"
@@ -564,7 +565,8 @@ class Core:
         if not wait_until(self.ctx, SHELL_WAIT_S, shell):
             return False, f"its terminal {place} did not get its shell back"
         self._call(["label", place, *self._labels(name, args)])
-        doc, why = self._call(["send", place, "--", "exec " + shlex.join([LAUNCHER, *args])], 90)
+        line = f"cd -- {shlex.quote(cwd)} && exec {shlex.join([LAUNCHER, *args])}"
+        doc, why = self._call(["send", place, "--", line], 90)
         if doc is None:
             return False, f"the launch was not typed into {place}: {why}"
         return self._running(place, name)
@@ -576,20 +578,20 @@ class Core:
         shell, else in a new terminal in cwd. Already running by that name (hc's
         name_taken) is not a failure. settled is herdr's; core needs no retry."""
         del workspace, settled  # every core agent is in CORE_SPACE
-        why = self.claude_floor()
-        if why:
-            return launched(False, why=why)
         _, terms, _ = self.terminals()
         live = [self.view(t) for t in terms or []]
         ours = (next((v for v in live if place and v["place"] == place
                       and v["name"] in (name, None)), None)
                 or next((v for v in live if v["name"] == name), None))
         for attempt in range(2):
+            if ours is not None and ours["kind"] == "claude" and ours["name"] == name:
+                return launched(True, ours["place"], CORE_SPACE)  # running already
+            why = self.claude_floor()
+            if why:
+                return launched(False, why=why)
             if ours is not None:
-                if ours["kind"] == "claude" and ours["name"] == name:
-                    return launched(True, ours["place"], CORE_SPACE)  # running already
                 if ours["kind"] in ("shell", "lost"):
-                    ok, why = self._exec_in(ours["place"], name, args)
+                    ok, why = self._exec_in(ours["place"], name, cwd, args)
                     return launched(ok, ours["place"], CORE_SPACE, why)
                 if ours["name"] == name:  # its terminal, but something else runs there
                     return launched(False, why=f"{ours['place']} ({name}) runs "

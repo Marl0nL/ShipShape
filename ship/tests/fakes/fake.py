@@ -786,10 +786,13 @@ def hc(s: dict, a: list[str]) -> int:
             return hc_error("unavailable")
         h.setdefault("sent", []).append([t["address"], text])
         fg = t["foreground"]["name"]
-        if fg in SHELLS and text.startswith("exec "):
+        if fg in SHELLS and "exec " in text:
             import shlex
 
-            argv = shlex.split(text)[1:]
+            words = shlex.split(text)
+            if words[:1] == ["cd"]:  # cd -- DIR && exec ...
+                t["cwd"] = t["foreground"]["cwd"] = words[2]
+            argv = words[words.index("exec") + 1:]
             t["argv_typed"] = argv
             if argv[:1] == [LAUNCHER]:
                 hc_claude(s, h, t, argv)

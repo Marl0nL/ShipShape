@@ -194,7 +194,8 @@ def test_after_a_reboot_each_kept_terminal_gets_its_agent_back(core):
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert "agent record: main started again, continuing its session." in out
-    line = f"exec {LAUNCHER} --permission-mode auto --resume {sids['main']}"
+    line = (f"cd -- /home/agent/work/main && exec {LAUNCHER} --permission-mode auto "
+            f"--resume {sids['main']}")
     assert [before["main"], line] in hc(ship)["sent"]
     assert launched(ship, "grinder") == ["--dangerously-skip-permissions",
                                          "--resume", sids["grinder"]]
@@ -266,7 +267,8 @@ def test_an_agent_killed_by_a_signal_comes_back_in_its_kept_terminal(core):
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert "main started again, continuing its session (it had stopped)." in out
-    assert [address, f"exec {LAUNCHER} --permission-mode auto --resume {sid}"] in hc(ship)["sent"]
+    assert [address, f"cd -- /home/agent/work/main && exec {LAUNCHER} --permission-mode auto "
+            f"--resume {sid}"] in hc(ship)["sent"]
     assert ship.terminal("main")["address"] == address
     assert launched(ship, "main")[-2:] == ["--resume", sid]
     never_killed(ship)
@@ -423,8 +425,9 @@ def test_the_launch_typed_into_a_shell_is_one_quoted_line(core):
     sid = ship.record()["agents"]["main"]["session"]
     ship.core_crash("main")
     ship.ctl("refresh")
-    [line] = [text for _, text in hc(ship)["sent"] if text.startswith("exec ")]
-    assert shlex.split(line) == ["exec", LAUNCHER, "--permission-mode", "auto", "--resume", sid]
+    [line] = [text for _, text in hc(ship)["sent"] if "exec " in text]
+    assert shlex.split(line) == ["cd", "--", "/home/agent/work/main", "&&", "exec", LAUNCHER,
+                                 "--permission-mode", "auto", "--resume", sid]
 
 
 def test_the_core_unit_only_starts_the_core():
@@ -442,3 +445,21 @@ def test_schemas_are_kept_in_step():
         a = json.loads((repo / "contracts" / f"{name}.schema.json").read_text())
         b = json.loads((repo / "ship/schemas" / f"{name}.schema.json").read_text())
         assert a == b
+
+
+def test_a_terminal_still_running_the_launcher_is_never_typed_into(core):
+    """agent-launch is a sh script: until it execs claude its terminal's foreground is
+    sh, which is not a free shell, so a second launch never lands in claude's prompt."""
+    ship = core
+    s = ship.scenario()
+    for t in s["hc"]["terminals"]:
+        if t["name"] == "main":
+            t.update(status=None, foreground={"pid": 7, "name": "sh", "cwd": t["cwd"],
+                                              "argv": ["/bin/sh", LAUNCHER, "--resume", "x"]})
+    ship.set(hc=s["hc"])
+    assert {a["name"]: a["state"] for a in status(ship)["herdr"]["agents"]}["main"] == "unknown"
+    rc, _, out = ship.ctl("refresh")
+    assert rc == 0, out
+    assert not [x for x in hc(ship).get("sent", []) if "exec " in x[1]]
+    assert len(runs(ship)) == 2
+
