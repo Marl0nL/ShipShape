@@ -182,3 +182,13 @@ def test_a_newer_ships_unknown_top_level_block_is_ignored(store, fake_ssh):
     broken["herdr"]["server"] = "sideways"  # a known block that breaks the contract
     view = fetch(fake_ssh(answer(broken)), inv, inv.ship("ship-01"))
     assert view.problem == "invalid" and "herdr" in view.message
+
+
+@pytest.mark.parametrize("raw", [b"\xff\xfe not utf-8", b"[1, 2]", b'"ready"', b"null"])
+def test_a_corrupt_cache_reads_as_no_cache(home, raw):
+    status_mod.cache_path("ship-01").parent.mkdir(parents=True, exist_ok=True)
+    status_mod.cache_path("ship-01").write_bytes(raw)
+    assert read_cache("ship-01") is None
+    from fleetledger import attach
+
+    assert attach.cached_runtime("ship-01") == attach.HERDR  # [1, 2] crashed .get() here
