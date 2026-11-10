@@ -41,7 +41,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths, sshkeys
+from fleetledger import attach, paths, sshkeys
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship
 
@@ -703,7 +703,7 @@ if [ "$herdr" = 1 ]; then
     echo "herdr is not installed here; skipping saved machines."
   fi
 fi
-echo "Done. Try: ssh @FIRST@ true   (then herdr --remote @FIRST@)"
+echo "Done. Try: ssh @FIRST@ true   (@ATTACH_HINT@)"
 """
 
 
@@ -772,15 +772,20 @@ def install_script(machine_name: str, ships: Sequence[str], identity: str, *,
     on_core = [s for s in ships if s in core] if herdr else []
     on_herdr = [s for s in ships if s not in on_core]
     first = ships[0] if ships else "<ship>"
+    if not herdr:
+        hint = "your own login; herdr needs the agent's"
+    elif first in on_core:
+        hint = (f"then {attach.command(first, attach.CORE, '<agent>')}, "
+                f"or {attach.command(first, attach.CORE)}")
+    else:
+        hint = f"then {attach.command(first, attach.HERDR)}"
     script = (
         INSTALL_SH.replace("@CERT@", f"{machine_name}-cert.pub")
         .replace("@IDENTITY_SH@", ident)
         .replace("@SHIPS@", " ".join(shlex.quote(s) for s in on_herdr) if herdr else "")
         .replace("@FIRST@", first)
+        .replace("@ATTACH_HINT@", hint)
     )
-    if not herdr:
-        script = script.replace("   (then herdr --remote " + first + ")",
-                                "   (your own login; herdr needs the agent's)")
     if on_core:
         # Ship names are host names (no spaces or globs): $core splits into them.
         block = (INSTALL_CORE_SH.replace("@CORE@", "'" + " ".join(on_core).replace("'", "") + "'")
@@ -788,9 +793,6 @@ def install_script(machine_name: str, ships: Sequence[str], identity: str, *,
         script = (script.replace("herdr saved machines\n", "herdr and hc saved machines\n", 1)
                   .replace("# everything except herdr\n", "# everything except herdr and hc\n", 1)
                   .replace("\necho \"Done. Try:", block.rstrip("\n") + "\necho \"Done. Try:", 1))
-        if first in on_core:
-            script = script.replace("   (then herdr --remote " + first + ")",
-                                    "   (then hc attach " + first + "/<agent>, or hc)")
     return script
 
 
