@@ -217,7 +217,7 @@ def dns_ready(ctx: Context) -> bool:
     return ctx.runner.run(["getent", "ahosts", DNS_PROBE], timeout=DNS_TIMEOUT_S).ok
 
 
-def _age_s(stamp: str | None) -> float | None:
+def age_s(stamp: str | None) -> float | None:
     """Seconds since a timestamp of this record, or None."""
     try:
         when = datetime.strptime(stamp or "", "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
@@ -412,7 +412,7 @@ def sync(ctx: Context, rt: Runtime, doc: dict, live: list[dict], ledger: dict[st
             here = _place(rt, ctx, a["place"], a["workspace"])
             if e["place"] != here:
                 fields["place"] = here
-        age = _age_s(e["launched_at"])
+        age = age_s(e["launched_at"])
         if e["relaunch"]["failures"] and age is not None and age >= STABLE_S:
             # It has run long enough since its last start: its tries are spent no more.
             fields["relaunch"] = {**e["relaunch"], "failures": 0, "last_error": None}
@@ -438,8 +438,8 @@ def sync(ctx: Context, rt: Runtime, doc: dict, live: list[dict], ledger: dict[st
     return changed
 
 
-def _stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
-                        since: str) -> str | None:
+def stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
+                       since: str) -> str | None:
     """Why an agent that ran this boot and is gone now was stopped, not crashed."""
     seen = sessions.get(e["session"] or "") or {"ended": None, "watched": False}
     # An exit ship-ctl made itself (agent restart) is no longer in the ledger: the
@@ -465,7 +465,7 @@ def _stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
     return None
 
 
-def _stop(doc: dict, name: str, autostart: set[str]) -> None:
+def let_go(doc: dict, name: str, autostart: set[str]) -> None:
     """Let an agent go: an [[autostart]] one stays, stopped (autostart starts it
     afresh at the next boot); any other leaves the record, as herdr forgets a pane's
     agent when it exits."""
@@ -473,6 +473,16 @@ def _stop(doc: dict, name: str, autostart: set[str]) -> None:
         del doc["agents"][name]
     else:
         _set(doc["agents"][name], want="stopped", stopped_at=utc_now())
+
+
+def let_go_exited(doc: dict, name: str, sessions: dict[str, dict], places: dict | None,
+                  since: str, autostart: set[str]) -> str | None:
+    """Let agent name go if it ran this boot and was stopped on purpose, not crashed
+    (stopped_on_purpose); why, or None (it stays, to be resumed)."""
+    why = stopped_on_purpose(doc["agents"][name], sessions, places, since)
+    if why:
+        let_go(doc, name, autostart)
+    return why
 
 
 def prune(doc: dict, ship: ShipToml) -> bool:
@@ -485,7 +495,7 @@ def prune(doc: dict, ship: ShipToml) -> bool:
     return bool(gone)
 
 
-def _folder_exists(ctx: Context, cwd: str) -> bool:
+def folder_exists(ctx: Context, cwd: str) -> bool:
     return (ctx.paths.p(cwd) if ctx.paths.sandbox else Path(cwd)).is_dir()
 
 
@@ -506,7 +516,7 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
     if mode == "bypassPermissions" and not ship.claude["allow_bypass"]:
         mode = ship.claude["default_mode"]
     cwd = e["cwd"]
-    if not _folder_exists(ctx, cwd):
+    if not folder_exists(ctx, cwd):
         return False, f"its folder {cwd} is not there"
     sid, chosen = new_session(rt) if fresh is not None else (None, [])
     args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]]),
@@ -568,20 +578,19 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[d
             r.update(boot_id=boot, failures=0, last_error=None, last_at=None,
                      counted_launch=None)
         this_boot = bool(own_place(rt, e)) and e["place"]["boot_id"] == boot
-        why = _stopped_on_purpose(e, sessions, places, since) if this_boot else None
+        why = let_go_exited(doc, name, sessions, places, since, autostart) if this_boot else None
         if why:
-            _stop(doc, name, autostart)
             messages.append(f"{name} stopped ({why}); not started again.")
             continue
         if not e["session"]:
             # Nothing to continue (it never reported a session): autostart starts
             # an [[autostart]] agent afresh; any other is let go.
-            _stop(doc, name, autostart)
+            let_go(doc, name, autostart)
             messages.append(f"{name}: no session to resume; left stopped.")
             continue
         if r["failures"] >= MAX_TRIES:
             continue
-        lived = _age_s(e["launched_at"]) if this_boot else None
+        lived = age_s(e["launched_at"]) if this_boot else None
         if lived is not None and lived < STABLE_S and r["counted_launch"] is None:
             # It stopped soon after it started (its transcript too big to load, a
             # crash on start): a failed try, once per start, so a loop of them ends.
