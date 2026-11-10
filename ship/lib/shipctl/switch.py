@@ -95,6 +95,13 @@ def _new_ship(ship: ShipToml, target: str) -> ShipToml:
     return ShipToml(doc)
 
 
+def _the_other(ctx: Context, rt: Runtime) -> Runtime:
+    """The runtime that rt is not. There are two; a third would need `settle` to
+    check each of the others, so this fails loudly until it does."""
+    (kind,) = [k for k in TARGETS if k != rt.kind]
+    return RUNTIMES[kind](ctx)
+
+
 def _history(doc: dict, entry: dict) -> None:
     doc["switches"] = [*doc.get("switches", []), entry][-HISTORY:]
 
@@ -102,8 +109,8 @@ def _history(doc: dict, entry: dict) -> None:
 def _preflight(rt: Runtime) -> None:
     """The target runtime answers, and (core) Claude is new enough for it."""
     if rt.version(15) is None:
-        binary = "/usr/local/bin/hc" if rt.kind == "core" else "/usr/local/bin/herdr"
-        raise CtlError("runtime-missing", f"{rt.kind} is not installed on this Ship ({binary} "
+        raise CtlError("runtime-missing", f"{rt.kind} is not installed on this Ship "
+                       f"(/usr/local/bin/{rt.binary} "
                        "does not answer); update the Ship's tooling first; nothing changed")
     why = rt.claude_floor(strict=True)
     if why:
@@ -162,10 +169,10 @@ class Switch:
                            "has not reported its session yet), so it could not be resumed; "
                            "wait a moment, or exit it, then switch")
         others = [a for a in live if a["kind"] != "claude"]
-        if others and self.source == "herdr":
+        if others and not self.old.stays_running_when_left:
             where = ", ".join(f"{a['name'] or a['place']} ({a['kind']})" for a in others)
-            raise CtlError("invalid-input", f"herdr also runs {where}; stopping herdr would "
-                           "end it, so exit it first")
+            raise CtlError("invalid-input", f"{self.source} also runs {where}; stopping "
+                           f"{self.source} would end it, so exit it first")
         ledger = read_ledger(ctx)
         problems, busy = [], []
         for name, a in sorted(found.items()):
@@ -267,7 +274,7 @@ class Switch:
         self.units_changed = True
         _systemctl(ctx, "--global", "disable", frm.unit)
         _systemctl(ctx, "--global", "enable", to.unit)
-        if frm.kind == "herdr":
+        if not frm.stays_running_when_left:
             _systemctl(ctx, "stop", frm.unit, agent=True)
         _systemctl(ctx, "start", to.unit, agent=True)
         if not wait_until(ctx, SERVER_WAIT_S, lambda: to.agents()[1] is not None):
@@ -406,9 +413,9 @@ class Switch:
         except Exception as exc:  # noqa: BLE001 - whatever it was, say so and stop here
             self.notes.append(f"putting {self.source} back failed: {exc}")
             return "rollback-failed", [f"{self.source} was not put back: {exc}"]
-        # herdr-core keeps running when the rollback leaves it: none of them may be
-        # there (a launch that came up late, say), or it would run twice.
-        other = self.new if self.target == "core" else None
+        # A runtime that keeps running when the rollback leaves it (herdr-core) may
+        # run none of them (a launch that came up late, say), or it would run twice.
+        other = self.new if self.new.stays_running_when_left else None
         names = [n for n in self.stopped if n not in stuck]
         left = self.resume_old(names, other)
         late = self.late_exit()
@@ -455,15 +462,15 @@ class Switch:
         self.stop_all(found)
         cleared = self.lift(self.old)
         self.save("switching")
-        if self.source == "herdr":  # while herdr runs, so it saves no layout with them
+        if self.old.release_before_unit_stop:
             self.notes += self.old.release(cleared)
         self.set_runtime(self.old, self.new, self.new_ship)
-        if self.source == "core":
+        if not self.old.release_before_unit_stop:
             self.notes += self.old.release(cleared)
         self.save("starting")
         self.launch_all(self.new, self.new_ship, list(self.snap))
         self.save("verifying")
-        left = self.verify(self.new, self.old if self.source == "core" else None,
+        left = self.verify(self.new, self.old if self.old.stays_running_when_left else None,
                            list(self.snap))
         if left:
             raise Failed("; ".join(left))
@@ -533,11 +540,12 @@ class Switch:
         unsure = last.get("outcome") in ("interrupted", "rollback-failed")
         if not unsure and rt.agents()[1] is not None:
             return self.result("already", []), [], [f"This Ship already runs {self.target}."]
-        other = RUNTIMES[next(k for k in TARGETS if k != rt.kind)](ctx)
+        other = _the_other(ctx, rt)
         _, there, _ = other.agents()
         sessions = {e["session"] for e in doc["agents"].values() if e["session"]}
-        # herdr's stop ends whatever it runs; a recorded agent on the core would run twice.
-        odd = [a for a in there or [] if other.kind == "herdr" or (
+        # Stopping a runtime that does not stay running (herdr) ends whatever it runs;
+        # a recorded agent on one that does (the core) would run twice.
+        odd = [a for a in there or [] if not other.stays_running_when_left or (
             a["kind"] == "claude" and (a["name"] in doc["agents"] or a["session"] in sessions))]
         if odd:
             where = ", ".join(f"{a['name'] or a['place']} ({a['kind']})" for a in odd)
@@ -549,7 +557,7 @@ class Switch:
             apply.herdr_resume_off(ctx)
             _systemctl(ctx, "--global", "disable", other.unit)
             _systemctl(ctx, "--global", "enable", rt.unit)
-            if other.kind == "herdr":
+            if not other.stays_running_when_left:
                 _systemctl(ctx, "stop", other.unit, agent=True)
             _systemctl(ctx, "start", rt.unit, agent=True)
             if not wait_until(ctx, SERVER_WAIT_S, lambda: rt.agents()[1] is not None):
