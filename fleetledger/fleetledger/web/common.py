@@ -1,19 +1,23 @@
 """Request helpers every page module shares.
 
-A leaf module: it imports nothing from the route modules or from app.py, so any
-of them can import it at the top. Helpers that render a page (render, not_found,
-partial) stay in app.py, because rendering pulls in the rest of the UI.
+A leaf module: it imports nothing from the route modules or from app.py (only
+the job runner, web/jobs.py), so any of them can import it at the top. Helpers
+that render a page (render, not_found, partial) stay in app.py, because rendering
+pulls in the rest of the UI.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from starlette.websockets import WebSocket
 
+from fleetledger.errors import FleetError
+from fleetledger.web import jobs
 from fleetledger.web.forms import NAME_RE
 from fleetledger.web.security import Session
 
@@ -54,3 +58,29 @@ def known_ship(request: Request) -> str | None:
     """The {name} in the path, if it is a Ship the poller knows."""
     name = ship_name(request)
     return name if name and name in ui_of(request).fleet.snapshot.by_name else None
+
+
+def start_cli_job(request: Request, kind: str, ships: list[str], argv: list[str], title: str,
+                  *, said: str | None = None, wrap: Callable[[Any, Any], Any] | None = None,
+                  locks: Iterable[str] = (), after: Callable[[Any], None] | None = None) -> bool:
+    """Start `ship-fleet ARGV` as a background job and flash how that went: why it was
+    refused, or `said` once it has started (nothing if said is None). True if it started.
+
+    wrap(app, job), if given, is the app the command runs with (jobs.RecordingApp keeps
+    a driver's answer on the job); after(job) runs once the command has succeeded."""
+    ui = ui_of(request)
+
+    def run(job: Any) -> int:
+        code = jobs.run_cli(ui.app if wrap is None else wrap(ui.app, job), argv, job)
+        if code == 0 and after is not None:
+            after(job)
+        return code
+
+    try:
+        ui.jobs.start(kind, ships, run, title=title, locks=list(locks))
+    except FleetError as exc:
+        flash(request, "bad", exc.message)
+        return False
+    if said is not None:
+        flash(request, "ok", said)
+    return True

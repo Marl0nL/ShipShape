@@ -46,6 +46,7 @@ from fleetledger.web.common import (
     flash,
     known_ship,
     session_of,
+    start_cli_job,
     ui_of,
 )
 from fleetledger.web.forms import NAME_RE, form, one
@@ -115,23 +116,8 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
 def _start(request: Request, kind: str, ships: list[str], argv: list[str],
            title: str, after: Any = None) -> bool:
     """Start the command as a job; after(), if given, runs once it has succeeded."""
-    from fleetledger.web import jobs
-
-    ui = ui_of(request)
-
-    def run(job: Any) -> int:
-        code = jobs.run_cli(ui.app, argv, job)
-        if code == 0 and after is not None:
-            after(job)
-        return code
-
-    try:
-        ui.jobs.start(kind, ships, run, title=title)
-    except FleetError as exc:
-        flash(request, "bad", exc.message)
-        return False
-    flash(request, "ok", f"{title}: started; it shows below.")
-    return True
+    return start_cli_job(request, kind, ships, argv, title, after=after,
+                         said=f"{title}: started; it shows below.")
 
 
 def _inventory(request: Request):

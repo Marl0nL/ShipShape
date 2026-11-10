@@ -24,7 +24,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
-from fleetledger.web.common import NO_SUCH_SHIP, back, flash, known_ship, ui_of
+from fleetledger.web.common import NO_SUCH_SHIP, back, flash, known_ship, start_cli_job, ui_of
 from fleetledger.web.forms import form, one
 
 POLICY_BYTES = 60 * 1024  # the pasted policy, form-encoded
@@ -52,7 +52,6 @@ def tab_context(inv: Any, ship: Any, doc: dict | None) -> dict[str, Any]:
 
 # --- leave ------------------------------------------------------------------------------
 async def leave(request: Request) -> Response:
-    from fleetledger.web import jobs
     from fleetledger.web.app import not_found
 
     name = known_ship(request)
@@ -68,16 +67,9 @@ async def leave(request: Request) -> Response:
         flash(request, "bad", f"Not left: a sign-in is open on {name}. Finish or cancel it "
               "on the Sign-ins page first.")
         return back(where)
-
-    def run(job: Any) -> int:
-        return jobs.run_cli(ui.app, ["overlay", "leave", name], job)
-
-    try:
-        ui.jobs.start("leave", [name], run, title=f"{name} leaves the overlay")
-    except FleetError as exc:
-        flash(request, "bad", exc.message)
-        return back(where)
-    flash(request, "ok", f"{name} is leaving the overlay; its progress is below.")
+    start_cli_job(request, "leave", [name], ["overlay", "leave", name],
+                  f"{name} leaves the overlay",
+                  said=f"{name} is leaving the overlay; its progress is below.")
     return back(where)
 
 

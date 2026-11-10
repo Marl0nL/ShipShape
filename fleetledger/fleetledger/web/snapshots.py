@@ -24,7 +24,14 @@ from starlette.routing import Route
 from fleetledger.drivers.base import NotSupported, check_snapshot_name
 from fleetledger.errors import FleetError
 from fleetledger.lifecycle import SNAPSHOT_WARNING
-from fleetledger.web.common import NO_SUCH_SHIP, back, flash, known_ship, session_of, ui_of
+from fleetledger.web.common import (
+    NO_SUCH_SHIP,
+    back,
+    flash,
+    known_ship,
+    start_cli_job,
+    ui_of,
+)
 from fleetledger.web.forms import form, one
 
 NOTE_MAX = 200
@@ -49,17 +56,8 @@ def listing(app: Any, name: str) -> dict[str, Any]:
 def _start(request: Request, name: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
 
-    ui = ui_of(request)
-
-    def run(job: Any) -> int:
-        return jobs.run_cli(jobs.RecordingApp(ui.app, job), argv, job)
-
-    try:
-        ui.jobs.start("snapshot", [name], run, title=title)
-    except FleetError as exc:
-        ui.flash(session_of(request), "bad", exc.message)
-        return
-    ui.flash(session_of(request), "ok", f"{title}: started; it shows above.")
+    start_cli_job(request, "snapshot", [name], argv, title, wrap=jobs.RecordingApp,
+                  said=f"{title}: started; it shows above.")
 
 
 def _snapshot_name(value: str) -> str | None:
