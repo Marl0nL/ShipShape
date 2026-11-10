@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fleetledger import keys, paths, prompts, vault
+from fleetledger import keys, paths, prompts, secretplaces, vault
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.overlay import secret_store
 
@@ -69,24 +69,17 @@ def named(inv) -> list[Placed]:
         secret = Secret(f"{label}'s passphrase", "passphrase", keys.item(path), path)
         out.append(Placed(secret, store or "file",
                           keys.passphrase_file(path) if store == "file" else None))
-    proxmox = inv.driver_config("proxmox") or {}
-    if proxmox.get("token_id"):
-        secret = Secret("the Proxmox token", "proxmox",
-                        secret_store.proxmox_item(proxmox["token_id"]))
-        if proxmox.get("token_store", "file") == "keyring":
-            out.append(Placed(Secret(secret.label, "proxmox", str(proxmox["keyring_item"])),
-                              "keyring", None))
-        elif proxmox.get("token_file"):
-            out.append(Placed(secret, "file", paths.expand(proxmox["token_file"])))
-    api = (inv.overlay or {}).get("api") or {}
-    if api.get("oauth_client_id"):
-        if api.get("secret_store", "file") == "keyring":
-            out.append(Placed(Secret("the overlay's OAuth secret", "oauth",
-                                     str(api["keyring_item"])), "keyring", None))
-        elif api.get("oauth_secret_file"):
-            item = secret_store.oauth_item(str(api["oauth_client_id"]))
-            out.append(Placed(Secret("the overlay's OAuth secret", "oauth", item), "file",
-                              paths.expand(api["oauth_secret_file"])))
+    for place in secretplaces.PLACES:
+        table = place.table(inv.doc) or {}
+        found = place.location(table)
+        if found is None:
+            continue
+        store, where = found
+        if store == "keyring":
+            out.append(Placed(Secret(place.label, place.kind, where), "keyring", None))
+        else:
+            out.append(Placed(Secret(place.label, place.kind, place.item(table)), "file",
+                              paths.expand(where)))
     return out
 
 
@@ -156,26 +149,11 @@ def point_at(editor, moved: list[tuple[Placed, str]], store_kind: str) -> dict[s
             files[secret.item] = target
         if secret.kind == "passphrase":
             doc["fleet"]["managed_keys"]["store"] = store_kind
-        elif secret.kind == "proxmox":
-            table = doc["drivers"]["proxmox"]
-            for name in ("token_store", "keyring_item", "token_file"):
-                if name in table:
-                    del table[name]
-            if store_kind == "keyring":
-                table["token_store"] = "keyring"
-                table["keyring_item"] = secret.item
-            else:
-                table["token_file"] = paths.tilde(target)
-        else:
-            table = doc["overlay"]["api"]
-            for name in ("secret_store", "keyring_item", "oauth_secret_file"):
-                if name in table:
-                    del table[name]
-            table["secret_store"] = store_kind
-            if store_kind == "keyring":
-                table["keyring_item"] = secret.item
-            else:
-                table["oauth_secret_file"] = paths.tilde(target)
+            continue
+        place = secretplaces.BY_KIND[secret.kind]
+        table = place.table(doc)
+        place.clear(table)
+        place.set(table, store_kind, item=secret.item, file=target)
     return files
 
 
