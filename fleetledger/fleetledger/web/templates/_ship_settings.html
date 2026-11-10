@@ -144,6 +144,7 @@
     <p class="hint">Ticked tools are installed on {{ ship.name }}; untick one to remove it. It
       runs as a job (<code>ship-fleet tools add|remove</code>), with its progress above.</p>
     {% endif %}
+    {% with toolkits = tools.toolkits %}{% include "_toolkit_tools.html" %}{% endwith %}
   </section>
   {% set ssh_form %}{% if on_overlay %}
     {% set now = setting_now(view, SSH_LISTEN) %}

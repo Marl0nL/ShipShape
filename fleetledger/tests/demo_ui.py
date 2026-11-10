@@ -281,10 +281,21 @@ def home(base: Path) -> None:
         if name == "ship-06":  # it never uses Google Cloud: shown as off
             text += 'signins = ["claude", "github"]\n'
     text += demo_images(base)
+    text += demo_toolkit(base)
     path = base / "config" / "ships.toml"
     path.write_text(text, encoding="utf-8")
     path.chmod(0o600)
     demo_ca(base, path)
+
+
+def demo_toolkit(base: Path) -> str:
+    """The tests' placeholder toolkit, copied into the demo home, so the Tools lists
+    show a toolkit's tools grouped beside the catalogue's."""
+    import shutil
+
+    folder = base / "home" / "toolkits" / "examplekit"
+    shutil.copytree(HERE / "fixtures" / "toolkits" / "examplekit", folder)
+    return f'\n[toolkit.examplekit]\npath = "{folder}"\nonly_tags = ["work"]\n'
 
 
 def demo_ca(base: Path, path: Path) -> None:

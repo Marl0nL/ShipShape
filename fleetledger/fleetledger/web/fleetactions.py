@@ -90,12 +90,14 @@ def page_context(ui: Any, inv: Any, tag: str | None) -> dict[str, Any]:
     from fleetledger.web import shipsettings
     from fleetledger.web.actions import tool_choices
 
+    choices = tool_choices(ui.app, None)
     return {
         "targets": targets(inv),
         "chosen": f"tag:{tag}" if tag else "all",
         "GROUPS": shipsettings.GROUPS,
         "REBOOT_POLICIES": ops.REBOOT_POLICIES,
-        "tools": tool_choices(ui.app, None)["list"],
+        "tools": choices["list"],
+        "toolkits": choices["toolkits"],
         "sources": commands.LOG_SOURCES,
         "LOG_LINES": LOG_LINES,
         "fleet_jobs": [j for j in ui.jobs.shown() if j.kind in KINDS][:4],

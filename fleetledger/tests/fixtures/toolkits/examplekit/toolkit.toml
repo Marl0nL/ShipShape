@@ -1,0 +1,9 @@
+# A placeholder toolkit for FleetLedger's tests (contracts/toolkit.md).
+schema = 1
+id = "examplekit"
+version = "1.4.0"
+description = "Example Docs tools for Ships tagged work."
+instructions = ["instructions/examplekit.md"]
+
+[files]
+"files/example-cli.txt" = "2db4f57b7a7644ca17f0369a7f4eb6157e167fb74a740cb2ab887f2d6166ec32"

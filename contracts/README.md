@@ -17,6 +17,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | Ship runtime (users, paths, units, sudo) | prose only | Ship (W4) | Fleet (W8, W9) |
 | Sign-in files (`ship/signins/<id>.toml`) | `signin.schema.json` | shared: the files travel in the tooling bundle | Fleet: the login concierge and sign-in registry (W9); Ship: ship-ctl status, `signin check`, `notify-signin` |
 | Catalogue recipes and profiles | `tool-recipe.schema.json`, `profile.schema.json` | Ship (W6) | Ship: ship-ctl tools (W5); Fleet: `ship-fleet tools`, `new --profile` (W3, W10) |
+| Your toolkits (`<toolkit>/toolkit.toml` and its folder) | `toolkit.schema.json` | you, outside the repo | Fleet: `ship-fleet toolkit`, `tools ls` |
 | Pinned versions (`/versions.toml`) | `versions.schema.json` | shared | Ship (W4), Fleet (W3, W8) |
 | SSH certificates for a Ship (`ship-ctl ssh-trust` stdin) | `ssh-trust.schema.json` | Fleet: the certificate authority (phase 3) | Ship: ship-ctl |
 | Network visibility summary (`ship-ctl net --json` data) | `net-summary.schema.json` | Ship: ship-netwatch and ship-ctl (phase 3) | Fleet: Network tab, first-seen destinations, who-talked search |
@@ -30,6 +31,7 @@ Prose documents:
 - `ship-ctl.md`: every ship-ctl command, its output and exit codes, and how status is worked out.
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
+- `toolkit.md`: your own toolkits: their layout, ids and the rules FleetLedger checks.
 - `image.md`: what a baked image holds, how `ship/image/bake` is called, image ids, pinning and rollout (phase 4).
 
 Examples live in `examples/<contract>/`. Every file there must validate, and every

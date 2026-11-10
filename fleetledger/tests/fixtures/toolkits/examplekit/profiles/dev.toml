@@ -1,0 +1,10 @@
+schema = 1
+id = "dev"
+description = "Example Docs tools plus the catalogue's task tool."
+tools = ["example-cli", "examplekit/example-guide", "tasks-axi"]
+setup = "dev-setup.sh"
+
+[options.workspace]
+description = "Workspace repository to clone."
+required = true
+pattern = "^https://"

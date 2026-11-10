@@ -1,0 +1,8 @@
+# A vendored file is pinned by its full SHA-256.
+schema = 1
+id = "mykit"
+version = "0.1.0"
+description = "Tools I use on my Ships."
+
+[files]
+"files/tool.tar.gz" = "latest"

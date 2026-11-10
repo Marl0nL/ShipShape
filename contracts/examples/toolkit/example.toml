@@ -1,0 +1,9 @@
+# A toolkit's toolkit.toml (contracts/toolkit.md).
+schema = 1
+id = "examplekit"
+version = "1.4.0"
+description = "Example tools for Ships tagged work."
+instructions = ["instructions/examplekit.md"]
+
+[files]
+"files/example-cli-1.2.0-linux-amd64.tar.gz" = "0f343b0931126a20f133d67c2b018a3b0c5e2d6b1e1c0e5a8a4f5f1b3c1f8e2d"

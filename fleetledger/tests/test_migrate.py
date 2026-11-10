@@ -47,7 +47,7 @@ from fleetledger.store import TomlFileStore
 from test_cli import RUNNING, result
 from test_secret_store import fake_backend
 
-from fleetledger import ca, cli, inuse, keys, migrate, paths, schemas
+from fleetledger import ca, cli, handover, inuse, keys, migrate, paths, schemas
 
 pytestmark = pytest.mark.skipif(
     not (shutil.which("ssh-keygen") and shutil.which("ssh-agent") and shutil.which("ssh-add")),
@@ -1570,3 +1570,45 @@ def test_a_half_made_ship_answering_with_another_host_key_still_blocks_activate(
     assert "FAIL  ship-02" in out and "not enrolled yet, not answering" not in out
     code, out, err = b.run("migrate", "activate", "--yes")
     assert code == 1 and "Not made active" in err
+
+
+# --- toolkits ------------------------------------------------------------------------------
+
+
+TOOLKIT = Path(__file__).resolve().parent / "fixtures" / "toolkits" / "examplekit"
+
+
+def test_toolkit_folders_are_named_in_the_plan_and_never_copied(computers, monkeypatch):
+    a, b, world = computers
+    yours = a.home / "toolkits" / "examplekit"
+    shutil.copytree(TOOLKIT, yours)
+    inside = a.root / "config" / "toolkits" / "otherkit"  # kept in FleetLedger's own folder
+    inside.mkdir(parents=True)
+    (inside / "toolkit.toml").write_text('schema = 1\nid = "otherkit"\n')
+    with a.store.edit() as ed:
+        ed.set_toolkit("examplekit", {"path": "~/toolkits/examplekit"})
+        ed.set_toolkit("otherkit", {"path": str(inside)})
+    code, out, err = a.run("migrate", "check")
+    assert code == 0, out + err
+    assert ("Note: Toolkit examplekit is read from ~/toolkits/examplekit, a folder of yours "
+            "that migrate does not copy: bring this folder to the new computer") in out
+    assert "Toolkit otherkit is read from" in out
+    stays = out.split("Stays here:")[1]
+    line = next(x for x in stays.splitlines() if "otherkit/toolkit.toml" in x)
+    assert "part of toolkit otherkit's folder, which migrate does not copy" in line
+    stream = send_bytes(a, monkeypatch)
+    assert b"placeholder release file" not in stream and b'id = "otherkit"' not in stream
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED
+    assert "Toolkit examplekit is read from ~/toolkits/examplekit" in b.out.getvalue()
+    assert tomllib.loads(b.store.path.read_text())["toolkit"]["examplekit"] == {
+        "path": "~/toolkits/examplekit"}
+    assert not (b.root / "config" / "toolkits").exists()
+
+    a.use(monkeypatch)
+    gone, kept = handover.wipe_plan(a.store)  # a wipe leaves a toolkit folder of yours
+    assert not [g for g in gone if "otherkit" in g.where]
+    assert any("toolkit otherkit's folder: yours" in why for _, why in kept)
+    (inside / "files").mkdir()  # an empty folder of the toolkit's (a git checkout has some)
+    handover.wipe(a.store, gone)
+    assert (inside / "toolkit.toml").exists() and (inside / "files").is_dir()
+    assert not a.store.path.exists()

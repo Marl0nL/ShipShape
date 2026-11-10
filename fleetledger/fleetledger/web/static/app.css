@@ -317,6 +317,7 @@ pre.log.bad { color: var(--term-bad); }
 .settings label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 form.settings > button { justify-self: start; }  /* Apply: its own size, not the cell's */
 form.tools label { display: inline-block; margin: 0 14px 6px 0; }
+fieldset.toolkit label { display: inline-block; margin: 0 14px 6px 0; white-space: nowrap; }
 form.ssh-listen { margin-top: 10px; }
 td.row-actions form.inline { margin: 0 6px 4px 0; }
 

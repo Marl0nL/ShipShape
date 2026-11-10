@@ -1,0 +1,6 @@
+schema = 1
+id = "example-guide"
+description = "A skill telling agents how to use Example Docs."
+kind = "skill-dir"
+skill_dir = "skills/example-docs"
+check = "test -f ~/.claude/skills/example-guide/SKILL.md"

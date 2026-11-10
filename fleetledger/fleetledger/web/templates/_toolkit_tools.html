@@ -1,0 +1,22 @@
+{# Your toolkits' tools, grouped by toolkit (web.actions.toolkit_groups), beside the
+   catalogue's. FleetLedger does not send toolkits to Ships yet, so they are listed, not
+   offered. #}
+{% if toolkits %}
+<div class="toolkit-tools">
+  {% for kit in toolkits %}
+  <fieldset class="toolkit" data-toolkit="{{ kit.id }}">
+    <legend>Toolkit {{ kit.id }}{% if kit.version %} {{ kit.version }}{% endif %}</legend>
+    {% if kit.error %}
+    <p class="flash bad">Does not load: {{ kit.error }}</p>
+    {% else %}
+    {% for id, description in kit.tools %}
+    <label title="{{ description }}"><input type="checkbox" disabled> {{ id }}</label>
+    {% else %}
+    <p class="quiet">No tools (profiles or sign-ins only).</p>
+    {% endfor %}
+    {% endif %}
+  </fieldset>
+  {% endfor %}
+  <p class="hint">Your toolkits' tools are listed and checked here (<code>ship-fleet toolkit ls</code>); FleetLedger does not send toolkits to Ships yet.</p>
+</div>
+{% endif %}

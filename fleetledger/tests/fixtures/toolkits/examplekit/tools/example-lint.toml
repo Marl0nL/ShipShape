@@ -1,0 +1,7 @@
+schema = 1
+id = "example-lint"
+description = "A linter from npm, pinned (a placeholder for tests)."
+kind = "npm"
+package = "@example/lint"
+version = "2.0.1"
+check = "example-lint --version"

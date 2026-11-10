@@ -8,7 +8,7 @@
   "required": ["schema", "id", "description", "tools"],
   "properties": {
     "schema": { "const": 1 },
-    "id": { "$ref": "#/$defs/profileId" },
+    "id": { "$ref": "#/$defs/catalogueId" },
     "description": { "type": "string", "minLength": 1, "maxLength": 120 },
     "tools": {
       "type": "array",
@@ -38,7 +38,20 @@
     }
   },
   "$defs": {
-    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
-    "profileId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" }
+    "toolId": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "A catalogue recipe id, or toolkit/recipe for a recipe from one of your toolkits (contracts/toolkit.md)."
+    },
+    "profileId": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "A catalogue profile id, or toolkit/profile for a profile from one of your toolkits (contracts/toolkit.md)."
+    },
+    "catalogueId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "A recipe's or profile's own id, its file name: never a toolkit/ prefix."
+    }
   }
 }

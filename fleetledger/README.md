@@ -347,6 +347,7 @@ covers the core ones; the rest are documented with their feature: `setup`,
 | `agent restart NAME AGENT...\|--all` | restarts running agents in place in a new mode (`--mode`, else the mode each starts in), continuing their conversations; below, under day-2 operations |
 | `tag NAME +work -personal` | changes tags in the inventory and on the Ship (`--local` for the inventory only); `none` clears them |
 | `tools ls`, `tools add/remove NAME ID...` | the catalogue, and `ship-ctl tools add/remove` |
+| `toolkit add ID PATH`, `toolkit ls\|check\|show` | your own toolkits: folders of recipes, profiles, sign-ins and skills, checked and listed as `<toolkit>/<id>` beside the catalogue (`contracts/toolkit.md`); `check PATH` also checks a folder not added yet. Not sent to Ships yet |
 | `ssh NAME [--as agent\|owner\|fleet] [-- CMD]` | a shell as agent with your own keys (default), as your own login with sudo (`owner`), or as fleet with the admin key; pinned host key either way |
 | `logs NAME SOURCE` | `ship-ctl logs` (provision, herdr, core, resume, tools, status, system) |
 | `put NAME FILE...` | sends files into the Ship's `~/inbox` for its agents, each streamed to `ship-ctl inbox put` over SSH (whole files only, names cleaned, never overwriting; 20 files of 256 MB at most); `--tell` tells its autostart agents how many arrived. `inbox ls\|rm NAME` lists or removes what is there |
