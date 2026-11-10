@@ -143,7 +143,8 @@ def untouched(ship, before: dict) -> None:
 
 
 @pytest.mark.parametrize("setup,code,why", [
-    (lambda s: s.set(hc={"installed": False}), "runtime-missing", "core is not installed"),
+    (lambda s: s.set(hc={"installed": False}), "runtime-missing",
+     "core is not installed on this Ship (/usr/local/bin/hc does not answer)"),
     (lambda s: s.set(claude={"logged_in": True, "version": "2.1.290"}), "runtime-missing",
      "older than 2.1.295"),
     (lambda s: s.set(claude={"logged_in": True, "version": "unknown"}), "runtime-missing",
@@ -165,6 +166,8 @@ def test_refuses_when_herdr_is_not_installed(core_ship):
     ship.set(herdr=s["herdr"])
     rc, doc, _ = switch(ship, "herdr")
     assert rc != 0 and doc["error"]["code"] == "runtime-missing"
+    assert ("herdr is not installed on this Ship (/usr/local/bin/herdr does not answer)"
+            in doc["error"]["message"])
     assert set(core_agents(ship)) == {"main", "grinder"} and runtime_in_toml(ship) == "core"
 
 
@@ -233,7 +236,8 @@ def test_refuses_when_stopping_herdr_would_end_another_agent(herdr_ship):
     ship.set(herdr=s["herdr"])
     rc, doc, _ = switch(ship, "core")
     assert rc != 0 and doc["error"]["code"] == "invalid-input"
-    assert "cx (codex)" in doc["error"]["message"]
+    assert ("herdr also runs cx (codex); stopping herdr would end it, so exit it first"
+            in doc["error"]["message"])
     assert hc_runs(ship) == []
 
 

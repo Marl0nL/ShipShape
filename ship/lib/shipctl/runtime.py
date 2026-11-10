@@ -78,7 +78,9 @@ def launched(ok: bool, place: str | None = None, workspace: str | None = None,
 class AgentRuntime:
     """What every runtime does the same way, over its own calls.
 
-    A runtime class supplies kind, unit and chooses_session; _run, _call, view,
+    A runtime class supplies kind, binary, unit, chooses_session and the facts
+    `ship-ctl runtime switch` acts on (stays_running_when_left,
+    release_before_unit_stop); _call, view,
     report, raw_agents, in_place, prompt, launch and the rest; and, for `stop`:
     _keys and _force_keys (keys to the agent, and keys to its pane or terminal
     even when no agent shows there), BLOCKED_WHY (the error its prompt gives an
@@ -91,6 +93,9 @@ class AgentRuntime:
 
     def __init__(self, ctx: Context):
         self.ctx = ctx
+
+    def _run(self, argv: list[str], timeout: float):
+        return self.ctx.runner.run([self.binary, *argv], timeout=timeout, agent=True)
 
     def version(self, timeout: float) -> str | None:
         r = self._run(["--version"], timeout)
@@ -150,15 +155,19 @@ class Herdr(AgentRuntime):
     """
 
     kind = "herdr"
+    binary = "herdr"  # in /usr/local/bin
     unit = "herdr.service"  # the agent user's unit that runs it (ship/files/systemd/user)
+    # Leaving herdr, its unit is stopped: the server ends every pane it runs, so a
+    # switch away refuses while it runs any other agent.
+    stays_running_when_left = False
+    # Its stopped agents' workspaces are closed while the server still runs, so it
+    # saves no layout with them.
+    release_before_unit_stop = True
     chooses_session = False  # herdr reports the session claude picked
     BLOCKED_WHY = "agent_blocked"
     UNKNOWN_NOTE = "it was interrupted (herdr could not tell its state)"
 
     # --- calls ------------------------------------------------------------------
-    def _run(self, argv: list[str], timeout: float):
-        return self.ctx.runner.run(["herdr", *argv], timeout=timeout, agent=True)
-
     def _keys(self, place: str, *keys: str) -> None:
         self._call(["agent", "send-keys", place, *keys])
 
@@ -369,7 +378,13 @@ class Core(AgentRuntime):
     """
 
     kind = "core"
+    binary = "hc"  # in /usr/local/bin
     unit = "ship-core.service"  # starts the core at boot; stopping it stops nothing
+    # Leaving herdr-core, the core keeps running (`hc server stop` would end every
+    # terminal): what it still runs is checked for agents that would run twice.
+    stays_running_when_left = True
+    # Its stopped agents' finished terminals are removed once the new runtime runs.
+    release_before_unit_stop = False
     chooses_session = True  # new agents get `--session-id <uuid>` from ShipShape
     BLOCKED_WHY = "blocked"  # hc send refuses while blocked
     UNKNOWN_NOTE = "it was interrupted (Claude had not reported its state)"
@@ -380,9 +395,6 @@ class Core(AgentRuntime):
         self._claude_version: tuple[int, ...] | None = None
 
     # --- calls ------------------------------------------------------------------
-    def _run(self, argv: list[str], timeout: float):
-        return self.ctx.runner.run(["hc", *argv], timeout=timeout, agent=True)
-
     def _keys(self, place: str, *keys: str) -> None:
         self._call(["keys", place, *keys])
 
