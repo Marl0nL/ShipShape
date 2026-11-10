@@ -10,7 +10,7 @@ prompt, and goes into the record.
 
 from __future__ import annotations
 
-import copy
+from functools import partial
 
 from . import naming, record
 from .apply import expand_cwd
@@ -189,20 +189,17 @@ def run(ctx: Context, ship: ShipToml, state: str,
             if named is None:
                 named = naming.name_flag_supported(ctx)
             sid, chosen = record.new_session(rt)
-            before = copy.deepcopy(doc["agents"].get(name))
-            if sid:  # the record has the session before the agent starts
-                record.launched(ctx, rt, doc, name, cwd=cwd, place=None, workspace=None,
-                                session=sid, mode=mode, origin="autostart", prompt=prompt,
-                                session_name=session)
-                record.save(ctx, doc)
-            done = rt.launch(name, cwd, [*mode_args(mode), *naming.launch_args(session, named),
-                                         *chosen], settled=False)
+            # The record has the session before the agent starts, and is put back as it
+            # was if nothing started.
+            prepare = partial(record.launched, ctx, rt, doc, name, cwd=cwd, place=None,
+                              workspace=None, session=sid, mode=mode, origin="autostart",
+                              prompt=prompt, session_name=session)
+            start = partial(rt.launch, name, cwd, [*mode_args(mode),
+                                                   *naming.launch_args(session, named),
+                                                   *chosen], settled=False)
+            done = record.start_and_record(ctx, doc, name, sid, prepare, start,
+                                           lambda d: d["ok"])
             if not done["ok"]:
-                if sid:  # back as it was: nothing started
-                    if before is None:
-                        del doc["agents"][name]
-                    else:
-                        doc["agents"][name] = before
                 failures += 1
                 why = done["why"]
                 skipped.append({"name": name, "reason": why if done["step"] == "place"
