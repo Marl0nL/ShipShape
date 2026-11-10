@@ -173,11 +173,7 @@ def _clean(raw: Any) -> Attempt | None:
 
 
 def _read() -> list[Attempt]:
-    try:
-        doc = json.loads(attempts_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    items = doc.get("attempts") if isinstance(doc, dict) else None
+    items = (paths.read_json(attempts_path()) or {}).get("attempts")
     return [a for a in (_clean(i) for i in items or []) if a is not None]
 
 

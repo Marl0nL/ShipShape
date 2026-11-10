@@ -13,3 +13,14 @@ def test_tilde_shortens_paths_under_home_only(tmp_path, monkeypatch):
     assert paths.tilde(str(home / "ships.toml")) == "~/ships.toml"
     outside = tmp_path / "elsewhere" / "key"
     assert paths.tilde(outside) == str(outside)
+
+
+def test_read_json_gives_an_object_or_none(tmp_path):
+    path = tmp_path / "state.json"
+    assert paths.read_json(path) is None  # missing
+    for raw in (b"\xff\xfe not utf-8", b"{not json", b"[1, 2]", b'"text"', b"null"):
+        path.write_bytes(raw)
+        assert paths.read_json(path) is None, raw
+    path.write_text('{"a": [1]}', encoding="utf-8")
+    assert paths.read_json(path) == {"a": [1]}
+    assert paths.read_json(tmp_path) is None  # a folder

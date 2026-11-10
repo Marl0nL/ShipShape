@@ -155,11 +155,7 @@ def on_this_disk(folder: Path) -> bool:
 
 def last() -> dict[str, Any] | None:
     """The last backup's result here (doctor shows it), or None."""
-    try:
-        doc = json.loads((paths.data_dir() / LAST).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return doc if isinstance(doc, dict) else None
+    return paths.read_json(paths.data_dir() / LAST)
 
 
 def _note(ok: bool, folder: Path, why: str | None = None, file: str | None = None,
