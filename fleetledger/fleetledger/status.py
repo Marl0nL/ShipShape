@@ -33,6 +33,29 @@ from fleetledger.ssh import SSH, HostKeyMismatch, Unreachable, ship_ctl
 AUTH_SERVICES = ("claude", "gcloud", "gcloud_adc", "github")
 SIGNED_IN = ("ok", "expiring")
 
+# What runs a Ship's agents (status herdr.runtime, from ship.toml runtime), as shown.
+RUNTIME_LABELS = {"herdr": "herdr", "core": "herdr-core"}
+# A blocked herdr-core agent's blocked_kind, as "waits for ...".
+WAITS_FOR = {"permission": "approval", "question": "an answer", "auth": "a sign-in"}
+
+
+def runtime_of(doc: dict[str, Any] | None) -> str:
+    """herdr or core: what runs the Ship's agents. Tooling that predates herdr-core
+    leaves herdr.runtime out, and runs herdr."""
+    return ((doc or {}).get("herdr") or {}).get("runtime") or "herdr"
+
+
+def waiting_reason(agent: dict[str, Any]) -> str | None:
+    """What a blocked agent waits for, e.g. "approval: npm test", or None. Only
+    herdr-core agents say (blocked_kind, message); herdr's never do."""
+    if agent.get("state") != "blocked":
+        return None
+    kind, message = agent.get("blocked_kind"), agent.get("message")
+    what = WAITS_FOR.get(kind or "", kind)
+    if what and message:
+        return f"{what}: {message}"
+    return what or message or None
+
 
 @dataclass
 class ShipView:

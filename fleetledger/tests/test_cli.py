@@ -24,6 +24,7 @@ from fleetledger import __version__, cli
 HERE = Path(__file__).resolve().parent
 EXAMPLES = HERE.parents[1] / "contracts" / "examples"
 RUNNING = json.loads((EXAMPLES / "ship-status" / "running.json").read_text())
+RUNNING_CORE = json.loads((EXAMPLES / "ship-status" / "running-core.json").read_text())
 CLAUDE_CODE = "EXAMPLE-CODE-0123456789abcdef#example-state"
 
 
@@ -689,6 +690,27 @@ def test_status_shows_recorded_agents_that_are_not_running(env):
     assert code == 0
     assert "  helper       failed   plan  (not running)" in out
     assert "last resume 2026-01-02T00:00:00Z (2 resumed, 1 failed)" in out
+
+
+def test_status_of_a_herdr_ship_has_no_terminal_column(env):
+    """herdr Ships print exactly as before: no address, no waiting reason."""
+    code, out, _ = env.run("status", "ship-01")
+    assert "  main         blocked  auto\n" in out
+    assert "herdr-core" not in out and "w1:p2" not in out
+
+
+def test_status_of_a_core_ship_shows_the_runtime_addresses_and_what_agents_wait_for(env):
+    env.ship.status_override["ship-01"] = copy.deepcopy(RUNNING_CORE)
+    code, out, _ = env.run("status", "ship-01")
+    assert code == 0
+    lines = out.splitlines()
+    [main] = [x for x in lines if x.startswith("  main ")]
+    [builder] = [x for x in lines if x.startswith("  builder ")]
+    assert main.split() == ["main", "blocked", "auto", "t3", "waits", "for", "approval:",
+                            "npm", "test"]
+    assert builder.split() == ["builder", "working", "bypassPermissions", "t4"]
+    assert "herdr-core 0.1.19 (core running); last resume 2026-01-01T00:00:00Z (2 resumed)" in out
+    assert "\nherdr 0.1.19" not in out
 
 
 def test_status_wait_enrols(env):

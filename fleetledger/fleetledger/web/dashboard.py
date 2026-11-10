@@ -20,6 +20,7 @@ never tokens, and nothing here adds anything else.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,7 +29,7 @@ from typing import Any
 from fleetledger import net, trustcmd
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory
-from fleetledger.status import ShipView
+from fleetledger.status import ShipView, runtime_of
 from fleetledger.web import charts
 from fleetledger.web.fleet import Item
 
@@ -56,9 +57,14 @@ class Confirm:
     danger: bool = False  # destructive: Cancel has the focus
 
 
-def op_confirm(op: str, ship: str) -> Confirm:
+def op_confirm(op: str, ship: str, runtime: str = "herdr") -> Confirm:
     """The dialog for updating, rebooting (or force-rebooting), joining or stopping
-    one Ship: the same words on the Ship's action bar and on an alert's button."""
+    one Ship: the same words on the Ship's action bar and on an alert's button.
+    runtime: what runs its agents (status.runtime_of); herdr when not known."""
+    if runtime == "core":
+        core = _core_confirm(op, ship)
+        if core is not None:
+            return core
     texts = {
         "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
                    "agents keep running. If its herdr changed it reboots, and its agents "
@@ -86,6 +92,34 @@ def op_confirm(op: str, ship: str) -> Confirm:
     return Confirm(f"{label}?", text, label, danger)
 
 
+def _core_confirm(op: str, ship: str) -> Confirm | None:
+    """op_confirm for a herdr-core Ship, where no herdr saves agents: ShipShape's agent
+    record resumes them after a boot, and an update never reboots for herdr-core."""
+    texts = {
+        "update": (f"FleetLedger copies this checkout's tooling to {ship} and converges it; "
+                   "agents keep running. If its herdr-core changed, the new one takes over "
+                   "at the next reboot. Progress shows on this page.", False),
+        "reboot": (f"{ship} restarts and is out of reach for a minute or two. Its agents "
+                   "stop, and ShipShape resumes each in its mode and conversation afterwards. "
+                   "Progress shows on this page.", True),
+        "stop": (f"{ship}'s VM shuts down cleanly (never a power-off). Its agents stop "
+                 "until you start it again, then resume in their modes. Progress shows on "
+                 "this page.", True),
+        "force-reboot": (
+            f"{ship} reboots even if a program holds a shutdown lock, such as apt installing "
+            "packages in an open login session: that program is cut off, and open sessions "
+            "are disconnected. Its agents stop, and ShipShape resumes each in its mode "
+            "afterwards. If apt was cut off, run sudo dpkg --configure -a on the Ship "
+            "afterwards. Progress shows on this page.", True),
+    }
+    if op not in texts:
+        return None
+    text, danger = texts[op]
+    label = {"stop": f"Stop {ship}'s VM",
+             "force-reboot": f"Force reboot {ship}"}.get(op, f"{op.capitalize()} {ship}")
+    return Confirm(f"{label}?", text, label, danger)
+
+
 @dataclass(frozen=True)
 class Action:
     """How to fix an alert: kind is signin (a button), link, command (copy it), or
@@ -101,9 +135,9 @@ class Action:
     title: str = ""  # the CLI equivalent, shown as the button's tooltip
 
 
-def _operation(op: str, ship: str, label: str, command: str) -> Action:
+def _operation(op: str, ship: str, label: str, command: str, runtime: str = "herdr") -> Action:
     return Action("post", label, "/operations", fields=(("operation", op), ("ship", ship)),
-                  confirm=op_confirm(op, ship), title=command)
+                  confirm=op_confirm(op, ship, runtime), title=command)
 
 
 @dataclass(frozen=True)
@@ -153,10 +187,15 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     if code.startswith("signin-"):
         return Action("link", "Sign-ins", "/signin")
     # Fixes the UI can do itself are buttons; the CLI command is the tooltip.
+    runtime = runtime_of(view.status if view is not None else None)
     if code in ("reboot-required", "herdr-restart-pending"):
-        return _operation("reboot", ship, "Reboot", f"ship-fleet reboot {ship}")
+        return _operation("reboot", ship, "Reboot", f"ship-fleet reboot {ship}", runtime)
+    if code == "core-restart-pending":  # not urgent: the old core keeps every agent
+        return dataclasses.replace(
+            _operation("reboot", ship, "Reboot", f"ship-fleet reboot {ship}", runtime),
+            hint="Agents keep running; to switch now:")
     if code == "behind-tooling":
-        return _operation("update", ship, "Update", f"ship-fleet update {ship}")
+        return _operation("update", ship, "Update", f"ship-fleet update {ship}", runtime)
     if code == "not-on-overlay":
         return _operation("join", ship, "Join", f"ship-fleet overlay join {ship}")
     if code in CERT_CODES:  # renewing changes no access: no dialog

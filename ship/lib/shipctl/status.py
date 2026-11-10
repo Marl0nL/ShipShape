@@ -233,19 +233,21 @@ def probe_herdr(ctx: Context, ship: ShipToml | None = None
 
 
 HERDR_BIN = "/usr/local/bin/herdr"
+CORE_BIN = "/usr/local/bin/herdr-core"  # `hc` is a link to it
 
 
-def herdr_restart_pending(ctx: Context) -> bool:
-    """True when a running `herdr server` is not the installed herdr binary.
+def _restart_pending(ctx: Context, binary: str, names: tuple[str, ...], verb: bytes) -> bool:
+    """True when a running server (argv[0] named one of names, argv[1] verb) is not
+    the installed binary.
 
-    A converge replaces /usr/local/bin/herdr with a new file; the running server
-    keeps the old one (its /proc/<pid>/exe points at the replaced inode) until
-    the next reboot. Only the agent's processes are looked at, and only stat()
-    and cmdline are read, so nothing an agent controls is opened or followed for
-    writing; at worst an agent could make this report a needless reboot.
+    A converge replaces the binary with a new file; the running server keeps the old
+    one (its /proc/<pid>/exe points at the replaced inode) until it restarts. Only the
+    agent's processes are looked at, and only stat() and cmdline are read, so nothing
+    an agent controls is opened or followed for writing; at worst an agent could make
+    this report a needless restart.
     """
     try:
-        installed = os.stat(ctx.paths.p(HERDR_BIN))
+        installed = os.stat(ctx.paths.p(binary))
     except OSError:
         return False
     owner = ctx.agent_owner
@@ -258,7 +260,7 @@ def herdr_restart_pending(ctx: Context) -> bool:
             if owner is not None and entry.stat().st_uid != owner[0]:
                 continue
             argv = (entry / "cmdline").read_bytes().split(b"\0")
-            if Path(argv[0].decode("utf-8", "replace")).name != "herdr" or argv[1:2] != [b"server"]:
+            if Path(argv[0].decode("utf-8", "replace")).name not in names or argv[1:2] != [verb]:
                 continue
             running = os.stat(entry / "exe")
         except OSError:
@@ -266,6 +268,20 @@ def herdr_restart_pending(ctx: Context) -> bool:
         if (running.st_dev, running.st_ino) != (installed.st_dev, installed.st_ino):
             return True
     return False
+
+
+def herdr_restart_pending(ctx: Context) -> bool:
+    """True when a running `herdr server` is not the installed herdr binary (it
+    switches at the next reboot)."""
+    return _restart_pending(ctx, HERDR_BIN, ("herdr",), b"server")
+
+
+def core_restart_pending(ctx: Context) -> bool:
+    """True when the running herdr-core (`herdr-core serve`, which the core starts as
+    its own transient user unit) is not the installed /usr/local/bin/herdr-core.
+    Its holders, which keep each terminal's program, are not counted: they stay on
+    the binary they started with until their terminal ends, by design."""
+    return _restart_pending(ctx, CORE_BIN, ("herdr-core", "hc"), b"serve")
 
 
 # --- sign-ins ---------------------------------------------------------------
@@ -452,7 +468,8 @@ def bundle_info(ctx: Context) -> tuple[str, str | None, list[str]]:
 
 
 # --- the document -----------------------------------------------------------
-def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = False) -> list[dict]:
+def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = False,
+                  core_pending: bool = False) -> list[dict]:
     items: list[dict] = []
 
     def add(code: str, message: str, subject: str | None = None) -> None:
@@ -500,6 +517,13 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             "herdr-restart-pending",
             "herdr was updated; the running server is the old version until the next reboot.",
             "herdr",
+        )
+    if core_pending:
+        add(
+            "core-restart-pending",
+            "herdr-core was updated; the running core is the old version until the next "
+            "reboot. Agents are not affected.",
+            "herdr-core",
         )
     ov = doc.get("overlay")
     if ov and ov["joined"] and ov["state"] != "running":
@@ -592,6 +616,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_ssh = pool.submit(ssh_state, ctx)
         f_net = pool.submit(net_section, ctx)
         f_pending = pool.submit(herdr_restart_pending, ctx)
+        f_core_pending = pool.submit(core_restart_pending, ctx)
         f_auth = {svc: pool.submit(AUTH_PROBES[svc], ctx) for svc in AUTH_SERVICES}
         host, e = f_host.result()
         errors += e
@@ -661,7 +686,8 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         if entry["mode"] is None and entry["kind"] == "claude":
             entry["mode"] = modes.get(id(agent))
     doc["state"] = derive_state(doc)
-    doc["attention"] = attention_for(doc, failed_units, f_pending.result())
+    doc["attention"] = attention_for(doc, failed_units, f_pending.result(),
+                                     f_core_pending.result())
     doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
                          for code, message, who in [*record.attention(doc["agent_record"]),
                                                     *repo_attention(ctx, ship)]]

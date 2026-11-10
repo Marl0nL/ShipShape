@@ -42,7 +42,7 @@
       {% if drifted %}
       <form method="post" action="/ships/{{ ship.name }}/agents/restart" class="inline"
         data-confirm-title="Restart {{ drifted|map(attribute='name')|join(', ') }} in the mode {{ 'each' if drifted|length != 1 else 'it' }} starts in?"
-        data-confirm="{% for r in drifted %}{{ r.name }} goes from {{ r.mode or 'an unknown mode' }} to {{ r.start_mode }}. {% endfor %}{{ "Each" if drifted|length != 1 else "It" }} exits and starts again in the same pane and folder, with the same name, and continues its conversation; Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if busy %} {{ busy|map(attribute='name')|join(', ') }} {{ 'are' if busy|length != 1 else 'is' }} working now and {{ 'are' if busy|length != 1 else 'is' }} left alone unless you ticked Interrupt.{% endif %}"
+        data-confirm="{% for r in drifted %}{{ r.name }} goes from {{ r.mode or 'an unknown mode' }} to {{ r.start_mode }}. {% endfor %}{{ "Each" if drifted|length != 1 else "It" }} exits and starts again in {{ "a new terminal in the same folder" if runtime_of(doc) == "core" else "the same pane and folder" }}, with the same name, and continues its conversation; Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if busy %} {{ busy|map(attribute='name')|join(', ') }} {{ 'are' if busy|length != 1 else 'is' }} working now and {{ 'are' if busy|length != 1 else 'is' }} left alone unless you ticked Interrupt.{% endif %}"
         data-confirm-action="Restart {{ drifted|length }} agent{{ 's' if drifted|length != 1 }}">
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="from" value="settings">
@@ -59,7 +59,12 @@
     </div>
   {% endif %}{% endset %}
   {{ setting_group("Claude Code", groups["Claude Code"], mode_form) }}
-  {{ setting_group("Agent", groups["Agent"]) }}
+  {% set runtime_note %}{% if runtime_of(doc) == "core" %}
+    <p class="hint runtime">Agent runtime: <strong>{{ RUNTIME_LABELS["core"] }}</strong>
+      (ship.toml <code>runtime = "core"</code>). It is not a setting to change here: moving a
+      Ship between herdr and herdr-core is a migration of its own.</p>
+  {% endif %}{% endset %}
+  {{ setting_group("Agent", groups["Agent"], runtime_note) }}
   <section>
     <h2>Sign-ins it uses</h2>
     <form method="post" action="/ships/{{ ship.name }}/signins" class="inline"

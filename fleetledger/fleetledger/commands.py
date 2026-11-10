@@ -649,8 +649,14 @@ def cmd_status(args, app) -> int:
                 + (f"; the token has {ghscopes.describe(ghscopes.extras(token))}"
                    if token is not None else ""))
     app.say("Agents:")
+    core = status.runtime_of(doc) == "core"
     for agent in doc["herdr"]["agents"] or []:
-        app.say(f"  {agent['name'] or '-':<12} {agent['state']:<8} {agent['mode'] or ''}")
+        line = f"  {agent['name'] or '-':<12} {agent['state']:<8} {agent['mode'] or ''}"
+        if core:  # the terminal's address, for hc attach; what a blocked one waits for
+            reason = status.waiting_reason(agent)
+            line = (f"{line:<45} {agent.get('pane') or ''}"
+                    + (f"  waits for {reason}" if reason else "")).rstrip()
+        app.say(line)
     idle = [a for a in (doc.get("agent_record") or {}).get("agents", [])
             if a["state"] != "running"]
     for agent in idle:  # recorded, not running: starting again, given up on, or exited
@@ -671,7 +677,10 @@ def cmd_status(args, app) -> int:
     resumed = (f"; last resume {resume['at']} ({resume['resumed']} resumed"
                + (f", {resume['failed']} failed" if resume.get("failed") else "") + ")"
                if resume else "")
-    app.say(f"herdr {herdr['version'] or '?'} ({herdr['server']}){resumed}")
+    if status.runtime_of(doc) == "core":
+        app.say(f"herdr-core {herdr['version'] or '?'} (core {herdr['server']}){resumed}")
+    else:
+        app.say(f"herdr {herdr['version'] or '?'} ({herdr['server']}){resumed}")
     commit = doc["ship"].get("bundle_commit")
     app.say(f"Tooling {doc['ship']['tooling']}" + (f" ({commit})" if commit else "")
             + f"; provisioned {doc['provision']['result']}"

@@ -5,12 +5,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { contextLine, homeView, readStatus, self } from "../src/view.js";
+import { contextLine, homeView, readStatus, rules, self } from "../src/view.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BIN = join(HERE, "../bin/ship-axi.js");
 const EXAMPLES = join(HERE, "../../../contracts/examples/ship-status");
 const running = JSON.parse(readFileSync(join(EXAMPLES, "running.json"), "utf-8"));
+const runningCore = JSON.parse(readFileSync(join(EXAMPLES, "running-core.json"), "utf-8"));
 
 function run(args, env = {}) {
   const home = mkdtempSync(join(tmpdir(), "ship-axi-"));
@@ -100,4 +101,41 @@ test("cli: setup hooks adds a SessionStart hook for Claude Code", () => {
   spawnSync(process.execPath, [BIN, "setup", "hooks"], { env: { PATH: process.env.PATH, HOME: home } });
   const again = JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf-8"));
   assert.deepEqual(again, settings);
+});
+
+test("on a herdr-core Ship the agent finds itself by HC_TERMINAL_ID, not HERDR_PANE_ID", () => {
+  assert.equal(self(runningCore, { HERDR_PANE_ID: "t3" }), undefined);
+  const me = self(runningCore, { HC_TERMINAL_ID: "t3" });
+  assert.equal(me.name, "main");
+  const view = homeView(runningCore, undefined, { HC_TERMINAL_ID: "t3" });
+  assert.deepEqual(view.you, { name: "main", terminal: "t3", mode: "auto" });
+  assert.equal(view.ship.runtime, "herdr-core");
+  assert.match(contextLine(runningCore, { pane: "t4" }), /the agent in terminal t4/);
+  // A herdr Ship: as before.
+  assert.equal(self(running, { HC_TERMINAL_ID: "w1:p2" }), undefined);
+  assert.equal(homeView(running, undefined, {}).ship.runtime, undefined);
+});
+
+test("rules follow the runtime: herdr-core agents never stop the core or kill terminals", () => {
+  const herdr = rules(running).rules.join("\n");
+  assert.match(herdr, /Do not stop or restart the herdr server/);
+  assert.doesNotMatch(herdr, /hc kill/);
+  assert.deepEqual(rules(null, {}), rules(running, {}));
+  const core = rules(runningCore);
+  const text = core.rules.join("\n");
+  assert.match(text, /Never run `hc kill` or `hc server stop`/);
+  assert.match(text, /\$HC_TERMINAL_ID/);
+  assert.doesNotMatch(text, /herdr server/);
+  assert.match(core.logs, /provision\|herdr\|core\|resume/);
+});
+
+test("cli: rules on a herdr-core Ship", () => {
+  const r = run(["rules"], { SHIPSHAPE_STATUS: join(EXAMPLES, "running-core.json") });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /hc server stop/);
+  // No status yet (early in a boot): a herdr-core terminal still gets the core rules.
+  const early = run(["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json", HC_TERMINAL_ID: "t3" });
+  assert.equal(early.status, 0, early.stderr);
+  assert.match(early.stdout, /hc server stop/);
+  assert.doesNotMatch(run(["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json" }).stdout, /hc kill/);
 });

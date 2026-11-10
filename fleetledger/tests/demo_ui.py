@@ -64,6 +64,7 @@ LOCKED = {"ship-04": {
     "still_running": []}}
 LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
 MODES_NOW: dict[tuple[str, str], str] = {}  # (Ship, agent) -> mode after a demo restart
+CORE: set[str] = set()  # Ships whose agents run in herdr-core (--core: ship-01)
 CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo run
 # Extra GitHub scopes: chosen in ship.toml, and on each Ship's token (ghscopes). ship-02
 # chose write:packages after it signed in, so its token lacks it: scopes differ.
@@ -409,6 +410,16 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         doc["state"] = "ready"
     for a in doc["herdr"]["agents"]:
         a["mode"] = MODES_NOW.get((name, a.get("name")), a["mode"])
+    if name in CORE:  # terminals and Claude's own words for what it waits for
+        doc["herdr"].update(runtime="core", version="0.1.19")
+        for i, a in enumerate(doc["herdr"]["agents"]):
+            a.update(pane=f"t{3 + i}", workspace="shipshape")
+            if a["state"] == "blocked":
+                a.update(blocked_kind="permission", message="npm test")
+        for item in doc["attention"]:
+            if item["code"] == "agent-waiting":
+                item["message"] = (f"Agent '{item['subject']}' is waiting for you to approve "
+                                   "something: npm test")
     if doc["herdr"]["agents"] and doc["state"] != "running":
         doc["state"] = "running"
     adc = doc["auth"]["gcloud_adc"]
@@ -766,7 +777,12 @@ def main() -> int:
     parser.add_argument("--vault", action="store_true",
                         help="turn FleetLedger's vault on in the demo home, locked (its "
                              "made-up passphrase is printed)")
+    parser.add_argument("--core", action="store_true",
+                        help="ship-01 runs its agents in herdr-core (ship.toml runtime = "
+                             "\"core\")")
     args = parser.parse_args()
+    if args.core:
+        CORE.add("ship-01")
     base = Path(args.home) if args.home else Path(tempfile.mkdtemp(prefix="fleetledger-demo-"))
     home(base)
     from fleetledger.repo import Repo

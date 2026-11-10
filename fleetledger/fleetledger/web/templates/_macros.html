@@ -226,7 +226,7 @@
     <span class="hint">It answers but is not enrolled yet.</span>
     {% endif %}
     {% for op in ("update", "reboot") %}
-    {% set c = op_confirm(op, ship.name) %}
+    {% set c = op_confirm(op, ship.name, runtime_of(doc)) %}
     <form method="post" action="/operations" class="inline"
       data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
       data-confirm-action="{{ c.action }}"{% if c.danger %} data-confirm-danger{% endif %}>
@@ -261,9 +261,9 @@
         {{ power_form("start") }}
         {{ power_form("stop") }}
         <p class="hint">{% if by_hand %}Made by hand, so FleetLedger shows the step to run.{% else %}Through {{ "Proxmox" if ship.driver == "proxmox" else ship.driver }}.{% endif %}
-          Stopping is a clean shutdown: herdr saves every agent, and they resume when it starts.</p>
+          Stopping is a clean shutdown: {% if runtime_of(doc) == "core" %}its agents stop{% else %}herdr saves every agent{% endif %}, and they resume when it starts.</p>
         {% if doc and not view.problem %}
-        {{ force_reboot_form(ship.name) }}
+        {{ force_reboot_form(ship.name, runtime=runtime_of(doc)) }}
         <p class="hint">When a reboot is refused because a program holds a shutdown lock
           (apt in an open login session, say): reboot anyway and cut it off.</p>
         {% endif %}
@@ -335,8 +335,8 @@
    reboot N --force), behind the danger dialog. Needs csrf in the context.
    from_fleet: sent from anywhere but the Ship's own page, so it returns to the
    Fleet page (whose Activity shows the job) instead of going to the Ship's. #}
-{% macro force_reboot_form(name, small=False, from_fleet=False) %}
-{% set c = op_confirm("force-reboot", name) %}
+{% macro force_reboot_form(name, small=False, from_fleet=False, runtime="herdr") %}
+{% set c = op_confirm("force-reboot", name, runtime) %}
 <form method="post" action="/operations" class="inline"
   data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
   data-confirm-action="{{ c.action }}" data-confirm-danger>
@@ -354,7 +354,7 @@
    behind the confirm dialog. Needs ship, csrf and op_confirm in the context. #}
 {% macro power_form(verb, primary=False) %}
 <form method="post" action="/ships/{{ ship.name }}/power" class="inline"
-  {%- if verb == "stop" %}{% set c = op_confirm("stop", ship.name) %}
+  {%- if verb == "stop" %}{% set c = op_confirm("stop", ship.name, runtime_of(doc)) %}
   data-confirm-title="{{ c.title }}" data-confirm="{{ c.text }}"
   data-confirm-action="{{ c.action }}"{% if c.danger %} data-confirm-danger{% endif %}{% endif %}>
   <input type="hidden" name="csrf" value="{{ csrf }}">

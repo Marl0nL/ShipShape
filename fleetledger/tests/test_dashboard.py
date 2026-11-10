@@ -418,3 +418,34 @@ def test_the_dashboard_shows_no_secrets(web):  # noqa: F811
     web.fleet.poll()
     web.sign_in()
     assert "ghp_EXAMPLESECRET" not in web.client.get("/").text
+
+
+# --- herdr-core Ships ------------------------------------------------------------------
+
+
+def test_confirm_texts_for_a_core_ship_name_no_herdr_and_herdr_ones_are_unchanged():
+    for op in ("update", "reboot", "stop", "force-reboot"):
+        herdr = dashboard.op_confirm(op, "ship-01")
+        assert dashboard.op_confirm(op, "ship-01", "herdr") == herdr
+        assert "herdr saves" in herdr.text or "If its herdr changed it reboots" in herdr.text
+        core = dashboard.op_confirm(op, "ship-01", "core")
+        assert "herdr saves" not in core.text and "herdr changed" not in core.text
+        assert (core.title, core.action, core.danger) == (herdr.title, herdr.action,
+                                                          herdr.danger)
+    assert "the new one takes over at the next reboot" in dashboard.op_confirm(
+        "update", "ship-01", "core").text
+    # Joining and force-rebooting say nothing about herdr's saving that differs.
+    assert dashboard.op_confirm("join", "ship-01", "core") == dashboard.op_confirm(
+        "join", "ship-01")
+
+
+def test_a_pending_core_restart_offers_a_reboot_that_is_not_urgent(store):
+    from test_cli import RUNNING_CORE
+
+    v = view(store, doc=copy.deepcopy(RUNNING_CORE))
+    action = dashboard.action_for("core-restart-pending", "ship-01", v, None)
+    assert action.kind == "post" and dict(action.fields)["operation"] == "reboot"
+    assert action.hint.startswith("Agents keep running")
+    assert "herdr saves" not in action.confirm.text
+    herdr = dashboard.action_for("herdr-restart-pending", "ship-01", view(store), None)
+    assert "herdr saves" in herdr.confirm.text  # a herdr Ship: as before

@@ -39,7 +39,7 @@ from fleetledger.ssh import Unreachable
 Event = Callable[[str, str], None]
 
 MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
-LOG_SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
+LOG_SOURCES = ("provision", "herdr", "core", "resume", "tools", "status", "system")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 TAG_RE = NAME_RE
 CIDR_RE = re.compile(r"^[0-9a-fA-F:.]+(/[0-9]{1,3})?$")
@@ -87,6 +87,7 @@ SEVERITY = {
     "tool-failed": "medium",
     "reboot-required": "medium",
     "herdr-restart-pending": "medium",
+    "core-restart-pending": "low",  # agents unaffected; the next reboot switches it
     "host-cert-expiring": "medium",
     "host-cert-missing": "medium",
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
@@ -571,6 +572,7 @@ def update_one(
 
     reboot_policy: auto reboots only when the converge replaced herdr (the running
     server keeps the old binary until a reboot); always and never do what they say.
+    A replaced herdr-core (core-restart-pending) never reboots under auto: see below.
     Never rolls a Ship back to an older ShipShape commit (rolls_back) unless force:
     an older checkout, on another computer say, must not undo a newer roll-out.
     """
@@ -593,6 +595,10 @@ def update_one(
         if has_attention(before, "herdr-restart-pending") and reboot_policy != "never":
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
+        if has_attention(before, "core-restart-pending"):  # never a reboot for it under auto
+            details.append("herdr-core was updated; its agents keep running on the old core, "
+                           f"and the new one takes over at the next reboot (ship-fleet reboot "
+                           f"{ship.name}).")
         return Outcome(ship.name, True, f"already on {release}", details, data)
 
     backwards = rolls_back(fleet.repo_factory(), before, bundle, ship.name)
@@ -624,6 +630,13 @@ def update_one(
                        f"converge finished but the Ship reports bundle "
                        f"{after['ship'].get('bundle_commit')}, not {release}", details, data)
     pending = has_attention(after, "herdr-restart-pending")
+    # Reboot policy for herdr-core: auto does not reboot for it. The old core keeps
+    # serving every agent until it restarts, and its holders keep their terminals
+    # across a core restart, so nothing is lost by waiting: the next reboot (an OS
+    # update's, say) switches it. Rebooting now would interrupt every agent mid-turn
+    # for no gain, and restarting the core in place is not something ShipShape does
+    # (ship-ctl never stops or restarts the core). always still reboots.
+    core_pending = has_attention(after, "core-restart-pending")
     if data.get("rolled_back"):
         details.insert(0, f"Rolled back on purpose (--force): {data['rolled_back']}.")
     outcome = Outcome(ship.name, True, ("rolled back to " if data.get("rolled_back") else
@@ -634,6 +647,11 @@ def update_one(
             outcome.details.append(
                 f"herdr was updated; it switches at the next reboot (ship-fleet reboot "
                 f"{ship.name})."
+            )
+        if core_pending:
+            outcome.details.append(
+                "herdr-core was updated; its agents keep running on the old core, and the "
+                f"new one takes over at the next reboot (ship-fleet reboot {ship.name})."
             )
         return outcome
     return _reboot_after(fleet, ship, on_event, outcome, wait, times, before=before,

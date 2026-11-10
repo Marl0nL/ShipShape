@@ -30,6 +30,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from fleetledger import attempts, commands, ghscopes, inbox, net, ops, signinlist, signins
+from fleetledger import status as status_mod
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
 from fleetledger.errors import FleetError
@@ -149,6 +150,9 @@ def make_env() -> Environment:
         since=network.since,
         RANGE_LABELS=dashboard.RANGE_LABELS,
         op_confirm=dashboard.op_confirm,
+        runtime_of=status_mod.runtime_of,
+        RUNTIME_LABELS=status_mod.RUNTIME_LABELS,
+        waiting_reason=status_mod.waiting_reason,
         ago=signinlist.ago,
         signin_url=_signin_url,
         SIGNIN_GROUPS=signinlist.GROUPS,

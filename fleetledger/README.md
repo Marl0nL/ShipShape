@@ -336,7 +336,7 @@ covers the core ones; the rest are documented with their feature: `setup`,
 | `tag NAME +work -personal` | changes tags in the inventory and on the Ship (`--local` for the inventory only); `none` clears them |
 | `tools ls`, `tools add/remove NAME ID...` | the catalogue, and `ship-ctl tools add/remove` |
 | `ssh NAME [--as agent\|owner\|fleet] [-- CMD]` | a shell as agent with your own keys (default), as your own login with sudo (`owner`), or as fleet with the admin key; pinned host key either way |
-| `logs NAME SOURCE` | `ship-ctl logs` (provision, herdr, resume, tools, status, system) |
+| `logs NAME SOURCE` | `ship-ctl logs` (provision, herdr, core, resume, tools, status, system) |
 | `put NAME FILE...` | sends files into the Ship's `~/inbox` for its agents, each streamed to `ship-ctl inbox put` over SSH (whole files only, names cleaned, never overwriting; 20 files of 256 MB at most); `--tell` tells its autostart agents how many arrived. `inbox ls\|rm NAME` lists or removes what is there |
 
 Every command is tested in `tests/test_cli.py` against a fake Ship behind a real

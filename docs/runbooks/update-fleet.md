@@ -49,9 +49,16 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   new herdr takes over, and FleetLedger checks every agent came back in the mode
   it had. Add `--reboot never` to postpone that; the Ship then shows
   `herdr-restart-pending` until you run `ship-fleet reboot ship-01`.
+- On a herdr-core Ship (ship.toml `runtime = "core"`), a new herdr-core does **not**
+  reboot it: the running core keeps serving every agent, and the new one takes over
+  at the next reboot (an OS update's, say). Until then the Ship shows
+  `core-restart-pending`, a notice, and the result says "herdr-core was updated".
+  Reboot when it suits you (`ship-fleet reboot ship-01`), or update with
+  `--reboot always`. Its core's own log is `ship-fleet logs ship-01 core`.
 - `FAILED` with `agent X came back in auto, was bypassPermissions` means the Ship
   did not resume it in its recorded mode: look at `ship-fleet logs ship-01 resume`
-  and `herdr` before going further (and check that the Ship still allows bypass).
+  and `herdr` (`core` on a herdr-core Ship) before going further (and check that
+  the Ship still allows bypass).
   `agent X did not come back`: it is not running yet, or it failed to start 3 times
   (attention `agent-relaunch-failed`); `ship-fleet agent restart ship-01 X` tries
   again in the mode it was in, `--fresh` in a new conversation. An agent stays
@@ -104,7 +111,8 @@ ship-fleet ls
 ship-fleet attention
 ```
 
-`behind-tooling` and `herdr-restart-pending` should be gone.
+`behind-tooling` and `herdr-restart-pending` should be gone (`core-restart-pending`
+stays on herdr-core Ships until their next reboot; that is expected).
 
 ## OS updates and reboots
 

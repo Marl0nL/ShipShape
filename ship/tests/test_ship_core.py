@@ -644,3 +644,106 @@ def test_a_terminal_with_no_program_is_lost_whatever_its_last_word(core):
     ship.set(hc=s["hc"])
     ship.ctl("refresh")
     assert launched(ship, "main")[-2:] == ["--resume", ship.record()["agents"]["main"]["session"]]
+
+
+# --- core-restart-pending and ship-ctl logs core -------------------------------------
+
+
+def _fake_process(ship, pid: int, argv: list[str], exe: Path) -> None:
+    proc = ship.p(f"/proc/{pid}")
+    proc.mkdir(parents=True)
+    (proc / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
+    (proc / "exe").symlink_to(exe)
+
+
+def _install_core(ship) -> Path:
+    path = ship.p("/usr/local/bin/herdr-core")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("new herdr-core")
+    return path
+
+
+def _codes(doc) -> list[str]:
+    return [a["code"] for a in doc["attention"]]
+
+
+def test_core_restart_pending_when_the_core_runs_an_old_binary(core, tmp_path):
+    """A converge replaced /usr/local/bin/herdr-core; the core keeps the old one. Its
+    holders (which keep each terminal's program) never count."""
+    ship = core
+    installed = _install_core(ship)
+    old = tmp_path / "old-core"
+    old.write_text("old herdr-core")
+    _fake_process(ship, 4300, ["/usr/local/bin/herdr-core", "hold", "--socket", "x"], old)
+    assert "core-restart-pending" not in _codes(status(ship))
+    _fake_process(ship, 4301, ["/usr/local/bin/herdr-core", "serve"], installed)
+    assert "core-restart-pending" not in _codes(status(ship))
+    _fake_process(ship, 4302, ["/usr/local/bin/herdr-core", "serve"], old)
+    doc = status(ship)
+    [item] = [a for a in doc["attention"] if a["code"] == "core-restart-pending"]
+    assert item["subject"] == "herdr-core" and "Agents are not affected" in item["message"]
+    assert "herdr-restart-pending" not in _codes(doc)
+
+
+def test_an_old_herdr_server_is_still_herdr_restart_pending_not_core(ship, tmp_path):
+    herdr = ship.p("/usr/local/bin/herdr")
+    herdr.parent.mkdir(parents=True, exist_ok=True)
+    herdr.write_text("new herdr")
+    _install_core(ship)
+    old = tmp_path / "old"
+    old.write_text("old")
+    _fake_process(ship, 4400, ["/usr/local/bin/herdr", "server"], old)
+    codes = _codes(status(ship))
+    assert "herdr-restart-pending" in codes and "core-restart-pending" not in codes
+
+
+def test_logs_core_reads_the_boot_unit_and_the_cores_own_logs(core):
+    ship = core
+    ship.set(journal=["2026-01-01T00:00:00+0000 hc[9]: core started"])
+    state = ship.p("/home/agent/.local/state/herdr-core/default")
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "core.log").write_text("".join(f"core {i}\n" for i in range(5)))
+    (state / "holder.log").write_text("holder 0\n")
+    rc, doc, _ = ship.ctl("logs", "core", "--lines", "2", "--json")
+    assert rc == 0
+    assert_valid("ship-ctl-result", doc)
+    assert doc["data"]["lines"] == ["2026-01-01T00:00:00+0000 hc[9]: core started",
+                                    "core.log: core 3", "core.log: core 4",
+                                    "holder.log: holder 0"]
+    journal = [c for c in ship.calls("journalctl") if "_SYSTEMD_USER_UNIT=ship-core.service" in c]
+    assert journal and journal[-1][-1] == "_SYSTEMD_USER_UNIT=ship-core.service"
+
+
+def test_logs_core_never_follows_a_planted_link(core, tmp_path):
+    """The agent owns its state folder: a core.log that is a link to a root-only file
+    is not read through."""
+    ship = core
+    secret = tmp_path / "secret"
+    secret.write_text("not for agents\n")
+    state = ship.p("/home/agent/.local/state/herdr-core/default")
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "core.log").symlink_to(secret)
+    rc, doc, _ = ship.ctl("logs", "core", "--json")
+    assert rc == 0
+    assert not [line for line in doc["data"]["lines"] if "not for agents" in line]
+
+
+def test_logs_core_reads_only_the_end_of_a_long_log(tmp_path, monkeypatch):
+    """herdr-core never rotates core.log: only its end is read, never a cut line."""
+    import sys
+    from types import SimpleNamespace
+
+    sys.path.insert(0, str(SHIP_FILES.parent / "lib"))
+    from shipctl import logs
+    from shipctl.homefs import HomeFS
+
+    state = tmp_path / ".local/state/herdr-core/default"
+    state.mkdir(parents=True)
+    (state / "core.log").write_text("x" * 50 + "\nlast line\n")
+    monkeypatch.setattr(logs, "CORE_LOG_BYTES", 20)
+    ctx = SimpleNamespace(home=HomeFS(tmp_path))
+    rel = ".local/state/herdr-core/default/core.log"
+    assert logs._home_tail(ctx, rel, 10) == ["last line"]
+    # Exactly CORE_LOG_BYTES long: nothing was cut, so no line is dropped.
+    (state / "core.log").write_text("first 789\nlast line\n")  # 20 bytes
+    assert logs._home_tail(ctx, rel, 10) == ["first 789", "last line"]

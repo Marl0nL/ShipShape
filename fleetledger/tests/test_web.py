@@ -2121,3 +2121,58 @@ def test_a_ship_the_fleet_does_not_have_is_dropped_from_the_filters(web):
     web.sign_in()
     page = web.client.get("/signin?ship=ship-99&group=healthy").text
     assert "ship-99" not in page and "group=healthy" in page and _rows(page)
+
+
+# --- herdr-core Ships -------------------------------------------------------------------
+
+
+def _agents_table(page):
+    table = page[page.index('<table class="agents">'):]
+    return table[:table.index("</table>")]
+
+
+def test_a_herdr_ships_agents_look_as_before(web):
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    table = _agents_table(page)
+    assert "<th>Pane</th>" in table and "<th>Terminal</th>" not in table
+    assert "w1:p2" in table and '<span class="quiet">for ' not in table
+    assert "herdr 0.9.5, server running." in page and "herdr-core" not in page
+    assert "starts again in the same pane and folder" in page
+    settings = web.client.get("/ships/ship-01/settings").text
+    assert "Agent runtime" not in settings
+
+
+def test_a_core_ships_page_shows_its_runtime_terminals_and_what_agents_wait_for(web):
+    from test_cli import RUNNING_CORE
+
+    web.ship.status_override["ship-01"] = copy.deepcopy(RUNNING_CORE)
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    table = _agents_table(page)
+    assert "<th>Terminal</th>" in table and "<th>Pane</th>" not in table
+    main = table[table.index("<td>main</td>"):]
+    main = main[:main.index("</tr>")]
+    assert ">waiting</span>" in main and "for approval: npm test" in main
+    assert '<td class="quiet">t3</td>' in main
+    assert "herdr-core 0.1.19, core running." in page and "herdr 0.1.19" not in page
+    assert "starts again in a new terminal in the same folder" in page
+    assert "the same pane" not in page
+    # Its Update and Reboot dialogs do not promise what herdr does.
+    assert "herdr saves" not in page and "If its herdr changed" not in page
+    # The waiting alert quotes what Claude asked.
+    assert "waiting for you to approve something: npm test" in page
+
+
+def test_a_core_ships_settings_show_the_runtime_read_only(web):
+    from test_cli import RUNNING_CORE
+
+    web.ship.status_override["ship-01"] = copy.deepcopy(RUNNING_CORE)
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-01/settings").text
+    note = page[page.index("Agent runtime"):]
+    note = note[:note.index("</p>")]
+    assert "herdr-core" in note and 'runtime = "core"' in note
+    assert 'name="runtime"' not in page  # nothing to set here: the migration moves it

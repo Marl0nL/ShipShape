@@ -67,6 +67,7 @@
     {% set claude_auth = doc.auth.claude %}
     {% set signed_in = claude_auth and claude_auth.state in ("ok", "expiring") %}
     {% set running = doc.herdr.agents|selectattr("kind", "equalto", "claude")|list %}
+    {% set core = runtime_of(doc) == "core" %}
     {% if running and signed_in and doc.claude.remote_control == "on" %}
     <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
       with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
@@ -86,8 +87,9 @@
     {% set reported = view.settings or {} %}
     {% set bypass_ok = (reported.claude or doc.claude).allow_bypass %}
     {% set can_restart = answers and doc.herdr.server == "running" %}
+    {% set place = "a new terminal in the same folder" if core else "the same pane and folder" %}
     <table class="agents">
-      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>Pane</th><th>Folder</th><th></th></tr></thead>
+      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>{{ "Terminal" if core else "Pane" }}</th><th>Folder</th><th></th></tr></thead>
       <tbody>
       {% set restart_info = restartable_by_name(view) %}
       {% for ws, agents in workspaces.items() %}
@@ -97,7 +99,7 @@
         <td>{{ ws if loop.first else "" }}</td>
         <td>{{ a.name or "-" }}</td>
         <td>{{ a.kind }}</td>
-        <td><span class="pill {{ ("waiting" if a.state == "blocked" else a.state)|pill }}">{{ "waiting" if a.state == "blocked" else a.state }}</span></td>
+        <td><span class="pill {{ ("waiting" if a.state == "blocked" else a.state)|pill }}">{{ "waiting" if a.state == "blocked" else a.state }}</span>{% set reason = waiting_reason(a) %}{% if reason %} <span class="quiet">for {{ reason }}</span>{% endif %}</td>
         <td>{{ a.mode or "-" }}{% if a.mode == "bypassPermissions" %} <span class="pill warn">bypass</span>{% endif %}</td>
         <td class="quiet">{{ a.pane or "" }}</td>
         <td class="quiet">{{ a.cwd or "" }}</td>
@@ -107,7 +109,7 @@
             <summary>Restart in mode&hellip;</summary>
             <form method="post" action="/ships/{{ ship.name }}/agents/restart"
               data-confirm-title="Restart {{ a.name }} on {{ ship.name }}?"
-              data-confirm="{% if ws == 'not running' %}{{ a.name }} is not running: it starts again in its folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation.{% else %}{{ a.name }} exits and starts again in the same pane and folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation.{% endif %} Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if a.state == 'working' %} It is working now: unless you ticked Interrupt it, it is left alone.{% elif a.state == 'blocked' %} It is waiting for an answer: that question is dismissed.{% endif %}"
+              data-confirm="{% if ws == 'not running' %}{{ a.name }} is not running: it starts again in its folder, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation.{% else %}{{ a.name }} exits and starts again in {{ place }}, with the same name, in the mode you chose; it continues its conversation unless you ticked New conversation.{% endif %} Remote Control and its session name come back as before, and a reboot keeps the new mode.{% if a.state == 'working' %} It is working now: unless you ticked Interrupt it, it is left alone.{% elif a.state == 'blocked' %} It is waiting for an answer: that question is dismissed.{% endif %}"
               data-confirm-action="Restart {{ a.name }}">
               <input type="hidden" name="csrf" value="{{ csrf }}">
               <input type="hidden" name="agent" value="{{ a.name }}">
@@ -134,7 +136,9 @@
       conversation (<code>ship-fleet agent restart</code>).{% if not bypass_ok %}
       bypassPermissions is not allowed on {{ ship.name }} (Settings).{% endif %}</p>{% endif %}
     <p class="hint">
-      herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
+      {% if core %}herdr-core {{ doc.herdr.version or "?" }}, core {{ doc.herdr.server }}.
+      {% else %}herdr {{ doc.herdr.version or "?" }}, server {{ doc.herdr.server }}.
+      {% endif %}
       {% set resume = (doc.agent_record.resume if doc.agent_record else none) or doc.herdr.last_resume %}
       {% if resume %}Last resume {{ resume.at }} ({{ "by ShipShape, from its agent record" if resume.method in ("ship-ctl", "api-fallback") else resume.method }}): {{ resume.resumed }} resumed{% if resume.failed %}, {{ resume.failed }} failed{% endif %}.{% endif %}
     </p>
