@@ -575,15 +575,24 @@ def uninstall(ctx: Context, ship: ShipToml, ids: list[str]) -> tuple[list[str], 
     inst = Installer(ctx, log)
     keep, _ = requested_tools(ctx, ship)
     keep = [k for k in keep if k not in ids]
-    kept_npm: set[str] = set()
+    # What a tool the Ship keeps also uses (another toolkit's or the catalogue's skill
+    # folder, MCP server or plugin of the same name) is never undone.
+    kept: dict[str, set[str]] = {"npm": set(), "skill-dir": set(), "mcp": set(),
+                                 "claude-plugin": set()}
     for rid in keep:
         try:
             other = load_recipe(ctx, rid, ship)
         except CtlError:
             continue
         if other.kind == "npm":
-            kept_npm.add(other.package)
-        kept_npm |= {split_spec(s)[0] for s in other.also_npm}
+            kept["npm"].add(other.package)
+        kept["npm"] |= {split_spec(s)[0] for s in other.also_npm}
+        if other.kind == "skill-dir":
+            kept["skill-dir"].add(other.id)
+        elif other.kind == "mcp":
+            kept["mcp"].add(other.mcp["name"])
+        elif other.kind == "claude-plugin":
+            kept["claude-plugin"].add(other.plugin["name"])
     done: list[str] = []
     messages: list[str] = []
     for rid in ids:
@@ -593,7 +602,7 @@ def uninstall(ctx: Context, ship: ShipToml, ids: list[str]) -> tuple[list[str], 
             messages.append(f"{rid}: not uninstalled ({exc.message})")
             continue
         try:
-            what = _uninstall_one(ctx, inst, recipe, kept_npm)
+            what = _uninstall_one(ctx, inst, recipe, kept)
         except CtlError as exc:
             messages.append(exc.message)
             continue
@@ -607,12 +616,13 @@ def uninstall(ctx: Context, ship: ShipToml, ids: list[str]) -> tuple[list[str], 
     return done, messages
 
 
-def _uninstall_one(ctx: Context, inst: Installer, recipe: Recipe, kept_npm: set[str]) -> str:
+def _uninstall_one(ctx: Context, inst: Installer, recipe: Recipe,
+                   kept: dict[str, set[str]]) -> str:
     rid, kind, did = recipe.rid, recipe.kind, []
     names = [split_spec(s)[0] for s in recipe.also_npm]
     if kind == "npm":
         names.insert(0, recipe.package)
-    names = [n for n in names if n not in kept_npm]
+    names = [n for n in names if n not in kept["npm"]]
     if names:
         prefix = ctx.paths.agent_path(inst.npm_prefix(recipe.run_as))
         r = ctx.runner.run(["npm", "uninstall", "-g", "--prefix", prefix, *names],
@@ -621,18 +631,18 @@ def _uninstall_one(ctx: Context, inst: Installer, recipe: Recipe, kept_npm: set[
         if not r.ok:
             raise CtlError("tool-failed", f"{rid}: npm uninstall failed")
         did.append("npm")
-    if kind == "skill-dir":
+    if kind == "skill-dir" and recipe.id not in kept["skill-dir"]:
         try:
             if ctx.home.remove(f".claude/skills/{recipe.id}"):
                 did.append(f"~/.claude/skills/{recipe.id}")
         except UnsafePath as exc:
             raise CtlError("tool-failed", f"{rid}: {exc}") from exc
-    elif kind == "mcp":
+    elif kind == "mcp" and recipe.mcp["name"] not in kept["mcp"]:
         r = ctx.runner.run(["claude", "mcp", "remove", "--scope", "user", recipe.mcp["name"]],
                            timeout=CHECK_TIMEOUT, agent=True)
         inst.log.result(rid, "claude mcp remove", r)
         did += ["mcp"] if r.ok else []
-    elif kind == "claude-plugin":
+    elif kind == "claude-plugin" and recipe.plugin["name"] not in kept["claude-plugin"]:
         r = ctx.runner.run(["claude", "plugin", "uninstall", recipe.plugin["name"]],
                            timeout=INSTALL_TIMEOUT, agent=True)
         inst.log.result(rid, "claude plugin uninstall", r)

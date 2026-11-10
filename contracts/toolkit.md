@@ -183,7 +183,14 @@ it) is a real folder owned by root and writable by root alone. So:
   `--allow-root`;
 - a toolkit recipe whose own id is a catalogue recipe's, or whose `apt` entries are
   not plain package names, is refused, as FleetLedger refuses them;
-- two toolkits' skill folders of one name: the first keeps `~/.claude/skills/<id>`.
+- two toolkits' skill folders of one name: the first keeps `~/.claude/skills/<id>`;
+- a recipe's `apt` packages are installed as root even without `allow_root` (as for
+  catalogue recipes: packages from the repositories the Ship already has, whose
+  maintainer scripts run as root), so list only packages you would install by hand.
+
+A Ship that stops qualifying (its tags, or the toolkit's `only_tags`, change) keeps the
+toolkit until it is removed there (`ship-ctl toolkit remove ID`); removing it for you
+is later work.
 
 Toolkit tools and profiles are `<toolkit>/<id>` in ship.toml. In a toolkit's profile a
 bare tool id is the toolkit's own tool when it has one, else a catalogue tool.
@@ -198,8 +205,8 @@ not there).
 
 `remove` uninstalls the toolkit's tools ship.toml asks for (directly or through its
 profiles): npm packages no other tool the Ship keeps uses, the skill folder, the MCP
-server, the Claude plugin, and the recipe's own `uninstall` command; apt packages
-stay. Then it drops its tools, profiles and profile options from ship.toml, its
+server, the Claude plugin (each unless a tool the Ship keeps uses the same one), and
+the recipe's own `uninstall` command; apt packages stay. Then it drops its tools, profiles and profile options from ship.toml, its
 `[toolkits]` entry, its records, its lines in the agent's environment file, and
 `/opt/shipshape/toolkits/<id>/`. `data`: `{ "removed", "tools", "uninstalled",
 "profiles" }`.

@@ -720,6 +720,11 @@ def update(
                              wait=wait, force=force, times=times)
         if catalogue is None or not outcome.ok:
             return outcome
+        if outcome.data.get("rebooted") and not wait:  # going down now: not the moment
+            outcome.details.append("Toolkits were not sent: it is rebooting. They go with "
+                                   "the next update, or ship-fleet toolkit push once it is "
+                                   "back.")
+            return outcome
         try:
             sent, lines, _ = toolkitpush.send_allowed(fleet, fleet.inventory, ship, catalogue,
                                                       archives)

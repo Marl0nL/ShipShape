@@ -505,3 +505,29 @@ def test_a_toolkit_whose_sign_in_clashes_is_refused(kits):
     archive = kits.out / "clash.tar.gz"
     archive.write_bytes(toolkitpack.pack(kit, created_at=CREATED).data)
     _refused(ship, archive, "sign-in github is also in")
+
+
+def test_remove_leaves_what_a_kept_tool_shares(kits):
+    """A second toolkit's skill folder of the same name lost to the first one: removing
+    the second leaves the first's folder (and so for an MCP server of one name)."""
+    ship = kits.ship
+    clash = make_otherkit(kits.src / "clash")
+    (clash / "toolkit.toml").write_text(OTHER_TOOLKIT.format(version="2.0.0").replace(
+        'id = "otherkit"', 'id = "clashkit"'))
+    for f in ("root-tool.toml", "root-tool.sh"):
+        (clash / "tools" / f).unlink()
+    (clash / "skills/mine").mkdir(parents=True)
+    (clash / "skills/mine/SKILL.md").write_text("---\nname: mine\n---\nNot examplekit's.\n")
+    (clash / "tools/example-guide.toml").write_text(
+        'schema = 1\nid = "example-guide"\ndescription = "Same skill name."\n'
+        'kind = "skill-dir"\nskill_dir = "skills/mine"\ncheck = "true"\n')
+    add_tools(ship, "examplekit/example-guide", "clashkit/example-guide")
+    assert apply(ship, kits.example)[0] == 0
+    skill = ship.p("/home/agent/.claude/skills/example-guide/SKILL.md")
+    first = skill.read_text()
+    rc, doc, _ = apply(ship, pack(clash, kits.out))
+    assert rc == 1 and "is examplekit/example-guide's" in " ".join(doc["messages"])
+    assert skill.read_text() == first
+    rc, doc, out = ship.ctl("toolkit", "remove", "clashkit", "--json")
+    assert rc == 0, out
+    assert skill.read_text() == first  # still examplekit's

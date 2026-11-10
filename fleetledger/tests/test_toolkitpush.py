@@ -279,6 +279,17 @@ def test_update_sends_the_toolkits_each_ship_may_have(fleet, monkeypatch):
                for d in outcomes[0].details)
 
 
+def test_update_sends_no_toolkit_to_a_ship_it_left_rebooting(fleet, monkeypatch):
+    def rebooting(fleet_, ship, bundle, event, **kw):
+        return ops.Outcome(ship.name, True, "updated; reboot started", data={"rebooted": True})
+    monkeypatch.setattr(ops, "update_one", rebooting)
+    outcomes = ops.update(fleet.ops, [fleet.store.load().ship("ship-01")], wait=False,
+                          bundle=Bundle(b"", {"dirty": False}))
+    assert outcomes[0].ok and "Toolkits were not sent: it is rebooting." in " ".join(
+        outcomes[0].details)
+    assert fleet.router.sent("ship-01") == []
+
+
 def test_a_new_ship_gets_its_toolkits_after_enrolling(fleet):
     said: list[str] = []
     toolkitpush.after_enrol(fleet.app, fleet.store, "ship-02", said.append)

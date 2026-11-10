@@ -253,6 +253,11 @@ def _extract(path: Path, dest: Path) -> None:
         seen: set[str] = set()
         for m in members:
             name = PurePosixPath(m.name)
+            try:
+                m.name.encode("utf-8")
+            except UnicodeEncodeError:
+                raise CtlError("invalid-toolkit", "a file name in the archive is not "
+                                                  "UTF-8") from None
             if (name.is_absolute() or not name.parts or ".." in name.parts
                     or _BAD_NAME.search(m.name)):
                 raise CtlError("invalid-toolkit", f"unsafe path in the archive: {m.name[:200]!r}")
@@ -349,6 +354,16 @@ def _check_contents(ctx: Context, ship: shiptoml.ShipToml, kit: str, root: Path)
             raise CtlError("invalid-toolkit", exc.message) from None
 
 
+def _clear_leftovers(top: Path, older_than: float = 3600) -> None:
+    """Remove what an apply cut short left (.unpack-*), once it is an hour old."""
+    import time
+
+    for d in top.glob(".unpack-*"):
+        with contextlib.suppress(OSError):
+            if time.time() - d.lstat().st_mtime > older_than:
+                shutil.rmtree(d)
+
+
 def _point_current(folder: Path, release: str) -> None:
     tmp = folder / f".current-{secrets.token_hex(4)}"
     os.symlink(release, tmp)
@@ -424,6 +439,7 @@ def apply(ctx: Context, ship: shiptoml.ShipToml, archive: str, *, force: bool = 
     top = base(ctx.paths)
     ensure_dir(top, 0o755)
     os.chmod(top, 0o755)
+    _clear_leftovers(top)
     tmp = Path(tempfile.mkdtemp(prefix=".unpack-", dir=top))
     try:
         _extract(path, tmp)
@@ -457,6 +473,7 @@ def apply(ctx: Context, ship: shiptoml.ShipToml, archive: str, *, force: bool = 
         os.rename(dest, aside)
     os.rename(tmp, dest)
     previous = os.readlink(folder / "current") if (folder / "current").is_symlink() else None
+    old_record = _record(ctx.paths).get(kit)
     try:
         _point_current(folder, release)
         # The record first: if ship.toml then fails, the allow-list still names the old
@@ -473,6 +490,8 @@ def apply(ctx: Context, ship: shiptoml.ShipToml, archive: str, *, force: bool = 
             _point_current(folder, previous)
         elif (folder / "current").is_symlink():
             (folder / "current").unlink()
+        with contextlib.suppress(OSError):
+            _write_record(ctx.paths, kit, old_record if isinstance(old_record, dict) else None)
         raise
     finally:
         if aside is not None:
@@ -519,7 +538,7 @@ def apply(ctx: Context, ship: shiptoml.ShipToml, archive: str, *, force: bool = 
 def remove(ctx: Context, ship: shiptoml.ShipToml, kit: str) -> tuple[dict, list[str], list[str]]:
     """`toolkit remove ID`: uninstall its tools, drop them and the toolkit from
     ship.toml, then delete its files."""
-    if not ID.match(kit):
+    if not ID.fullmatch(kit):
         raise CtlError("usage", f"{kit!r} is not a toolkit id")
     folder = base(ctx.paths) / kit
     listed = kit in allowed(ship)

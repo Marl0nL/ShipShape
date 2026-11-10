@@ -25,7 +25,9 @@ CONTRACT = "toolkit"
 
 def why_not(cfg: toolkits.Config | None, tags: Iterable[str], ship_name: str) -> str | None:
     """Why the Ship may not have this toolkit (only_tags), or None if it may."""
-    if cfg is None or cfg.only_tags is None:
+    if cfg is None:  # not one ships.toml names: never sent
+        return "that toolkit is in no ships.toml [toolkit.<id>]"
+    if cfg.only_tags is None:
         return None
     tags = list(tags)
     if set(cfg.only_tags) & set(tags):
