@@ -76,6 +76,8 @@ def panes(h: dict) -> dict[str, dict]:
 
 def herdr(s: dict, a: list[str]) -> int:
     h = s.setdefault("herdr", {})
+    if not h.get("installed", True):
+        return 127
     if a == ["--version"]:
         out(f"herdr {h.get('version', '0.9.5')}")
         return 0
@@ -93,9 +95,17 @@ def herdr(s: dict, a: list[str]) -> int:
             if ag["settle_in"] <= 0:
                 del ag["settle_in"]
                 ag["agent_status"] = "idle"
-        if settling:
+        leaving = [ag for ag in agents if "exit_in" in ag]
+        for ag in leaving:  # late_exit: claude takes this many polls to act on /exit
+            ag["exit_in"] -= 1
+            if ag["exit_in"] <= 0:
+                agents.remove(ag)
+                h.setdefault("exited", []).append(ag)
+                end_session(ag)
+        if settling or leaving:
             save(s)
-        shown = [{k: v for k, v in ag.items() if k != "settle_in"} for ag in agents]
+        shown = [{k: v for k, v in ag.items() if k not in ("settle_in", "exit_in")}
+                 for ag in agents]
         out({"id": "cli", "result": {"type": "agent_list", "agents": shown}})
         return 0
     if a[:2] == ["pane", "list"]:
@@ -121,6 +131,18 @@ def herdr(s: dict, a: list[str]) -> int:
                 }
             }
         )
+        return 0
+    if a[:2] == ["workspace", "close"]:
+        ws = a[2]
+        # Closing a workspace ends whatever runs in it: tests check no agent was there.
+        inside = [ag for ag in agents if (ag.get("workspace_id") or "") == ws]
+        if inside:
+            h.setdefault("killed", []).extend(ag.get("name") for ag in inside)
+            h["agents"] = [ag for ag in agents if ag not in inside]
+        h["panes"] = [p for p in h.get("panes", []) if p.get("workspace_id") != ws]
+        h.setdefault("closed", []).append(ws)
+        save(s)
+        out({"result": {}})
         return 0
     if a[:2] == ["agent", "start"]:
         name, pane = a[2], a[a.index("--pane") + 1]
@@ -199,7 +221,9 @@ def herdr(s: dict, a: list[str]) -> int:
             print(json.dumps({"error": {"code": code, "message": "x"}}), file=sys.stderr)
             return 1
         h.setdefault("prompts", []).append(a[2:4])
-        if ag.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
+        if ag.get("name") in h.get("late_exit", {}):
+            ag.setdefault("exit_in", h["late_exit"][ag["name"]])
+        elif ag.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
             agents.remove(ag)  # claude exits; herdr clears the name with it
             h.setdefault("exited", []).append(ag)
             end_session(ag)
@@ -400,6 +424,33 @@ def systemctl(s: dict, a: list[str]) -> int:
         out(state)
         return 0 if state == "active" else 3
     words = [w for w in a if not w.startswith("-")]
+    if words[:1] in (["start"], ["stop"]) and "--user" in a:
+        # The agent's user units (herdr.service, ship-core.service): what runs them.
+        unit = words[1]
+        s.setdefault("user_unit_calls", []).append(words[:2])
+        if [words[0], unit] in [x.split(" ", 1) for x in s.get("unit_fails", [])]:
+            save(s)
+            print(f"Job for {unit} failed.", file=sys.stderr)
+            return 1
+        if unit == "herdr.service":
+            s.setdefault("herdr", {})["server"] = words[0] == "start"
+        if unit == "ship-core.service" and words[0] == "start":
+            s.setdefault("hc", {"terminals": []})["server"] = True
+        save(s)
+        return 0
+    if words[:1] in (["enable"], ["disable"], ["is-enabled"]) and "--global" in a:
+        # --global: the agent user's boot-time links (/etc/systemd/user/...wants).
+        enabled = s.setdefault("global_units", ["herdr.service"])
+        unit = words[1]
+        if f"{words[0]} {unit}" in s.get("unit_fails", []):
+            print(f"Failed to {words[0]} unit {unit}.", file=sys.stderr)
+            return 1
+        if words[0] == "enable" and unit not in enabled:
+            enabled.append(unit)
+        if words[0] == "disable" and unit in enabled:
+            enabled.remove(unit)
+        save(s)
+        return 0
     if words[:1] in (["enable"], ["disable"], ["is-enabled"]):
         enabled = s.setdefault("enabled_units", [])
         unit = words[1]
@@ -655,7 +706,9 @@ def hc_claude(s: dict, h: dict, t: dict, argv: list[str]) -> None:
     t["status"] = {"app": "claude-code", "state": "idle"}
     t["claude_args"] = rest
     t["session"] = sid  # what claude really runs (the label is what ShipShape said)
-    ledger_hook({"hook_event_name": "SessionStart", "session_id": sid, "argv": rest,
+    drift = h.get("mode_drift", {}).get(t.get("name"))  # claude came up in another mode
+    seen = ["--permission-mode", drift] if drift else rest
+    ledger_hook({"hook_event_name": "SessionStart", "session_id": sid, "argv": seen,
                  "terminal": t["address"]})
 
 
@@ -670,6 +723,8 @@ def hc_end(t: dict, code: int = 0) -> None:
 def hc(s: dict, a: list[str]) -> int:
     h = s.setdefault("hc", {})
     terms = h.setdefault("terminals", [])
+    if not h.get("installed", True):
+        return 127
     if a in (["--version"], ["-V"]):
         out(f"herdr-core {h.get('version', '0.1.19')}")
         return 0

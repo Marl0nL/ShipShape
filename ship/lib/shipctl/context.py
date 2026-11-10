@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -42,7 +43,12 @@ class Context:
     def log(self, message: str) -> None:
         """Diagnostics: stderr, which systemd sends to the journal. Never stdout."""
         if not self.quiet:
-            print(f"ship-ctl: {message}", file=sys.stderr, flush=True)
+            try:
+                print(f"ship-ctl: {message}", file=sys.stderr, flush=True)
+            except (OSError, ValueError):
+                # stderr is gone (the SSH session that ran ship-ctl dropped): what was
+                # being done must still finish (a runtime switch's rollback, say).
+                sys.stderr = open(os.devnull, "w")  # noqa: SIM115 - for the process's life
 
     @property
     def agent_owner(self) -> tuple[int, int] | None:

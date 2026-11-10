@@ -178,9 +178,11 @@ the delay ("10 minutes"); `ship-ctl set wake.text=` (empty) goes back to this on
 
 Agents continue their sessions across a change of runtime (the agent record has
 each one's session and mode; `ship-ctl.md`, "On herdr-core Ships"), from the next
-boot: until then an agent that ran under the other runtime is started by neither. Moving a live
-Ship between the two is a later verb; until then the setting is for new Ships and
-trial Ships.
+boot: until then an agent that ran under the other runtime is started by neither. A
+live Ship moves between the two with `ship-ctl runtime switch core|herdr`
+(`ship-fleet runtime SHIP core|herdr`; `ship-ctl.md`), which stops the agents
+first, resumes them on the other runtime in their modes, and rolls back on any
+failure; `docs/runbooks/switch-runtime.md` has the steps.
 
 ## Permission modes across reboots
 

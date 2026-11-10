@@ -62,7 +62,8 @@ How fields are worked out:
 | `auth.gcloud_adc` | `gcloud auth application-default print-access-token` as `agent`, output discarded: exit 0 gives `ok`. `account` may be null. |
 | `auth.github` | `gh auth status --hostname github.com` as `agent`; `account` is the login it reports; `scopes` the token's scopes it lists (`Token scopes:`), sorted, or null when it lists none. |
 | `herdr` | What runs the agents, `runtime` saying which (ship.toml `runtime`, `settings.md`). `herdr`: `herdr --version` and `herdr agent list` as `agent`. `core`: `hc --version`, `hc ls` and `hc get` as `agent`; an agent is a live terminal Claude reports from (or one ShipShape started that is not back at a shell), `pane` its address (`t3`), `state` Claude's own word (`unknown` until it reports), and a `blocked` one has `blocked_kind` and `message` (attention `agent-waiting` names them); `server` is the core. `mode` comes from the mode ledger for the agent's session, else from the agent record. `last_resume` is the agent record's last resume after a boot, with `method` `api-fallback` (ship-ctl started the recorded agents again through herdr's API); until a Ship's first boot on tooling with the record, the one ship-resume recorded (`hidden-client`). |
-| `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed tries this boot, and the last boot's resume (`method` `ship-ctl`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
+| `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed tries this boot, and the last boot's resume (`method` `ship-ctl`), and the last runtime switch
+(`last_switch`, see `runtime switch`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown); `tmp`: whether `/tmp` is a tmpfs or on the disk, now and from the next boot (the mount table, and `tmp.mount`'s mask). |
@@ -268,6 +269,101 @@ time), each recorded for this boot so it is not tried again, or `off`, `too-earl
 `already-done`, `busy` (another `ship-ctl wake` is running), `no-boot-id`, which
 change nothing.
 
+### `ship-ctl runtime switch core|herdr [--force] [--json]`
+
+Moves a live Ship's agents to the other runtime (ship.toml `runtime`,
+`settings.md`): each running Claude agent continues its own conversation there, in
+its own permission mode, and the Ship boots into that runtime from then on. Both
+runtimes stay installed. Any failure part way puts the Ship back on the runtime it
+ran, with its agents resumed there. `ship-fleet runtime SHIP core|herdr` runs it;
+the steps for a person are in `docs/runbooks/switch-runtime.md`.
+
+It holds the agent record's lock from start to end, so the status refresh (which
+would start a missing agent) stays out. It ignores SIGHUP and carries on when its
+stderr is gone, so a dropped SSH session does not stop it part way.
+
+1. **Refusals** (nothing is touched): the target does not answer
+   (`hc --version` or `herdr --version`; `runtime-missing`), or, for core, Claude
+   Code is older than 2.1.295 or its version cannot be read (`runtime-missing`);
+   the current runtime does not answer (`herdr-unavailable`; switching to the
+   current runtime starts it again, below); a running Claude is
+   not in the agent record, or a recorded one has no known session or mode, runs in
+   `bypassPermissions` where `allow_bypass` is now false, or its folder is gone
+   (`agent-failed`); an agent is `working`, `blocked` or `unknown` (`agent-busy`,
+   unless `--force`, which interrupts it with Escape as `agent restart` does);
+   leaving herdr, herdr runs an agent of another kind, which stopping herdr would
+   end (`invalid-input`); ship.toml names one runtime while recorded agents ran
+   under the other this boot (`invalid-input`: an unplanned edit, put it back or
+   reboot; after a rollback that did not finish, reboot).
+   Already on the target: `ok`, outcome `already`, nothing done; unless the
+   last switch was `interrupted` or `rollback-failed`, or the runtime does not
+   answer: then the switch **repairs** it (outcome `repaired`): the other unit's boot
+   link goes and this one's is made, herdr stops (leaving it), the runtime starts,
+   and the status refresh's resume starts every agent waiting for it. It refuses
+   (`invalid-input`, nothing changed) while herdr still runs anything or the core
+   runs a recorded agent.
+2. **Snapshot:** a recorded agent not running now that was exited on purpose this
+   boot (or its pane closed) is let go first, as the status refresh would, so the
+   switch never brings it back; one that crashed is resumed on the new runtime.
+   Each running agent's name, folder, session (the runtime's word,
+   else the record's) and mode (the mode ledger's, else the record's) go into the
+   record (`switch`, `agent-record.schema.json`).
+3. **Stop** each agent gracefully through the current runtime, as `agent restart`
+   does (Escape if needed, Ctrl+C, `/exit`; Ctrl+C twice; never `hc kill`, `hc
+   server stop` or killing herdr). Each stopped session's mode is pinned in the mode
+   ledger, which also clears the `/exit`, so the agent counts as one to resume. Then
+   the current runtime must list no Claude agent at all.
+4. **Lifting the guard.** An agent whose recorded place is in the other runtime this
+   boot is started by neither runtime ("On herdr-core Ships", below), because after
+   an unplanned ship.toml change it may still run there. The switch has just seen
+   the old runtime run no Claude, under the lock, so it clears those places; only
+   then does it start anything. An agent it could not see stop keeps its place, and
+   so stays guarded.
+5. **Change runtime:** herdr's `session.resume_agents_on_restore` stays false.
+   Leaving herdr: the stopped agents' workspaces are closed (`herdr workspace
+   close`), so a herdr TUI that starts the server again over SSH finds nothing to
+   restore, then `herdr.service` stops. Leaving herdr-core: the core keeps running
+   (`hc server stop` would end every terminal), and the agents' finished terminals
+   are removed (`hc rm`). Then ship.toml gets `runtime`, the old unit's boot link
+   goes (`systemctl --global disable`), the new one's is made (`--global enable`),
+   and the new unit starts (`systemctl --user start`, as `agent`).
+6. **Relaunch** each agent on the new runtime the way the boot resume does (record
+   relaunch), with its snapshot mode's flag and `--resume <session>`: on core, `hc
+   run ... -- /opt/shipshape/bin/agent-launch`; on herdr, a new workspace and
+   `herdr agent start`.
+7. **Verify**, like `ship-fleet reboot`: each agent is live by its name exactly once,
+   runs its own session, the mode ledger saw that session start after the relaunch,
+   and in the snapshot mode; leaving herdr-core, none of them is live on the core
+   any more. Remote Control follows the managed settings, which the switch does not
+   touch, and a resumed session reconnects to its own Remote Control session.
+8. **Roll back** on any failure in 3-7: agents that started on the new runtime are
+   stopped gracefully (one that will not stop, or that cannot be seen to stop, is
+   left running where it is and is not started on the old runtime: never twice),
+   ship.toml and the units go back, and every other agent is relaunched and
+   verified on the old runtime as in 6 and 7 (leaving herdr-core running: none of
+   them may be live on it). An agent that did not exit when asked in 3 and has
+   exited by the end of the rollback is pinned and resumed too (that exit was the
+   switch's); one still running is left as it was.
+
+Every switch is recorded (`switches`, the last 10: when, from, to, outcome, forced,
+how many agents, a message) and shown as the status document's
+`agent_record.last_switch`. Outcomes: `switched`, `rolled-back`, `rollback-failed`
+(attention `runtime-switch-failed`: what is left is in the message), `interrupted`
+(ship-ctl stopped part way; the next switch records it), `repaired` (a switch to
+the runtime ship.toml names started it again: `from` and `to` are the same). A
+switch still in progress after an hour shows attention `runtime-switch-unfinished`:
+agents it had stopped have no place, so the status refresh resumes them on the
+runtime ship.toml names once it runs; `ship-ctl runtime switch <that runtime>`
+makes sure it does.
+
+`data`: `{ "from", "to", "outcome": "switched" | "already" | "repaired" |
+"rolled-back" | "rollback-failed", "forced", "runtime": what runs the agents now,
+"remote_control": the Ship's setting, "agents": [{ "name", "mode" (its snapshot
+mode), "was" (its state before), "mode_now" (the mode ledger's now) }], "problems":
+[what is left, after a rollback] }`; `changed` is `runtime: <target>` and the agents
+moved. A switch that rolled back fails with `switch-failed`, `data` still saying
+what happened. Session ids are not reported.
+
 ### The agent record
 
 ShipShape keeps its own record of the Claude agents a Ship runs,
@@ -355,7 +451,8 @@ With ship.toml `runtime = "core"` the record works the same through herdr-core
 - **Changing the runtime** in ship.toml while agents run: an agent that ran this
   boot under the other runtime may still run there, so neither runtime starts it
   (its state is `unknown`) until the next boot, when only the new one starts and
-  resumes it.
+  resumes it. `ship-ctl runtime switch` (above) is the planned way: it stops the
+  agents first, then lifts this guard.
 - **Stopping** is graceful only (`hc keys esc`, `ctrl+c`, `hc send /exit`). ship-ctl
   never calls `hc kill` or `hc server stop`: both end agents. Notices and first
   prompts use `hc send`, never `--force`, so a blocked agent is not typed into.

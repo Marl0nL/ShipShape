@@ -75,6 +75,76 @@
           }
         }
       ]
+    },
+    "switch": {
+      "description": "`ship-ctl runtime switch` in progress (contracts/ship-ctl.md): what each agent ran before it was stopped, so an interrupted switch can still tell. Absent when none is in progress; one found by the next switch is recorded in switches as interrupted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "started_at",
+        "forced",
+        "step",
+        "agents"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/runtime"
+        },
+        "to": {
+          "$ref": "#/$defs/runtime"
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "forced": {
+          "type": "boolean"
+        },
+        "step": {
+          "enum": [
+            "stopping",
+            "switching",
+            "starting",
+            "verifying",
+            "rolling back"
+          ]
+        },
+        "agents": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cwd",
+              "session",
+              "mode"
+            ],
+            "properties": {
+              "cwd": {
+                "type": "string"
+              },
+              "session": {
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "#/$defs/permissionMode"
+              }
+            }
+          }
+        }
+      }
+    },
+    "switches": {
+      "description": "The last 10 runtime switches, oldest first.",
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/switch"
+      }
     }
   },
   "$defs": {
@@ -283,6 +353,59 @@
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
       "description": "UTC, RFC 3339, with a Z suffix."
+    },
+    "runtime": {
+      "enum": [
+        "herdr",
+        "core"
+      ]
+    },
+    "switch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "at",
+        "from",
+        "to",
+        "outcome",
+        "forced",
+        "agents",
+        "message"
+      ],
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/timestamp",
+          "description": "When it started."
+        },
+        "from": {
+          "$ref": "#/$defs/runtime"
+        },
+        "to": {
+          "$ref": "#/$defs/runtime"
+        },
+        "outcome": {
+          "enum": [
+            "switched",
+            "rolled-back",
+            "rollback-failed",
+            "interrupted",
+            "repaired"
+          ],
+          "description": "switched: every agent runs on `to`, in its mode. rolled-back: it failed, and every agent runs on `from` again, in its mode. rollback-failed: it failed and the rollback did not finish cleanly (message says what is left; attention runtime-switch-failed). interrupted: ship-ctl stopped part way (found by the next switch). repaired: a switch to the runtime ship.toml names found it stopped, or the last switch unfinished, and started it again (from and to are the same)."
+        },
+        "forced": {
+          "type": "boolean"
+        },
+        "agents": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many agents it moved."
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 300
+        }
+      }
     }
   }
 }

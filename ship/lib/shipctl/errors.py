@@ -17,6 +17,8 @@ EXIT_CODES = {
     "overlay-failed": 1,
     "overlay-not-joined": 1,
     "invalid-input": 1,
+    "runtime-missing": 1,
+    "switch-failed": 1,
     "internal": 1,
 }
 
