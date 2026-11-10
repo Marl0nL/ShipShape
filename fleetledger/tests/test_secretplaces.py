@@ -52,6 +52,11 @@ def by_point_at(text: str, store_kind: str) -> dict:
                                               secret_store.oauth_item("kExampleClient1")),
                               "keyring", None), "secret")]
     vaultcmd.point_at(ed, moved, store_kind)
+    for kind, table in (("proxmox", ed.doc["drivers"]["proxmox"]),
+                        ("oauth", ed.doc["overlay"]["api"])):
+        kept = [k for k in table if k in FIELDS[kind]]
+        assert list(table)[-len(kept):] == kept  # re-added at the table's end, as ever
+        assert kept == [k for k in FIELDS[kind] if k in kept]  # store, item, file
     return store_fields(ed.doc)
 
 
