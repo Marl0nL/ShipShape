@@ -372,7 +372,9 @@ install_herdr_core() {
   echo "$sum  $archive" | sha256sum -c --quiet - || die "herdr-core checksum mismatch"
   dir=$(mktemp -d)
   tar -xzf "$archive" -C "$dir" --no-same-owner herdr-core || die "herdr-core archive has no herdr-core binary"
-  [ -f "$dir/herdr-core" ] && [ ! -L "$dir/herdr-core" ] || die "herdr-core archive has no herdr-core binary"
+  if [ ! -f "$dir/herdr-core" ] || [ -L "$dir/herdr-core" ]; then
+    die "herdr-core archive has no herdr-core binary"
+  fi
   put_file "$dir/herdr-core" /usr/local/bin/herdr-core 0755
   put_link herdr-core /usr/local/bin/hc
   # The archive's checksum, so a re-run knows the installed binary is the pinned one.
