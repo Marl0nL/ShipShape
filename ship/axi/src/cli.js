@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { AxiError, installSessionStartHooks, runAxiCli } from "axi-sdk-js";
 import { VERSION } from "./version.js";
-import { homeView, readStatus, RULES } from "./view.js";
+import { homeView, readStatus, rules } from "./view.js";
 
 export { VERSION };
 
@@ -46,7 +46,7 @@ export async function main(argv = process.argv.slice(2), stdout = process.stdout
       return homeView(doc, note);
     },
     commands: {
-      rules: async () => RULES,
+      rules: async () => rules(readStatus().doc),
       setup: async (args) => {
         if (args[0] !== "hooks") {
           throw new AxiError("Unknown setup command", "USAGE", ["Run `ship-axi setup hooks`"]);

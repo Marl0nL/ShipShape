@@ -89,6 +89,9 @@ class SimShip:
         self.tooling = "0.1.0"
         self.herdr_changes = False  # does the next converge replace herdr?
         self.herdr_pending = False
+        self.runtime = "herdr"  # ship.toml runtime: herdr or core (herdr-core)
+        self.core_changes = False  # does the next converge replace herdr-core?
+        self.core_pending = False
         self.converge_error = None
         self.report_commit = None  # lie about the bundle after converge
         self.accounts = {}  # service -> account reported in auth
@@ -122,6 +125,7 @@ class SimShip:
         self.booted = self.down_until
         self.down_until = None
         self.herdr_pending = False
+        self.core_pending = False
         self.impostor = bool(self.after_reboot_id or self.after_reboot_host_key)
         if self.after_reboot is not None:
             self.agents = dict(self.after_reboot)
@@ -168,6 +172,12 @@ class SimShip:
         if self.herdr_pending:
             doc["attention"].append({"code": "herdr-restart-pending",
                                      "message": "herdr was updated; reboot to switch."})
+        if self.runtime == "core":
+            doc["herdr"]["runtime"] = "core"
+        if self.core_pending:
+            doc["attention"].append({"code": "core-restart-pending",
+                                     "message": "herdr-core was updated.",
+                                     "subject": "herdr-core"})
         doc["state"] = "running" if agents else "ready"
         return doc
 
@@ -264,6 +274,8 @@ class SimShip:
         self.bundle_commit = self.report_commit or manifest["commit"][:12]
         if self.herdr_changes:
             self.herdr_pending = True
+        if self.core_changes:
+            self.core_pending = True
         return 0, json.dumps(ctl_result("converge", data={
             "from": old, "to": f"{self.tooling}-{manifest['commit'][:12]}"})), ""
 
@@ -747,6 +759,36 @@ def test_update_up_to_date_ship_with_herdr_pending_still_reboots(world):
     sim.bundle_commit, sim.tooling, sim.herdr_pending = NEW_COMMIT[:12], "0.2.0", True
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
     assert outcome.ok and sim.converged == [] and len(sim.reboots) == 1
+
+
+def test_update_does_not_reboot_when_only_herdr_core_changed(world):
+    """A replaced herdr-core leaves its agents running on the old core: auto does not
+    reboot, says when it switches, and always still reboots."""
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.core_changes = "core", True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok, outcome
+    assert sim.reboots == [] and outcome.data["rebooted"] is False
+    assert any("herdr-core was updated" in d and "next reboot" in d for d in outcome.details)
+    assert not any(d.startswith("herdr was updated") for d in outcome.details)
+
+
+def test_update_with_always_reboots_a_core_ship_and_clears_the_pending_core(world):
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.core_changes = "core", True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                           reboot_policy="always")
+    assert outcome.ok, outcome
+    assert len(sim.reboots) == 1 and not sim.core_pending
+    assert "2/2 agents resumed in their modes" in outcome.summary
+
+
+def test_update_up_to_date_ship_with_only_the_core_pending_does_not_reboot(world):
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.core_pending = "core", True
+    sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and outcome.summary.startswith("already on") and sim.reboots == []
 
 
 def test_update_converge_failure_is_reported_and_upload_removed(world):

@@ -6,9 +6,17 @@ from collections import deque
 
 from .context import Context
 from .errors import CtlError
+from .homefs import UnsafePath
 from .record import LOG_TAG
 
-SOURCES = ("provision", "herdr", "resume", "tools", "status", "system")
+SOURCES = ("provision", "herdr", "core", "resume", "tools", "status", "system")
+
+# herdr-core has no log command. It runs itself as transient user units
+# (hc-serve-*, hc-hold-*) whose stderr systemd appends to files in its state folder
+# (default session), so only the boot unit that starts it is in the journal.
+CORE_STATE = ".local/state/herdr-core/default"
+CORE_LOGS = ("core.log", "holder.log")
+CORE_LOG_BYTES = 4 << 20
 
 
 def _tail(path, lines: int) -> list[str]:
@@ -19,6 +27,29 @@ def _tail(path, lines: int) -> list[str]:
         return []
     except OSError as exc:
         raise CtlError("internal", f"cannot read {path.name}: {exc.strerror}") from exc
+
+
+def _home_tail(ctx: Context, rel: str, lines: int) -> list[str]:
+    """The last lines of a file in the agent's home, read without following links."""
+    try:
+        raw = ctx.home.read_tail(rel, CORE_LOG_BYTES)
+    except (UnsafePath, OSError):
+        return []
+    if raw is None:
+        return []
+    text = raw.decode("utf-8", "replace").splitlines()
+    if len(raw) >= CORE_LOG_BYTES:
+        text = text[1:]  # read from the middle of a line
+    return text[-lines:]
+
+
+def _core(ctx: Context, journal: list[str], lines: int) -> list[str]:
+    """ship-core.service's journal (the core starting at boot), then the end of the
+    core's and its holders' own logs, each line prefixed with its file."""
+    out = list(journal)
+    for name in CORE_LOGS:
+        out += [f"{name}: {line}" for line in _home_tail(ctx, f"{CORE_STATE}/{name}", lines)]
+    return out
 
 
 def read(ctx: Context, source: str, lines: int) -> list[str]:
@@ -41,6 +72,7 @@ def read(ctx: Context, source: str, lines: int) -> list[str]:
         base[-1] = str(min(10000, lines * 20))
     selector = {
         "herdr": ["_SYSTEMD_USER_UNIT=herdr.service", *agent],
+        "core": ["_SYSTEMD_USER_UNIT=ship-core.service", *agent],
         "resume": ["-u", "ship-status.service"],
         "status": ["-u", "ship-status.service"],
         "system": [],
@@ -51,4 +83,6 @@ def read(ctx: Context, source: str, lines: int) -> list[str]:
     out = [line for line in r.out.splitlines() if not line.startswith("-- No entries --")]
     if source == "resume":
         out = [line for line in out if f"ship-ctl: {LOG_TAG}:" in line][-lines:]
+    if source == "core":
+        out = _core(ctx, out, lines)
     return out

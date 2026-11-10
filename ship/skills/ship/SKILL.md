@@ -8,10 +8,14 @@ description: How the ShipShape Ship you are running on works - its name and tags
 You are running on a **Ship**: an Ubuntu VM made for coding agents and managed from
 outside by **FleetLedger** (`ship-fleet`), which a person runs on their own computer.
 
-Start with `ship-axi`. It shows this Ship's name and tags, your own herdr agent name
+Start with `ship-axi`. It shows this Ship's name and tags, your own agent name
 and permission mode, the other agents and their states, Remote Control, the
 sign-ins (account names only) and the installed tools. `ship-axi rules` lists what
-agents may and may not change.
+agents may and may not change on this Ship.
+
+Agents run in one of two runtimes, chosen per Ship: **herdr** (most Ships) or
+**herdr-core** (`hc`). `ship-axi` shows `runtime: herdr-core` on a herdr-core Ship;
+`$HC_TERMINAL_ID` is set in a herdr-core terminal, `$HERDR_PANE_ID` in a herdr pane.
 
 ## How the Ship is run
 
@@ -23,6 +27,11 @@ agents may and may not change.
   To change your mode, the person may restart you (`ship-fleet agent restart`): you
   are asked to `/exit`, then started again in the same pane, continuing this
   conversation in the new mode.
+- **On a herdr-core Ship** it is the same, except that each agent runs in its own
+  herdr-core *terminal* (an address such as `t3`, in `$HC_TERMINAL_ID`) rather than a
+  herdr pane, and a restart (`/exit`, then start again) gives you a new terminal in
+  the same folder. Claude reports its own state to herdr-core, so the person sees
+  what you wait for (an approval, an answer) without attaching.
 - Settings come from `/etc/shipshape/ship.toml` (read-only for you). FleetLedger
   changes them with `ship-ctl`; Claude Code's managed settings are derived from it.
 - Sign-ins (Claude Code, gcloud, GitHub) belong to the Ship and are shared by every
@@ -62,8 +71,11 @@ name already taken gets `-2`, `-3` ... (`report-2.pdf`), so nothing is overwritt
 
 - Work in your own folder under `~/work/`.
 - Do not edit `/etc/shipshape/`, `/etc/claude-code/` or `~/.claude/settings.json`.
-- Do not stop or restart the herdr server, and do not replace `~/.local/bin/claude`
-  or `herdr`.
+- Do not stop or restart the herdr server, and do not replace `~/.local/bin/claude`,
+  `herdr` or `herdr-core`/`hc`.
+- On a herdr-core Ship, never run `hc kill` or `hc server stop`, and do not kill the
+  herdr-core processes: `hc kill` ends an agent and `hc server stop` ends every agent
+  on the Ship. Find your own terminal with `$HC_TERMINAL_ID`, never by guessing.
 - There is no network allow-list: the internet is open. The Ship records which
   programs connect where, for the person to review, and if its LAN guard is on,
   new connections to the local network (other than its gateway, DNS and any

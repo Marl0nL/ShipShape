@@ -73,7 +73,7 @@ How fields are worked out:
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
-`reboot-required`, `herdr-restart-pending`, `provision-failed`, `tool-waiting`,
+`reboot-required`, `herdr-restart-pending`, `core-restart-pending`, `provision-failed`, `tool-waiting`,
 `tool-failed`, `signin-scopes-differ` (GitHub is signed in, and its token lacks an
 extra scope `github.scopes` chooses, or has a catalogue scope it no longer chooses;
 `settings.md`, "Extra GitHub scopes"; for a scope it has but does not choose, the message says to tick it to keep it before it says that signing in again drops it), `host-cert-expiring` (the host certificate ends within 14 days),
@@ -90,6 +90,11 @@ shows unknown codes as they are.
 `/usr/local/bin/herdr` (a converge replaced the binary; the server keeps running
 the old one). A reboot switches to the new one and resumes every agent in its
 mode; `ship-fleet update` does that for you unless told not to.
+
+`core-restart-pending`: the running herdr-core (`herdr-core serve`) is not the
+installed `/usr/local/bin/herdr-core`. Its agents are not affected: the old core
+keeps serving them, and the new one takes over at the next reboot. `ship-fleet
+update` does not reboot for it (`--reboot always` does).
 
 ### `ship-ctl apply [--dry-run] [--json]`
 
@@ -416,7 +421,7 @@ exits 1. `data`: `{ "from": release, "to": release }`.
 
 Converge never restarts herdr or reboots: agents keep running. When it replaced
 the herdr binary, the status document reports `herdr-restart-pending` until the
-next reboot. Its `apply` records every running agent in the agent record first, so
+next reboot (`core-restart-pending` for the herdr-core binary). Its `apply` records every running agent in the agent record first, so
 the next reboot brings them back in their modes.
 
 ### `ship-ctl tools list|run|add|remove [ID...] [--json]`
@@ -438,9 +443,14 @@ error: `changed` is empty. `data`: `{ "device": "/dev/sda1", "grown": true|false
 
 ### `ship-ctl logs SOURCE [--lines N] [--json]`
 
-SOURCE is one of `provision`, `herdr`, `resume`, `tools`, `status`, `system`;
+SOURCE is one of `provision`, `herdr`, `core`, `resume`, `tools`, `status`, `system`;
 default 200 lines. `resume` is the agent record's lines from the status refresh:
-agents resumed after a boot, started again after a crash, or let go. With `--json`, `data` is `{ "lines": [strings] }`. Log lines
+agents resumed after a boot, started again after a crash, or let go. `core` is for
+herdr-core Ships: `ship-core.service`'s journal (the core starting at boot), then the
+last lines of herdr-core's own `core.log` and `holder.log` (in
+`~/.local/state/herdr-core/default/`), each prefixed with its file name. herdr-core
+has no log command and runs itself in transient `hc-serve-*`/`hc-hold-*` user units
+whose output goes to those files, not to the journal. With `--json`, `data` is `{ "lines": [strings] }`. Log lines
 are passed through as written; the Ship track keeps secrets out of them.
 
 ### `ship-ctl ssh-trust --file - [--json]`

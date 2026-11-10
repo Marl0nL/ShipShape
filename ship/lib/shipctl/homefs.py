@@ -119,6 +119,23 @@ class HomeFS:
         finally:
             os.close(dfd)
 
+    def read_tail(self, rel: str, max_bytes: int) -> bytes | None:
+        """At most the last max_bytes of the file, or None as read() (for logs that
+        are never rotated)."""
+        dfd, name = self._parent(rel, create=False, dir_mode=0o755)
+        if dfd is None:
+            return None
+        try:
+            fd = self._open_file(dfd, name, rel)
+            if fd is None:
+                return None
+            with os.fdopen(fd, "rb") as fh:
+                size = os.fstat(fh.fileno()).st_size
+                fh.seek(max(0, size - max_bytes))
+                return fh.read(max_bytes)
+        finally:
+            os.close(dfd)
+
     # --- writing ---------------------------------------------------------------------
     def _write_at(
         self,
