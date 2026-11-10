@@ -8,10 +8,11 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+from fl_harness import finished
 from fleetledger.overlay.providers import Check
 from fleetledger.web import actions, dashboard, overlayweb
 from test_cli import EXAMPLES, Keys
-from test_web import wait_for, web  # noqa: F401 - the web UI fixture
+from test_web import web  # noqa: F401 - the web UI fixture
 from test_webtrust import cakeys, caweb  # noqa: F401 - the web UI with a CA
 
 from fleetledger import overlay, overlay_setup, trustcmd
@@ -37,12 +38,6 @@ def ov(web):  # noqa: F811
     return web
 
 
-def _finished(web, count=1):  # noqa: F811
-    wait_for(lambda: len(web.app_ui.jobs.recent()) >= count
-             and all(j.done for j in web.app_ui.jobs.recent()))
-    return web.app_ui.jobs.recent()[0]
-
-
 def test_the_access_tab_lists_every_way_to_attach_and_contacts_nothing(ov, monkeypatch):
     def refuse(*args, **kwargs):
         raise AssertionError("the Access tab ran a command")
@@ -59,11 +54,8 @@ def test_the_access_tab_lists_every_way_to_attach_and_contacts_nothing(ov, monke
 
 
 def test_once_this_computer_attaches_it_lists_herdr_and_ssh(ov, monkeypatch):
-    from fleetledger.web import app as webapp
-
     monkeypatch.setattr(trustcmd, "attaches_here", lambda inv, ship: True)
     monkeypatch.setattr(trustcmd, "this_computer_until", lambda inv: "2026-11-12T10:00:00Z")
-    monkeypatch.setattr(webapp, "_attach_context", webapp._attach_context)
     page = ov.client.get("/ships/ship-01/access").text
     owner = ov.store.load().owner
     for line in ("herdr --remote ship-01", "ssh ship-01", f"ssh {owner}@ship-01"):
@@ -89,7 +81,7 @@ def test_leave_needs_the_tick_then_clears_the_node_and_the_overlay_name(ov):
     assert ov.app_ui.jobs.recent() == []
     response = ov.post("/ships/ship-01/overlay/leave", {"confirm": "yes"})
     assert response.headers["location"] == "/ships/ship-01"  # from More: the page it was on
-    job = _finished(ov)
+    job = finished(ov)
     assert job.ok, job.snapshot()
     assert job.kind == "leave" and job.ships == ["ship-01"]
     ship = ov.store.load().ship("ship-01")
@@ -130,7 +122,7 @@ def test_check_runs_the_cli_checks_as_a_job_and_shows_its_items(ov, monkeypatch)
     monkeypatch.setattr(overlay_setup, "check_items", fake)
     response = ov.post("/settings/overlay/check", {"policy": "  ", "probe": "yes"})
     assert response.headers["location"] == "/settings?said=overlay#overlay"
-    job = _finished(ov)
+    job = finished(ov)
     assert seen == [(None, True)] and not job.ok  # an item failed
     card = ov.client.get(f"/jobs/{job.id}?v=0").text
     assert "ship-01 overlay" in card and ">failed<" in card and ">skipped<" in card
@@ -142,7 +134,7 @@ def test_check_runs_the_cli_checks_as_a_job_and_shows_its_items(ov, monkeypatch)
 def test_a_pasted_policy_is_checked_with_the_same_items_as_the_cli(ov):
     rules = overlay.policy(ov.store.load().overlay)
     ov.post("/settings/overlay/check", {"policy": rules})
-    job = _finished(ov)
+    job = finished(ov)
     names = [c.name for c in job.result["checks"]]
     assert "access rules" not in names  # read from the pasted policy, not skipped
     assert "ship-01 overlay" in names
@@ -219,7 +211,7 @@ def test_one_check_at_a_time(ov, monkeypatch):
     assert len(ov.app_ui.jobs.recent()) == 1
     assert "already running" in ov.client.get("/settings?said=overlay").text
     go.set()
-    assert _finished(ov).ok
+    assert finished(ov).ok
 
 
 def test_a_stale_node_is_explained(ov):

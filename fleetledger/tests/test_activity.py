@@ -9,6 +9,7 @@ import threading
 import time
 
 import pytest
+from fl_harness import Clock
 from fleetledger.history import Operation, Operations
 from fleetledger.web import app as webapp
 from fleetledger.web.jobs import Jobs
@@ -27,14 +28,6 @@ NOW = time.time()
 def op(op_id, *, ships=("ship-01",), started=NOW - 10, ended=NOW, outcome="ok", **kw):
     return Operation(id=op_id, kind=kw.pop("kind", "update"), title=kw.pop("title", "Update"),
                      ships=tuple(ships), started=started, ended=ended, outcome=outcome, **kw)
-
-
-class Wall:
-    def __init__(self, t=2000.0):
-        self.t = t
-
-    def __call__(self):
-        return self.t
 
 
 # --- the store -----------------------------------------------------------------------
@@ -106,13 +99,13 @@ def test_a_long_log_is_cut_and_says_so(home):
 
 
 def test_it_is_pruned_by_age_and_by_count(home):
-    wall = Wall(100 * 86400.0)
+    wall = Clock(100 * 86400.0)
     store = Operations(keep=86400.0, keep_count=3, wall=wall)
-    store.save(op(1, started=0, ended=wall.t - 2 * 86400))  # older than keep
-    store.save(op(2, started=0, ended=wall.t - 10))
+    store.save(op(1, started=0, ended=wall.now - 2 * 86400))  # older than keep
+    store.save(op(2, started=0, ended=wall.now - 10))
     assert [o.id for o in store.find()] == [2]
     for i in range(3, 7):
-        store.save(op(i, started=0, ended=wall.t - 10 + i))
+        store.save(op(i, started=0, ended=wall.now - 10 + i))
     assert [o.id for o in store.find()] == [6, 5, 4]  # the newest keep_count
 
 

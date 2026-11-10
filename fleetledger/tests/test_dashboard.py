@@ -8,6 +8,7 @@ import stat
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fl_harness import Clock
 from fleetledger.history import History, Sample, sample_of
 from fleetledger.web import charts, dashboard
 from fleetledger.web.fleet import Item, attention_items
@@ -17,14 +18,6 @@ from test_web import web  # noqa: F401 - the shared web UI fixture
 from fleetledger import paths, status
 
 NOW = 1_800_000_000.0
-
-
-class Wall:
-    def __init__(self, t=NOW):
-        self.t = t
-
-    def __call__(self):
-        return self.t
 
 
 def view(store, name="ship-01", doc=None, problem=None):
@@ -42,7 +35,7 @@ def view(store, name="ship-01", doc=None, problem=None):
 
 
 def test_history_records_at_most_one_sample_per_gap_and_reads_back(store, home):
-    wall = Wall()
+    wall = Clock(NOW)
     h = History(wall=wall)
     v = view(store)
     assert h.record([v], NOW) == 1
@@ -68,11 +61,11 @@ def test_history_samples_an_unreachable_ship_as_down(store, home):
 
 
 def test_history_prunes_old_samples(store, home):
-    wall = Wall()
+    wall = Clock(NOW)
     h = History(wall=wall)
     h.add([Sample("ship-01", NOW - 8 * 86400, True, cpu=1.0),
            Sample("ship-02", NOW - 3600, True, cpu=2.0)])
-    wall.t = NOW + 3601  # pruning runs at most hourly
+    wall.now = NOW + 3601  # pruning runs at most hourly
     h.add([Sample("ship-01", NOW, True, cpu=3.0)])
     found = h.since(0)
     assert [s.cpu for s in found["ship-01"]] == [3.0]  # the 8-day-old one is gone

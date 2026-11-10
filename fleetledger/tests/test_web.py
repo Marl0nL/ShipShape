@@ -12,11 +12,11 @@ import logging
 import re
 import sys
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from fl_harness import Clock, wait_for
 from fleetledger.concierge import audit, engine
 from fleetledger.errors import FleetError
 from fleetledger.web import actions, flows, network, security, server
@@ -37,14 +37,6 @@ WEB = HERE.parent / "fleetledger" / "web"
 PORT = 8765
 BASE = f"http://127.0.0.1:{PORT}"
 ORIGIN = {"Origin": BASE}
-
-
-class Clock:
-    def __init__(self):
-        self.t = 1000.0
-
-    def __call__(self):
-        return self.t
 
 
 NET_SUMMARY = json.loads((EXAMPLES / "net-summary" / "running.json").read_text())
@@ -104,7 +96,7 @@ def web(store, fake_repo, monkeypatch, tmp_path):
         stdin_isatty=lambda: False,
         sleep=lambda s: None,
     )
-    clock = Clock()
+    clock = Clock(1000.0)
     gate = Gate(PORT, clock=clock)
     fleet = Fleet(app, interval=30)
     concierge = Concierge(app, on_finished=lambda ship: fleet.poll([ship]),
@@ -138,15 +130,6 @@ def web(store, fake_repo, monkeypatch, tmp_path):
     env.sign_in, env.post = sign_in, post
     yield env
     concierge.cancel_all()
-
-
-def wait_for(predicate, timeout=20.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if predicate():
-            return True
-        time.sleep(0.05)
-    raise AssertionError("timed out")
 
 
 # --- the gate ----------------------------------------------------------------------
@@ -215,7 +198,7 @@ def test_link_token_is_swapped_for_a_strict_cookie_once(web):
 
 def test_link_token_expires(web):
     token = web.gate.new_token()
-    web.clock.t += security.TOKEN_TTL + 1
+    web.clock.now += security.TOKEN_TTL + 1
     assert web.client.get(f"/login?token={token}").status_code == 403
     assert web.client.get("/").status_code == 401
 
@@ -227,7 +210,7 @@ def test_only_a_hash_of_the_token_is_kept(web):
 
 def test_session_lapses_when_idle(web):
     web.sign_in()
-    web.clock.t += security.SESSION_IDLE + 1
+    web.clock.now += security.SESSION_IDLE + 1
     assert web.client.get("/").status_code == 401
 
 
@@ -520,19 +503,19 @@ def test_waiting_agent_shows_within_a_poll(web):
 
 
 def test_poller_polls_only_while_someone_looks(store, fake_repo):
-    clock = Clock()
+    clock = Clock(1000.0)
     polls = []
     app = cli.App(store_factory=lambda: store, repo_factory=lambda: fake_repo)
     f = Fleet(app, interval=30, idle_after=120, clock=clock)
     f.poll = lambda names=None: polls.append(names) or setattr(f, "_last_poll", clock())
     assert f.active()
-    clock.t += 121
+    clock.now += 121
     assert not f.active()
     f.touch()
     assert f.active() and f._due() is True
     f.poll()
     assert not f._due()
-    clock.t += 31
+    clock.now += 31
     assert f._due()
 
 

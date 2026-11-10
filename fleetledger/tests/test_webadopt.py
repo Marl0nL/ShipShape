@@ -3,10 +3,11 @@ two steps (the host checked before any keyscan, then "It matches"), and re-pin."
 
 from __future__ import annotations
 
+from fl_harness import last_job
 from fleetledger.scan import Announcement
 from fleetledger.seed import hostkey
 from test_cli import RUNNING
-from test_web import _action_bar, wait_for, web  # noqa: F401  (web is a fixture)
+from test_web import _action_bar, web  # noqa: F401  (web is a fixture)
 
 from fleetledger import ca
 
@@ -14,11 +15,6 @@ from fleetledger import ca
 def new_key(name="ship-07"):
     key = hostkey.generate(name)
     return " ".join(key.public.split()[:2]), key.fingerprint
-
-
-def last_job(web):  # noqa: F811
-    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
-    return web.app_ui.jobs.recent()[0]
 
 
 def test_scan_runs_as_a_job_and_lists_what_it_heard(web):  # noqa: F811

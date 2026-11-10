@@ -15,6 +15,7 @@ import re
 import time
 
 import pytest
+from fl_harness import Clock
 from fleetledger.concierge import audit
 from fleetledger.errors import FleetError
 from fleetledger.web import app as webapp
@@ -35,14 +36,6 @@ COOKIE = "__Host-fleetledger"
 OTHER = "someone@example.com"
 
 
-class Wall:
-    def __init__(self):
-        self.now = time.time()
-
-    def __call__(self):
-        return self.now
-
-
 def csrf_of(page_text):
     return re.search(r'name="csrf-token" content="([^"]+)"', page_text).group(1)
 
@@ -56,7 +49,7 @@ def web(store, fake_repo, home, monkeypatch):
                   stdin_isatty=lambda: False, sleep=lambda s: None,
                   tailscale=FakeTailscale())
     remote.save(ON)
-    wall = Wall()
+    wall = Clock()
 
     class OnTheWall(Devices):  # ship-fleet ui link/devices/revoke: the same clock
         def __init__(self, folder=None, wall_=None):
