@@ -13,8 +13,9 @@ module installs what it issues, after checking it:
   not revoke fleet's own key (that would lock FleetLedger out for good).
 
 Every change ends with `sshd -t`; if sshd would refuse the configuration, all
-files go back to what they were. Everything here is root-owned under /etc/ssh;
-nothing reads or writes the agent's home.
+files go back to what they were, the owner's principals and keys included.
+Everything here is root-owned under /etc/ssh; nothing reads or writes the agent's
+home.
 """
 
 from __future__ import annotations
@@ -368,9 +369,19 @@ MANAGED = (
 )
 
 
+# Folders whose every file is managed: render_files writes and deletes per-login files
+# here (the owner's principals and keys), so a rollback must bring back removed ones too.
+MANAGED_DIRS = (PRINCIPALS_DIR, KEYS_DIR)
+
+
 def _snapshot(ctx: Context) -> dict[str, tuple[bytes, int] | None]:
+    paths = set(MANAGED)
+    for folder in MANAGED_DIRS:
+        d = _p(ctx, folder)
+        if d.is_dir():
+            paths.update(f"{folder}/{f.name}" for f in d.iterdir() if not f.is_dir())
     snap: dict[str, tuple[bytes, int] | None] = {}
-    for path in MANAGED:
+    for path in sorted(paths):
         p = _p(ctx, path)
         data = read_bytes(p)
         snap[path] = None if data is None else (data, p.stat().st_mode & 0o7777)
@@ -378,6 +389,11 @@ def _snapshot(ctx: Context) -> dict[str, tuple[bytes, int] | None]:
 
 
 def _restore(ctx: Context, snap: dict[str, tuple[bytes, int] | None]) -> None:
+    for folder in MANAGED_DIRS:
+        d = _p(ctx, folder)
+        for f in sorted(d.iterdir()) if d.is_dir() else []:
+            if not f.is_dir() and f"{folder}/{f.name}" not in snap:
+                remove(f)
     for path, old in snap.items():
         p = _p(ctx, path)
         if old is None:
