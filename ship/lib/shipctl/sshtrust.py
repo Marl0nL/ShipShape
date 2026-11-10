@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import schema
-from .context import Context
+from .context import Context, parse_stamp, stamp
 from .errors import CtlError
 from .fsutil import read_bytes, remove, write_atomic
 from .shiptoml import ShipToml
@@ -102,10 +102,10 @@ def fingerprint(ctx: Context, key_line: str) -> str | None:
 
 def _time(text: str) -> str | None:
     try:
-        when = datetime.strptime(text, "%Y-%m-%dT%H:%M:%S")
+        when = datetime.strptime(text, "%Y-%m-%dT%H:%M:%S")  # ssh-keygen -L, run with TZ=UTC
     except ValueError:
         return None
-    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return stamp(when.replace(tzinfo=UTC))
 
 
 def parse_cert_listing(text: str) -> dict | None:
@@ -189,7 +189,7 @@ def _now() -> datetime:
 def _parse_ts(value: str | None) -> datetime | None:
     if value is None:
         return None
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    return parse_stamp(value)
 
 
 def check_host_cert(ctx: Context, ship: ShipToml, line: str) -> dict:

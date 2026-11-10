@@ -13,7 +13,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 
-from .context import Context
+from .context import Context, stamp
 from .fsutil import read_json
 
 SCHEMA = "shipshape.net-summary/1"
@@ -36,10 +36,6 @@ PROGRAM = re.compile(r"^[A-Za-z0-9_.+:@-]{1,32}$|^\?$")
 TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 HOUR = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}$")
 IFACE = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
-
-
-def _utc(when: datetime) -> str:
-    return when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _hour(when: datetime) -> str:
@@ -105,7 +101,7 @@ def vnstat_totals(ctx: Context, now: datetime) -> tuple[dict | None, list[str]]:
             if when >= day - timedelta(hours=1):
                 sums["rx_mb_24h"] += rx
                 sums["tx_mb_24h"] += tx
-            key = _utc(when.replace(minute=0, second=0, microsecond=0))
+            key = stamp(when.replace(minute=0, second=0, microsecond=0))
             slot = hourly.setdefault(key, [0, 0])
             slot[0] += rx
             slot[1] += tx
@@ -234,7 +230,7 @@ def summary(ctx: Context, now: datetime | None = None) -> tuple[dict, list[str]]
     source = store.get("source") if store.get("source") in ("ebpf", "ss") else None
     doc = {
         "schema": SCHEMA,
-        "generated_at": _utc(now),
+        "generated_at": stamp(now),
         "collector": {
             "state": state,
             "source": source,
@@ -261,7 +257,7 @@ def status_section(ctx: Context, now: datetime | None = None) -> tuple[dict | No
     doc, errors = summary(ctx, now)
     if doc["collector"]["state"] == "unavailable":
         return None, errors
-    since = _utc(now - timedelta(hours=24))
+    since = stamp(now - timedelta(hours=24))
     new = sorted(
         (d for d in doc["destinations"] if d["first_seen"] >= since),
         key=lambda d: d["first_seen"],
