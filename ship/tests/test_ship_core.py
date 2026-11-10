@@ -742,4 +742,8 @@ def test_logs_core_reads_only_the_end_of_a_long_log(tmp_path, monkeypatch):
     (state / "core.log").write_text("x" * 50 + "\nlast line\n")
     monkeypatch.setattr(logs, "CORE_LOG_BYTES", 20)
     ctx = SimpleNamespace(home=HomeFS(tmp_path))
-    assert logs._home_tail(ctx, ".local/state/herdr-core/default/core.log", 10) == ["last line"]
+    rel = ".local/state/herdr-core/default/core.log"
+    assert logs._home_tail(ctx, rel, 10) == ["last line"]
+    # Exactly CORE_LOG_BYTES long: nothing was cut, so no line is dropped.
+    (state / "core.log").write_text("first 789\nlast line\n")  # 20 bytes
+    assert logs._home_tail(ctx, rel, 10) == ["first 789", "last line"]

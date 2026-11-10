@@ -789,6 +789,7 @@ def test_update_up_to_date_ship_with_only_the_core_pending_does_not_reboot(world
     sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
     assert outcome.ok and outcome.summary.startswith("already on") and sim.reboots == []
+    assert any("herdr-core was updated" in d for d in outcome.details)
 
 
 def test_update_converge_failure_is_reported_and_upload_removed(world):

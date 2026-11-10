@@ -32,20 +32,22 @@ def _tail(path, lines: int) -> list[str]:
 def _home_tail(ctx: Context, rel: str, lines: int) -> list[str]:
     """The last lines of a file in the agent's home, read without following links."""
     try:
-        raw = ctx.home.read_tail(rel, CORE_LOG_BYTES)
+        got = ctx.home.read_tail(rel, CORE_LOG_BYTES)
     except (UnsafePath, OSError):
         return []
-    if raw is None:
+    if got is None:
         return []
+    raw, cut = got
     text = raw.decode("utf-8", "replace").splitlines()
-    if len(raw) >= CORE_LOG_BYTES:
+    if cut:
         text = text[1:]  # read from the middle of a line
     return text[-lines:]
 
 
 def _core(ctx: Context, journal: list[str], lines: int) -> list[str]:
     """ship-core.service's journal (the core starting at boot), then the end of the
-    core's and its holders' own logs, each line prefixed with its file."""
+    core's and its holders' own logs, each line prefixed with its file. `lines`
+    applies to each of the three sources (contracts/ship-ctl.md)."""
     out = list(journal)
     for name in CORE_LOGS:
         out += [f"{name}: {line}" for line in _home_tail(ctx, f"{CORE_STATE}/{name}", lines)]

@@ -595,6 +595,10 @@ def update_one(
         if has_attention(before, "herdr-restart-pending") and reboot_policy != "never":
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
+        if has_attention(before, "core-restart-pending"):  # never a reboot for it under auto
+            details.append("herdr-core was updated; its agents keep running on the old core, "
+                           f"and the new one takes over at the next reboot (ship-fleet reboot "
+                           f"{ship.name}).")
         return Outcome(ship.name, True, f"already on {release}", details, data)
 
     backwards = rolls_back(fleet.repo_factory(), before, bundle, ship.name)

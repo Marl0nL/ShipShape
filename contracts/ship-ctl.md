@@ -448,7 +448,8 @@ default 200 lines. `resume` is the agent record's lines from the status refresh:
 agents resumed after a boot, started again after a crash, or let go. `core` is for
 herdr-core Ships: `ship-core.service`'s journal (the core starting at boot), then the
 last lines of herdr-core's own `core.log` and `holder.log` (in
-`~/.local/state/herdr-core/default/`), each prefixed with its file name. herdr-core
+`~/.local/state/herdr-core/default/`), each prefixed with its file name; `--lines`
+applies to each of the three, so up to three times N lines come back. herdr-core
 has no log command and runs itself in transient `hc-serve-*`/`hc-hold-*` user units
 whose output goes to those files, not to the journal. With `--json`, `data` is `{ "lines": [strings] }`. Log lines
 are passed through as written; the Ship track keeps secrets out of them.

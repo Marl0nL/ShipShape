@@ -120,7 +120,7 @@ test("rules follow the runtime: herdr-core agents never stop the core or kill te
   const herdr = rules(running).rules.join("\n");
   assert.match(herdr, /Do not stop or restart the herdr server/);
   assert.doesNotMatch(herdr, /hc kill/);
-  assert.deepEqual(rules(null), rules(running));
+  assert.deepEqual(rules(null, {}), rules(running, {}));
   const core = rules(runningCore);
   const text = core.rules.join("\n");
   assert.match(text, /Never run `hc kill` or `hc server stop`/);
@@ -133,4 +133,9 @@ test("cli: rules on a herdr-core Ship", () => {
   const r = run(["rules"], { SHIPSHAPE_STATUS: join(EXAMPLES, "running-core.json") });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /hc server stop/);
+  // No status yet (early in a boot): a herdr-core terminal still gets the core rules.
+  const early = run(["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json", HC_TERMINAL_ID: "t3" });
+  assert.equal(early.status, 0, early.stderr);
+  assert.match(early.stdout, /hc server stop/);
+  assert.doesNotMatch(run(["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json" }).stdout, /hc kill/);
 });
