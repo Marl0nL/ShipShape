@@ -144,7 +144,9 @@ class Installer:
             r = self.ctx.runner.run(
                 ["dpkg-query", "-W", "-f=${Status}", pkg], timeout=CHECK_TIMEOUT
             )
-            if not (r.ok and r.out.strip().endswith("installed")):
+            # "install ok installed" (or "hold ok installed"), as ship-provision checks;
+            # "unknown ok not-installed" and "deinstall ok config-files" are missing.
+            if not (r.ok and r.out.strip().endswith(" ok installed")):
                 missing.append(pkg)
         return missing
 

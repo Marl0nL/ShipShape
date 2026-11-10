@@ -162,6 +162,18 @@ def test_tool_waits_for_sign_in_then_finishes(catalogue):
     assert status["tools"]["example-cli"] == {"state": "ok", "version": "1.2.3"}
 
 
+def test_apt_package_known_but_not_installed_is_installed(catalogue):
+    """dpkg-query knows a removed package ("unknown ok not-installed", exit 0): that is
+    missing, not installed."""
+    ship = catalogue
+    ship.set(apt={"not_installed": ["example-browser"]})
+    rc, doc, out = ship.ctl("tools", "run", "example-browser-tool", "--json")
+    assert rc == 0, out
+    assert ["apt-get", "install", "-y", "-q", "--no-install-recommends",
+            "example-browser"] in ship.calls("apt-get")
+    assert "example-browser" in ship.scenario()["apt"]["installed"]
+
+
 def test_failures_are_reported(catalogue):
     ship = catalogue
     ship.set(npm={"fail": ["example-browser-tool"]})

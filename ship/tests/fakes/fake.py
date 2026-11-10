@@ -392,8 +392,12 @@ def npm(s: dict, a: list[str]) -> int:
 
 def dpkg_query(s: dict, a: list[str]) -> int:
     pkg = a[-1]
-    if pkg in s.setdefault("apt", {}).get("installed", []):
+    apt = s.setdefault("apt", {})
+    if pkg in apt.get("installed", []):
         out("install ok installed")
+        return 0
+    if pkg in apt.get("not_installed", []):  # known to dpkg (removed, say), not installed
+        out("unknown ok not-installed")
         return 0
     return 1
 
