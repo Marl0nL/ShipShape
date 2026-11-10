@@ -37,6 +37,24 @@ HERDR_KEYS = {
 }
 
 
+HERDR_CONFIG = ".config/herdr/config.toml"  # in the agent's home
+
+
+def herdr_config(text: bytes | None) -> str:
+    """herdr's config with ShipShape's keys set (HERDR_KEYS), the rest kept."""
+    try:
+        return tomlw.set_keys(text.decode("utf-8") if text else "", HERDR_KEYS)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise CtlError("internal", f"cannot update ~/{HERDR_CONFIG}: {exc}") from exc
+
+
+def herdr_resume_off(ctx: Context) -> bool:
+    """Make sure herdr's own resume is off (`session.resume_agents_on_restore =
+    false`), as apply does; True if the file had to change."""
+    return ctx.home.write(HERDR_CONFIG, herdr_config(ctx.home.read(HERDR_CONFIG)), 0o644,
+                          dir_mode=0o755, keep_mode=True)
+
+
 def managed_settings(ship: ShipToml, versions: dict) -> dict:
     c = ship.claude
     # "off" must also set disableRemoteControl: a resumed session reattaches to the
@@ -327,16 +345,10 @@ def apply(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[list[str
         doc = merge_claude_json(_json_obj(text, "~/.claude.json"), trusted)
         return json.dumps(doc, indent=2) + "\n"
 
-    def herdr_config(text: bytes | None) -> str:
-        try:
-            return tomlw.set_keys(text.decode("utf-8") if text else "", HERDR_KEYS)
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise CtlError("internal", f"cannot update ~/.config/herdr/config.toml: {exc}") from exc
-
     for rel, render, mode, dir_mode in (
         (".claude/settings.json", settings, 0o644, 0o700),
         (".claude.json", claude_json, 0o600, 0o700),
-        (".config/herdr/config.toml", herdr_config, 0o644, 0o755),
+        (HERDR_CONFIG, herdr_config, 0o644, 0o755),
     ):
         try:
             text = render(fs.read(rel))

@@ -706,7 +706,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         "settings": settings_section(ship),
         "errors": [],
     }
-    from . import record  # record and autostart import this module
+    from . import record, switch  # they import this module
     from .autostart import repo_attention
 
     doc["agent_record"], found = record.view(ctx, ship, live)
@@ -721,6 +721,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
                                      f_core_pending.result())
     doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
                          for code, message, who in [*record.attention(doc["agent_record"]),
+                                                    *switch.attention(doc["agent_record"]),
                                                     *repo_attention(ctx, ship)]]
     elapsed = time.monotonic() - started
     if elapsed > 12:

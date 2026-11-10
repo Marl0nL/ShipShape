@@ -117,6 +117,9 @@ class SimShip:
         self.herdr_resume = True  # also report herdr.last_resume (older FleetLedgers read it)
         self.converged = []
         self.reboots = []
+        self.runtime = None  # tooling with herdr.runtime: "herdr" or "core"
+        self.switch = "switched"  # how `ship-ctl runtime switch` ends, or "refused"
+        self.switch_drops = None  # an agent missing after the switch, though the Ship said ok
 
     # --- state ------------------------------------------------------------
     def up(self):
@@ -153,6 +156,8 @@ class SimShip:
         doc["herdr"]["agents"] = [
             {"name": n, "kind": "claude", "state": "idle", "mode": m} for n, m in agents.items()
         ]
+        if self.runtime:
+            doc["herdr"]["runtime"] = self.runtime
         at = datetime.fromtimestamp(EPOCH + self.booted + self.resume_delay, UTC).strftime(
             self.time_format)
         doc["herdr"]["last_resume"] = None if not resumed or not self.herdr_resume else {
@@ -227,6 +232,8 @@ class SimShip:
             return self.converge(command[command.index("--bundle") + 1])
         if verb == "agent":
             return self.agent(command[4:-1])
+        if verb == "runtime":
+            return self.runtime_switch(command[4:-1])
         if verb == "logs":
             return 0, json.dumps(ctl_result("logs", data={"lines": [f"{ship.name} line"]})), ""
         return 0, json.dumps(ctl_result(verb, changed=["/etc/shipshape/ship.toml"])), ""
@@ -262,6 +269,31 @@ class SimShip:
             doc.update(ok=False, error={"code": "agent-busy", "message": "1 agent(s) are busy"})
             return 1, json.dumps(doc), ""
         return 0, json.dumps(doc), ""
+
+    def runtime_switch(self, argv):
+        """`ship-ctl runtime switch TARGET [--force]`, as the Ship answers it."""
+        if not self.runtime:
+            return 2, json.dumps(ctl_result("status", ok=False, error={
+                "code": "usage", "message": "argument COMMAND: invalid choice: 'runtime'"})), ""
+        assert argv[0] == "switch"
+        target, frm = argv[1], self.runtime
+        if self.switch == "refused":
+            return 1, json.dumps(ctl_result("runtime", ok=False, error={
+                "code": "agent-busy", "message": "not every agent is idle: main (working)"})), ""
+        outcome = "already" if frm == target else self.switch
+        if outcome == "switched":
+            self.runtime = target
+        if self.switch_drops:
+            self.agents.pop(self.switch_drops)
+        data = {"from": frm, "to": target, "outcome": outcome, "forced": "--force" in argv,
+                "runtime": self.runtime, "remote_control": "on",
+                "agents": [{"name": n, "mode": m, "was": "idle", "mode_now": m}
+                           for n, m in self.agents.items()], "problems": []}
+        if outcome in ("switched", "already"):
+            return 0, json.dumps(ctl_result("runtime", data=data, changed=[])), ""
+        doc = ctl_result("runtime", ok=False, data=data, error={
+            "code": "switch-failed", "message": f"the switch to {target} failed"})
+        return 1, json.dumps(doc), ""
 
     def converge(self, path):
         assert path.startswith(ops.INCOMING + "/")
@@ -1394,3 +1426,72 @@ def test_cli_update_says_why_it_left_a_ship_and_force_rolls_it_back(app, world, 
     code, out, err = app.run("update", "ship-01", "--force")
     assert code == 0, out + err
     assert world.sims["ship-01"].converged == [one]
+
+
+# --- runtime switch -------------------------------------------------------------------
+
+
+def test_switch_runtime_moves_the_ship_and_checks_its_agents(world):
+    sim = world.sims["ship-01"]
+    sim.runtime = "herdr"
+    seen, on_event = events()
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "core", on_event=on_event)
+    assert outcome.ok, outcome
+    assert outcome.summary == "moved from herdr to core; 2/2 agents running in their modes"
+    call = next(c for c in sim.calls if c[3:4] == ["runtime"])
+    assert call[3:] == ["runtime", "switch", "core", "--json"]
+    assert outcome.data["runtime_after"] == "core"
+    assert any("trust bundle again" in d for d in outcome.details)
+    assert seen == [("ship-01", "moving 2 agent(s) from herdr to core")]
+
+
+def test_switch_runtime_passes_force(world):
+    sim = world.sims["ship-01"]
+    sim.runtime = "herdr"
+    ops.switch_runtime(world.fleet, world.ship("ship-01"), "core", force=True)
+    call = next(c for c in sim.calls if c[3:4] == ["runtime"])
+    assert call[3:] == ["runtime", "switch", "core", "--force", "--json"]
+
+
+def test_switch_runtime_reports_a_rollback(world):
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.switch = "herdr", "rolled-back"
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "core")
+    assert not outcome.ok
+    assert outcome.summary == ("the switch to core failed and was rolled back to herdr; "
+                               "2/2 agents running in their modes")
+    assert outcome.data["runtime_after"] == "herdr"
+
+
+def test_switch_runtime_reports_a_refusal(world):
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.switch = "herdr", "refused"
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "core")
+    assert not outcome.ok and outcome.summary.startswith("not switched: not every agent")
+
+
+def test_switch_runtime_checks_from_here_too(world):
+    """The Ship said ok, but an agent that ran before is not running now: not ok."""
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.switch_drops = "herdr", "builder"
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "core")
+    assert not outcome.ok and "agent builder is not running" in outcome.details
+
+
+def test_switch_runtime_on_older_tooling_says_to_update(world):
+    with pytest.raises(FleetError, match="cannot switch runtimes yet"):
+        ops.switch_runtime(world.fleet, world.ship("ship-01"), "core")
+
+
+def test_switch_runtime_refuses_an_unknown_runtime(world):
+    with pytest.raises(FleetError, match="Unknown runtime"):
+        ops.switch_runtime(world.fleet, world.ship("ship-01"), "tmux")
+
+
+def test_cli_runtime(app, world):
+    world.sims["ship-01"].runtime = "herdr"
+    code, out, err = app.run("runtime", "ship-01", "core")
+    assert code == 0, err
+    assert "moved from herdr to core" in out
+    code, out, _ = app.run("runtime", "ship-01", "herdr", "--json")
+    assert code == 0 and json.loads(out)[0]["data"]["runtime_after"] == "herdr"

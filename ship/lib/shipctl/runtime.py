@@ -83,6 +83,7 @@ class Herdr:
     """
 
     kind = "herdr"
+    unit = "herdr.service"  # the agent user's unit that runs it (ship/files/systemd/user)
     chooses_session = False  # herdr reports the session claude picked
 
     def __init__(self, ctx: Context):
@@ -252,6 +253,18 @@ class Herdr:
         doc, _ = self._call(["agent", "rename", place, name], 10)
         return doc is not None
 
+    def release(self, places: list[tuple[str, str | None]]) -> list[str]:
+        """Forget where stopped agents ran ([(place, workspace)]), for `ship-ctl
+        runtime switch`: close their workspaces, so herdr saves no layout with them
+        and a herdr TUI that starts the server again cannot bring them back. Only
+        for agents already stopped. Returns notes on what could not be closed."""
+        notes = []
+        for ws in dict.fromkeys(w for _, w in places if w):
+            doc, why = self._call(["workspace", "close", ws])
+            if doc is None:
+                notes.append(f"herdr workspace {ws} was not closed ({why})")
+        return notes
+
     def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
         """End the Claude agent in place, gracefully; (stopped, notes for the person).
 
@@ -320,11 +333,13 @@ class Core:
     """
 
     kind = "core"
+    unit = "ship-core.service"  # starts the core at boot; stopping it stops nothing
     chooses_session = True  # new agents get `--session-id <uuid>` from ShipShape
 
     def __init__(self, ctx: Context):
         self.ctx = ctx
         self._claude_too_old: str | None = None  # "" once claude passed the floor
+        self._claude_version: tuple[int, ...] | None = None
 
     # --- calls ------------------------------------------------------------------
     def _run(self, argv: list[str], timeout: float):
@@ -544,18 +559,23 @@ class Core:
         return v
 
     # --- starting -------------------------------------------------------------------
-    def claude_floor(self) -> str:
+    def claude_floor(self, strict: bool = False) -> str:
         """Why claude is too old for herdr-core ("" if it is not, or if its version
-        cannot be read: the launch then says what is wrong)."""
+        cannot be read: the launch then says what is wrong). strict: a version that
+        cannot be read is a reason too (`ship-ctl runtime switch` checks first)."""
         if self._claude_too_old is None:
             r = self.ctx.runner.run(["claude", "--version"], timeout=15, agent=True)
             m = VERSION.match(r.out.strip()) if r.ok else None
             found = tuple(int(x) for x in m.groups()) if m else None
+            self._claude_version = found
             floor = ".".join(map(str, CORE_CLAUDE_FLOOR))
             self._claude_too_old = (
                 f"Claude Code {'.'.join(map(str, found))} is older than {floor}, the "
                 "first that reports its state to herdr-core; update it (claude update)"
                 if found is not None and found < CORE_CLAUDE_FLOOR else "")
+        if strict and self._claude_version is None:
+            return ("Claude Code's version could not be read, so it is not known to report "
+                    "its state to herdr-core")
         return self._claude_too_old
 
     @staticmethod
@@ -676,6 +696,20 @@ class Core:
     def rename(self, place: str, name: str) -> bool:
         """herdr-core names a terminal when it starts, and only then."""
         return False
+
+    def release(self, places: list[tuple[str, str | None]]) -> list[str]:
+        """Forget where stopped agents ran, for `ship-ctl runtime switch`: remove
+        their finished terminals (`hc rm` refuses a live one, and only a finished
+        one is asked). Returns notes on what was left."""
+        notes = []
+        for place in dict.fromkeys(p for p, _ in places):
+            raw = self.get(place)
+            if raw is None or raw.get("state") == "live":
+                continue  # gone already, or (never expected) live: left alone
+            doc, why = self._call(["rm", place])
+            if doc is None:
+                notes.append(f"herdr-core terminal {place} was not removed ({why})")
+        return notes
 
     def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
         """End the Claude agent in place, gracefully, as Herdr.stop does: Escape

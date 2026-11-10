@@ -59,6 +59,8 @@ DELIBERATE_ENDS = ("prompt_input_exit", "logout")  # Claude's SessionEnd reasons
 RESUME_GRACE_S = 600  # after this much uptime, nothing waits for this boot's resume
 DNS_PROBE = "api.anthropic.com"  # resumed sessions reconnect Remote Control at once
 LOG_TAG = "agent record"  # starts every line upkeep logs
+RUNTIME_KINDS = ("herdr", "core")
+SWITCH_OUTCOMES = ("switched", "rolled-back", "rollback-failed", "interrupted")
 
 
 # --- the file -------------------------------------------------------------------
@@ -123,6 +125,15 @@ def load(ctx: Context) -> dict:
     mark = raw.get("primary")
     if isinstance(mark, str) and mark in doc["agents"]:  # one that left the record loses it
         doc["primary"] = mark
+    # `ship-ctl runtime switch` (switch.py): the one in progress, and the last few.
+    now = raw.get("switch")
+    if (isinstance(now, dict) and now.get("from") in RUNTIME_KINDS
+            and now.get("to") in RUNTIME_KINDS and isinstance(now.get("agents"), dict)):
+        doc["switch"] = now
+    done = [s for s in raw.get("switches") or [] if isinstance(s, dict) and _ts(s.get("at"))
+            and s.get("outcome") in SWITCH_OUTCOMES]
+    if done:
+        doc["switches"] = done
     return doc
 
 
@@ -795,11 +806,20 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
         agents.append(item)
     resume = doc["resume"]
     first, marked = primary(doc, ship)
+    switching = doc.get("switch")
+    switches = doc.get("switches") or []
+    last_switch = ({"at": switching["started_at"], "from": switching["from"],
+                    "to": switching["to"], "outcome": "in-progress",
+                    "forced": bool(switching.get("forced")), "agents": len(switching["agents"]),
+                    "message": str(switching.get("step") or "starting")}
+                   if switching else dict(switches[-1]) if switches else None)
     block = {"runtime": ship.runtime, "agents": agents,
              "primary": None if first is None else {"name": first, "marked": marked},
              "resume": None if resume is None else {
                  "at": resume["at"], "method": "ship-ctl", "resumed": resume["resumed"],
                  "failed": resume["failed"]}}
+    if last_switch is not None:  # only on a Ship that has switched runtime
+        block["last_switch"] = last_switch
     return block, found
 
 

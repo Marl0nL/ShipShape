@@ -31,6 +31,7 @@ from . import (
     signins,
     sshtrust,
     status,
+    switch,
     tools,
     wake,
 )
@@ -130,6 +131,12 @@ def build_parser() -> Parser:
                     help="also restart an agent that is working (interrupts its turn)")
     ag.add_argument("--clear", action="store_true",
                     help="primary: unmark it (the first autostart agent is the primary)")
+    rs = cmd("runtime", "Move this Ship's agents to the other runtime (herdr or herdr-core), "
+                        "rolling back on any failure.")
+    rs.add_argument("action", choices=["switch"])
+    rs.add_argument("target", choices=list(switch.TARGETS), metavar="core|herdr")
+    rs.add_argument("--force", action="store_true",
+                    help="also move agents that are working or waiting (interrupts them)")
     ns = cmd("notify-signin", "Tell the [[autostart]] agents that a sign-in has completed.")
     ns.add_argument("service", choices=sorted(signins.NOTIFY))
     c = cmd("converge", "Apply a tooling bundle.")
@@ -382,6 +389,12 @@ def cmd_agent(ctx: Context, args) -> dict:
     return result("agent", changed=changed, messages=messages, data=data)
 
 
+def cmd_runtime(ctx: Context, args) -> dict:
+    data, changed, messages = switch.switch(ctx, shiptoml.load(ctx.paths), args.target,
+                                            force=args.force)
+    return result("runtime", changed=changed, messages=messages, data=data)
+
+
 def cmd_notify_signin(ctx: Context, args) -> dict:
     ship = shiptoml.load(ctx.paths)
     data, messages = notice.notify(ctx, ship, args.service)
@@ -576,6 +589,7 @@ COMMANDS = {
     "set": cmd_set,
     "autostart": cmd_autostart,
     "agent": cmd_agent,
+    "runtime": cmd_runtime,
     "notify-signin": cmd_notify_signin,
     "converge": cmd_converge,
     "tools": cmd_tools,
@@ -627,7 +641,8 @@ def _print_human(doc: dict) -> None:
             print(f"  {f['size']:>12}  {f['modified']}  {f['name']}")
         if not data["files"]:
             print(f"{data['path']} is empty.")
-    elif doc["command"] in ("tools", "autostart", "ssh-trust", "agent", "inbox") and data:
+    elif doc["command"] in ("tools", "autostart", "ssh-trust", "agent", "inbox",
+                            "runtime") and data:
         print(json.dumps(data, indent=2))
     if doc["error"]:
         print(f"ship-ctl: {doc['error']['message']}", file=sys.stderr)

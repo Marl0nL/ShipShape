@@ -23,10 +23,10 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "signins", "owner", "set", "agent", "tag", "tools", "update", "reboot", "attention", "pins",
-    "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy", "resize", "snapshot",
-    "image", "overlay", "put", "inbox", "migrate", "service", "unlock", "vault",
-    "appliance", "backup", "self-update",
+    "signins", "owner", "set", "agent", "runtime", "tag", "tools", "update", "reboot",
+    "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy",
+    "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service", "unlock",
+    "vault", "appliance", "backup", "self-update",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -344,6 +344,22 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start a new conversation instead of continuing it")
     p.add_argument("--force", action="store_true",
                    help="also restart an agent that is working, interrupting its turn")
+    p.add_argument("--json", action="store_true", help="print the result as JSON")
+
+    p = _add(sub, "runtime", "move a Ship's agents between herdr and herdr-core",
+             "Move every agent on one Ship to the other runtime: herdr (its server, the\n"
+             "default) or core (herdr-core). Each agent stops gracefully, then continues\n"
+             "its conversation on the new runtime in its own permission mode; the Ship\n"
+             "boots into the new runtime from then on. Both stay installed. If any step\n"
+             "fails, the Ship goes back to the runtime it ran, with its agents resumed\n"
+             "there, and says what happened. Agents must be idle (or done) first, unless\n"
+             "--force. One Ship at a time; see docs/runbooks/switch-runtime.md.\n\n"
+             "  ship-fleet runtime ship-01 core     move to herdr-core\n"
+             "  ship-fleet runtime ship-01 herdr    move back")
+    p.add_argument("ship", metavar="SHIP")
+    p.add_argument("target", choices=("core", "herdr"))
+    p.add_argument("--force", action="store_true",
+                   help="also move agents that are working or waiting (interrupts them)")
     p.add_argument("--json", action="store_true", help="print the result as JSON")
 
     p = _add(sub, "tag", "show or change a Ship's tags",

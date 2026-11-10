@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.shipshape.invalid/ship-ctl-result.schema.json",
   "title": "ship-ctl --json result (every command except a successful status)",
-  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version, logs, ssh-trust, net, overlay, agent, inbox and wake, and by `ship-ctl status --json` when it cannot produce a status document. The exit code carries the same outcome (see contracts/ship-ctl.md).",
+  "description": "Printed on stdout by `ship-ctl <command> --json` for apply, set, autostart, converge, tools, version, logs, ssh-trust, net, overlay, agent, inbox, wake and runtime, and by `ship-ctl status --json` when it cannot produce a status document. The exit code carries the same outcome (see contracts/ship-ctl.md).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "command", "ok", "changed", "messages", "error"],
@@ -25,7 +25,8 @@
         "overlay",
         "agent",
         "inbox",
-        "wake"
+        "wake",
+        "runtime"
       ]
     },
     "ok": { "type": "boolean" },
@@ -66,6 +67,8 @@
                 "invalid-input",
                 "overlay-failed",
                 "overlay-not-joined",
+                "runtime-missing",
+                "switch-failed",
                 "internal"
               ]
             },

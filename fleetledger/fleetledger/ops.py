@@ -78,6 +78,7 @@ SEVERITY = {
     "signin-wrong-account": "high",
     "signin-expired": "high",
     "provision-failed": "high",
+    "runtime-switch-failed": "high",  # a runtime switch failed and did not roll back cleanly
     "unit-failed": "high",
     "host-cert-expired": "high",
     "agent-waiting": "medium",
@@ -95,6 +96,7 @@ SEVERITY = {
     "agent-repo-waiting": "medium",  # its agent starts once GitHub is signed in
     "agent-repo-failed": "medium",
     "agent-relaunch-failed": "medium",  # a recorded agent died and did not start again
+    "runtime-switch-unfinished": "medium",  # a runtime switch stopped part way
     "behind-tooling": "low",
     "not-enrolled": "low",  # in the inventory, never enrolled: being made or made by hand
     "tool-waiting": "low",
@@ -886,6 +888,75 @@ def restart_agents(
     details += [f"{s['name']}: {s['reason']}" for s in data.get("skipped") or []
                 if not any(d.startswith(f"{s['name']} ") for d in details)]
     return Outcome(ship.name, result.ok, summary, details, data)
+
+
+# --- runtime switch ---------------------------------------------------------------
+
+RUNTIMES = ("herdr", "core")
+RUNTIME_SWITCH_TIMEOUT = 600  # per agent: stop it, start it on the other runtime, check it
+
+
+def switch_runtime(
+    fleet: Fleet,
+    ship: Ship,
+    target: str,
+    *,
+    force: bool = False,
+    on_event: Event | None = None,
+) -> Outcome:
+    """Move one Ship's agents to another runtime (ship-ctl runtime switch): each
+    continues its conversation there in its own mode, and the Ship rolls back by itself
+    on any failure. Then, as after a reboot, check from here that every agent that ran
+    before runs now, in its mode, on the runtime the Ship says."""
+    on_event = on_event or _quiet
+    if target not in RUNTIMES:
+        raise FleetError(f"Unknown runtime '{target}' (runtimes: {', '.join(RUNTIMES)}).")
+    inventory = fleet.inventory
+    view = _fetch(fleet, inventory, ship)
+    before = _require_status(view)
+    current = before["herdr"].get("runtime", "herdr")
+    expected = agent_modes(before)
+    on_event(ship.name, f"moving {len(expected)} agent(s) from {current} to {target}"
+             + (", interrupting busy ones" if force else ""))
+    ctl = ShipCtl(fleet.ssh(inventory), ship)
+    try:
+        result = ctl.call("runtime", "switch", target, *(["--force"] if force else []),
+                          partial=True,
+                          timeout=RUNTIME_SWITCH_TIMEOUT * (2 + 2 * max(1, len(expected))))
+    except ShipCtlError as exc:
+        if exc.code == "usage" and "invalid choice" in exc.message:
+            raise FleetError(f"{ship.name}'s tooling cannot switch runtimes yet.",
+                             hint=f"Update it first: ship-fleet update {ship.name}") from exc
+        raise
+    data = dict(result.data or {})
+    outcome = data.get("outcome") or ("switched" if result.ok else "refused")
+    details = list(result.messages)
+    if not result.ok and outcome == "refused":
+        return Outcome(ship.name, False, f"not switched: {(result.error or {}).get('message')}",
+                       details, data)
+    # The reboot check's rule, seen from here: every agent back, in its mode.
+    after_doc = _require_status(_fetch(fleet, inventory, ship))
+    now = after_doc["herdr"].get("runtime", "herdr")
+    want = target if outcome in ("switched", "already") else current
+    after = agent_modes(after_doc)
+    checks = [f"the Ship runs {now}, not {want}"] if now != want else []
+    checks += [f"agent {n} is not running" for n in sorted(expected) if n not in after]
+    checks += [f"agent {n} runs in {after[n]}, was {expected[n]}" for n in sorted(expected)
+               if n in after and after[n] != expected[n]]
+    data.update(agents_before=expected, agents_after=after, runtime_after=now)
+    same = len(expected) - sum(1 for n in expected if after.get(n) != expected[n])
+    summary = {
+        "already": f"already on {target}",
+        "switched": f"moved from {current} to {target}; {same}/{len(expected)} agents "
+                    "running in their modes",
+        "rolled-back": f"the switch to {target} failed and was rolled back to {current}; "
+                       f"{same}/{len(expected)} agents running in their modes",
+    }.get(outcome, f"the switch to {target} failed and the rollback did not finish cleanly")
+    if outcome == "switched":
+        details.append("On each laptop that attaches to it: make its trust bundle again "
+                       "(ship-fleet trust <machine>) and run its install.sh, so the herdr "
+                       f"machine entry for {ship.name} is replaced.")
+    return Outcome(ship.name, result.ok and not checks, summary, details + checks, data)
 
 
 def apply_tag_changes(current: Iterable[str], changes: Iterable[str]) -> list[str]:

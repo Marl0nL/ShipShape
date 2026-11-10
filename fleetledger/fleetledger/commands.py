@@ -1007,6 +1007,16 @@ def cmd_agent(args, app) -> int:
     return _report(app, [outcome], args.json)
 
 
+def cmd_runtime(args, app) -> int:
+    """`ship-fleet runtime SHIP core|herdr`: move a Ship's agents to another runtime
+    (ops.switch_runtime)."""
+    fleet = _fleet(app)
+    ship = fleet.inventory.ship(args.ship)
+    outcome = ops.switch_runtime(fleet, ship, args.target, force=args.force,
+                                 on_event=_progress(app))
+    return _report(app, [outcome], args.json)
+
+
 def cmd_tag(args, app) -> int:
     fleet = _fleet(app)
     ship = fleet.inventory.ship(args.name)
