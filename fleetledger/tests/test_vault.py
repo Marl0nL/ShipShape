@@ -17,6 +17,7 @@ import subprocess
 import time
 
 import pytest
+from fl_harness import fake_tskey
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.overlay import secret_store
 from test_secret_store import fake_backend
@@ -26,7 +27,7 @@ from fleetledger import cli, keys, vault, vaultcmd
 
 PASS = "correct horse battery staple"
 TOKEN = "11111111-2222-3333-4444-555555555555"
-OAUTH = "tskey-client-k123EXAMPLE-SECRET"
+OAUTH = fake_tskey("client", "k123EXAMPLE-SECRET")
 
 
 @pytest.fixture(autouse=True)

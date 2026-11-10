@@ -146,6 +146,45 @@ def test_narrower_private_subnets_are_flagged(subnet):
     assert rules("my lan is " + subnet) == ["private-ip"]
 
 
+TSK = "tsk" + "ey-"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'KEY = "' + TSK + 'auth-kExample1CNTRL-0123456789abcdef"',
+        'SECRET = "' + TSK + 'client-k123EXAMPLE-SECRET"',
+        "token " + TSK + "api-ACCESSTOKEN0123",
+        "upper " + TSK.upper() + "AUTH-K1",
+    ],
+)
+def test_tailscale_shaped_keys_are_flagged(text):
+    assert rules(text) == ["tailscale-key"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "# a client secret names its client: " + TSK + "client-<client id>-<secret>",
+        're.compile(r"^' + TSK + 'client-([A-Za-z0-9]+)-")',
+        're.sub(r"' + TSK + '[A-Za-z0-9_-]+", "' + TSK + '[redacted]", text)',
+        "a Headscale key has no " + TSK + " prefix",
+        'startswith("' + TSK + 'client")',
+    ],
+)
+def test_tailscale_placeholders_and_patterns_pass(text):
+    assert rules(text) == []
+
+
+def test_tailscale_key_rule_ignores_the_allow_marker_and_frozen_folders():
+    line = TSK + "auth-kExample1-SECRET  # hygiene: allow"
+    assert rules(line) == ["tailscale-key"]
+    findings = hygiene.scan_text(line, "docs/archive/old.md", [], frozen=True)
+    assert [f.rule for f in findings] == ["tailscale-key"]
+    assert "kExample1-SECRET" not in str(findings[0])
+    assert "fake_tskey" in str(findings[0])
+
+
 def test_generic_findings_never_echo_the_value():
     ip = "10." + "20.30.40"
     domain = "corp-mail" + ".io"

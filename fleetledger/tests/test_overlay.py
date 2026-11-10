@@ -12,14 +12,15 @@ import urllib.error
 import urllib.parse
 
 import pytest
+from fl_harness import fake_tskey
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Ship
 
 from fleetledger import overlay
 
-SECRET = "tskey-client-kExample3CNTRL-OAUTHSECRET0123456789"
-TOKEN = "tskey-api-ACCESSTOKEN0123456789abcdef"
-MINTED = "tskey-auth-kExample4CNTRL-MINTEDKEY0123456789"
+SECRET = fake_tskey("client", "kExample3CNTRL-OAUTHSECRET0123456789")
+TOKEN = fake_tskey("api", "ACCESSTOKEN0123456789abcdef")
+MINTED = fake_tskey("auth", "kExample4CNTRL-MINTEDKEY0123456789")
 SHIP = Ship(name="ship-03", id="0b9f6c1e-7d7a-4d4c-8f39-2f1d7e1f0c11", driver="manual",
             names=("ship-03.local",), host_key="ssh-ed25519 AAAA")
 

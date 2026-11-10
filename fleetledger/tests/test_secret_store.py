@@ -6,10 +6,11 @@ Every test uses a fake backend; conftest makes sure no test reaches a real keyri
 from __future__ import annotations
 
 import pytest
+from fl_harness import fake_tskey
 from fleetledger.errors import ConfigError
 from fleetledger.overlay import secret_store
 
-SECRET = "tskey-client-kExample5CNTRL-KEYRINGSECRET0123"
+SECRET = fake_tskey("client", "kExample5CNTRL-KEYRINGSECRET0123")
 
 
 class Locked(Exception):
@@ -142,7 +143,7 @@ def test_a_keyring_secret_never_falls_back_to_a_file(use, tmp_path):
     """Even with a readable secret file next to it, a locked keyring is an error."""
     use(fake_backend(locked=True))
     stray = tmp_path / "tailscale-oauth"
-    stray.write_text("tskey-client-OTHERFILESECRET\n")
+    stray.write_text(fake_tskey("client", "OTHERFILESECRET") + "\n")
     stray.chmod(0o600)
     api = {**KEYRING_API, "oauth_secret_file": str(stray)}
     with pytest.raises(ConfigError):
@@ -240,9 +241,9 @@ def test_an_empty_keyring_item_is_not_a_secret(use, stored):
 
 def test_stored_names_lists_item_names_without_reading_a_secret(use):
     backend = use(fake_backend())
-    backend.items = {("fleetledger", "tailscale-oauth:kOne"): "tskey-client-kOne-s1",
+    backend.items = {("fleetledger", "tailscale-oauth:kOne"): fake_tskey("client", "kOne-s1"),
                      ("fleetledger", "proxmox-token:shipshape@pve!build"): "a-secret",
-                     ("fleetledger", "tailscale-oauth:kTwo"): "tskey-client-kTwo-s2",
+                     ("fleetledger", "tailscale-oauth:kTwo"): fake_tskey("client", "kTwo-s2"),
                      ("another-app", "tailscale-oauth:kThree"): "not ours"}
     assert secret_store.stored_names("tailscale-oauth:") == ["kOne", "kTwo"]
     assert secret_store.stored_names("proxmox-token:") == ["shipshape@pve!build"]

@@ -11,9 +11,9 @@ import json
 from pathlib import Path
 
 import pytest
-from ship_harness import FAKE, assert_valid
+from ship_harness import FAKE, assert_valid, fake_tskey
 
-KEY = "tskey-auth-kExample1CNTRL-0123456789abcdefSECRETPART"
+KEY = fake_tskey("auth", "kExample1CNTRL-0123456789abcdefSECRETPART")
 JOIN = ("overlay", "join", "--hostname", "ship-01", "--tag", "tag:ship", "--json")
 
 

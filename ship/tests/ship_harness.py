@@ -399,3 +399,9 @@ def clean_env(monkeypatch):
     for key in list(os.environ):
         if key.startswith(("HERDR_", "SHIPSHAPE_")):
             monkeypatch.delenv(key, raising=False)
+
+
+def fake_tskey(kind: str, rest: str) -> str:
+    """A made-up Tailscale key ("tskey-<kind>-<rest>"), built at runtime so no literal in
+    the source looks like a real key to secret scanners (scripts/hygiene.py refuses one)."""
+    return "-".join(("tsk" + "ey", kind, rest))

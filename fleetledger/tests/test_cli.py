@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from fl_harness import fake_tskey
 from fleetledger.concierge import engine
 from fleetledger.drivers import get_driver
 from fleetledger.drivers.base import Outcome
@@ -1102,7 +1103,7 @@ def test_image_build_records_the_image(env, tmp_path):
 
 # --- phase 5: the overlay ----------------------------------------------------------
 
-TS_KEY = "tskey-auth-kExample2CNTRL-SECRETSECRETSECRET0123"
+TS_KEY = fake_tskey("auth", "kExample2CNTRL-SECRETSECRETSECRET0123")
 
 
 class Keys:
@@ -1371,7 +1372,7 @@ import json as _json  # noqa: E402
 
 from fleetledger.overlay.providers import policy_doc  # noqa: E402
 
-OAUTH_SECRET = "tskey-client-kExample9CNTRL-SETUPSECRET0123456789"
+OAUTH_SECRET = fake_tskey("client", "kExample9CNTRL-SETUPSECRET0123456789")
 GOOD_POLICY = _json.dumps(policy_doc(["tag:ship"]), indent=2)
 
 
@@ -1838,7 +1839,8 @@ def test_an_implausible_keyring_item_is_not_reused(env, monkeypatch, stored):
 
 def test_setup_with_an_existing_keyring_secret_can_take_a_new_one(env, monkeypatch):
     backend = secure_keyring(monkeypatch)
-    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = "tskey-client-OLD000000"
+    old = fake_tskey("client", "OLD000000")
+    backend.items[("fleetledger", "tailscale-oauth:kExampleClient1")] = old
     tailnet = FakeTailscale(scopes=LEVEL_SCOPES["keys"])
     interactive(env, ["", "", "", "kExampleClient1", "no", ""], tailnet=tailnet)
     assert env.run("overlay", "setup")[0] == 0

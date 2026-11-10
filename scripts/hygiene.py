@@ -5,9 +5,10 @@ ShipShape is a public repository. Nothing committed may point at a specific
 person, employer, machine or network. This script enforces that in two layers:
 
 1. Generic rules, committed here, that catch the common leaks: private IPv4
-   addresses, home-directory paths and real-looking email addresses. The
-   home-path and email rules skip the frozen folder docs/archive/;
-   private IPs are checked everywhere. Findings never repeat the matched value.
+   addresses, home-directory paths, real-looking email addresses and
+   Tailscale-shaped keys. The home-path and email rules skip the frozen folder
+   docs/archive/; private IPs and Tailscale keys are checked everywhere.
+   Findings never repeat the matched value.
 2. A private deny-list of exact terms (names, hostnames, project ids...). The
    list lives OUTSIDE the repo, so the terms themselves are never committed, and
    a match is reported by entry number only, never by the matched text.
@@ -29,7 +30,8 @@ are ignored; 're:<regex>' is a case-insensitive regular expression; anything
 else is a case-insensitive literal.
 
 A line containing the marker 'hygiene: allow' is skipped by the generic rules
-(use it sparingly, for documented examples). Exit status: 0 clean, 1 findings,
+(use it sparingly, for documented examples), except the Tailscale-key rule:
+secret scanners do not honour the marker. Exit status: 0 clean, 1 findings,
 2 usage or setup error.
 """
 
@@ -80,6 +82,16 @@ HOME_RE = re.compile(
 EMAIL_RE = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 # OpenSSH algorithm names look like addresses (ssh-ed25519-cert-v01@openssh.com).
 SSH_ALGORITHM_RE = re.compile(r"(?<![\w.+-])[a-z0-9-]+-v[0-9]{2}@openssh\.com\b")
+# A Tailscale key: "tskey-", its kind (auth, client, api...), then key characters.
+# Secret scanners report even a made-up one as a leaked key, so tests build fakes at
+# run time (fake_tskey in fleetledger/tests/fl_harness.py and ship/tests/ship_harness.py).
+# Placeholders such as "tskey-client-<id>" or a regex like "tskey-[A-Za-z0-9]+" pass.
+TSKEY_RE = re.compile(r"tskey-[A-Za-z]+-[A-Za-z0-9]", re.IGNORECASE)
+TSKEY_FINDING = (
+    "tailscale-key",
+    "Tailscale-shaped key literal; build fakes at run time with fake_tskey() "
+    "(see docs/hygiene.md)",
+)
 
 # Ranges that identify a private network. Documentation ranges (192.0.2.0/24,
 # 198.51.100.0/24, 203.0.113.0/24), loopback and 0.0.0.0 are fine.
@@ -156,11 +168,14 @@ def check_generic(line: str, frozen: bool = False) -> list[tuple[str, str]]:
 
     Details name the rule and the fix, never the matched value: findings end up in
     public CI logs. `frozen` lines (docs/archive/) get the private-IP rule
-    only.
+    only. The Tailscale-key rule applies everywhere, even on a 'hygiene: allow'
+    line, because secret scanners do not know the marker.
     """
-    if ALLOW_MARKER in line:
-        return []
     found: list[tuple[str, str]] = []
+    if TSKEY_RE.search(line):
+        found.append(TSKEY_FINDING)
+    if ALLOW_MARKER in line:
+        return found
     for match in IPV4_RE.finditer(line):
         if _is_private(match.group(1), match.group(2)):
             found.append(("private-ip", "private IPv4 address; use 192.0.2.x instead"))

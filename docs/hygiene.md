@@ -37,6 +37,12 @@ names, the token file) lives only in local, git-ignored config such as
    - home-directory paths that name a user, and email addresses outside the
      reserved example domains. These skip `docs/archive/`, which predates the
      rule.
+   - Tailscale-shaped keys: `tskey-`, a kind such as `auth` or `client`, then key
+     characters. Secret scanners (GitHub's included) report even a made-up one as
+     a leaked key, so tests build fake keys at run time with `fake_tskey(kind,
+     rest)` from `fleetledger/tests/fl_harness.py` or `ship/tests/ship_harness.py`.
+     Placeholders such as `tskey-client-<client id>` and regexes pass. This rule
+     covers every file, and a `hygiene: allow` marker does not skip it.
 
    Findings name the rule and the location, never the matched value, because
    they end up in public CI logs.
@@ -62,5 +68,5 @@ CI has no deny-list, so it runs the generic rules on files and on the PR's commi
 messages. Run the full check locally before pushing.
 
 A line containing `hygiene: allow` is skipped by the generic rules (not by the
-deny-list). Use it only for lines that must contain such a pattern, such as the
+deny-list, and not by the Tailscale-key rule). Use it only for lines that must contain such a pattern, such as the
 rule definitions themselves.
