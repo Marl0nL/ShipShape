@@ -13,6 +13,7 @@ import os
 import pwd
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,8 +109,11 @@ class Runner:
         discard: bool = False,
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
+        limit: int | None = None,
     ) -> Result:
-        """Run argv. `discard` sends stdout and stderr to /dev/null (for token probes)."""
+        """Run argv. `discard` sends stdout and stderr to /dev/null (for token probes).
+        `limit` keeps at most that many bytes of stdout, reading and dropping the rest,
+        and sends stderr to /dev/null (for sign-in checks, signincheck.py)."""
         if agent:
             full_env = self.agent_env()
             full_env.update(env or {})
@@ -128,21 +132,24 @@ class Runner:
         if cwd is not None and not Path(cwd).is_dir():
             cwd = None
         out_target = subprocess.DEVNULL if discard else subprocess.PIPE
+        capped = limit is not None and not discard
         try:
             proc = subprocess.Popen(
                 argv,
                 stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
                 stdout=out_target,
-                stderr=out_target,
+                stderr=subprocess.DEVNULL if capped else out_target,
                 env=run_env,
                 cwd=cwd,
-                text=True,
+                text=not capped,
                 start_new_session=True,
             )
         except FileNotFoundError:
             return Result(NOT_FOUND_RC, "", f"{argv[0]}: not found")
         except PermissionError:
             return Result(126, "", f"{argv[0]}: permission denied")
+        if capped:
+            return _capped(proc, argv[0], timeout, limit, input)
         try:
             out, err = proc.communicate(input=input, timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -151,3 +158,32 @@ class Runner:
             proc.communicate()
             return Result(TIMEOUT_RC, "", f"{argv[0]}: timed out after {timeout:g}s")
         return Result(proc.returncode, out or "", err or "")
+
+
+def _capped(proc: subprocess.Popen, name: str, timeout: float, limit: int,
+            input: str | None) -> Result:
+    """Wait for proc, keeping the first `limit` bytes of its stdout."""
+    kept = bytearray()
+
+    def read() -> None:
+        while chunk := proc.stdout.read(65536):
+            if len(kept) < limit:
+                kept.extend(chunk[: limit - len(kept)])
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    if input is not None:
+        with contextlib.suppress(OSError):
+            proc.stdin.write(input.encode("utf-8"))
+            proc.stdin.close()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        reader.join(1)
+        return Result(TIMEOUT_RC, "", f"{name}: timed out after {timeout:g}s")
+    # A child that keeps stdout open past the command's exit must not hold us up.
+    reader.join(1)
+    return Result(proc.returncode, bytes(kept).decode("utf-8", "replace"), "")

@@ -1,5 +1,6 @@
 # Claude Code: `claude auth login` prints a sign-in link; the browser shows a
 # code that is pasted back into the terminal.
+schema = 1
 id = "claude"
 label = "Claude Code"
 mode = "paste-back"
@@ -22,6 +23,15 @@ service = "claude"
 run = "claude auth status --json"
 ok_json = "loggedIn"
 account = "json:email"
+
+# The Ship's check (ship-ctl status, ship-ctl signin check): written in ship-ctl.
+[status]
+builtin = "example"
+
+# Where the sign-in lives on the Ship (docs/security.md): documentation only.
+[secrets]
+paths = ["~/.claude/.credentials.json"]
+store = "file"
 
 [logout]
 run = "claude auth logout"

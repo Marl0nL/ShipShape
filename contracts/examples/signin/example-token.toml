@@ -1,0 +1,26 @@
+# A check whose output is a token: only its exit code counts.
+schema = 1
+id = "example-token"
+label = "Example Token"
+mode = "paste-back"
+run = "example-cli login"
+timeout = 300
+
+[signin]
+part_of = "exampledocs"
+
+[match]
+url = 'https://auth\.example\.com/\S+'
+prompt = 'Code:'
+success = 'Saved'
+
+[[check]]
+service = "example_token"
+run = "example-cli print-token >/dev/null"
+
+[status]
+run = "example-cli print-token"
+discard_output = true
+
+[logout]
+run = "example-cli logout"

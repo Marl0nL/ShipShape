@@ -100,6 +100,16 @@ class Paths:
     def profiles(self) -> Path:
         return self.bundle / "profiles"
 
+    @property
+    def signins(self) -> Path:
+        """Sign-in files (contracts/signin.schema.json), shared with FleetLedger."""
+        return self.bundle / "signins"
+
+    @property
+    def signin_cache(self) -> Path:
+        """Results of the sign-in checks kept between status refreshes (signincheck.py)."""
+        return self.run / "signin-checks.json"
+
     # --- the agent user's home --------------------------------------------
     @property
     def agent_home(self) -> Path:

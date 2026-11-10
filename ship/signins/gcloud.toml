@@ -3,6 +3,7 @@
 # Every gcloud command runs with file logging off: gcloud's own debug log
 # (~/.config/gcloud/logs) records the sign-in code during `auth login`, and
 # the other commands handle tokens (phase 0 spike S5).
+schema = 1
 id = "gcloud"
 label = "gcloud and ADC"
 mode = "paste-back"
@@ -31,6 +32,16 @@ label = "Google Cloud ADC"
 short = "ADC"
 # The token goes to /dev/null on the Ship; only the exit code comes back.
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default print-access-token >/dev/null"
+
+# The Ship's check of the gcloud key (gcloud-adc.toml checks gcloud_adc).
+[status]
+builtin = "gcloud"
+label = "gcloud"
+
+# Where the sign-in lives on the Ship (docs/security.md): documentation only.
+[secrets]
+paths = ["~/.config/gcloud"]
+store = "file"
 
 [logout]
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default revoke --quiet; CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth revoke --all --quiet"

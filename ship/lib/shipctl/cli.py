@@ -28,6 +28,7 @@ from . import (
     notice,
     overlay,
     shiptoml,
+    signincheck,
     signins,
     sshtrust,
     status,
@@ -138,7 +139,11 @@ def build_parser() -> Parser:
     rs.add_argument("--force", action="store_true",
                     help="also move agents that are working or waiting (interrupts them)")
     ns = cmd("notify-signin", "Tell the [[autostart]] agents that a sign-in has completed.")
-    ns.add_argument("service", choices=sorted(signins.NOTIFY))
+    ns.add_argument("service", metavar="SERVICE", help="a sign-in file's id")
+    sg = cmd("signin", "Check a sign-in now, as its sign-in file says.")
+    sg.add_argument("action", choices=["check"])
+    sg.add_argument("id", metavar="ID",
+                    help="a sign-in file's id (gcloud), or a status key (gcloud_adc)")
     c = cmd("converge", "Apply a tooling bundle.")
     c.add_argument("--bundle", required=True, metavar="PATH")
     t = cmd("tools", "List, install or check catalogue tools.")
@@ -395,10 +400,33 @@ def cmd_runtime(ctx: Context, args) -> dict:
     return result("runtime", changed=changed, messages=messages, data=data)
 
 
+def _unknown_signin(reg: signins.Registry, name: str) -> CtlError:
+    return CtlError("usage", f"unknown sign-in {name!r} (known: {', '.join(sorted(reg.flows))})")
+
+
 def cmd_notify_signin(ctx: Context, args) -> dict:
+    reg = signins.registry(ctx.paths)
+    if args.service not in reg.flows:
+        raise _unknown_signin(reg, args.service)
     ship = shiptoml.load(ctx.paths)
     data, messages = notice.notify(ctx, ship, args.service)
     return result("notify-signin", messages=messages, data=data)
+
+
+def cmd_signin(ctx: Context, args) -> dict:
+    """signin check ID: every status key the sign-in file signs in, checked now
+    (never from the cache), so FleetLedger's check after a sign-in, the status
+    document and the Sign-ins page agree. What it finds is kept for the next status."""
+    reg = signins.registry(ctx.paths)
+    flow = reg.flow(args.id)
+    if flow is None:
+        raise _unknown_signin(reg, args.id)
+    found = signincheck.check(ctx, reg, flow.keys, fresh=True)
+    auth = {key: entry for key, (entry, _) in found.items()}
+    messages = [f"{key}: {e['state']}" + (f" ({e['account']})" if e["account"] else "")
+                for key, e in auth.items()]
+    messages += [m for _, errors in found.values() for m in errors]
+    return result("signin", messages=messages, data={"signin": flow.id, "auth": auth})
 
 
 def cmd_wake(ctx: Context, args) -> dict:
@@ -495,7 +523,9 @@ def cmd_refresh(ctx: Context, args) -> dict:
     prev = read_json(prev_path, {})
     prev = prev if isinstance(prev, dict) else {}
     now = {svc: entry["state"] for svc, entry in doc["auth"].items()}
-    newly_ok = {svc for svc, st in now.items() if st == "ok" and prev.get(svc) != "ok"}
+    # Signed in, ending soon or not ("expiring" counts: it is a sign-in a tool can use).
+    newly_ok = {svc for svc, st in now.items()
+                if st in ("ok", "expiring") and prev.get(svc) not in ("ok", "expiring")}
     record = dict(now)
     waiting = tools.waiting_on(ctx, newly_ok)
     if waiting:
@@ -591,6 +621,7 @@ COMMANDS = {
     "agent": cmd_agent,
     "runtime": cmd_runtime,
     "notify-signin": cmd_notify_signin,
+    "signin": cmd_signin,
     "converge": cmd_converge,
     "tools": cmd_tools,
     "logs": cmd_logs,

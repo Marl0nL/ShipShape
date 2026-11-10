@@ -45,11 +45,12 @@ def test_every_flow_is_registered():
 
 def _copy(tmp_path: Path) -> Path:
     folder = tmp_path / "providers"
-    shutil.copytree(signinreg.PROVIDERS_DIR, folder)
+    shutil.copytree(signinreg.SIGNINS_DIR, folder)
     return folder
 
 
 EXTRA = """\
+schema = 1
 id = "exampledocs"
 label = "Example Docs"
 mode = "device-code"

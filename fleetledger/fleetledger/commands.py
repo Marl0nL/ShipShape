@@ -777,7 +777,8 @@ def _report_login(app, result: concierge.LoginResult) -> int:
         app.say(f"{head} {result.outcome}." + (f" {result.detail}" if result.detail else ""))
         for check in result.checks:
             if not check.signed_in:
-                app.say(f"  {check.service}: not signed in")
+                said = check.state if check.state not in (None, "missing") else "not signed in"
+                app.say(f"  {check.service}: {said}")
     for note in result.notes:
         app.say(f"  note: {note}")
     return 0 if result.outcome == "ok" else 1

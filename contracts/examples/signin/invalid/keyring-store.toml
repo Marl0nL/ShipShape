@@ -1,0 +1,37 @@
+# A toolkit-style sign-in for a CLI ShipShape cannot change: its status is read
+# as an adapter (exit code, JSON fields). Placeholders only.
+schema = 1
+id = "exampledocs"
+label = "Example Docs"
+mode = "paste-back"
+run = "example-cli auth login --no-browser --store file"
+timeout = 300
+after = ["example-cli setup hooks"]
+
+[signin]
+label = "Example Docs"
+order = 10
+
+[match]
+url = 'https://auth\.example\.com/oauth2/authorize\S+'
+prompt = '(?i)paste the code'
+success = '(?i)signed in'
+failure = '(?i)(?:access_denied|invalid_grant|error:)'
+
+# Run on the Ship by ship-ctl status (cached for `every`) and ship-ctl signin check.
+[status]
+run = "example-cli auth status --json"
+every = "5m"
+ok_json = "signed_in"
+account = "json:account.email"
+expires_at = "json:session.expires_at"
+expiring_within = "24h"
+missing_exit = [1]
+env = { EXAMPLE_NO_FILE_LOG = "1" }
+
+[secrets]
+paths = ["~/.config/example-cli/tokens.json"]
+store = "keyring"
+
+[logout]
+run = "example-cli auth revoke --all"

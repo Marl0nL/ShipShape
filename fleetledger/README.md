@@ -41,7 +41,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/proxmox_setup.py` | first run | setup's Proxmox step: pins the certificate after showing it, checks the token, finds node, pool, storages, bridge and template through the API, and prints the root commands for anything missing |
 | `shipfleet_launch.py` (next to the package) | | the `ship-fleet` command's entry point: drops the current folder and empty `PYTHONPATH` entries from `sys.path` first, so a ShipShape checkout's outer `fleetledger/` folder can never shadow the package |
 | `fleetledger/enrol.py` | W8 | from a booted seed to an enrolled Ship (`contracts/seed.md`) |
-| `fleetledger/concierge/`, `providers/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
+| `fleetledger/concierge/`, `ship/signins/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)); `web/control.py`, its private control socket (`ship-fleet ui link --local`) |
 | `fleetledger/appliance.py`, `backup.py`, `selfupdate.py` | | FleetLedger on its own VM: `ship-fleet appliance seed\|show\|forget` (the cloud-init seed, `[fleet] self` and its guard), `backup now\|schedule\|unschedule` (sealed under the vault; restored with `migrate import`), `self-update` ([fleetledger-vm.md](../docs/runbooks/fleetledger-vm.md)) |
 | `fleetledger/service.py` | | FleetLedger as a systemd user service: `ship-fleet service install\|status\|restart\|uninstall` ([fleetledger-service.md](../docs/runbooks/fleetledger-service.md)) |
@@ -298,10 +298,14 @@ failure is a few redacted lines (escape sequences stripped first, then typed
 codes, URL query strings, email addresses and long token-like strings such as
 UUIDs removed).
 
-Providers are one TOML file each in `fleetledger/providers/`: the command, mode
-(`paste-back` or `device-code`), timeout, `[match]` patterns (`url`, `code`,
-`prompt`, `success`, `failure`, `send`), `[[check]]` entries, `after` commands
-and `[logout]`. Adding a service is one file.
+Providers are sign-in files, one TOML file each in `ship/signins/`
+(`contracts/signin.schema.json`): the command, mode (`paste-back` or
+`device-code`), timeout, `[match]` patterns (`url`, `code`, `prompt`, `success`,
+`failure`, `send`), `[[check]]` entries, `after` commands, `[status]` (how the Ship
+checks it) and `[logout]`. Adding a service is one file. The Ship reads the same
+files from its tooling bundle, so after a sign-in FleetLedger asks the Ship
+(`ship-ctl signin check`) instead of running the checks itself; only a Ship whose
+tooling predates that gets the `[[check]]` commands over SSH.
 
 The same files are the sign-in registry (`fleetledger/signinreg.py`): every list of
 sign-ins (the per-Ship choices, status keys, labels, which flow signs in which key,

@@ -5,7 +5,8 @@ whole document is ready well inside the 15 s budget. A failed probe leaves its
 fields unknown and adds a line to `errors`; it never stops the document.
 
 Nothing here reads or prints a token: sign-ins are checked through each tool's own
-status command, and the ADC check discards its output.
+status command, and the ADC check discards its output. Which sign-ins there are, and
+how each is checked, comes from the sign-in files (signins.py, signincheck.py).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import PERMISSION_MODES, overlay, signins
+from . import PERMISSION_MODES, overlay, signincheck, signins
 from .context import Context, utc_now
 from .fsutil import read_json, write_atomic
 from .net import status_section as net_section
@@ -31,12 +32,10 @@ SCHEMA = "shipshape.ship-status/1"
 PROBE_TIMEOUT = 5.0
 if os.environ.get("SHIPSHAPE_ROOT") and os.environ.get("SHIPSHAPE_PROBE_TIMEOUT"):
     PROBE_TIMEOUT = float(os.environ["SHIPSHAPE_PROBE_TIMEOUT"])  # tests only
-AUTH_SERVICES = signins.KEYS
 AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$")
 COMMIT = re.compile(r"^[0-9a-f]{7,40}$")
 TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$")
-SERVICE_LABELS = signins.LABELS
 
 
 def _fail(what: str, result: Result) -> str:
@@ -404,23 +403,19 @@ def probe_github_auth(ctx: Context) -> tuple[dict, list[str]]:
     return entry, []
 
 
-# The built-in checks a registered sign-in names (signins.py `probe`).
+# The built-in checks a sign-in file names ([status] builtin).
 BUILTIN_PROBES = {
     "claude": probe_claude_auth,
     "gcloud": probe_gcloud_auth,
     "adc": probe_adc,
     "github": probe_github_auth,
 }
-AUTH_PROBES = {s.key: BUILTIN_PROBES[s.probe] for s in signins.SIGNINS}
 
 
 def probe_auth(ctx: Context, services: list[str]) -> dict[str, dict]:
     """Check only the given services (used by the tools runner for `needs`)."""
-    out = {}
-    for svc in services:
-        probe = AUTH_PROBES.get(svc)
-        out[svc] = probe(ctx)[0] if probe else _auth("unknown")
-    return out
+    reg = signins.registry(ctx.paths)
+    return {svc: found for svc, (found, _) in signincheck.check(ctx, reg, services).items()}
 
 
 # --- claude, tools, units ---------------------------------------------------
@@ -493,8 +488,11 @@ def bundle_info(ctx: Context) -> tuple[str, str | None, list[str]]:
 
 # --- the document -----------------------------------------------------------
 def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = False,
-                  core_pending: bool = False) -> list[dict]:
+                  core_pending: bool = False, labels: dict[str, str] | None = None
+                  ) -> list[dict]:
+    """labels: how each sign-in is named (signins.Registry.labels)."""
     items: list[dict] = []
+    labels = labels or {}
 
     def add(code: str, message: str, subject: str | None = None) -> None:
         item = {"code": code, "message": message[:500]}
@@ -513,7 +511,7 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             said = f": {agent['message']}" if agent.get("message") else "."
             add("agent-waiting", f"Agent '{who}' is waiting for you{what}{said}", who)
     for svc, entry in doc["auth"].items():
-        label = SERVICE_LABELS.get(svc, svc)
+        label = labels.get(svc, svc)
         if svc in signins.CORE and entry["state"] == "missing":
             add("signin-missing", f"{label} is not signed in.", svc)
         elif entry["state"] == "expiring":
@@ -562,7 +560,7 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             "off the LAN.", "overlay")
     for tid, tool in doc["tools"].items():
         if tool["state"] == "waiting":
-            needs = ", ".join(SERVICE_LABELS.get(s, s) for s in tool.get("waiting_for", []))
+            needs = ", ".join(labels.get(s, s) for s in tool.get("waiting_for", []))
             add("tool-waiting", f"{tid} waits for the {needs or 'required'} sign-in.", tid)
         elif tool["state"] == "failed":
             add("tool-failed", f"{tid} failed to install or check; see `ship-ctl logs tools`.", tid)
@@ -637,6 +635,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
     started = time.monotonic()
     now = utc_now()
     errors: list[str] = []
+    reg = signins.registry(ctx.paths)
     with ThreadPoolExecutor(max_workers=10) as pool:
         f_host = pool.submit(probe_host, ctx)
         f_cloud = pool.submit(probe_cloud_init, ctx)
@@ -648,7 +647,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_net = pool.submit(net_section, ctx)
         f_pending = pool.submit(herdr_restart_pending, ctx)
         f_core_pending = pool.submit(core_restart_pending, ctx)
-        f_auth = {svc: pool.submit(AUTH_PROBES[svc], ctx) for svc in AUTH_SERVICES}
+        f_auth = pool.submit(signincheck.check, ctx, reg, reg.keys)
         host, e = f_host.result()
         errors += e
         cloud_init, e = f_cloud.result()
@@ -665,9 +664,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         errors += e
         overlay_doc = f_overlay.result()
         auth = {}
-        for svc, fut in f_auth.items():
-            entry, e = fut.result()
-            entry["checked_at"] = now
+        for svc, (entry, e) in f_auth.result().items():
             auth[svc] = entry
             errors += e
 
@@ -718,7 +715,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
             entry["mode"] = modes.get(id(agent))
     doc["state"] = derive_state(doc)
     doc["attention"] = attention_for(doc, failed_units, f_pending.result(),
-                                     f_core_pending.result())
+                                     f_core_pending.result(), reg.labels)
     doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
                          for code, message, who in [*record.attention(doc["agent_record"]),
                                                     *switch.attention(doc["agent_record"]),

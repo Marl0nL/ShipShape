@@ -1,0 +1,26 @@
+# A sign-in whose status command prints ShipShape's own status line, for a tool you
+# write or wrap in a small script:
+#   {"shipshape_signin": 1, "state": "ok", "account": "you@example.com",
+#    "expires_at": "2026-12-01T00:00:00Z", "detail": "read only"}
+schema = 1
+id = "example-native"
+label = "Example Native"
+mode = "device-code"
+run = "example-tool login --device"
+timeout = 600
+
+[match]
+url = 'https://example\.com/device'
+code = 'code: ([A-Z0-9]{4}-[A-Z0-9]{4})'
+success = 'Logged in'
+
+[status]
+run = "example-tool-status"
+format = "shipshape"
+every = "1m"
+
+[logout]
+run = "example-tool logout"
+
+[params]
+account = { from = "expected-account" }
