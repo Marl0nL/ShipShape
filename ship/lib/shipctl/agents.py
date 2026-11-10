@@ -156,26 +156,15 @@ def restart(ctx: Context, ship: ShipToml, names: list[str], *, everyone: bool = 
 
 
 def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
+    r = _Restart(ctx, ship, rt, doc, skipped, fresh=fresh, force=force)
     autostart = {e["name"]: e for e in ship.autostart}
     restarted: list[dict] = []
-    messages: list[str] = []
     busy = failed = 0
-    named = None  # whether claude takes --name; asked once, only for a fresh start
     ledger = read_ledger(ctx)
     states = {name: ("stopped" if e["want"] == "stopped" else
                      "failed" if record.tries_this_boot(ctx, e) >= record.MAX_TRIES
                      else "starting")
               for name, e in doc["agents"].items()}
-
-    def label(name: str) -> str:
-        rec = doc["agents"].get(name) or {}
-        return rec.get("session_name") or naming.session_name(ship, name)
-
-    def fresh_args(name: str) -> list[str]:
-        nonlocal named
-        if named is None:
-            named = naming.name_flag_supported(ctx)
-        return naming.launch_args(label(name), named)
 
     for name, a in targets:
         rec = doc["agents"].get(name)
@@ -187,109 +176,143 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
         previous = (rec or {}).get("mode")  # before this restart records the new one
         if a is not None and (a["session"] or (rec or {}).get("session")) in ledger:
             previous = ledger[a["session"] or rec["session"]]
-        if a is None:  # recorded, not running: start it again from the record
+        if a is None:
             was = states.get(name) or rec["want"]
-            if not fresh and not rec["session"]:
-                failed += 1
-                skipped.append({"name": name, "reason": "its session is not known, so its "
-                                "conversation cannot be continued; restart it fresh instead"})
-                continue
-            ok, why = record.relaunch(ctx, ship, rt, doc, name, rt.places(), same_place=False,
-                                      mode=new_mode, fresh=fresh_args(name) if fresh else None,
-                                      keep_tries=False)
-            if not ok:
-                failed += 1
-                skipped.append({"name": name, "reason": f"did not start again: {why}"})
-                continue
-            session = doc["agents"][name]["session"]
-            if session:
-                record_mode(ctx, session, new_mode)
+            outcome, notes = r.stopped(name, rec, new_mode), []
         else:
-            was, place, session = a["state"], a["place"], a["session"] or (rec or {}).get(
-                "session")
-            if was in BUSY_STATES and not force:
-                busy += 1
-                why = "working" if was == "working" else "in a state herdr cannot tell"
-                skipped.append({"name": name, "reason": f"it is {why}; not interrupted"})
-                messages.append(f"{name} is {why}: left alone. Try again when it is idle, or "
-                                "force it (which interrupts its turn).")
-                continue
-            if not place:
-                failed += 1
-                skipped.append({"name": name, "reason": "herdr reports no pane for it"})
-                continue
-            if not fresh and session is None:
-                failed += 1
-                skipped.append({"name": name, "reason": "its session is not known, so its "
-                                "conversation cannot be continued; restart it fresh instead"})
-                continue
-            stopped, notes = rt.stop(place, was)
-            if not stopped:
-                failed += 1
-                skipped.append({"name": name, "reason": "it did not exit; left running"})
-                messages.append(f"{name} did not exit when asked; it is still running as before"
-                                + (f" ({'; '.join(notes)})" if notes else "") + ".")
-                continue
-            if not fresh:  # stopped: from now on the session is in its new mode
-                record_mode(ctx, session, new_mode)
-            sid, chosen = record.new_session(rt) if fresh else (None, [])
-            args = [*mode_args(new_mode), *(fresh_args(name) if fresh else ["--resume", session]),
-                    *chosen]
-            cwd = a["cwd"] or (rec or {}).get("cwd")
-            was_session = (rec or {}).get("session")
-            if sid and rec is not None:  # the record has the new session before it starts
-                rec["session"] = sid
-                record.save(ctx, doc)
-            # In place: herdr's pane; on herdr-core the agent's terminal, else a new one.
-            done = rt.launch(name, cwd or "", args, place, a["workspace"])
-            ok, why = done["ok"], done["why"]
-            place = done["place"] or place
-            back = rt.in_place(place, name)
-            if not ok and back is None and sid and rec is not None:
-                rec["session"] = was_session
-            if not ok and back is None:
-                failed += 1
-                skipped.append({"name": name, "reason": f"stopped, but did not start again: {why}"})
-                launch = " ".join(["claude", *mode_args(new_mode),
-                                   *([] if fresh else ["--resume", session])])
-                messages.append(f"{name} stopped but did not start again ({why}). Start it in its "
-                                f"pane with: {launch}")
-                if rec is not None and not fresh:
-                    # A crash, as far as the record goes (the restart cleared its /exit
-                    # from the ledger): the next refresh starts it again, in its new mode,
-                    # and counts this as its first failed try (it stopped at once).
-                    record.launched(ctx, rt, doc, name, cwd=rec["cwd"], place=place,
-                                    workspace=a["workspace"], session=session, mode=new_mode,
-                                    origin=rec["origin"])
-                    rec["relaunch"].update(last_error=why[:200])
-                continue
-            new_session = (back or {}).get("session") or sid or (None if fresh else session)
-            if new_session and (fresh or new_session != session):
-                record_mode(ctx, new_session, new_mode)
-            if cwd:
-                record.launched(ctx, rt, doc, name, cwd=cwd, place=place,
-                                workspace=(back or a).get("workspace"), session=new_session,
-                                mode=new_mode, origin=(rec or {}).get("origin", "adopted"),
-                                session_name=label(name) if fresh else None)
-                if fresh and not new_session:
-                    doc["agents"][name]["session"] = None
+            was = a["state"]
+            outcome, notes = r.running(name, a, rec, new_mode)
+        if outcome == "busy":
+            busy += 1
+            continue
+        if outcome == "failed":
+            failed += 1
+            continue
         if fresh:
             prompt = (autostart.get(name) or {}).get("prompt") or (
                 DEFAULT_PROMPT if name in autostart else (rec or {}).get("prompt"))
             if prompt:
                 sent, why = rt.prompt(name, prompt)
                 if not sent:
-                    messages.append(f"{name}: started, but the first prompt was not sent "
-                                    f"({why}).")
+                    r.messages.append(f"{name}: started, but the first prompt was not sent "
+                                      f"({why}).")
         restarted.append({"name": name, "mode": new_mode, "previous_mode": previous,
                           "conversation": "fresh" if fresh else "continued", "was": was})
         said = f"{name} restarted in {new_mode}, " + (
             "in a fresh conversation" if fresh else "continuing its conversation")
-        notes = notes if a is not None else []
-        messages.append(said + (f" ({'; '.join(notes)})" if notes else "") + ".")
+        r.messages.append(said + (f" ({'; '.join(notes)})" if notes else "") + ".")
 
     data = {"restarted": restarted, "skipped": skipped}
-    return data, [r["name"] for r in restarted], messages, busy, failed
+    return data, [rec["name"] for rec in restarted], r.messages, busy, failed
+
+
+class _Restart:
+    """One `ship-ctl agent restart`: each agent is "restarted", "busy" (left alone)
+    or "failed"; why goes to skipped and messages."""
+
+    def __init__(self, ctx, ship, rt, doc, skipped, *, fresh, force):
+        self.ctx, self.ship, self.rt, self.doc = ctx, ship, rt, doc
+        self.fresh, self.force = fresh, force
+        self.skipped = skipped
+        self.messages: list[str] = []
+        self._named = None  # whether claude takes --name; asked once, only for a fresh start
+
+    def label(self, name: str) -> str:
+        rec = self.doc["agents"].get(name) or {}
+        return rec.get("session_name") or naming.session_name(self.ship, name)
+
+    def fresh_args(self, name: str) -> list[str]:
+        if self._named is None:
+            self._named = naming.name_flag_supported(self.ctx)
+        return naming.launch_args(self.label(name), self._named)
+
+    def _skip(self, name: str, reason: str) -> str:
+        self.skipped.append({"name": name, "reason": reason})
+        return "failed"
+
+    def stopped(self, name: str, rec: dict, new_mode: str) -> str:
+        """Recorded, not running: start it again from the record."""
+        ctx, rt, doc, fresh = self.ctx, self.rt, self.doc, self.fresh
+        if not fresh and not rec["session"]:
+            return self._skip(name, "its session is not known, so its conversation cannot "
+                              "be continued; restart it fresh instead")
+        ok, why = record.relaunch(ctx, self.ship, rt, doc, name, rt.places(), same_place=False,
+                                  mode=new_mode,
+                                  fresh=self.fresh_args(name) if fresh else None,
+                                  keep_tries=False)
+        if not ok:
+            return self._skip(name, f"did not start again: {why}")
+        session = doc["agents"][name]["session"]
+        if session:
+            record_mode(ctx, session, new_mode)
+        return "restarted"
+
+    def running(self, name: str, a: dict, rec: dict | None, new_mode: str
+                ) -> tuple[str, list[str]]:
+        """Running: stop it gracefully, then start it again in its place."""
+        ctx, rt, doc, fresh = self.ctx, self.rt, self.doc, self.fresh
+        was, place, session = a["state"], a["place"], a["session"] or (rec or {}).get(
+            "session")
+        if was in BUSY_STATES and not self.force:
+            why = "working" if was == "working" else "in a state herdr cannot tell"
+            self.skipped.append({"name": name, "reason": f"it is {why}; not interrupted"})
+            self.messages.append(f"{name} is {why}: left alone. Try again when it is idle, "
+                                 "or force it (which interrupts its turn).")
+            return "busy", []
+        if not place:
+            return self._skip(name, "herdr reports no pane for it"), []
+        if not fresh and session is None:
+            return self._skip(name, "its session is not known, so its conversation cannot "
+                              "be continued; restart it fresh instead"), []
+        stopped, notes = rt.stop(place, was)
+        if not stopped:
+            self.messages.append(f"{name} did not exit when asked; it is still running as "
+                                 "before" + (f" ({'; '.join(notes)})" if notes else "") + ".")
+            return self._skip(name, "it did not exit; left running"), []
+        if not fresh:  # stopped: from now on the session is in its new mode
+            record_mode(ctx, session, new_mode)
+        sid, chosen = record.new_session(rt) if fresh else (None, [])
+        args = [*mode_args(new_mode),
+                *(self.fresh_args(name) if fresh else ["--resume", session]), *chosen]
+        cwd = a["cwd"] or (rec or {}).get("cwd")
+
+        def prepare() -> None:  # the record has the new session before it starts
+            rec["session"] = sid
+
+        def start() -> tuple[bool, str, str, dict | None]:
+            # In place: herdr's pane; on herdr-core the agent's terminal, else a new one.
+            done = rt.launch(name, cwd or "", args, place, a["workspace"])
+            where = done["place"] or place
+            return done["ok"], done["why"], where, rt.in_place(where, name)
+
+        ok, why, place, back = record.start_and_record(
+            ctx, doc, name, sid if rec is not None else None, prepare, start,
+            lambda r: r[0] or r[3] is not None)
+        if not ok and back is None:
+            launch = " ".join(["claude", *mode_args(new_mode),
+                               *([] if fresh else ["--resume", session])])
+            self.messages.append(f"{name} stopped but did not start again ({why}). Start it "
+                                 f"in its pane with: {launch}")
+            if rec is not None and not fresh:
+                # A crash, as far as the record goes (the restart cleared its /exit
+                # from the ledger): the next refresh starts it again, in its new mode,
+                # and counts this as its first failed try (it stopped at once).
+                record.launched(ctx, rt, doc, name, cwd=rec["cwd"], place=place,
+                                workspace=a["workspace"], session=session, mode=new_mode,
+                                origin=rec["origin"])
+                rec["relaunch"].update(last_error=why[:200])
+            return self._skip(name, f"stopped, but did not start again: {why}"), []
+        new_session = (back or {}).get("session") or sid or (None if fresh else session)
+        if new_session and (fresh or new_session != session):
+            record_mode(ctx, new_session, new_mode)
+        if cwd:
+            record.launched(ctx, rt, doc, name, cwd=cwd, place=place,
+                            workspace=(back or a).get("workspace"), session=new_session,
+                            mode=new_mode, origin=(rec or {}).get("origin", "adopted"),
+                            session_name=self.label(name) if fresh else None)
+            if fresh and not new_session:
+                doc["agents"][name]["session"] = None
+        return "restarted", notes
 
 
 def forget(ctx: Context, names: list[str]) -> tuple[dict, list[str], list[str]]:

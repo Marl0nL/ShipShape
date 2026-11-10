@@ -28,13 +28,14 @@ starts, restarts or changes an agent:
 from __future__ import annotations
 
 import contextlib
+import copy
 import fcntl
 import json
 import os
 import re
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -499,6 +500,41 @@ def folder_exists(ctx: Context, cwd: str) -> bool:
     return (ctx.paths.p(cwd) if ctx.paths.sandbox else Path(cwd)).is_dir()
 
 
+def start_and_record[T](ctx: Context, doc: dict, name: str, sid: str | None,
+                        prepare: Callable[[], object], start: Callable[[], T],
+                        started: Callable[[T], bool]) -> T:
+    """Start agent name with the record ahead of it, and back out if nothing started.
+
+    With sid (a session ShipShape chose), prepare() puts it in the record, which is
+    saved, before start() runs: a hook or a crash right after the start finds it.
+    If started(result) says nothing started, the agent's entry goes back to what it
+    was (none: it is dropped). The keys that did not change keep their objects, so a
+    caller holding the entry or a part of it (its relaunch tries) still sees the
+    record. Returns start()'s result."""
+    before = copy.deepcopy(doc["agents"].get(name))
+    if sid:
+        prepare()
+        save(ctx, doc)
+    result = start()
+    if sid and not started(result):
+        _put_back(doc, name, before)
+    return result
+
+
+def _put_back(doc: dict, name: str, before: dict | None) -> None:
+    e = doc["agents"].get(name)
+    if before is None:
+        doc["agents"].pop(name, None)
+    elif e is None:
+        doc["agents"][name] = before
+    else:
+        for key in [k for k in e if k not in before]:
+            del e[key]
+        for key, value in before.items():
+            if key not in e or e[key] != value:
+                e[key] = value
+
+
 def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
              places: dict | None, *, same_place: bool, mode: str | None = None,
              fresh: list[str] | None = None, keep_tries: bool = True) -> tuple[bool, str]:
@@ -531,28 +567,30 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
         tries = [old, None]
     else:
         tries = [None]
-    before = e["session"]
-    if sid:  # the record has the new conversation's id before it starts
+
+    def prepare() -> None:  # the record has the new conversation's id before it starts
         e["session"] = sid
-        save(ctx, doc)
-    why = ""
-    for place in tries:
-        workspace = (spot or {}).get("workspace") if place else None
-        done = rt.launch(name, cwd, args, place, workspace)
-        why = done["why"]
-        if done["ok"]:
-            place = done["place"]
-            back = rt.in_place(place, name) or {}
-            launched(ctx, rt, doc, name, cwd=cwd, place=place,
-                     workspace=back.get("workspace") or done["workspace"],
-                     session=back.get("session") or sid or (None if fresh is not None
-                                                            else e["session"]),
-                     mode=mode, origin=e["origin"], keep_tries=keep_tries)
-            if fresh is not None and not (back.get("session") or sid):
-                e["session"] = None  # a new conversation: the next sync learns its id
-            return True, ""
-    e["session"] = before
-    return False, why or "it did not start"
+
+    def start() -> tuple[bool, str]:
+        why = ""
+        for place in tries:
+            workspace = (spot or {}).get("workspace") if place else None
+            done = rt.launch(name, cwd, args, place, workspace)
+            why = done["why"]
+            if done["ok"]:
+                place = done["place"]
+                back = rt.in_place(place, name) or {}
+                launched(ctx, rt, doc, name, cwd=cwd, place=place,
+                         workspace=back.get("workspace") or done["workspace"],
+                         session=back.get("session") or sid or (None if fresh is not None
+                                                                else e["session"]),
+                         mode=mode, origin=e["origin"], keep_tries=keep_tries)
+                if fresh is not None and not (back.get("session") or sid):
+                    e["session"] = None  # a new conversation: the next sync learns its id
+                return True, ""
+        return False, why or "it did not start"
+
+    return start_and_record(ctx, doc, name, sid, prepare, start, lambda r: r[0])
 
 
 def reconcile(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[dict]
