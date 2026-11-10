@@ -23,7 +23,7 @@ ITEM_FIELD = "keyring_item"
 
 @dataclass(frozen=True)
 class Place:
-    kind: str  # proxmox | oauth: what vaultcmd and migrate call it
+    kind: str  # proxmox | oauth: vaultcmd's Secret.kind
     label: str  # for messages: "the Proxmox token"
     section: tuple[str, ...]  # its table in ships.toml
     id_field: str  # what names the secret (no id: no secret)
@@ -67,7 +67,10 @@ class Place:
     def set(self, table: MutableMapping[str, Any], store: str, *, item: str | None = None,
             file: Path | None = None) -> None:
         """Record that the secret is in store: keyring (under item) or file. A field
-        already there keeps its place; the other store's field goes."""
+        already there keeps its place; the other store's field goes. Nothing changes
+        unless store is keyring with an item or file with a file."""
+        if not (store == "keyring" and item or store == "file" and file is not None):
+            raise ValueError(f"No {store!r} place given for {self.label}.")
         if store == "keyring":
             table[self.store_field] = "keyring"
             table[ITEM_FIELD] = item

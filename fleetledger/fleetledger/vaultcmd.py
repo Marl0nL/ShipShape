@@ -152,6 +152,9 @@ def point_at(editor, moved: list[tuple[Placed, str]], store_kind: str) -> dict[s
             continue
         place = secretplaces.BY_KIND[secret.kind]
         table = place.table(doc)
+        if table is None:
+            raise ConfigError(f"ships.toml has no [{'.'.join(place.section)}] table for "
+                              f"{place.label}.")
         place.clear(table)
         place.set(table, store_kind, item=secret.item, file=target)
     return files
