@@ -367,6 +367,11 @@ class Concierge:
     def active(self) -> list[WebFlow]:
         return [f for f in self.flows() if not f.done]
 
+    def open_on(self, ship: str) -> bool:
+        """Whether a sign-in is open on the Ship: a restart, shutdown or overlay change
+        would cut its terminal mid-flow."""
+        return any(f.ship == ship for f in self.active())
+
     @property
     def version(self) -> int:
         with self._lock:

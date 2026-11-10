@@ -29,7 +29,6 @@ from fleetledger.web.common import (
     flash,
     ship_form,
     start_cli_job,
-    ui_of,
 )
 from fleetledger.web.forms import one
 
@@ -81,11 +80,11 @@ async def take(request: Request) -> Response:
 
 
 async def rollback(request: Request) -> Response:
-    _, name, fields, _ = await ship_form(request)
+    ui, name, fields, _ = await ship_form(request)
     snap = _snapshot_name(one(fields, "snapshot"))
     if snap is None:
         flash(request, "bad", "Choose a snapshot to roll back to.")
-    elif _signing_in(request, name):
+    elif ui.concierge.open_on(name):
         # A rollback restarts the VM: it would cut the sign-in's terminal mid-flow.
         flash(request, "bad", f"Not rolled back: a sign-in is open on {name}. Finish or "
               "cancel it on the Sign-ins page first.")
@@ -107,10 +106,6 @@ async def delete(request: Request) -> Response:
     else:
         _start(request, name, ["snapshot", "rm", name, snap], f"Delete {snap} of {name}")
     return back(f"/ships/{name}/snapshots")
-
-
-def _signing_in(request: Request, name: str) -> bool:
-    return any(f.ship == name for f in ui_of(request).concierge.active())
 
 
 async def tab_context(app: Any, name: str) -> dict[str, Any]:

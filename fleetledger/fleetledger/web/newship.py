@@ -13,17 +13,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fleetledger.errors import FleetError
-from fleetledger.web.forms import NAME_RE
-
-MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")
-
-
-def _one(fields: dict[str, list[str]], key: str) -> str:
-    values = fields.get(key, [])
-    return values[0].strip() if len(values) == 1 else ""
-
-
-one_field = _one
+from fleetledger.ops import MODES
+from fleetledger.web.forms import NAME_RE, one, size_from_form
 
 
 def next_name(inv) -> str:
@@ -144,31 +135,31 @@ def refill(nf: FormChoices, fields: dict[str, list[str]]) -> FormChoices:
         return fields[key][0] if fields.get(key) else default
 
     tools = nf.tools
-    if _one(fields, "tools_shown"):
+    if one(fields, "tools_shown"):
         ticked = set(fields.get("tool", []))
         tools = [(t, d, t in ticked) for t, d, _ in nf.tools]
     changed_tools = [on for *_, on in tools] != [on for *_, on in nf.tools]
     out = dataclasses.replace(
         nf,
         name=text("name", nf.name),
-        tags=_one(fields, "tag").replace(",", " ").split() if "tag" in fields else nf.tags,
+        tags=one(fields, "tag").replace(",", " ").split() if "tag" in fields else nf.tags,
         cores=text("cores", nf.cores), memory_gb=text("memory_gb", nf.memory_gb),
         disk_gb=text("disk_gb", nf.disk_gb),
-        signins_on=(tuple(fields.get("signin", [])) if _one(fields, "signins_shown")
+        signins_on=(tuple(fields.get("signin", [])) if one(fields, "signins_shown")
                     else nf.signins_on),
         github_scopes_on=tuple(fields.get("github_scope", [])),
-        agent_on=_one(fields, "agent_on") == "yes",
+        agent_on=one(fields, "agent_on") == "yes",
         agent=text("agent", nf.agent), cwd=text("cwd", nf.cwd), repo=text("repo", ""),
-        overlay_on=_one(fields, "overlay") == "yes",
+        overlay_on=one(fields, "overlay") == "yes",
         driver=text("driver", nf.driver), image=text("image", nf.image),
         vmid=text("vmid", ""), hosts=text("hosts", ""), mode=text("mode", nf.mode),
         agent_mode=text("agent_mode", ""), prompt=text("prompt", ""),
-        allow_bypass=_one(fields, "allow_bypass") == "yes",
-        agent_sudo=_one(fields, "agent_sudo") == "yes",
+        allow_bypass=one(fields, "allow_bypass") == "yes",
+        agent_sudo=one(fields, "agent_sudo") == "yes",
         timezone=text("timezone", nf.timezone), tools=tools,
         profiles_on=tuple(fields.get("profile", [])),
     )
-    out.open_advanced = (changed_tools or any(_one(fields, k) for k in ADVANCED_FIELDS)
+    out.open_advanced = (changed_tools or any(one(fields, k) for k in ADVANCED_FIELDS)
                          or bool(fields.get("profile"))
                          or (out.driver, out.image, out.mode, out.timezone)
                          != (nf.driver, nf.image, nf.mode, nf.timezone))
@@ -230,9 +221,8 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
     from fleetledger import attempts, ghscopes, github, ops, signins
     from fleetledger.overlay import HOST_RE
     from fleetledger.seed.shiptoml import TIMEZONE_RE, known_timezone
-    from fleetledger.web import setup
 
-    name = _one(fields, "name") or next_name(inv)
+    name = one(fields, "name") or next_name(inv)
     if not NAME_RE.match(name):
         raise FleetError("A Ship name uses a-z, 0-9 and -, up to 31 characters.")
     if inv is not None and inv.has_ship(name):
@@ -241,18 +231,18 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
                          or f"{name} is already in the inventory: choose another name.")
     out = ["new", name]
 
-    raw_tags = _one(fields, "tag").replace(",", " ").split()
+    raw_tags = one(fields, "tag").replace(",", " ").split()
     for tag in raw_tags:
         if not ops.TAG_RE.match(tag):
             raise FleetError(f"'{tag}' is not a tag: a-z, 0-9 and -, up to 31 characters.")
         out += ["--tag", tag]
 
-    size = setup.size_from_form(fields)  # lifecycle.check_size: the size contract
+    size = size_from_form(fields)  # lifecycle.check_size: the size contract
     flags = {"cores": "--cores", "memory_mb": "--memory-mb", "disk_gb": "--disk-gb"}
     for key, value in size.items():
         out += [flags[key], str(value)]
 
-    chosen = signins.check(fields.get("signin", []) if _one(fields, "signins_shown")
+    chosen = signins.check(fields.get("signin", []) if one(fields, "signins_shown")
                            else list(signins.CHOICES))
     if chosen != list(signins.CHOICES):
         out += ["--signins", ",".join(chosen)]
@@ -260,19 +250,19 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
     if scopes:
         out += ["--github-scopes", ",".join(scopes)]
 
-    if _one(fields, "agent_on") == "yes":
-        agent, cwd = _one(fields, "agent") or "main", _one(fields, "cwd") or "~/work"
-        mode = _one(fields, "agent_mode") if advanced else ""
+    if one(fields, "agent_on") == "yes":
+        agent, cwd = one(fields, "agent") or "main", one(fields, "cwd") or "~/work"
+        mode = one(fields, "agent_mode") if advanced else ""
         if mode and mode not in MODES:
             raise FleetError("The first agent's mode is not one Claude Code has.")
         first = f"{agent}:{cwd}" + (f":{mode}" if mode else "")
         ops.parse_autostart_change("autostart.add", first)
         out += ["--autostart", first]
-        if _one(fields, "repo"):
-            out += ["--repo", github.check_name(_one(fields, "repo"))]
-        if advanced and _one(fields, "prompt"):
-            out += ["--autostart-prompt", _one(fields, "prompt")[:4000]]
-    if _one(fields, "overlay") != "yes":
+        if one(fields, "repo"):
+            out += ["--repo", github.check_name(one(fields, "repo"))]
+        if advanced and one(fields, "prompt"):
+            out += ["--autostart-prompt", one(fields, "prompt")[:4000]]
+    if one(fields, "overlay") != "yes":
         out.append("--no-overlay")
 
     if advanced:
@@ -283,17 +273,17 @@ def argv(fields: dict[str, list[str]], app, inv, *, advanced: bool = True
 def _advanced(fields, app, inv, host_re, timezone_re, known_timezone) -> list[str]:
     out: list[str] = []
     picked = choices(app, inv)
-    driver = _one(fields, "driver")
+    driver = one(fields, "driver")
     if driver:
         if driver not in picked.drivers:
             raise FleetError("Where it runs: not one of the choices.")
         out += ["--driver", driver]
-    image = _one(fields, "image")
+    image = one(fields, "image")
     if image and image != picked.image:
         if image not in images_for(inv, driver or picked.driver):  # the driver chosen here
             raise FleetError("Base image: not one of the images published there.")
         out += ["--image", image]
-    vmid = _one(fields, "vmid")
+    vmid = one(fields, "vmid")
     if vmid:
         if not vmid.isdigit() or not 100 <= int(vmid) <= 999999999:
             raise FleetError("VM id: a whole number, 100 or more.")
@@ -303,21 +293,21 @@ def _advanced(fields, app, inv, host_re, timezone_re, known_timezone) -> list[st
         if not host_re.match(host):
             raise FleetError(f"'{host}' is not a host name or address.")
         out += ["--host", host]
-    mode = _one(fields, "mode")
+    mode = one(fields, "mode")
     if mode and mode != picked.mode:
         if mode not in MODES:
             raise FleetError("Default permission mode: not one Claude Code has.")
         out += ["--mode", mode]
-    if _one(fields, "allow_bypass") == "yes":
+    if one(fields, "allow_bypass") == "yes":
         out.append("--allow-bypass")
-    if _one(fields, "agent_sudo") == "yes":
+    if one(fields, "agent_sudo") == "yes":
         out.append("--agent-sudo")
-    zone = _one(fields, "timezone")
+    zone = one(fields, "timezone")
     if zone and zone != picked.timezone:
         if not (timezone_re.match(zone) and known_timezone(zone)):
             raise FleetError("Time zone: an IANA name such as Europe/Berlin.")
         out += ["--timezone", zone]
-    if _one(fields, "tools_shown"):
+    if one(fields, "tools_shown"):
         known = {t for t, _, _ in picked.tools}
         ticked = [t for t in fields.get("tool", []) if t in known]
         if len(ticked) != len(fields.get("tool", [])):
@@ -428,7 +418,7 @@ def confirm_token(attempt) -> str:
 def check_confirmed(fields: dict[str, list[str]], clearing_: list) -> list[str]:
     """Raise FleetError unless the confirmed dialog named every attempt in clearing_
     (nothing on the hypervisor is removed that it did not name); returns their names."""
-    confirmed = set(fields.get("clear_left", [])) if _one(fields, "confirm") == "yes" else set()
+    confirmed = set(fields.get("clear_left", [])) if one(fields, "confirm") == "yes" else set()
     unasked = [a for a in clearing_ if confirm_token(a) not in confirmed]
     if unasked:
         raise FleetError(
@@ -442,5 +432,5 @@ def retry_of(fields: dict[str, list[str]]):
     """The saved attempt a posted form retries, if any (attempts.py)."""
     from fleetledger import attempts
 
-    name = _one(fields, "retry_of")
+    name = one(fields, "retry_of")
     return attempts.get(name) if name and NAME_RE.match(name) else None
