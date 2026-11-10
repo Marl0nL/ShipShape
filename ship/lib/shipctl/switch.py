@@ -209,7 +209,7 @@ class Switch:
                                 "allows, so it would come back in another mode; restart it "
                                 "in another mode first")
                 continue
-            if not record._folder_exists(ctx, e["cwd"]):
+            if not record.folder_exists(ctx, e["cwd"]):
                 problems.append(f"{name}: its folder {e['cwd']} is not there")
                 continue
             if a["state"] in UNSETTLED:
@@ -240,9 +240,8 @@ class Switch:
         sessions, places = record.ledger_sessions(ctx), self.old.places()
         since, autostart = record.boot_started(ctx), {a["name"] for a in self.ship.autostart}
         for name in gone:
-            why = record._stopped_on_purpose(doc["agents"][name], sessions, places, since)
+            why = record.let_go_exited(doc, name, sessions, places, since, autostart)
             if why:
-                record._stop(doc, name, autostart)
                 self.notes.append(f"{name} stopped ({why}); not moved")
         self.save()
 
@@ -634,7 +633,7 @@ def attention(block: dict | None) -> list[tuple[str, str, str]]:
         what = (f"The switch from {sw['from']} to {sw['to']} failed and was not rolled back "
                 "cleanly" if sw["from"] != sw["to"] else f"{sw['to']} could not be put right")
         return [("runtime-switch-failed", f"{what}: {sw['message']}", "runtime")]
-    age = record._age_s(sw["at"])
+    age = record.age_s(sw["at"])
     if sw["outcome"] == "in-progress" and age is not None and age > UNFINISHED_S:
         return [("runtime-switch-unfinished", f"A switch from {sw['from']} to {sw['to']} "
                  f"stopped part way ({sw['message']}). Run ship-ctl runtime switch "
