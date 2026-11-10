@@ -139,6 +139,28 @@ def test_ssh_listen_overlay_after_joining(ov):
     assert status["settings"]["network"]["ssh_listen"] == "overlay"
 
 
+
+def test_a_listen_policy_sshd_refuses_is_removed(ov):
+    assert ov.ctl(*JOIN, input=KEY)[0] == 0
+    assert ov.ctl("apply", "--json")[0] == 0  # the certificate files are settled first
+    reload = ["systemctl", "try-reload-or-restart", "ssh.service"]
+    reloads = ov.calls("systemctl").count(reload)
+    ov.set(sshd_refuses="/etc/ssh/sshd_config.d/20-shipshape-listen.conf line 3: Bad option")
+    code, doc, out = ov.ctl("set", "network.ssh_listen=overlay", "--json")
+    assert code != 0, out
+    assert doc["error"]["message"] == "sshd rejected the listen policy; it was removed"
+    assert not ov.p("/etc/ssh/sshd_config.d/20-shipshape-listen.conf").exists()
+    assert ov.calls("systemctl").count(reload) == reloads  # sshd is not reloaded
+
+
+def test_a_new_listen_policy_is_checked_and_sshd_reloaded(ov):
+    assert ov.ctl(*JOIN, input=KEY)[0] == 0
+    assert ov.ctl("set", "network.ssh_listen=overlay", "--json")[0] == 0
+    sshd = [c for c in ov.calls() if c[0] == "sshd"]
+    assert sshd and sshd[-1][:2] == ["sshd", "-t"]
+    assert ["systemctl", "try-reload-or-restart", "ssh.service"] in ov.calls("systemctl")
+
+
 def test_leave_listens_everywhere_first(ov):
     assert ov.ctl(*JOIN, input=KEY)[0] == 0
     assert ov.ctl("set", "network.ssh_listen=overlay", "--json")[0] == 0
