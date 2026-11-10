@@ -84,8 +84,9 @@ reaches `needs-sign-in` and signs in, destroy it, then `image use <id>`.
 
 ## Rebuild
 
-One command, whenever `versions.toml` or `ship-provision` changes, or to pick up
-Ubuntu's latest packages:
+One command, whenever `versions.toml` or `ship-provision` changes (an image baked
+before the disk-backed `/tmp` gives new Ships an in-memory `/tmp` until their first
+reboot), or to pick up Ubuntu's latest packages:
 
 ```sh
 ship-fleet image build && ship-fleet image publish <new id> && ship-fleet image use <new id>

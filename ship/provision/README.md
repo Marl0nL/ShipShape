@@ -78,4 +78,6 @@ the pinned-key check). Real-VM runs happen through the phase 0 harness and W11.
 - `/tmp` after a converge, then a reboot: before it, `findmnt /tmp` still shows the
   tmpfs and agents keep working; after it, `findmnt /tmp` shows nothing (a folder of
   `/`), `stat -c %a /tmp` is 1777, `systemctl is-enabled tmp.mount` says `masked`,
-  and services with `PrivateTmp=yes` still start.
+  and services with `PrivateTmp=yes` still start. `/tmp` now keeps its files across
+  reboots: check that sockets left there from before the reboot (tmux's, Claude
+  Code's) do not stop agents or herdr from coming back.
