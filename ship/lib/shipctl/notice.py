@@ -34,7 +34,7 @@ READY_STATES = ("idle", "working", "done")
 _UNSAFE = re.compile(r"[^A-Za-z0-9@._+-]")
 
 
-def record(ctx: Context, message: str, what: str = "notify-signin") -> None:
+def journal(ctx: Context, message: str, what: str = "notify-signin") -> None:
     """Into the Ship's journal (`ship-ctl logs system`), however ship-ctl was run:
     over SSH its stderr goes back to FleetLedger, not to the journal."""
     ctx.log(message)
@@ -65,20 +65,32 @@ def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]
     data: dict = {"service": service, "account": None, "sent": [], "skipped": []}
     if not signincheck.signed_in(entry):
         msg = f"{label} is not signed in on this Ship; no notice sent."
-        record(ctx, f"{service}: {msg}")
+        journal(ctx, f"{service}: {msg}")
         return data, [msg]
     account = clean_account(entry.get("account"))
     data["account"] = account
     line = text(label, account)
 
+    note, messages = broadcast(ctx, ship, line, data, label)
+    if note:
+        journal(ctx, f"{service}: {note}")
+    else:
+        journal(ctx, f"{service} as {account or 'unknown'}: " + " ".join(messages))
+    return data, messages
+
+
+def broadcast(
+    ctx: Context, ship: ShipToml, line: str, data: dict, label: str
+) -> tuple[str | None, list[str]]:
+    """send_to_cores, plus the lines that report it. Returns (note, messages): note
+    says why nothing was tried (then it is the only message), else None and the
+    "LABEL notice sent to: ..." line with one "NAME: not sent (REASON)." per skip."""
     note = send_to_cores(ctx, ship, line, data)
     if note:
-        record(ctx, f"{service}: {note}")
-        return data, [note]
+        return note, [note]
     messages = [f"{label} notice sent to: {', '.join(data['sent']) or 'none'}."]
     messages += [f"{s['name']}: not sent ({s['reason']})." for s in data["skipped"]]
-    record(ctx, f"{service} as {account or 'unknown'}: " + " ".join(messages))
-    return data, messages
+    return None, messages
 
 
 def send_to_cores(ctx: Context, ship: ShipToml, line: str, data: dict) -> str | None:

@@ -95,7 +95,7 @@ def _finish(ctx: Context, boot: str, data: dict, message: str) -> tuple[dict, li
     keep = {"boot_id": boot, "at": utc_now(), **{k: data[k] for k in
                                                  ("outcome", "agent", "tries", "reason")}}
     write_atomic(ctx.paths.state / FILE, json.dumps(keep, indent=2) + "\n", 0o644)
-    notice.record(ctx, message, WHAT)
+    notice.journal(ctx, message, WHAT)
     return data, [message]
 
 
