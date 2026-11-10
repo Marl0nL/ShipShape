@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", metavar="OWNER/NAME",
                    help="a GitHub repo for the first agent to work in: cloned into "
                    "~/work/NAME first (a private one after the GitHub sign-in)")
-    p.add_argument("--signins", metavar="claude,gcloud,github",
+    p.add_argument("--signins", metavar=",".join(signinreg.registry().choices),
                    help="the sign-ins it uses (default: all); see ship-fleet signins")
     p.add_argument("--github-scopes", metavar="workflow,...",
                    help="extra GitHub scopes its GitHub sign-in asks for (default: none, "
@@ -290,7 +290,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", metavar="NAME,NAME", help="exactly these (empty: none)")
     p.add_argument("--tag", help="list: only Ships with this tag")
     p.add_argument("--service", metavar="SERVICE",
-                   help="list: only this service (claude, gcloud, gcloud_adc, github)")
+                   help="list: only this service "
+                   f"({', '.join(signinreg.registry().service_keys)})")
     p.add_argument("--group", choices=("action", "underway", "degraded", "healthy", "off"),
                    help="list: only this group (action: what needs you)")
     p.add_argument("--json", action="store_true", help="list: print JSON")

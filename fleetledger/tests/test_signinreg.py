@@ -160,3 +160,10 @@ def test_a_sign_in_needs_an_id_ships_toml_can_name(tmp_path):
                                                             'id = "example-docs"'))
     with pytest.raises(ConfigError, match="'example-docs' is not a sign-in id"):
         signinreg.build(folder)
+
+
+def test_a_misshapen_signin_table_is_a_config_error(tmp_path):
+    folder = _copy(tmp_path)
+    (folder / "exampledocs.toml").write_text(EXTRA.replace("order = 0\n", ""))
+    with pytest.raises(ConfigError, match="lacks or misshapes 'order'"):
+        signinreg.build(folder)

@@ -127,6 +127,15 @@ def _read(path: Path) -> dict:
 
 def build(folder: Path = PROVIDERS_DIR) -> Registry:
     """The registry from a folder of provider files."""
+    try:
+        return _build(folder)
+    except (KeyError, TypeError) as exc:
+        # The provider schema (concierge/providers.py) says what a file needs.
+        raise ConfigError(f"{folder}: a provider file lacks or misshapes {exc} "
+                          "(see concierge/providers.py SCHEMA).") from exc
+
+
+def _build(folder: Path) -> Registry:
     docs = {p.stem: _read(p) for p in sorted(folder.glob("*.toml"))}
     own: list[tuple[int, str, dict]] = []
     parts: dict[str, list[str]] = {}
