@@ -13,9 +13,11 @@ machines (docs/hygiene.md).
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from pathlib import Path
+from typing import Any
 
 
 def _base(env: str, xdg: str, fallback: str, leaf: str = "fleetledger") -> Path:
@@ -118,6 +120,16 @@ def runtime_socket(name: str, hint: str, *, per_home: bool = False) -> Path:
         home = hashlib.sha256(str(runtime_dir()).encode("utf-8")).hexdigest()[:12]
         return folder / f"{home}-{name}"
     return folder / name
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    """A JSON object kept in a state file, or None when there is none: missing,
+    unreadable, not UTF-8, not JSON, or JSON that is not an object."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # ValueError: JSONDecodeError and UnicodeDecodeError
+        return None
+    return doc if isinstance(doc, dict) else None
 
 
 def write_private(path: Path, data: bytes) -> None:

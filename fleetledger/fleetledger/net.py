@@ -58,28 +58,19 @@ def _stamp(when: datetime) -> str:
 
 
 # --- cache -------------------------------------------------------------------------
-def _read(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
 def _write(path: Path, doc: Any) -> None:
     paths.private_dir(path.parent)
     paths.write_private(path, json.dumps(doc, separators=(",", ":")).encode("utf-8"))
 
 
 def cached_summary(name: str) -> dict[str, Any] | None:
-    doc = _read(net_dir() / f"{name}.json")
-    return doc if isinstance(doc, dict) and schemas.is_valid("net-summary", doc) else None
+    doc = paths.read_json(net_dir() / f"{name}.json")
+    return doc if doc is not None and schemas.is_valid("net-summary", doc) else None
 
 
 def seen_ledger() -> dict[str, Any]:
     """{"ships": {ship: {destination: first seen}}, "fleet": {destination: {...}}}."""
-    doc = _read(net_dir() / "seen.json")
-    if not isinstance(doc, dict):
-        doc = {}
+    doc = paths.read_json(net_dir() / "seen.json") or {}
     doc.setdefault("ships", {})
     doc.setdefault("fleet", {})
     return doc

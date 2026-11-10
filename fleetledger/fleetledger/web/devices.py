@@ -186,11 +186,8 @@ class Devices:
 
     @staticmethod
     def _read(path: Path, kind: type) -> list[Any]:
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return []  # missing or unreadable: nothing in it (fail closed)
-        items = doc.get("items") if isinstance(doc, dict) and doc.get("schema") == 1 else None
+        doc = paths.read_json(path) or {}  # missing or unreadable: nothing in it (fail closed)
+        items = doc.get("items") if doc.get("schema") == 1 else None
         names = {f.name for f in fields(kind)}
         out = []
         for item in items if isinstance(items, list) else []:

@@ -440,11 +440,8 @@ MACHINE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 
 def this_computer() -> dict | None:
     """{"machine": name, "identity": path} once this computer is trusted; else None."""
-    try:
-        doc = json.loads((paths.config_dir() / THIS_COMPUTER).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(doc, dict) or not MACHINE_RE.match(str(doc.get("machine", ""))):
+    doc = paths.read_json(paths.config_dir() / THIS_COMPUTER)
+    if doc is None or not MACHINE_RE.match(str(doc.get("machine", ""))):
         return None
     return doc
 

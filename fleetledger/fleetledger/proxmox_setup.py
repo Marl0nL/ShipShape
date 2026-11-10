@@ -271,14 +271,9 @@ def _progress_path() -> Path:
 def _load_progress() -> dict[str, Any]:
     """What a partial run confirmed (no secret): kept so the next run does not ask
     again, and so a certificate that changes in between is noticed."""
-    import json
-
-    try:
-        doc = json.loads(_progress_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    doc = paths.read_json(_progress_path()) or {}
     keys = ("api_url", "tls_fingerprint", "token_id")
-    return {k: doc[k] for k in keys if isinstance(doc, dict) and isinstance(doc.get(k), str)}
+    return {k: doc[k] for k in keys if isinstance(doc.get(k), str)}
 
 
 def _save_progress(config: Mapping[str, Any]) -> None:
