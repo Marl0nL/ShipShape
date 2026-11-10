@@ -1220,10 +1220,8 @@ def _store_secret(kind: str, where: str, value: str, store_kind: str,
     elif kind == "keyring":
         keyring(where, lambda: secret_store.store_in_keyring(where, value))
     else:
-        secret_store.refuse_file(kind)
         path = Path(where)
-        paths.private_dir(path.parent)
-        paths.write_private(path, (value + "\n").encode("utf-8"))
+        secret_store.write_file(path, value, kind)
         undo.append(lambda: path.unlink(missing_ok=True))
 
 

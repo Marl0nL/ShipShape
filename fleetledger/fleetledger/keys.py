@@ -96,10 +96,7 @@ def store_passphrase(key: Path, passphrase: str, store: str) -> None:
     if store == "keyring":
         secret_store.store_in_keyring(item(key), passphrase, SWITCH_HINT)
         return
-    secret_store.refuse_file(f"the passphrase for {key.name}")
-    target = passphrase_file(key)
-    paths.private_dir(target.parent)
-    paths.write_private(target, (passphrase + "\n").encode("utf-8"))
+    secret_store.write_file(passphrase_file(key), passphrase, f"the passphrase for {key.name}")
 
 
 def read_passphrase(key: Path, store: str) -> str:
