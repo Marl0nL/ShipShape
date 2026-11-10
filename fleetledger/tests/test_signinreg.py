@@ -197,8 +197,10 @@ from shipctl import signins as ship_signins  # noqa: E402 - the Ship's registry
 
 SHIP_SCHEMA = signinreg.SIGNINS_DIR.parents[0] / "schemas" / "signin.schema.json"
 
-# A sign-in with two status keys whose order ties a built-in's (broken by id), and the
-# flow that signs in its second key alone: the shapes a toolkit's files can take.
+# The shapes a toolkit's files can take: a sign-in with two status keys, listed out of
+# alphabetical order, whose `order` puts it after a built-in it sorts before by id; the
+# flow that signs in one of its keys alone; and a sign-in whose `order` ties a
+# built-in's (the tie is broken by id).
 TWO_KEYS = """\
 schema = 1
 id = "exampledocs"
@@ -209,7 +211,7 @@ timeout = 300
 
 [signin]
 label = "Example Docs"
-order = 2
+order = 4
 
 [match]
 url = 'https://auth\\.example\\.com/device'
@@ -217,14 +219,14 @@ code = 'code: (\\S+)'
 success = 'signed in'
 
 [[check]]
-service = "exampledocs"
-run = "example-cli auth status"
-account = "stdout"
-
-[[check]]
 service = "exampledocs_api"
 short = "API"
 run = "example-cli api status"
+
+[[check]]
+service = "exampledocs"
+run = "example-cli auth status"
+account = "stdout"
 
 [status]
 run = "example-cli auth status --json"
@@ -259,6 +261,32 @@ run = "example-cli api logout"
 """
 
 
+TIED = """\
+schema = 1
+id = "zeta"
+label = "Zeta"
+mode = "device-code"
+run = "zeta-cli login"
+timeout = 300
+
+[signin]
+label = "Zeta"
+order = 1
+
+[match]
+url = 'https://zeta\\.example\\.com/device'
+code = 'code: (\\S+)'
+success = 'signed in'
+
+[status]
+run = "zeta-cli status --json"
+ok_json = "signed_in"
+
+[logout]
+run = "zeta-cli logout"
+"""
+
+
 def _both_sides(folder: Path) -> None:
     fl = signinreg.build(folder)
     ship = ship_signins.build(folder, SHIP_SCHEMA)
@@ -285,6 +313,7 @@ def test_the_ship_derives_the_same_status_keys_for_new_files(tmp_path):
     folder = _copy(tmp_path)
     (folder / "exampledocs.toml").write_text(TWO_KEYS)
     (folder / "exampledocs-api.toml").write_text(API_PART)
+    (folder / "zeta.toml").write_text(TIED)
     assert signinreg.build(folder).service_keys == (
-        "claude", "exampledocs", "exampledocs_api", "gcloud", "gcloud_adc", "github")
+        "claude", "zeta", "gcloud", "gcloud_adc", "github", "exampledocs_api", "exampledocs")
     _both_sides(folder)
