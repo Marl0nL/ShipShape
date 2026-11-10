@@ -4,7 +4,6 @@ keyring. Nothing here touches your own agent, keys or keyring."""
 from __future__ import annotations
 
 import os
-import signal
 import stat
 import subprocess
 
@@ -17,20 +16,10 @@ from test_secret_store import fake_backend
 from fleetledger import keys
 
 
-def _agent(sock):
-    out = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
-                         check=True, timeout=10).stdout
-    return int(out.split("SSH_AGENT_PID=")[1].split(";")[0])
-
-
 @pytest.fixture
-def agent(tmp_path, monkeypatch):
+def agent(ssh_agent):
     """A private ssh-agent for this test only."""
-    sock = tmp_path / "agent.sock"
-    pid = _agent(sock)
-    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
-    yield sock
-    os.kill(pid, signal.SIGTERM)
+    return ssh_agent()
 
 
 @pytest.fixture
@@ -172,19 +161,25 @@ def test_without_an_inventory_table_nothing_is_managed(home, ring, agent, tmp_pa
     assert keys.ensure_loaded(TomlFileStore(path).load()) == []
 
 
-def test_fleetledger_starts_its_own_agent_when_none_answers(home, ring, monkeypatch, tmp_path):
+def test_fleetledger_starts_its_own_agent_when_none_answers(home, ring, monkeypatch, tmp_path,
+                                                           short_dir):
+    # A runtime folder short enough for the agent's socket: under a long TMPDIR, home's
+    # would not be, and FleetLedger would put its agent in the shared /tmp folder.
+    runtime = short_dir / "run"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(runtime))
     monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "nothing-here.sock"))
     admin = tmp_path / "ssh" / "admin"
     keys.make(admin, "admin", "keyring")
     inv = inventory_with(home, tmp_path, "keyring", admin)
+    sock = runtime / "agent.sock"
     try:
         assert keys.ensure_loaded(inv) == ["admin"]
-        sock = home / "run" / "agent.sock"
         assert os.environ["SSH_AUTH_SOCK"] == str(sock)
-        assert stat.S_IMODE((home / "run").stat().st_mode) == 0o700
+        assert stat.S_IMODE(runtime.stat().st_mode) == 0o700
         assert keys.fingerprint(admin) in held()
     finally:
-        subprocess.run(["pkill", "-f", f"ssh-agent -a {home / 'run' / 'agent.sock'}"])
+        subprocess.run(["pkill", "-f", f"ssh-agent -a {sock}"])
 
 
 def _key_with(path, passphrase):

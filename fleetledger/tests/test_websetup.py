@@ -693,32 +693,17 @@ def test_bringing_keys_asks_plainly_who_looks_after_their_passphrases(ws, tmp_pa
     assert not ws.store.exists() and "Choose who looks after" in page(ws)
 
 
-def _agent_at(sock):
-    out = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
-                         check=True, timeout=10).stdout
-    return int(out.split("SSH_AGENT_PID=")[1].split(";")[0])
-
-
 @pytest.mark.parametrize("gnome", [True, False])
-def test_gnomes_agent_listing_your_key_is_not_taken_as_loaded(partway, tmp_path, monkeypatch,
+def test_gnomes_agent_listing_your_key_is_not_taken_as_loaded(partway, short_dir, ssh_agent,
                                                                gnome):
     """GNOME's agent lists every ~/.ssh key with a .pub whether it holds it or not, and
     asks for the passphrase in a pop-up when one is used: the page cannot tell, so it
     says so. (A real agent here, holding the key, stands in for that list.)"""
-    import os
-    import signal
-
-    folder = tmp_path / ("keyring" if gnome else "agent")
+    folder = short_dir / ("keyring" if gnome else "agent")
     folder.mkdir(mode=0o700)
-    sock = folder / ("ssh" if gnome else "agent.sock")
-    pid = _agent_at(sock)
-    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
-    try:
-        keys.add_to_agent(partway.user_home / ".ssh" / "shipshape_fleet_ed25519",
-                          "chosen by them")
-        text = page(partway)
-    finally:
-        os.kill(pid, signal.SIGTERM)
+    ssh_agent(folder / ("ssh" if gnome else "agent.sock"))
+    keys.add_to_agent(partway.user_home / ".ssh" / "shipshape_fleet_ed25519", "chosen by them")
+    text = page(partway)
     assert ("Making a Ship needs your fleet admin key" in text) is gnome
     assert ("pop-up" in text) is gnome
 

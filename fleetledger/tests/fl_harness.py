@@ -7,7 +7,10 @@ conftest.py only defines the fixtures. ship/tests does the same with ship_harnes
 
 from __future__ import annotations
 
+import socket
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +24,55 @@ def keygen(path: Path, comment: str) -> Path:
         capture_output=True,
     )
     return path
+
+
+def short_folder() -> Path:
+    """A new private folder under /tmp, short enough for Unix socket paths (about 108
+    bytes), whatever TMPDIR is. The short_dir fixture removes it again."""
+    return Path(tempfile.mkdtemp(prefix="fl-", dir="/tmp"))
+
+
+def _answers(sock: Path) -> bool:
+    """Something listens on the socket: it exists a moment before ssh-agent listens."""
+    with socket.socket(socket.AF_UNIX) as s:
+        try:
+            s.connect(str(sock))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False
+    return True
+
+
+class SSHAgents:
+    """Private ssh-agents run as child processes (ssh-agent -D), so they can always be
+    stopped: nothing outlives the test."""
+
+    def __init__(self):
+        self.procs: list[subprocess.Popen] = []
+
+    def start(self, sock: Path) -> Path:
+        proc = subprocess.Popen(["ssh-agent", "-D", "-a", str(sock)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.procs.append(proc)
+        deadline = time.monotonic() + 10
+        while not _answers(sock):
+            if proc.poll() is not None:
+                raise RuntimeError(f"ssh-agent did not start: {proc.stderr.read()!r}")
+            if time.monotonic() > deadline:
+                raise RuntimeError("ssh-agent did not answer on its socket in 10 s")
+            time.sleep(0.01)
+        return sock
+
+    def stop_all(self) -> None:
+        for proc in self.procs:
+            proc.terminate()
+        for proc in self.procs:
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            proc.stderr.close()
+        self.procs.clear()
 
 
 class NoKeyring:

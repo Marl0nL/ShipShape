@@ -469,32 +469,22 @@ def test_passphrase_and_recovery_on_the_command_line(store, home):
     vault.unlock(code, recovery=True)
 
 
-def test_locking_takes_the_managed_keys_out_of_ssh_agent(store, home, tmp_path, monkeypatch):
-    import os
-    import signal
-
-    sock = tmp_path / "agent.sock"
-    started = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
-                             check=True, timeout=10).stdout
-    pid = int(started.split("SSH_AGENT_PID=")[1].split(";")[0])
-    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+def test_locking_takes_the_managed_keys_out_of_ssh_agent(store, home, monkeypatch, ssh_agent):
+    ssh_agent()
     monkeypatch.setattr(keys, "_ADDED", {})
-    try:
-        vault.create(PASS)
-        path = home / "ssh" / "fleet_admin"
-        keys.make(path, "admin", "keyring")
-        with store.edit() as ed:
-            keys.record(ed, "keyring", [str(path)])
+    vault.create(PASS)
+    path = home / "ssh" / "fleet_admin"
+    keys.make(path, "admin", "keyring")
+    with store.edit() as ed:
+        keys.record(ed, "keyring", [str(path)])
+    keys.ensure_loaded(store.load())
+    held = lambda: subprocess.run(["ssh-add", "-l"], capture_output=True,  # noqa: E731
+                                  text=True).stdout
+    assert keys.fingerprint(path) in held()
+    assert cli.main(["vault", "lock"], app_for(store)[0]) == 0
+    assert keys.fingerprint(path) not in held()
+    with pytest.raises(vault.Locked):
         keys.ensure_loaded(store.load())
-        held = lambda: subprocess.run(["ssh-add", "-l"], capture_output=True,  # noqa: E731
-                                      text=True).stdout
-        assert keys.fingerprint(path) in held()
-        assert cli.main(["vault", "lock"], app_for(store)[0]) == 0
-        assert keys.fingerprint(path) not in held()
-        with pytest.raises(vault.Locked):
-            keys.ensure_loaded(store.load())
-    finally:
-        os.kill(pid, signal.SIGTERM)
 
 
 # --- the web UI ----------------------------------------------------------------------------

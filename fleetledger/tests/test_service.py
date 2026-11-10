@@ -27,17 +27,10 @@ from fleetledger import cli, service
 
 
 @pytest.fixture
-def runtime(monkeypatch):
+def runtime(monkeypatch, short_dir):
     """A short private runtime folder (a Unix socket path must be short)."""
-    import tempfile
-
-    folder = Path(tempfile.mkdtemp(prefix="fl-"))
-    os.chmod(folder, 0o700)
-    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(folder))
-    yield folder
-    for f in folder.iterdir():
-        f.unlink()
-    folder.rmdir()
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(short_dir))
+    return short_dir
 
 
 @pytest.fixture

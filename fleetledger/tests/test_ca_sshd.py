@@ -22,7 +22,6 @@ import os
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -44,11 +43,10 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def setup(store, home, tmp_path, monkeypatch):
+def setup(store, home, tmp_path, monkeypatch, short_dir):
     if not os.access(SSHD, os.X_OK):
         pytest.skip("no sshd binary (set FLEETLEDGER_TEST_SSHD)")
-    runtime = Path(tempfile.mkdtemp(prefix="fl-", dir="/tmp"))
-    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(short_dir))
     d = tmp_path / "sshd"
     d.mkdir()
     cakeys = ca.CAConfig(keygen(d / "host_ca", "host-ca"), keygen(d / "user_ca", "user-ca"))
@@ -91,7 +89,6 @@ def setup(store, home, tmp_path, monkeypatch):
     yield {"dir": d, "port": port, "ca": cakeys, "inv": inv, "ship": ship}
     proc.terminate()
     proc.wait(timeout=5)
-    shutil.rmtree(runtime, ignore_errors=True)
 
 
 def _login(s, key: Path, cert: str | None) -> subprocess.CompletedProcess:
