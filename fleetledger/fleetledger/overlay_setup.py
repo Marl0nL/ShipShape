@@ -334,8 +334,7 @@ def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, stor
         if from_file is not None:
             from_file.unlink(missing_ok=True)
     else:
-        paths.private_dir(secret_path.parent)
-        paths.write_private(secret_path, (secret + "\n").encode("utf-8"))
+        secret_store.write_file(secret_path, secret, "the OAuth secret")
         kept = f"in {secret_path} (0600)"
     config = {"provider": "tailscale", "tags": ["tag:ship"], "key_source": "tailscale-api",
               "api": api_cfg}

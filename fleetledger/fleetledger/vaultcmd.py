@@ -401,6 +401,8 @@ def move_out(app, store, store_kind: str) -> list[str]:
                     continue
                 raise ConfigError(f"{paths.tilde(target)} is there already, holding something "
                                   "else; not writing over it. Nothing was changed.")
+            # Not secret_store.write_file: the vault is still on here, and turning it
+            # off is the one time secrets leave it for files (write_file would refuse).
             paths.private_dir(target.parent)
             paths.write_private(target, (value + "\n").encode("utf-8"))
             written.append(target)

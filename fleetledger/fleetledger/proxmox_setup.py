@@ -383,9 +383,7 @@ def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused:
         return f"{secret_store.keyring_label()} ({secret_store.SERVICE} / {item})"
     path = secret_path or paths.config_dir() / SECRET_FILE
     if not reused:
-        secret_store.refuse_file("the Proxmox token")
-        paths.private_dir(path.parent)
-        paths.write_private(path, (secret + "\n").encode("utf-8"))
+        secret_store.write_file(path, secret, "the Proxmox token")
     config["token_file"] = paths.tilde(path)
     config.pop("token_store", None)
     config.pop("keyring_item", None)

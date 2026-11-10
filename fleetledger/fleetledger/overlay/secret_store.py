@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import stat
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from fleetledger import paths
@@ -106,6 +107,14 @@ def refuse_file(what: str) -> None:
                           "a file.", hint="Choose the keyring store (with the vault on, "
                           "that is the vault), or turn the vault off first: ship-fleet "
                           "vault off.")
+
+
+def write_file(path: Path, secret: str, what: str) -> None:
+    """Keep a secret in a file of its own (mode 0600, in a 0700 folder), ending in a
+    newline as read_file expects. Refused while the vault is on (refuse_file)."""
+    refuse_file(what)
+    paths.private_dir(path.parent)
+    paths.write_private(path, (secret + "\n").encode("utf-8"))
 
 
 def os_backend() -> tuple[Any | None, str]:

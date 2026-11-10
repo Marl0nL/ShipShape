@@ -261,3 +261,20 @@ def test_stored_names_is_unknown_where_the_keyring_cannot_list(use):
 def test_stored_names_is_empty_when_nothing_is_stored(use):
     use(fake_backend())
     assert secret_store.stored_names("tailscale-oauth:") == []
+
+
+def test_write_file_writes_0600_with_a_newline(tmp_path):
+    path = tmp_path / "new" / "secret"
+    secret_store.write_file(path, "s3cret-value", "the test secret")
+    assert path.read_bytes() == b"s3cret-value\n"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert secret_store.read_file(str(path), "the test secret") == "s3cret-value"
+
+
+def test_write_file_refuses_while_the_vault_is_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(secret_store, "vault_on", lambda: True)
+    path = tmp_path / "secret"
+    with pytest.raises(ConfigError, match="so the test secret goes in it, never in a file"):
+        secret_store.write_file(path, "s3cret-value", "the test secret")
+    assert not path.exists()
