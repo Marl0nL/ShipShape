@@ -1,0 +1,26 @@
+# herdr-core for the agent user, on Ships with ship.toml runtime = "core"
+# (contracts/ship-runtime.md). Installed in /etc/systemd/user (root-owned) and
+# enabled by ship-provision instead of herdr.service on those Ships.
+#
+# It only starts the core, early and with the Ship's environment. The core runs
+# itself as a transient user unit and keeps running after this one has finished.
+# Agents do not depend on its environment (they start through
+# /opt/shipshape/bin/agent-launch), and the agent record brings them back: the
+# status refresh after a boot relaunches every recorded agent (ship-ctl.md, "The
+# agent record"). Nothing here stops the core: `hc server stop` ends every agent.
+[Unit]
+Description=herdr-core (ShipShape)
+Documentation=https://herdr.dev
+ConditionUser=agent
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=npm_config_prefix=%h/.local
+EnvironmentFile=-%h/.config/shipshape/env
+WorkingDirectory=%h
+ExecStart=/usr/local/bin/hc server start
+
+[Install]
+WantedBy=default.target

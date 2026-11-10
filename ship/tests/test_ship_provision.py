@@ -235,8 +235,13 @@ def test_user_units():
     text = (FILES / "systemd/user/herdr.service").read_text()
     assert "Environment=PATH=%h/.local/bin:" in text and "shim" not in text
     assert herdr["Install"]["WantedBy"] == "default.target"
-    # herdr is the only user unit: ship-ctl resumes agents from its record.
-    assert sorted(p.name for p in (FILES / "systemd/user").iterdir()) == ["herdr.service"]
+    # herdr's server, and herdr-core's for core Ships: ship-ctl resumes agents from its record.
+    assert sorted(p.name for p in (FILES / "systemd/user").iterdir()) == [
+        "herdr.service", "ship-core.service"]
+    core = unit(FILES / "systemd/user/ship-core.service")
+    assert core["Unit"]["ConditionUser"] == "agent"
+    assert core["Service"]["ExecStart"] == "/usr/local/bin/hc server start"
+    assert core["Install"]["WantedBy"] == "default.target"
 
 
 def test_status_timer():
@@ -427,6 +432,35 @@ def test_units_are_enabled(tmp_path):
     provision("--first-boot", "--root", str(tmp_path))
     assert (tmp_path / "etc/systemd/system/timers.target.wants/ship-status.timer").is_symlink()
     wants = tmp_path / "etc/systemd/user/default.target.wants"
+    assert sorted(p.name for p in wants.iterdir()) == ["herdr.service"]
+
+
+def test_the_agent_launcher_is_installed(tmp_path):
+    provision("--converge", "--root", str(tmp_path))
+    launcher = tmp_path / "opt/shipshape/bin/agent-launch"
+    assert mode(launcher) == "0o755"
+    assert launcher.read_bytes() == (FILES / "bin/agent-launch").read_bytes()
+    assert (tmp_path / "etc/systemd/user/ship-core.service").exists()
+
+
+def test_a_core_ship_starts_herdr_core_at_boot_not_herdr(tmp_path):
+    """ship.toml runtime = "core": ship-core.service is enabled instead of herdr.service
+    (both stay installed), and back again when it says herdr."""
+    if shutil.which("systemctl") is None:
+        pytest.skip("needs systemctl")
+    provision("--first-boot", "--root", str(tmp_path))
+    wants = tmp_path / "etc/systemd/user/default.target.wants"
+    toml = tmp_path / "etc/shipshape/ship.toml"
+    toml.write_text('schema = 1\nruntime = "core"\n\n[ship]\nname = "ship-01"\n'
+                    'id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"\n')
+    r = provision("--converge", "--root", str(tmp_path))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert sorted(p.name for p in wants.iterdir()) == ["ship-core.service"]
+    assert (tmp_path / "etc/systemd/user/herdr.service").exists()
+    again = provision("--converge", "--root", str(tmp_path))
+    assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
+    toml.write_text(toml.read_text().replace('runtime = "core"\n', ""))
+    provision("--converge", "--root", str(tmp_path))
     assert sorted(p.name for p in wants.iterdir()) == ["herdr.service"]
 
 

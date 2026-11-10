@@ -93,7 +93,7 @@ def send_to_cores(ctx: Context, ship: ShipToml, line: str, data: dict) -> str | 
     if agent_record.resume_pending(ctx):
         data["skipped"] = [{"name": name, "reason": "resume-pending"} for name in cores]
         return "This boot's resume is not done yet; no notice sent."
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)
     _, live, _ = rt.agents()
     doc = agent_record.load(ctx)
     for name in cores:

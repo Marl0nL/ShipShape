@@ -10,6 +10,7 @@ prompt, and goes into the record.
 
 from __future__ import annotations
 
+import copy
 import json
 
 from . import naming, record
@@ -140,7 +141,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
         skipped = [{"name": e["name"], "reason": state} for e in entries]
         return {"started": [], "skipped": skipped}, [], []
 
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)
     server, live, _ = rt.agents()
     if server != "running" or live is None:
         raise CtlError("herdr-unavailable", "the herdr server is not answering")
@@ -183,26 +184,36 @@ def run(ctx: Context, ship: ShipToml, state: str,
                 ctx.runner.run(["mkdir", "-p", cwd], timeout=10, agent=True)
             else:
                 ensure_dir(ctx.paths.p(cwd))
-            pane, workspace, why = rt.new_place(cwd, name)
-            if not pane:
-                failures += 1
-                skipped.append({"name": name, "reason": why})
-                continue
             mode = entry.get("mode") or ship.claude["default_mode"]
             session = naming.session_name(ship, name)
+            prompt = entry.get("prompt") or DEFAULT_PROMPT
             if named is None:
                 named = naming.name_flag_supported(ctx)
-            ok, why = rt.start(name, pane, [*mode_args(mode), *naming.launch_args(session, named)])
-            if not ok:
+            sid, chosen = record.new_session(rt)
+            before = copy.deepcopy(doc["agents"].get(name))
+            if sid:  # the record has the session before the agent starts
+                record.launched(ctx, rt, doc, name, cwd=cwd, place=None, workspace=None,
+                                session=sid, mode=mode, origin="autostart", prompt=prompt,
+                                session_name=session)
+                record.save(ctx, doc)
+            done = rt.launch(name, cwd, [*mode_args(mode), *naming.launch_args(session, named),
+                                         *chosen], settled=False)
+            if not done["ok"]:
+                if sid:  # back as it was: nothing started
+                    if before is None:
+                        del doc["agents"][name]
+                    else:
+                        doc["agents"][name] = before
                 failures += 1
-                skipped.append({"name": name, "reason": f"agent start failed: {why}"})
+                why = done["why"]
+                skipped.append({"name": name, "reason": why if done["step"] == "place"
+                                else f"agent start failed: {why}"})
                 continue
             started.append(name)
-            prompt = entry.get("prompt") or DEFAULT_PROMPT
-            back = rt.in_place(pane, name) or {}
-            record.launched(ctx, rt, doc, name, cwd=cwd, place=pane,
-                            workspace=back.get("workspace") or workspace,
-                            session=back.get("session"), mode=mode, origin="autostart",
+            back = rt.in_place(done["place"], name) or {}
+            record.launched(ctx, rt, doc, name, cwd=cwd, place=done["place"],
+                            workspace=back.get("workspace") or done["workspace"],
+                            session=back.get("session") or sid, mode=mode, origin="autostart",
                             prompt=prompt, session_name=session)
             sent, why = rt.prompt(name, prompt)
             if not sent:

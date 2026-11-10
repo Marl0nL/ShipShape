@@ -129,7 +129,7 @@ def restart(ctx: Context, ship: ShipToml, names: list[str], *, everyone: bool = 
         raise CtlError("usage", "name the agents to restart, or give --all")
     if mode is not None:
         _check_mode(ship, mode)
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)
     server, live, _ = rt.agents()
     if server != "running" or live is None:
         raise CtlError("herdr-unavailable", "the herdr server is not answering")
@@ -232,10 +232,21 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
                 continue
             if not fresh:  # stopped: from now on the session is in its new mode
                 record_mode(ctx, session, new_mode)
-            args = [*mode_args(new_mode), *(fresh_args(name) if fresh else ["--resume", session])]
-            ok, why = rt.start_settled(name, place, args)
-            back = rt.in_place(place, name)
+            sid, chosen = record.new_session(rt) if fresh else (None, [])
+            args = [*mode_args(new_mode), *(fresh_args(name) if fresh else ["--resume", session]),
+                    *chosen]
             cwd = a["cwd"] or (rec or {}).get("cwd")
+            was_session = (rec or {}).get("session")
+            if sid and rec is not None:  # the record has the new session before it starts
+                rec["session"] = sid
+                record.save(ctx, doc)
+            # In place: herdr's pane; on herdr-core the agent's terminal, else a new one.
+            done = rt.launch(name, cwd or "", args, place, a["workspace"])
+            ok, why = done["ok"], done["why"]
+            place = done["place"] or place
+            back = rt.in_place(place, name)
+            if not ok and back is None and sid and rec is not None:
+                rec["session"] = was_session
             if not ok and back is None:
                 failed += 1
                 skipped.append({"name": name, "reason": f"stopped, but did not start again: {why}"})
@@ -252,7 +263,7 @@ def _restart_all(ctx, ship, rt, doc, targets, skipped, *, mode, fresh, force):
                                     origin=rec["origin"])
                     rec["relaunch"].update(last_error=why[:200])
                 continue
-            new_session = (back or {}).get("session") or (None if fresh else session)
+            new_session = (back or {}).get("session") or sid or (None if fresh else session)
             if new_session and (fresh or new_session != session):
                 record_mode(ctx, new_session, new_mode)
             if cwd:

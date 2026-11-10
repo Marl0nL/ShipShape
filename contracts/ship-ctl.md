@@ -61,7 +61,7 @@ How fields are worked out:
 | `auth.gcloud` | `gcloud auth list --filter=status:ACTIVE --format="value(account)"` as `agent`. |
 | `auth.gcloud_adc` | `gcloud auth application-default print-access-token` as `agent`, output discarded: exit 0 gives `ok`. `account` may be null. |
 | `auth.github` | `gh auth status --hostname github.com` as `agent`; `account` is the login it reports; `scopes` the token's scopes it lists (`Token scopes:`), sorted, or null when it lists none. |
-| `herdr` | `herdr --version` and `herdr agent list` as `agent`. `mode` comes from the mode ledger for the agent's session, else from the agent record. `last_resume` is the agent record's last resume after a boot, with `method` `api-fallback` (ship-ctl started the recorded agents again through herdr's API); until a Ship's first boot on tooling with the record, the one ship-resume recorded (`hidden-client`). |
+| `herdr` | What runs the agents, `runtime` saying which (ship.toml `runtime`, `settings.md`). `herdr`: `herdr --version` and `herdr agent list` as `agent`. `core`: `hc --version`, `hc ls` and `hc get` as `agent`; an agent is a live terminal Claude reports from (or one ShipShape started that is not back at a shell), `pane` its address (`t3`), `state` Claude's own word (`unknown` until it reports), and a `blocked` one has `blocked_kind` and `message` (attention `agent-waiting` names them); `server` is the core. `mode` comes from the mode ledger for the agent's session, else from the agent record. `last_resume` is the agent record's last resume after a boot, with `method` `api-fallback` (ship-ctl started the recorded agents again through herdr's API); until a Ship's first boot on tooling with the record, the one ship-resume recorded (`hidden-client`). |
 | `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed tries this boot, and the last boot's resume (`method` `ship-ctl`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
@@ -308,6 +308,46 @@ layout, each pane a shell in its folder under its old id.
   `autostart`, `agent restart` and `agent forget` wait for it at most 60 seconds
   (a boot's resume can hold it for a while), then fail with `agent-busy`, saying
   why; nothing has been touched.
+
+#### On herdr-core Ships
+
+With ship.toml `runtime = "core"` the record works the same through herdr-core
+(`hc`, `ship/lib/shipctl/runtime.py` `Core`), and herdr's units are not started:
+
+- **Launch:** every agent starts with `hc run --bg --keep --name <name> --cwd
+  <folder> --label shipshape.session=<session> --label herdr.space=shipshape
+  --label herdr.tab=<name> -- /opt/shipshape/bin/agent-launch <mode flag>
+  --resume <session>`. The launcher sets the Ship's PATH and npm prefix and loads
+  `~/.config/shipshape/env`, then runs `claude`: nothing relies on the core's own
+  environment (a laptop's `hc` may have started it over a bare SSH login). A new
+  conversation (autostart, `restart --fresh`) gets `--session-id <uuid>` chosen by
+  ship-ctl and written to the record before it starts. Claude Code 2.1.295 or newer
+  is needed (it reports its state to herdr-core); an older one starts nothing.
+- **After a boot** `ship-core.service` starts the core, and the status refresh's
+  pass runs as on herdr, for each recorded agent: one live and running Claude is
+  left alone; a kept terminal (back under its address and name, first with no
+  program, then a shell) gets `exec /opt/shipshape/bin/agent-launch <mode flag>
+  --resume <session>` typed into it once its shell is there, so it keeps its
+  address; one that is gone gets `hc run` as above. hc's `name_taken` means it runs
+  already, which is not a failure.
+- **Crash policy:** the same pass. An agent killed by a signal leaves its kept
+  terminal at a shell, and the launch is typed into it; one that ended with an exit
+  code leaves its terminal finished, and runs in a new one (the finished one is
+  removed). All agents can die at once (one holder process carries every terminal):
+  each comes back the same way.
+- **Which session a terminal runs** comes from the mode-ledger hook, which records
+  each session's terminal address (`$HC_TERMINAL_ID`) as it starts, so the record
+  follows `/clear` and a Claude restarted by hand there, as on herdr; the
+  `shipshape.session` label is the session it was started with. A launch typed
+  into a kept shell is labelled `shipshape.launching` and never typed again within
+  2 minutes, even if the shell is slow to run it.
+- **Changing the runtime** in ship.toml while agents run: an agent that ran this
+  boot under the other runtime may still run there, so neither runtime starts it
+  (its state is `unknown`) until the next boot, when only the new one starts and
+  resumes it.
+- **Stopping** is graceful only (`hc keys esc`, `ctrl+c`, `hc send /exit`). ship-ctl
+  never calls `hc kill` or `hc server stop`: both end agents. Notices and first
+  prompts use `hc send`, never `--force`, so a blocked agent is not typed into.
 
 ### `ship-ctl notify-signin SERVICE [--json]`
 

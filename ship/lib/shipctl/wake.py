@@ -107,7 +107,7 @@ def _try(ctx: Context, ship: ShipToml, text: str) -> tuple[str | None, str | Non
     name, _ = agent_record.primary(doc, ship)
     if name is None:
         return None, "no-primary"
-    rt = for_ship(ctx)
+    rt = for_ship(ctx, ship)  # herdr's server or herdr-core (ship.toml runtime)
     _, live, _ = rt.agents()
     if live is None:
         return name, "runtime-not-answering"

@@ -164,6 +164,24 @@ the delay ("10 minutes"); `ship-ctl set wake.text=` (empty) goes back to this on
   gives up for this boot. Each outcome is one line in the Ship's journal
   (`ship-ctl logs system`, `wake: ...`).
 
+## The agent runtime
+
+`runtime` (top level, `herdr` when unset) chooses what runs the Ship's agents:
+
+- `herdr`: the herdr server (`herdr.service`), as Ships have always run.
+- `core`: herdr-core (`hc`, `ship-core.service`). Each agent runs in a kept
+  terminal, labelled for the herdr desktop app (one space, `shipshape`, a tab per
+  agent), started through `/opt/shipshape/bin/agent-launch`; agents report their
+  own state; Claude Code 2.1.295 or newer is needed. ship-provision enables
+  `ship-core.service` instead of `herdr.service` at boot; both stay installed, and
+  `session.resume_agents_on_restore` stays false either way.
+
+Agents continue their sessions across a change of runtime (the agent record has
+each one's session and mode; `ship-ctl.md`, "On herdr-core Ships"), from the next
+boot: until then an agent that ran under the other runtime is started by neither. Moving a live
+Ship between the two is a later verb; until then the setting is for new Ships and
+trial Ships.
+
 ## Permission modes across reboots
 
 Claude Code restores a resumed session's permission mode, except bypass, which it
@@ -181,7 +199,10 @@ and that agent's mode flag (`ship-ctl.md`, "The agent record"):
   `resume`, `logout`, `prompt_input_exit`, `other`), until the session starts again;
   that tells an agent someone exited from one that crashed. `SessionStart` also
   records `started_at`: the session runs under these hooks, so its end will be
-  recorded (Claude Code reads its hooks when a session starts). The ledger:
+  recorded (Claude Code reads its hooks when a session starts). In a herdr-core
+  terminal `SessionStart` records the terminal's address as `terminal`
+  (`$HC_TERMINAL_ID`, e.g. `t3`): which session each core terminal runs now. The
+  ledger:
 
   ```json
   { "schema": "shipshape.modes/1",

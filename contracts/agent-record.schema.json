@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.shipshape.invalid/agent-record.schema.json",
   "title": "Agent record (/var/lib/shipshape/agents.json, version 1)",
-  "description": "ShipShape's own record of the Claude agents a Ship keeps running: written only by ship-ctl (root), read by ship-ctl. It, not the runtime, decides which agents resume after a boot and which start again after a crash, so the runtime underneath (herdr's server today) can change without losing them. See contracts/ship-ctl.md, \"The agent record\". FleetLedger sees it through the status document's agent_record block, never this file.",
+  "description": "ShipShape's own record of the Claude agents a Ship keeps running: written only by ship-ctl (root), read by ship-ctl. It, not the runtime, decides which agents resume after a boot and which start again after a crash, so the runtime underneath (herdr's server, or herdr-core on a Ship with ship.toml runtime = \"core\") can change without losing them. See contracts/ship-ctl.md, \"The agent record\". FleetLedger sees it through the status document's agent_record block, never this file.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
     },
     "runtime": {
       "type": "string",
-      "description": "What runs the agents: herdr (its server, 0.9)."
+      "description": "What runs the agents: herdr (its server, 0.9) or core (herdr-core), following ship.toml runtime."
     },
     "agents": {
       "type": "object",
@@ -149,7 +149,7 @@
           "description": "running: resumed at boot, started again when it dies. stopped: it was exited on purpose (an adopted agent leaves the record instead)."
         },
         "place": {
-          "description": "Where it last ran: opaque to everything but the runtime adapter (herdr: its pane id).",
+          "description": "Where it last ran: opaque to everything but the runtime adapter (herdr: its pane id; herdr-core: its terminal address). A place of the other runtime (from before the Ship's runtime changed) is no place: the agent starts in a new one.",
           "oneOf": [
             {
               "type": "null"
