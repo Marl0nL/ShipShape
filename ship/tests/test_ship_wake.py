@@ -18,10 +18,6 @@ LINE = ("Your Ship rebooted 10 minutes ago. Make sure you've resumed any backgro
         "crews may have been interrupted by the reboot too.")
 
 
-def prompts(ship) -> list[list[str]]:
-    return ship.scenario()["herdr"].get("prompts", [])
-
-
 def uptime(ship, seconds: float) -> None:
     ship.p("/proc/uptime").write_text(f"{seconds} 1.0\n")
 
@@ -37,14 +33,6 @@ def wake(ship) -> dict:
 def wake_lines(ship) -> list[str]:
     return [e["message"] for e in ship.scenario().get("logged", [])
             if e["message"].startswith("wake: ")]
-
-
-def set_state(ship, name: str, state: str) -> None:
-    s = ship.scenario()
-    for a in s["herdr"]["agents"]:
-        if a.get("name") == name:
-            a["agent_status"] = state
-    ship.set(herdr=s["herdr"])
 
 
 @pytest.fixture
@@ -76,7 +64,7 @@ def test_off_by_default_sends_nothing(booted):
     assert "ship-wake.timer" not in ship.scenario().get("enabled_units", [])
     assert not ship.p(DROP_IN).exists()
     assert wake(ship)["outcome"] == "off"
-    assert prompts(ship) == []
+    assert ship.prompts() == []
     assert not ship.p(WAKE).exists()  # turned on later this boot, it can still run
 
 
@@ -103,7 +91,7 @@ def test_on_sends_once_to_the_primary(booted):
     turn_on(ship)
     data = wake(ship)
     assert data == {"outcome": "sent", "agent": "main", "tries": 1, "reason": None}
-    assert prompts(ship) == [["main", LINE]]
+    assert ship.prompts() == [["main", LINE]]
     assert wake_lines(ship) == ["wake: sent to the primary agent main."]
     assert ship.json(WAKE)["outcome"] == "sent"
 
@@ -116,7 +104,7 @@ def test_a_second_run_in_the_same_boot_sends_nothing(booted):
     assert wake(ship)["outcome"] == "already-done"
     ship.ctl("refresh")
     assert wake(ship)["outcome"] == "already-done"
-    assert prompts(ship) == [["main", LINE]]
+    assert ship.prompts() == [["main", LINE]]
 
 
 def test_the_next_boot_sends_again(booted):
@@ -128,7 +116,7 @@ def test_the_next_boot_sends_again(booted):
     assert rc == 0, out
     uptime(ship, 610)
     assert wake(ship)["outcome"] == "sent"
-    assert [p[0] for p in prompts(ship)] == ["main", "main"]
+    assert [p[0] for p in ship.prompts()] == ["main", "main"]
 
 
 def test_delay_and_text_are_set_and_rendered(booted):
@@ -139,7 +127,7 @@ def test_delay_and_text_are_set_and_rendered(booted):
     assert status["settings"]["wake"] == {"after_boot": True, "delay_minutes": 2,
                                           "text": "Back up {delay} after a reboot: check."}
     assert wake(ship)["outcome"] == "sent"
-    assert prompts(ship) == [["main", "Back up 2 minutes after a reboot: check."]]
+    assert ship.prompts() == [["main", "Back up 2 minutes after a reboot: check."]]
 
 
 def test_a_text_with_a_line_break_is_refused(booted):
@@ -158,7 +146,7 @@ def test_before_the_delay_or_long_after_nothing_is_sent(booted):
     assert not ship.p(WAKE).exists()
     uptime(ship, 4000)  # the timer was enabled or moved late in the boot
     assert wake(ship)["outcome"] == "late"
-    assert prompts(ship) == []
+    assert ship.prompts() == []
     assert wake(ship)["outcome"] == "already-done"
 
 
@@ -176,7 +164,7 @@ def test_a_marked_primary_gets_it(booted):
     assert status["agent_record"]["primary"] == {"name": "grinder", "marked": True}
     turn_on(ship)
     assert wake(ship)["agent"] == "grinder"
-    assert [p[0] for p in prompts(ship)] == ["grinder"]
+    assert [p[0] for p in ship.prompts()] == ["grinder"]
 
 
 def test_only_one_primary_and_clear(booted):
@@ -203,7 +191,7 @@ def test_without_a_primary_it_logs_and_sends_nothing(ship):
     uptime(ship, 605)
     data = wake(ship)
     assert data["outcome"] == "no-primary" and data["agent"] is None
-    assert prompts(ship) == []
+    assert ship.prompts() == []
     assert len(wake_lines(ship)) == 1 and "no primary agent" in wake_lines(ship)[0]
     assert ship.ctl("status", "--json")[1]["agent_record"]["primary"] is None
 
@@ -213,22 +201,22 @@ def test_a_blocked_primary_is_retried_then_given_up(booted):
     """Text and Enter could answer its permission prompt: never typed into."""
     ship = booted
     turn_on(ship)
-    set_state(ship, "main", "blocked")
+    ship.set_state("main", "blocked")
     data = wake(ship)
     assert data == {"outcome": "gave-up", "agent": "main", "tries": 6,
                     "reason": "waiting-for-permission"}
-    assert prompts(ship) == []
+    assert ship.prompts() == []
     assert wake_lines(ship) == ["wake: not sent to the primary agent main after 6 tries "
                                 "(waiting-for-permission); gave up."]
-    set_state(ship, "main", "idle")
+    ship.set_state("main", "idle")
     assert wake(ship)["outcome"] == "already-done"  # given up for this boot
-    assert prompts(ship) == []
+    assert ship.prompts() == []
 
 
 def test_an_agent_in_an_unknown_state_or_not_running_is_not_typed_into(booted):
     ship = booted
     turn_on(ship)
-    set_state(ship, "main", "unknown")
+    ship.set_state("main", "unknown")
     assert wake(ship)["reason"] == "not-ready"
     ship.reboot(uptime=40)
     ship.ctl("refresh")
@@ -240,7 +228,7 @@ def test_an_agent_in_an_unknown_state_or_not_running_is_not_typed_into(booted):
     data = wake(ship)
     assert data["outcome"] == "gave-up"
     assert data["reason"] == "not-running"
-    assert prompts(ship) == []
+    assert ship.prompts() == []
 
 
 def test_it_waits_for_this_boots_resume(booted):
@@ -249,4 +237,4 @@ def test_it_waits_for_this_boots_resume(booted):
     ship.reboot(uptime=65)  # no refresh yet: the resume is not done
     data = wake(ship)
     assert data["outcome"] == "gave-up" and data["reason"] == "resume-pending"
-    assert prompts(ship) == []
+    assert ship.prompts() == []

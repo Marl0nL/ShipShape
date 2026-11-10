@@ -13,17 +13,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from ship_harness import PROVISION, provision
 
 SHIP = Path(__file__).resolve().parents[1]
-PROVISION = SHIP / "provision" / "ship-provision"
 FILES = SHIP / "files"
-
-
-def provision(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
-    full = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", **(env or {})}
-    return subprocess.run(
-        [str(PROVISION), *args], env=full, capture_output=True, text=True, timeout=60
-    )
 
 
 def mode(path: Path) -> str:

@@ -35,13 +35,6 @@ def launched(ship, name: str) -> list[str]:
     return ship.terminal(name)["claude_args"]
 
 
-def status(ship) -> dict:
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert rc == 0
-    assert_valid("ship-status", doc)
-    return doc
-
-
 def never_killed(ship) -> None:
     """Nothing ended an agent the hard way, and nothing typed into a blocked one."""
     assert not hc(ship).get("forbidden"), hc(ship).get("forbidden")
@@ -68,14 +61,14 @@ def test_herdr_stays_the_default_and_never_meets_hc(ship):
     ship.ctl("refresh")
     assert {a["name"] for a in ship.scenario()["herdr"]["agents"]} == {"main", "grinder"}
     assert ship.calls("hc") == []
-    doc = status(ship)
+    doc = ship.status()
     assert doc["herdr"]["runtime"] == "herdr" and doc["agent_record"]["runtime"] == "herdr"
     assert ship.record()["runtime"] == "herdr"
 
 
 def test_a_core_ship_never_meets_herdr(core):
     ship = core
-    status(ship)
+    ship.status()
     assert ship.calls("herdr") == []
     assert ship.record()["runtime"] == "core"
 
@@ -140,7 +133,7 @@ def test_status_maps_claudes_own_state(core):
     ship = core
     ship.core_status("main", "blocked", "permission", "approve Bash: curl -sI https://example.com")
     ship.core_status("grinder", None)  # not reporting yet
-    doc = status(ship)
+    doc = ship.status()
     herdr = doc["herdr"]
     assert herdr["runtime"] == "core" and herdr["server"] == "running"
     assert herdr["version"] == "0.1.19"
@@ -168,14 +161,14 @@ def test_terminals_that_are_not_agents_are_not_listed(core):
         "state": "live", "keep": False, "status": None,
         "foreground": {"pid": 9, "name": "vim", "argv": ["vim"], "cwd": "/tmp"}})
     ship.set(hc=s["hc"])
-    assert {a["name"] for a in status(ship)["herdr"]["agents"]} == {"main", "grinder"}
+    assert {a["name"] for a in ship.status()["herdr"]["agents"]} == {"main", "grinder"}
     assert "scratch" not in ship.record()["agents"]
 
 
 def test_status_says_when_hc_is_missing(core):
     ship = core
     os.unlink(Path(ship.env["PATH"].split(":")[0]) / "hc")
-    doc = status(ship)
+    doc = ship.status()
     assert doc["herdr"]["server"] == "unknown" and doc["herdr"]["agents"] == []
     assert "herdr-core: not installed" in doc["errors"]
     assert {a["state"] for a in doc["agent_record"]["agents"]} == {"unknown"}
@@ -190,7 +183,7 @@ def test_after_a_reboot_each_kept_terminal_gets_its_agent_back(core):
     before = {t["name"]: t["address"] for t in ship.terminals()}
     sids = {n: e["session"] for n, e in ship.record()["agents"].items()}
     ship.core_reboot(recover_in=10)
-    assert {a["state"] for a in status(ship)["agent_record"]["agents"]} == {"starting"}
+    assert {a["state"] for a in ship.status()["agent_record"]["agents"]} == {"starting"}
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert "agent record: main started again, continuing its session." in out
@@ -203,7 +196,7 @@ def test_after_a_reboot_each_kept_terminal_gets_its_agent_back(core):
     assert {t["name"]: t["address"] for t in ship.terminals()} == before
     assert len(runs(ship)) == 2  # only the first boot's
     assert ship.terminal("main")["labels"]["shipshape.session"] == sids["main"]
-    doc = status(ship)
+    doc = ship.status()
     assert doc["agent_record"]["resume"]["resumed"] == 2
     assert {a["state"] for a in doc["agent_record"]["agents"]} == {"running"}
     assert {a["name"]: a["mode"] for a in doc["herdr"]["agents"]} == {
@@ -327,7 +320,7 @@ def test_attention_after_three_failed_relaunches(core):
     first = len(runs(ship))
     ship.ctl("refresh")  # left alone
     assert len(runs(ship)) == first
-    doc = status(ship)
+    doc = ship.status()
     main = {a["name"]: a for a in doc["agent_record"]["agents"]}["main"]
     assert main["state"] == "failed" and main["relaunch_failures"] == 3
     assert "exited at once" in main["last_error"]
@@ -346,7 +339,7 @@ def test_restart_is_graceful_and_never_kills(core):
     main = ship.terminal("main")
     assert main["address"] != old  # /exit finished the old terminal
     assert main["claude_args"] == ["--permission-mode", "acceptEdits", "--resume", sid]
-    assert {a["name"]: a["mode"] for a in status(ship)["herdr"]["agents"]} == {
+    assert {a["name"]: a["mode"] for a in ship.status()["herdr"]["agents"]} == {
         "main": "acceptEdits", "grinder": "bypassPermissions"}
     never_killed(ship)
 
@@ -457,7 +450,7 @@ def test_a_terminal_still_running_the_launcher_is_never_typed_into(core):
             t.update(status=None, foreground={"pid": 7, "name": "sh", "cwd": t["cwd"],
                                               "argv": ["/bin/sh", LAUNCHER, "--resume", "x"]})
     ship.set(hc=s["hc"])
-    assert {a["name"]: a["state"] for a in status(ship)["herdr"]["agents"]}["main"] == "unknown"
+    assert {a["name"]: a["state"] for a in ship.status()["herdr"]["agents"]}["main"] == "unknown"
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert not [x for x in hc(ship).get("sent", []) if "exec " in x[1]]
@@ -507,7 +500,7 @@ def test_the_record_follows_clear_and_resumes_in_the_new_sessions_mode(core):
     ship = core
     old = ship.record()["agents"]["grinder"]["session"]
     ship.core_clear("grinder", "sess-cleared", "plan")
-    agents = {a["name"]: a for a in status(ship)["herdr"]["agents"]}
+    agents = {a["name"]: a for a in ship.status()["herdr"]["agents"]}
     assert agents["grinder"]["mode"] == "plan"
     ship.ctl("refresh")
     assert ship.record()["agents"]["grinder"]["session"] == "sess-cleared"
@@ -571,7 +564,7 @@ def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
     assert runs(ship) == [] and len(ship.scenario()["herdr"]["agents"]) == 2
     rc, doc, _ = ship.ctl("autostart", "--json")
     assert runs(ship) == []
-    assert {a["state"] for a in status(ship)["agent_record"]["agents"]} == {"unknown"}
+    assert {a["state"] for a in ship.status()["agent_record"]["agents"]} == {"unknown"}
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc != 0 and runs(ship) == []
     ship.reboot()
@@ -599,7 +592,7 @@ def test_one_failed_hc_get_never_stops_or_drops_a_live_agent(core):
     assert after["want"] == "running" and after["origin"] == before["origin"] == "autostart"
     assert after["prompt"] == before["prompt"]
     assert len(runs(ship)) == 2
-    doc = status(ship)
+    doc = ship.status()
     assert doc["herdr"]["agents"] == [] and "hc get t1: no answer" in doc["errors"]
 
 
@@ -628,7 +621,7 @@ def test_another_program_in_a_kept_terminal_is_not_claude(core):
             t.update(status=None, foreground={"pid": 5, "name": "vim", "argv": ["vim", "x"],
                                               "cwd": t["cwd"]})
     ship.set(hc=s["hc"])
-    doc = status(ship)
+    doc = ship.status()
     assert "main" not in {a["name"] for a in doc["herdr"]["agents"]}
     assert {a["name"]: a["state"] for a in doc["agent_record"]["agents"]}["main"] == "starting"
     ship.ctl("refresh")
@@ -675,11 +668,11 @@ def test_core_restart_pending_when_the_core_runs_an_old_binary(core, tmp_path):
     old = tmp_path / "old-core"
     old.write_text("old herdr-core")
     _fake_process(ship, 4300, ["/usr/local/bin/herdr-core", "hold", "--socket", "x"], old)
-    assert "core-restart-pending" not in _codes(status(ship))
+    assert "core-restart-pending" not in _codes(ship.status())
     _fake_process(ship, 4301, ["/usr/local/bin/herdr-core", "serve"], installed)
-    assert "core-restart-pending" not in _codes(status(ship))
+    assert "core-restart-pending" not in _codes(ship.status())
     _fake_process(ship, 4302, ["/usr/local/bin/herdr-core", "serve"], old)
-    doc = status(ship)
+    doc = ship.status()
     [item] = [a for a in doc["attention"] if a["code"] == "core-restart-pending"]
     assert item["subject"] == "herdr-core" and "Agents are not affected" in item["message"]
     assert "herdr-restart-pending" not in _codes(doc)
@@ -693,7 +686,7 @@ def test_an_old_herdr_server_is_still_herdr_restart_pending_not_core(ship, tmp_p
     old = tmp_path / "old"
     old.write_text("old")
     _fake_process(ship, 4400, ["/usr/local/bin/herdr", "server"], old)
-    codes = _codes(status(ship))
+    codes = _codes(ship.status())
     assert "herdr-restart-pending" in codes and "core-restart-pending" not in codes
 
 

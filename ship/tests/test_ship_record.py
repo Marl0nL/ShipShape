@@ -27,15 +27,8 @@ def starts(ship) -> list[list[str]]:
     return [c for c in ship.calls("herdr") if c[1:3] == ["agent", "start"]]
 
 
-def status(ship) -> dict:
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert rc == 0
-    assert_valid("ship-status", doc)
-    return doc
-
-
 def recorded(ship) -> dict[str, dict]:
-    return {a["name"]: a for a in status(ship)["agent_record"]["agents"]}
+    return {a["name"]: a for a in ship.status()["agent_record"]["agents"]}
 
 
 def add_live(ship, name, session, cwd, pane, mode=None, kind="claude", watched=True):
@@ -112,7 +105,7 @@ def test_after_a_reboot_the_refresh_resumes_every_agent_in_its_folder_and_mode(s
     assert len(ship.scenario()["herdr"]["workspaces"]) == 2
     assert [p for p in ship.scenario()["herdr"]["prompts"]] == [
         ["main", "Get oriented."], ["grinder", "Get oriented and ready to work."]]  # boot 1
-    doc = status(ship)
+    doc = ship.status()
     assert {a["name"]: a["mode"] for a in doc["herdr"]["agents"]} == {
         "main": "auto", "grinder": "bypassPermissions"}
     assert doc["herdr"]["last_resume"]["method"] == "api-fallback"
@@ -271,7 +264,7 @@ def test_after_three_failed_tries_it_is_left_alone_with_attention(started):
         ship.ctl("refresh")
     # Its first start, then two failed starts (each tried twice), then it is let be.
     assert len([c for c in starts(ship) if c[3] == "grinder"]) == 1 + 2 * 2
-    doc = status(ship)
+    doc = ship.status()
     grinder = next(a for a in doc["agent_record"]["agents"] if a["name"] == "grinder")
     assert grinder["state"] == "failed" and grinder["relaunch_failures"] == 3
     assert grinder["last_error"] == "agent_not_ready"
@@ -288,7 +281,7 @@ def test_after_three_failed_tries_it_is_left_alone_with_attention(started):
     assert ship.agent("grinder")["args"] == ["--permission-mode", "dontAsk",
                                              "--resume", "sess-grinder"]
     assert ship.record()["agents"]["grinder"]["mode"] == "dontAsk"
-    assert "agent-relaunch-failed" not in {a["code"] for a in status(ship)["attention"]}
+    assert "agent-relaunch-failed" not in {a["code"] for a in ship.status()["attention"]}
 
 
 def test_an_agent_that_keeps_dying_soon_after_it_starts_is_not_started_forever(started):
@@ -303,7 +296,7 @@ def test_an_agent_that_keeps_dying_soon_after_it_starts_is_not_started_forever(s
     assert grinder["state"] == "failed" and grinder["relaunch_failures"] == 3
     assert grinder["last_error"].startswith("it stopped ") and "after it started" in (
         grinder["last_error"])
-    assert "agent-relaunch-failed" in {a["code"] for a in status(ship)["attention"]}
+    assert "agent-relaunch-failed" in {a["code"] for a in ship.status()["attention"]}
 
 
 def age_launch(ship, name: str, minutes: int) -> None:
@@ -388,7 +381,7 @@ def test_a_lost_conversation_counts_as_a_failed_start(started):
     ship.reboot()
     ship.ctl("refresh")
     assert "main" not in args(ship) and "grinder" in args(ship)
-    assert status(ship)["herdr"]["last_resume"] == {
+    assert ship.status()["herdr"]["last_resume"] == {
         "at": ship.record()["resume"]["at"], "method": "api-fallback", "resumed": 1,
         "failed": 1}
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
@@ -627,7 +620,7 @@ def old_ship(ship):
 def test_an_update_records_what_runs_and_a_reboot_brings_it_back_in_its_modes(ship, tmp_path):
     ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
     old_ship(ship)
-    before = {a["pane"]: a["mode"] for a in status(ship)["herdr"]["agents"]}
+    before = {a["pane"]: a["mode"] for a in ship.status()["herdr"]["agents"]}
     assert before == {"w1:p1": "auto", "w2:p1": "bypassPermissions",
                       "w3:p1": "bypassPermissions"}
 
@@ -647,7 +640,7 @@ def test_an_update_records_what_runs_and_a_reboot_brings_it_back_in_its_modes(sh
     assert not ship.p("/var/lib/shipshape/autostart.json").exists()
     cfg = ship.p("/home/agent/.config/herdr/config.toml").read_text()
     assert "resume_agents_on_restore = false" in cfg  # from the next boot, ship-ctl resumes
-    assert status(ship)["herdr"]["last_resume"] is None
+    assert ship.status()["herdr"]["last_resume"] is None
 
     # The reboot that follows: herdr brings its panes back empty; the refresh resumes.
     ship.reboot()
@@ -659,7 +652,7 @@ def test_an_update_records_what_runs_and_a_reboot_brings_it_back_in_its_modes(sh
         "helper": ["--dangerously-skip-permissions", "--resume", "sess-helper"],
     }
     assert not [c for c in ship.calls("herdr") if c[1:3] == ["workspace", "create"]]
-    doc = status(ship)
+    doc = ship.status()
     after = {a["pane"]: a["mode"] for a in doc["herdr"]["agents"]}
     assert after == before
     assert {a["name"]: a["mode"] for a in doc["herdr"]["agents"]} == {

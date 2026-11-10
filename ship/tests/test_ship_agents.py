@@ -36,14 +36,6 @@ def agent(ship, name: str) -> dict:
     return next(a for a in ship.scenario()["herdr"]["agents"] if a["name"] == name)
 
 
-def set_state(ship, name: str, state: str) -> None:
-    s = ship.scenario()
-    for a in s["herdr"]["agents"]:
-        if a["name"] == name:
-            a["agent_status"] = state
-    (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
-
-
 def status_modes(ship) -> dict[str, str]:
     rc, doc, _ = ship.ctl("status", "--json")
     return {a["name"]: a["mode"] for a in doc["herdr"]["agents"]}
@@ -117,7 +109,7 @@ def test_bypass_is_refused_where_it_is_not_allowed(running):
 
 def test_a_working_agent_is_left_alone_unless_forced(running):
     ship = running
-    set_state(ship, "main", "working")
+    ship.set_state("main", "working")
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--mode", "acceptEdits", "--json")
     assert rc == 1
     assert_valid("ship-ctl-result", doc)
@@ -140,7 +132,7 @@ def test_a_working_agent_is_left_alone_unless_forced(running):
 
 def test_a_waiting_agent_has_its_question_dismissed_and_says_so(running):
     ship = running
-    set_state(ship, "main", "blocked")
+    ship.set_state("main", "blocked")
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 0, doc
     assert any("its open question was dismissed" in m for m in doc["messages"])
@@ -267,7 +259,7 @@ def test_exit_waits_until_escape_has_dismissed_the_question(running):
     s = ship.scenario()
     s["herdr"]["slow_esc"] = ["main"]
     (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
-    set_state(ship, "main", "blocked")
+    ship.set_state("main", "blocked")
     pane = agent(ship, "main")["pane_id"]
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 0, doc
@@ -279,7 +271,7 @@ def test_exit_waits_until_escape_has_dismissed_the_question(running):
 
 def test_an_agent_in_an_unknown_state_counts_as_busy(running):
     ship = running
-    set_state(ship, "main", "unknown")
+    ship.set_state("main", "unknown")
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 1 and doc["error"]["code"] == "agent-busy"
     assert doc["data"]["skipped"][0]["reason"] == (
