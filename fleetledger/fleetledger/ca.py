@@ -35,7 +35,7 @@ import secrets
 import shlex
 import subprocess
 import tempfile
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -714,23 +714,90 @@ echo "Done. Try: ssh @FIRST@ true   (then herdr --remote @FIRST@)"
 """
 
 
+# herdr-core Ships (ship.toml runtime = "core"): the herdr TUI cannot attach to them,
+# and a herdr TUI that lists one starts a stray herdr server there over SSH, which
+# could resume sessions herdr-core is running. So their herdr saved machine goes,
+# found by its label or SSH target (both the Ship's name, as this script adds them;
+# never another field, such as its session) and removed by that profile's id (32 hex
+# digits; an entry whose id cannot be read is said, not guessed at), and hc gets
+# the Ship instead, when it is installed here. Nothing is installed: no --install,
+# which would copy hc over.
+INSTALL_CORE_SH = r"""
+# herdr-core Ships: hc attaches to them, the herdr TUI cannot.
+core=@CORE@
+if [ "$herdr" = 1 ]; then
+  if command -v herdr >/dev/null 2>&1; then
+    known=$(herdr machine list --json 2>/dev/null || true)
+    for ship in $core; do
+      ids=$(printf '%s' "$known" | tr -d '\n' | tr '{' '\n' | tr '}' '\n' \
+        | grep -E "\"(label|target)\" *: *\"$ship\"" \
+        | grep -oE '"([a-z_]*_)?id" *: *"[0-9a-f]{32}"' | grep -oE '[0-9a-f]{32}' || true)
+      for id in $ids; do
+        if herdr machine remove "$id" </dev/null >/dev/null; then
+          echo "Removed $ship from herdr's saved machines: it runs herdr-core (use hc)."
+        else
+          echo "herdr could not remove $ship; run: herdr machine remove $id" >&2
+        fi
+      done
+      if [ -z "$ids" ] && printf '%s' "$known" | grep -qE "\"(label|target)\" *: *\"$ship\""; then
+        echo "herdr still lists $ship, which runs herdr-core: remove it" \
+          "(herdr machine list, then herdr machine remove <id>)." >&2
+      fi
+    done
+  fi
+  if command -v hc >/dev/null 2>&1; then
+    known=$(hc machine ls --json 2>/dev/null || true)
+    for ship in $core; do
+      if printf '%s' "$known" | grep -qE "\"name\" *: *\"$ship\""; then
+        echo "hc already has $ship."
+      elif err=$(hc machine add "$ship" --name "$ship" </dev/null 2>&1); then
+        echo "hc added $ship."
+      elif printf '%s' "$err" | grep -q already; then
+        echo "hc already has $ship."
+      else
+        echo "hc could not add $ship; check \`ssh $ship true\` first." >&2
+      fi
+    done
+  else
+    echo "hc (herdr-core) is not installed here; skipping @CORE_SAID@." \
+      "Install it, then run this again, or use the herdr desktop app."
+  fi
+fi
+"""
+
+
 def install_script(machine_name: str, ships: Sequence[str], identity: str, *,
-                   herdr: bool = True) -> str:
+                   herdr: bool = True, core: Collection[str] = ()) -> str:
     """herdr=False: a machine that may not log in as the agent gets no herdr saved
-    machines (herdr attaches to the agent), and its hint says so."""
+    machines (herdr attaches to the agent), and its hint says so. core: the Ships
+    that run herdr-core: hc gets them and herdr loses them (INSTALL_CORE_SH). With
+    none the script is exactly as before core existed."""
     if identity.startswith("~/"):
         ident = '"$HOME/' + identity[2:].replace('"', "") + '"'
     else:
         ident = shlex.quote(identity)
+    on_core = [s for s in ships if s in core] if herdr else []
+    on_herdr = [s for s in ships if s not in on_core]
+    first = ships[0] if ships else "<ship>"
     script = (
         INSTALL_SH.replace("@CERT@", f"{machine_name}-cert.pub")
         .replace("@IDENTITY_SH@", ident)
-        .replace("@SHIPS@", " ".join(shlex.quote(s) for s in ships) if herdr else "")
-        .replace("@FIRST@", ships[0] if ships else "<ship>")
+        .replace("@SHIPS@", " ".join(shlex.quote(s) for s in on_herdr) if herdr else "")
+        .replace("@FIRST@", first)
     )
     if not herdr:
-        script = script.replace("   (then herdr --remote " + (ships[0] if ships else "<ship>")
-                                + ")", "   (your own login; herdr needs the agent's)")
+        script = script.replace("   (then herdr --remote " + first + ")",
+                                "   (your own login; herdr needs the agent's)")
+    if on_core:
+        # Ship names are host names (no spaces or globs): $core splits into them.
+        block = (INSTALL_CORE_SH.replace("@CORE@", "'" + " ".join(on_core).replace("'", "") + "'")
+                 .replace("@CORE_SAID@", ", ".join(on_core)))
+        script = (script.replace("herdr saved machines\n", "herdr and hc saved machines\n", 1)
+                  .replace("# everything except herdr\n", "# everything except herdr and hc\n", 1)
+                  .replace("\necho \"Done. Try:", block.rstrip("\n") + "\necho \"Done. Try:", 1))
+        if first in on_core:
+            script = script.replace("   (then herdr --remote " + first + ")",
+                                    "   (then hc attach " + first + "/<agent>, or hc)")
     return script
 
 
@@ -745,7 +812,9 @@ def write_bundle(
     valid_before: datetime,
     hostnames: Mapping[str, str] | None = None,
     user: str = "agent",
+    core: Collection[str] = (),
 ) -> Bundle:
+    """core: the Ships that run herdr-core (attach.cached_runtime), for install.sh."""
     paths.private_dir(folder)
     files = {
         f"{machine_name}-cert.pub": cert + "\n",
@@ -753,7 +822,7 @@ def write_bundle(
         "config": ssh_config_text(machine_name, ships, identity, hostnames, user),
         # herdr attaches to the agent: only for a machine that may log in as agent.
         "install.sh": install_script(machine_name, [s.name for s in ships], identity,
-                                     herdr=user == "agent"),
+                                     herdr=user == "agent", core=core),
         "bundle.json": json.dumps({
             "schema": "shipshape.trust-bundle/1",
             "machine": machine_name,

@@ -37,8 +37,8 @@
         </select>
       </label>
       <p class="hint">Your own SSH key: each Ship puts its public half on its <code>agent</code>
-        user, so <code>ssh</code>, <code>herdr --remote</code> and <code>ship-fleet ssh</code>
-        let you in. Its private half never leaves this computer.
+        user, so <code>ssh</code>, <code>herdr --remote</code> (or <code>hc</code>, on a
+        herdr-core Ship) and <code>ship-fleet ssh</code> let you in. Its private half never leaves this computer.
         {% if your_keys %}Found in <code>~/.ssh</code>.{% else %}None found in <code>~/.ssh</code>.{% endif %}</p>
       <details class="advanced"><summary>Advanced</summary>
         <fieldset>

@@ -444,7 +444,8 @@ def build_parser() -> argparse.ArgumentParser:
              "Your login has passwordless sudo, your keys and the same certificates as agent;\n"
              "agent keeps no sudo. Connect as yourself: ssh <owner>@<ship>, or\n"
              "ship-fleet ssh <ship> --as owner. The agent's herdr session is agent's:\n"
-             "herdr --remote <ship> (or ssh <ship>) logs in as agent with the same key.")
+             "herdr --remote <ship> (hc attach <ship>/<agent> on a herdr-core Ship, or\n"
+             "ssh <ship>) logs in as agent with the same key.")
     p.add_argument("name", nargs="?")
 
     p = _add(sub, "logs", "show Ships' logs (ship-ctl logs)",
@@ -474,22 +475,24 @@ def build_parser() -> argparse.ArgumentParser:
                    help="init: make the CA keys without a passphrase (not recommended)")
     p.add_argument("--json", action="store_true", help="show: print JSON")
 
-    p = _add(sub, "trust", "certify one of your machines to attach to Ships (herdr --remote)",
+    p = _add(sub, "trust", "certify one of your machines to attach to Ships (herdr --remote, hc)",
              "Give a machine a short-lived certificate for the agent user on the Ships its\n"
-             "scope allows, and write its bundle: certificate, SSH config, CA line and herdr\n"
-             "saved machines. Run it again to renew.\n\n"
+             "scope allows, and write its bundle: certificate, SSH config, CA line and saved\n"
+             "machines (herdr's; hc's for herdr-core Ships, which leave herdr's). Run it\n"
+             "again to renew, and after a Ship changes runtime.\n\n"
              "  ship-fleet trust laptop --key laptop.pub --scope tag:work\n"
              "  ship-fleet trust laptop --print-cert     renew: just the new certificate")
     p.add_argument("machine", nargs="?", help="a name for the machine (e.g. laptop)")
     p.add_argument("--this-computer", action="store_true",
                    help="trust this computer with your own key and install it here, so "
-                   "ssh <ship> and herdr --remote <ship> work (the web setup does this)")
+                   "ssh <ship> and herdr --remote <ship> (hc on herdr-core Ships) work "
+                   "(the web setup does this)")
     p.add_argument("--key", help="the machine's ed25519 public key (file or line); first time only")
     p.add_argument("--scope", action="append", metavar="all|tag:TAG|ship:NAME",
                    help="which Ships it may attach to (repeatable; default all)")
     p.add_argument("--logins", metavar="agent|owner|both",
                    help="what its certificates log in as: agent (attach to the agent, "
-                   "herdr --remote), owner (your own login, with sudo) or both (the "
+                   "herdr --remote or hc), owner (your own login, with sudo) or both (the "
                    "default for a new machine: one of yours)")
     p.add_argument("--hours", type=int, help="certificate validity (default from [ca])")
     p.add_argument("--identity", default="~/.ssh/shipshape/id_ed25519",

@@ -457,36 +457,43 @@ def _ship_context(ui: UI, name: str, session: Session | None = None) -> dict[str
         "jobs": ui.jobs.for_ship(name, shown=True),
         "workspaces": workspaces,
         "snap": snap,
-        **_attach_context(inv, view.ship, session),
+        # A Ship that does not answer now keeps its last known runtime.
+        **_attach_context(inv, view.ship, session, view.status or status_mod.read_cache(name)),
         "signins_used": signins.used(view.ship),
         "gh": ghscopes.summary(view.ship, view.status),
     }
 
 
-def _attach_context(inv, ship, session: Session | None = None) -> dict[str, Any]:
+def _attach_context(inv, ship, session: Session | None = None,
+                    doc: dict[str, Any] | None = None) -> dict[str, Any]:
     """How to attach from the machine this browser is on, whether it can be set up for
     it, and whether the Ship is on the overlay. A browser on this computer: this
     computer's trust (this-computer.json), as ever. A paired device: the trusted
-    machine it runs on (devices.Device.machine), if you said; never this computer's."""
-    from fleetledger import ca, trustcmd
+    machine it runs on (devices.Device.machine), if you said; never this computer's.
+    doc: the Ship's status document, which says what runs its agents (attach.py):
+    herdr --remote for herdr, hc for herdr-core."""
+    from fleetledger import attach, ca, trustcmd
     from fleetledger.web import devicesweb
 
     device = session.device if session is not None else None
+    runtime = attach.runtime_of(doc)
+    agents_cmd = attach.for_ship(ship.name, doc)
     common = {"can_trust_here": ca.config(inv) is not None, "overlay_set": bool(inv.overlay),
-              "on_overlay": ship.overlay_node is not None, "remote_session": device is not None}
+              "on_overlay": ship.overlay_node is not None, "remote_session": device is not None,
+              "runtime": runtime, "agents_cmd": agents_cmd}
     if device is None:
         here = trustcmd.attaches_here(inv, ship)
         return {**common, "attach_here": here, "attach_owner": here,
                 "attach_until": trustcmd.this_computer_until(inv), "here_machine": None,
                 "here_label": "this computer",
-                "attach_cmd": ("herdr --remote " if here else "ship-fleet ssh ") + ship.name}
+                "attach_cmd": agents_cmd if here else f"ship-fleet ssh {ship.name}"}
     m = devicesweb.machine_of(device, inv)
     agent, owner = devicesweb.logins_on(device, inv, ship)
     return {**common, "attach_here": agent, "attach_owner": owner,
             "attach_until": m.last_valid_before if m else None,
             "here_machine": m.name if m else None, "here_label": m.name if m else device.name,
             "machine_choices": devicesweb.machine_choices(inv),
-            "attach_cmd": (f"herdr --remote {ship.name}" if agent else
+            "attach_cmd": (agents_cmd if agent else
                            f"ssh {inv.owner}@{ship.name}" if owner else None)}
 
 
@@ -758,7 +765,7 @@ async def ship_size(request: Request) -> Response:
 
 
 async def attach_here(request: Request) -> Response:
-    """Trust this computer (your key) so plain ssh and herdr --remote reach Ships. Never
+    """Trust this computer (your key) so plain ssh, herdr --remote and hc reach Ships. Never
     from a paired device: it would trust the FleetLedger computer, not the device."""
     from fleetledger import trustcmd
 

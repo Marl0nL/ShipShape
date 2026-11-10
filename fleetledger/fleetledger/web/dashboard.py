@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from fleetledger import net, trustcmd
+from fleetledger import attach, net, trustcmd
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory
 from fleetledger.status import ShipView, runtime_of
@@ -168,11 +168,13 @@ CERT_CODES = {
 
 
 def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
-               attach_here: bool = False, *, remote: bool = False) -> Action:
+               attach_here: bool = False, *, remote: bool = False,
+               agent: str | None = None) -> Action:
     """The one action that fixes an attention code on a Ship. attach_here: the machine
-    the browser is on reaches the Ship with plain herdr --remote, so that is the
-    command offered for a waiting agent; else ship-fleet ssh, which, from a paired
-    device (remote), is said to run on the FleetLedger computer."""
+    the browser is on reaches the Ship over plain ssh, so its attach command is the
+    one offered for a waiting agent (herdr --remote, or hc attach <ship>/<agent> on a
+    herdr-core Ship: attach.py); else ship-fleet ssh, which, from a paired device
+    (remote), is said to run on the FleetLedger computer. agent: the waiting one."""
     on_fleetledger = " (on the FleetLedger computer)" if remote else ""
     if code == "signin-scopes-differ" and view is not None:
         from fleetledger import ghscopes
@@ -207,7 +209,8 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
                       title=f"ship-fleet status {ship}")
     commands = {
         "agent-waiting": (f"Attach to answer it{'' if attach_here else on_fleetledger}:",
-                          f"herdr --remote {ship}" if attach_here else f"ship-fleet ssh {ship}"),
+                          attach.for_ship(ship, view.status if view else None, agent)
+                          if attach_here else f"ship-fleet ssh {ship}"),
         "disk-nearly-full": (f"See what fills it{on_fleetledger}:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),
     }
@@ -281,7 +284,8 @@ def alerts(views: Sequence[ShipView], items: Sequence[Item], flows_waiting: Sequ
         found.append(Alert(
             LEVEL_OF.get(item.level, "warning"), item.ship, item.code, item.message,
             action_for(item.code, item.ship, by_name.get(item.ship), item.signin,
-                       item.code == "agent-waiting" and attaches_(item.ship), remote=remote),
+                       item.code == "agent-waiting" and attaches_(item.ship), remote=remote,
+                       agent=item.subject if item.code == "agent-waiting" else None),
             item.key, waiting=item.code == "agent-waiting",
         ))
     order = {level: i for i, level in enumerate(LEVELS)}

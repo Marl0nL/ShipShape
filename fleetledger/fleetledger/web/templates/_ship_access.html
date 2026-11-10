@@ -2,7 +2,8 @@
    browser is on (this computer; or, on a paired device, the trusted machine it runs
    on), that machine's trust, the overlay, and the host certificate. Read from what the
    page already has (status document, inventory, cached revocation list): nothing is
-   contacted. Context: ship, doc, view, csrf, snap, attach_here, attach_owner,
+   contacted. Context: ship, doc, view, csrf, snap, runtime (herdr or core: what runs
+   its agents, attach.py), agents_cmd, attach_here, attach_owner,
    attach_until, here_machine, here_label, remote_session, machine_choices,
    this_device, can_trust_here, overlay_set, on_overlay, cert (ca.judge, or None
    without a CA). #}
@@ -15,7 +16,12 @@
   <table class="attach-commands">
     <tbody>
     {% if attach_here %}
+    {% if runtime == "core" %}
+    {{ cmd(agents_cmd, ("one agent" if agents_cmd != "hc" else "the agents, in hc's picker") ~ ", in a terminal (herdr-core: needs hc on " ~ here_label ~ " and the Ship in hc's machines, which the trust bundle adds)") }}
+    {% if agents_cmd != "hc" %}{{ cmd("hc", "every agent, in hc's picker") }}{% endif %}
+    {% else %}
     {{ cmd("herdr --remote " ~ ship.name, "the agents, in herdr (as the agent: your key and the fleet's certificate)") }}
+    {% endif %}
     {{ cmd("ssh " ~ ship.name, "a shell as the agent (no sudo)") }}
     {% endif %}
     {% if attach_owner %}
@@ -30,9 +36,18 @@
     {% endif %}
     </tbody>
   </table>
+  {% if runtime == "core" %}
+  <p class="hint">{{ ship.name }} runs its agents in herdr-core, which the herdr TUI
+    (<code>herdr --remote</code>) cannot attach to: use <code>hc</code>, or the herdr
+    desktop app (add {{ ship.name }} under Settings &gt; Machines; it reads your SSH config,
+    so the trust bundle's entry is there; its telemetry is on by default and can be
+    turned off in its settings). Both log in as the agent, which has no sudo. (A Ship made
+    before owner logins existed gets one with <code>ship-fleet owner {{ owner }}</code>.)</p>
+  {% else %}
   <p class="hint">The agent's login has no sudo; its herdr session is the agent's own, so
     <code>herdr --remote</code> logs in as the agent. (A Ship made before owner logins
     existed gets one with <code>ship-fleet owner {{ owner }}</code>.)</p>
+  {% endif %}
 
   </div>
 </section>
@@ -90,18 +105,19 @@
   <p>Trusted (certificate valid until {{ until(attach_until) }}), but not for {{ ship.name }}
     yet: its scope does not reach it, or {{ ship.name }} has no host certificate.</p>
   {% else %}
-  <p>Not trusted: <code>ssh {{ ship.name }}</code> and <code>herdr --remote {{ ship.name }}</code> need it.</p>
+  <p>Not trusted: <code>ssh {{ ship.name }}</code> and <code>{{ agents_cmd }}</code> need it.</p>
   {% endif %}
   {% if can_trust_here %}
   <form method="post" action="/attach-here" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="ship" value="{{ ship.name }}">
     <input type="hidden" name="from" value="access">
-    <button type="submit" class="ghost" title="ship-fleet trust --this-computer">{{ "Renew now" if attach_until else "Let this computer use ssh " ~ ship.name ~ " and herdr --remote " ~ ship.name }}</button>
+    <button type="submit" class="ghost" title="ship-fleet trust --this-computer">{{ "Renew now" if attach_until else "Let this computer use ssh " ~ ship.name ~ (" and hc" if runtime == "core" else " and herdr --remote " ~ ship.name) }}</button>
   </form>
   <p class="hint">This trusts this computer with your own key (a short-lived certificate)
     and adds the Ships to your SSH config (<code>~/.ssh/shipshape/</code>, included from
-    <code>~/.ssh/config</code>) and to herdr's saved machines. Other machines: Settings ▸
+    <code>~/.ssh/config</code>) and to herdr's saved machines (herdr-core Ships to hc's
+    instead, when hc is installed). Other machines: Settings ▸
     <a href="/settings?said=machines#machines">Trusted machines</a>.</p>
   {% else %}
   <p class="hint">The fleet has no certificate authority yet: make it in Settings ▸

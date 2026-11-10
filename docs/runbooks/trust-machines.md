@@ -107,7 +107,8 @@ It installs into `~/.ssh/shipshape/`:
 
 It puts `Include ~/.ssh/shipshape/config` at the top of `~/.ssh/config`. Then
 it runs `herdr machine add <ship> --label <ship> --remote-session default` for
-each Ship herdr does not know yet.
+each herdr Ship herdr does not know yet. Ships that run herdr-core get hc instead
+(see [herdr-core Ships](#herdr-core-ships) below).
 
 If the machine is the FleetLedger computer itself, `ship-fleet trust
 --this-computer` does all of this in place, with your own key (the first of
@@ -138,6 +139,48 @@ herdr                             # every saved Ship in the sidebar
 Never turn on `ForwardAgent` for Ships, even though herdr's docs suggest it for
 git: agents on the Ship could then use your keys while you are attached. Ships
 use their own GitHub sign-in.
+
+### herdr-core Ships
+
+A Ship with `runtime = "core"` in its ship.toml runs its agents in herdr-core,
+and the herdr TUI (`herdr --remote`) cannot attach to it. FleetLedger knows a
+Ship's runtime from its last status (`herdr.runtime`), and every attach command
+it shows follows it. Nothing about SSH changes: the same certificate (`clear,
+permit-pty`), CA line and `Host` block work for herdr-core.
+
+For each herdr-core Ship, `install.sh`:
+
+- removes its herdr saved machine, if herdr is installed and has one (the entry
+  whose label or SSH target is the Ship's name, removed by its profile id). A
+  herdr TUI that lists a herdr-core Ship starts a stray herdr server on it over
+  SSH, which could try to resume sessions herdr-core is running;
+- runs `hc machine add <ship> --name <ship>` if `hc` is installed here and does
+  not have the Ship yet. Without `hc` it says so and skips it. It never installs
+  anything, here or on the Ship (no `--install`).
+
+A herdr-only bundle is exactly as before. Run the bundle again after a Ship
+changes runtime (download it again, or `ship-fleet trust <machine>`; this
+computer's is rewritten in its next renewal, or with `ship-fleet trust
+--this-computer`): it is safe to run any number of times. `--no-herdr` skips both
+herdr and hc.
+
+On the laptop, two clients reach a herdr-core Ship:
+
+- **`hc` in a terminal** (herdr-core, installed the way its docs say; the Ship's
+  version may differ, as long as both speak the same protocol generation):
+
+  ```sh
+  hc ls                             # every machine's terminals: ship-01/t3 main idle
+  hc attach ship-01/main            # one agent (detach: ctrl+\)
+  hc                                # the picker
+  ```
+
+- **The herdr desktop app**: Settings > Machines > Add machine, and pick the Ship
+  (the app reads `~/.ssh/config` and its `Include`, so the bundle's entry is
+  there). If it offers to install or update herdr-core on the Ship, decline: the
+  Ship has the pinned version. The app's telemetry is on by default; turn it off
+  in its settings (Privacy) if you want. It shows the Ship's agents in one space,
+  `shipshape`, a tab each.
 
 ## 4. Renew
 

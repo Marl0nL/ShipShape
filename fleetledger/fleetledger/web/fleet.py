@@ -202,8 +202,8 @@ class Fleet:
             pass  # charts are a convenience; never fail a poll for them
 
     def _renew_this_computer(self) -> None:
-        """This computer's certificate, in its last day: renewed, so plain ssh and herdr
-        --remote keep working (trustcmd.renew_this_computer_if_due)."""
+        """This computer's certificate, in its last day: renewed, so plain ssh, herdr
+        --remote and hc keep working (trustcmd.renew_this_computer_if_due)."""
         from fleetledger import trustcmd
 
         try:

@@ -56,6 +56,7 @@ class SetupShipView:
         self.ok = bool(job.ok)
         for key in ("enrolled", "manual", "still_starting", "attach_here", "from_device"):
             setattr(self, key, bool(job.result.get(key)))
+        self.attach_cmd = job.result.get("attach_cmd")  # by its runtime (attach.py)
 
     def snapshot(self) -> list[str]:
         return self.job.snapshot()
