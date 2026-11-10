@@ -10,7 +10,7 @@ import os
 import sqlite3
 from datetime import UTC, datetime
 
-from fleetledger import enrol, history, images, overlay, paths, status
+from fleetledger import enrol, history, images, overlay, paths, prompts, status
 from fleetledger.commands import table
 from fleetledger.concierge import audit
 from fleetledger.drivers import NotSupported, PublishedImage
@@ -106,12 +106,10 @@ def cmd_destroy(args, app) -> int:
     inv = store.load()
     ship = inv.ship(args.name)
     if not args.yes:
-        if not app.stdin_isatty():
-            raise FleetError(f"Destroying {ship.name} deletes its VM and disks; rerun with --yes.")
-        answer = app.confirm(f"This deletes {ship.name}'s VM, disks and sign-ins. "
-                             "Type its name to go on: ")
-        if answer.strip() != ship.name:
-            raise FleetError("Not destroyed.")
+        prompts.typed(app, f"This deletes {ship.name}'s VM, disks and sign-ins. "
+                      "Type its name to go on: ", ship.name, exact=True,
+                      no_terminal=f"Destroying {ship.name} deletes its VM and disks; rerun "
+                      "with --yes.", refused="Not destroyed.")
     if not args.forget:
         hook = getattr(app, "before_destroy", None)
         if hook is None:  # leave the overlay first, so the Ship does not linger there
@@ -275,13 +273,10 @@ def cmd_snapshot(args, app) -> int:
     check_snapshot_name(args.snapshot)  # before asking or recording: never log a bad name
     if args.action == "rollback":
         if not args.yes:
-            if not app.stdin_isatty():
-                raise FleetError("Rolling back discards everything since the snapshot; "
-                                 "rerun with --yes.")
-            answer = app.confirm(f"Roll {ship.name} back to {args.snapshot}? Everything since "
-                                 "then is lost, sign-ins included. Type yes: ")
-            if answer.strip().lower() != "yes":
-                raise FleetError("Not rolled back.")
+            prompts.typed(app, f"Roll {ship.name} back to {args.snapshot}? Everything since "
+                          "then is lost, sign-ins included. Type yes: ", "yes",
+                          no_terminal="Rolling back discards everything since the snapshot; "
+                          "rerun with --yes.", refused="Not rolled back.")
         with audit.recorded(ship.name, "snapshot-rollback", args.snapshot) as audited:
             outcome = driver.rollback(ship, args.snapshot)
             audited["outcome"] = "ok" if outcome.done else "steps"

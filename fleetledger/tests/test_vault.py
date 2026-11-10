@@ -1049,3 +1049,22 @@ def test_off_cut_short_right_before_the_delete_stays_unlocked_and_runs_again(sto
     assert cli.main(["vault", "off", "--store", "file", "--yes"], app) == 0, out.getvalue()
     assert vault.state() == "off" and not vault.key_path().exists()
     _readable(store, managed, passphrases)
+
+
+def test_off_asks_for_off_in_a_terminal(store, home, ring):
+    vault.create(PASS)
+    app, out = app_for(store)
+    assert cli.main(["vault", "off", "--store", "file"], app) == 1
+    assert ("Turning the vault off puts every secret back in 0600 files. Run it in a "
+            "terminal to confirm, or add --yes.") in out.getvalue()
+    asked = []
+    app, out = app_for(store, confirm=lambda prompt: asked.append(prompt) or "no")
+    app.stdin_isatty = lambda: True
+    assert cli.main(["vault", "off", "--store", "keyring"], app) == 1
+    assert "Nothing done." in out.getvalue() and vault.is_on()
+    assert asked == ["Move every secret out of the vault into your OS keyring and delete the "
+                     "vault? Type off to go on: "]
+    app, out = app_for(store, confirm=lambda prompt: " OFF ")  # off in any case
+    app.stdin_isatty = lambda: True
+    assert cli.main(["vault", "off", "--store", "keyring"], app) == 0, out.getvalue()
+    assert not vault.is_on()

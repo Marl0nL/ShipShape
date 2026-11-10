@@ -16,7 +16,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from fleetledger import ca, firstrun, keys, paths
+from fleetledger import ca, firstrun, keys, paths, prompts
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 
@@ -103,14 +103,10 @@ class _Setup:
         self.app.say(f"\n== {self.number}/{len(STEPS)}  {STEPS[self.number - 1]} ==")
 
     def ask(self, prompt: str, default: str = "") -> str:
-        from fleetledger.overlay_setup import _ask
-
-        return _ask(self.app, prompt, default)
+        return prompts.ask(self.app, prompt, default)
 
     def choose(self, prompt: str, choices: tuple[str, ...], default: str) -> str:
-        from fleetledger.overlay_setup import _choose
-
-        return _choose(self.app, prompt, choices, default)
+        return prompts.choose(self.app, prompt, choices, default)
 
     def yes(self, prompt: str, default: str = "yes") -> bool:
         return self.choose(prompt, ("yes", "no"), default) == "yes"

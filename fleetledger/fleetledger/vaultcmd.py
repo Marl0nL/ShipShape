@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fleetledger import keys, paths, vault
+from fleetledger import keys, paths, prompts, vault
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.overlay import secret_store
 
@@ -183,11 +183,7 @@ def point_at(editor, moved: list[tuple[Placed, str]], store_kind: str) -> dict[s
 
 
 def _ask_secret(app, prompt: str) -> str:
-    import getpass
-
-    ask = getattr(app, "ask_secret", None) or (
-        lambda p: getpass.getpass(p, stream=sys.stderr))
-    return ask(prompt)
+    return prompts.secret(app, prompt, strip=False)  # a passphrase, exactly as typed
 
 
 def _need_terminal(app, what: str) -> None:
@@ -656,15 +652,12 @@ def vault_off(args, app, store) -> int:
     vault.data_key()  # unlocked, or Locked
     kind = args.store or ("keyring" if secret_store.os_backend()[0] is not None else "file")
     if not args.yes:
-        if not app.stdin_isatty():
-            raise FleetError("Turning the vault off puts every secret back in "
-                             + ("your OS keyring" if kind == "keyring" else "0600 files")
-                             + ". Run it in a terminal to confirm, or add --yes.")
-        answer = app.confirm(f"Move every secret out of the vault into "
-                             f"{'your OS keyring' if kind == 'keyring' else '0600 files'} and "
-                             "delete the vault? Type off to go on: ")
-        if answer.strip().lower() != "off":
-            raise FleetError("Nothing done.")
+        into = "your OS keyring" if kind == "keyring" else "0600 files"
+        prompts.typed(app, f"Move every secret out of the vault into {into} and delete the "
+                      "vault? Type off to go on: ", "off",
+                      no_terminal=f"Turning the vault off puts every secret back in {into}. "
+                      "Run it in a terminal to confirm, or add --yes.",
+                      refused="Nothing done.")
     moved = move_out(app, store, kind)
     path = vault.vault_path()
     try:

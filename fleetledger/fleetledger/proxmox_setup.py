@@ -26,7 +26,10 @@ from fleetledger import paths
 from fleetledger.drivers import proxmox_api
 from fleetledger.errors import FleetError
 from fleetledger.overlay import secret_store
-from fleetledger.overlay_setup import _ask, _choose, _plausible_secret, _secret
+from fleetledger.overlay_setup import _plausible_secret
+from fleetledger.prompts import ask as _ask
+from fleetledger.prompts import choose as _choose
+from fleetledger.prompts import secret as _secret
 
 SECRET_FILE = "proxmox-token"
 TOKEN_ID_RE = re.compile(r"^[^@!\s]+@[^!\s]+![A-Za-z][A-Za-z0-9_.-]*$")  # as the schema
