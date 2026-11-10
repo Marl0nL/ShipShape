@@ -18,6 +18,11 @@ ANSI = re.compile(
 QUERY = re.compile(r"(https?://[^\s?#]+)[?#]\S*")
 LONG_TOKEN = re.compile(r"[A-Za-z0-9_\-+/=.]{24,}")  # also catches UUIDs
 EMAIL = re.compile(r"[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+# EMAIL, starting only where a run of local-part characters starts. EMAIL.sub
+# alone re-scans a long run (a base64 blob, a progress bar) from each of its
+# positions, which is quadratic; a match from inside a run is the same as one
+# from its start, so nothing is lost.
+EMAIL_AT_RUN = re.compile(r"(?<![\w.+-])" + EMAIL.pattern)
 
 
 def clean(text: str) -> str:
@@ -48,8 +53,23 @@ def redact(text: str, secrets: Iterable[str] = ()) -> str:
         if secret:
             text = text.replace(secret, "[code]")
     text = QUERY.sub(r"\1?[…]", text)
-    text = EMAIL.sub("[email]", text)
+    text = redact_emails(text)
     return LONG_TOKEN.sub("[redacted]", text)
+
+
+def redact_emails(text: str) -> str:
+    """EMAIL.sub("[email]", text), in linear time."""
+    parts, pos = [], 0
+    while found := EMAIL_AT_RUN.search(text, pos):
+        parts += [text[pos:found.start()], "[email]"]
+        pos = found.end()
+        # A match can end where the next local part starts ("a@example.com_c@example.org"):
+        # EMAIL.sub would match there too, with no break in the run before it.
+        while found := EMAIL.match(text, pos):
+            parts.append("[email]")
+            pos = found.end()
+    parts.append(text[pos:])
+    return "".join(parts)
 
 
 def tail(text: str, lines: int = 4, secrets: Iterable[str] = ()) -> str:
