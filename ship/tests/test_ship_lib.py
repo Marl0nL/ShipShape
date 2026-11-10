@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "ship" / "lib"))
 
-from shipctl import schema, tomlw  # noqa: E402
+from shipctl import fsutil, schema, tomlw  # noqa: E402
 
 CONTRACTS = REPO / "contracts"
 EXAMPLES = CONTRACTS / "examples"
@@ -131,3 +131,24 @@ def test_stamp_and_parse_stamp_round_trip():
     assert parse_stamp("2026-01-02T03:04:05Z") == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     with pytest.raises(ValueError):
         parse_stamp("2026-01-02T03:04:05")
+
+
+# --- JSON state files (fsutil) -----------------------------------------------------
+@pytest.mark.parametrize("text", [None, "", "not json", "[1, 2]", '"text"', "null"])
+def test_read_json_dict_is_empty_unless_the_file_holds_an_object(tmp_path, text):
+    path = tmp_path / "state.json"
+    if text is not None:
+        path.write_text(text)
+    assert fsutil.read_json_dict(path) == {}
+
+
+def test_write_json_writes_what_json_dumps_does_and_reports_changes(tmp_path):
+    path = tmp_path / "state.json"
+    doc = {"b": [1, 2], "a": "x"}
+    assert fsutil.write_json(path, doc, 0o600, indent=2)
+    assert path.read_text() == json.dumps(doc, indent=2) + "\n"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert fsutil.read_json_dict(path) == doc
+    assert not fsutil.write_json(path, doc, 0o600, indent=2)  # unchanged
+    assert fsutil.write_json(path, doc, 0o600)  # compact is other bytes
+    assert path.read_text() == json.dumps(doc) + "\n"

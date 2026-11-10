@@ -19,7 +19,7 @@ from pathlib import Path
 from . import sshtrust
 from .context import Context, utc_now
 from .errors import CtlError
-from .fsutil import read_json, remove, write_atomic
+from .fsutil import read_json_dict, remove, write_atomic, write_json
 from .shiptoml import ShipToml
 
 PROVIDER = "tailscale"
@@ -63,8 +63,7 @@ def listen_conf_path(ctx: Context) -> Path:
 
 
 def read_state(ctx: Context) -> dict:
-    doc = read_json(state_path(ctx), {})
-    return doc if isinstance(doc, dict) else {}
+    return read_json_dict(state_path(ctx))
 
 
 def joined(ctx: Context) -> bool:
@@ -277,7 +276,7 @@ def join(ctx: Context, ship: ShipToml, *, hostname: str, tags: list[str],
         "addresses": live["addresses"],
         "joined_at": utc_now(),
     }
-    if write_atomic(state_path(ctx), json.dumps(record, indent=2) + "\n", 0o600):
+    if write_json(state_path(ctx), record, 0o600, indent=2):
         changed.append(ctx.paths.agent_path(state_path(ctx)))
     # Overlay addresses may have changed: refresh the listen policy if it is in use.
     did, messages = apply_listen(ctx, ship)

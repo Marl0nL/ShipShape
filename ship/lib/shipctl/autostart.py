@@ -11,13 +11,12 @@ prompt, and goes into the record.
 from __future__ import annotations
 
 import copy
-import json
 
 from . import naming, record
 from .apply import expand_cwd
 from .context import Context
 from .errors import CtlError
-from .fsutil import ensure_dir, read_json, write_atomic
+from .fsutil import ensure_dir, read_json, read_json_dict, write_json
 from .runtime import for_ship, mode_args
 from .shiptoml import ShipToml
 
@@ -88,9 +87,9 @@ def ensure_repo(ctx: Context, repo: str, cwd: str) -> tuple[str, str]:
 def _repo_states(ctx: Context, ship: ShipToml) -> dict:
     """What is known about each [[autostart]] repo, for the entries still there: an
     agent removed (or given another repo) drops out, with its attention item."""
-    repos = read_json(ctx.paths.state / REPOS_STATE, {})
+    repos = read_json_dict(ctx.paths.state / REPOS_STATE)
     wanted = {e["name"]: e.get("repo") for e in ship.autostart if e.get("repo")}
-    return {name: rec for name, rec in (repos if isinstance(repos, dict) else {}).items()
+    return {name: rec for name, rec in repos.items()
             if isinstance(rec, dict) and wanted.get(name) == rec.get("repo")}
 
 
@@ -115,7 +114,7 @@ def prepare_repos(ctx: Context, ship: ShipToml, retry: bool = False) -> list[str
         states[entry["name"]] = {"repo": entry["repo"], "state": state, "message": why}
         messages.append(f"{entry['name']}: {why}")
     if messages or states != raw:
-        write_atomic(ctx.paths.state / REPOS_STATE, json.dumps(states, indent=2) + "\n", 0o644)
+        write_json(ctx.paths.state / REPOS_STATE, states, 0o644, indent=2)
     return messages
 
 
@@ -220,7 +219,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
                 messages.append(f"{name}: started, but the first prompt was not sent ({why}).")
 
         record.save(ctx, doc)
-    write_atomic(ctx.paths.state / REPOS_STATE, json.dumps(repos, indent=2) + "\n", 0o644)
+    write_json(ctx.paths.state / REPOS_STATE, repos, 0o644, indent=2)
     if failures:
         data = {"started": started, "skipped": skipped}
         raise CtlError(

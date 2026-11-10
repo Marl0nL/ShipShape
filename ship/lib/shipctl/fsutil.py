@@ -23,6 +23,12 @@ def read_json(path: Path, default: object = None) -> object:
         return default
 
 
+def read_json_dict(path: Path) -> dict:
+    """A JSON state file's object, or {} when it is missing, unreadable or not one."""
+    doc = read_json(path, {})
+    return doc if isinstance(doc, dict) else {}
+
+
 def write_atomic(
     path: Path,
     data: bytes | str,
@@ -62,6 +68,11 @@ def write_atomic(
             os.unlink(tmp)
         raise
     return True
+
+
+def write_json(path: Path, doc: object, mode: int, indent: int | None = None) -> bool:
+    """write_atomic of `doc` as JSON with a final newline (indent as json.dumps)."""
+    return write_atomic(path, json.dumps(doc, indent=indent) + "\n", mode)
 
 
 def remove(path: Path, dry_run: bool = False) -> bool:

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
-import json
 import os
 import time
 from collections.abc import Iterator
@@ -33,7 +32,7 @@ from . import notice
 from . import record as agent_record
 from .context import Context, utc_now
 from .errors import CtlError
-from .fsutil import ensure_dir, read_json, remove, write_atomic
+from .fsutil import ensure_dir, read_json_dict, remove, write_atomic, write_json
 from .runtime import for_ship, wait_budget
 from .shiptoml import ShipToml
 from .status import boot_id
@@ -87,14 +86,14 @@ def _locked(ctx: Context) -> Iterator[bool]:
 
 def _done(ctx: Context, boot: str) -> dict | None:
     """This boot's outcome, if this boot already had its run."""
-    doc = read_json(ctx.paths.state / FILE, None)
-    return doc if isinstance(doc, dict) and boot and doc.get("boot_id") == boot else None
+    doc = read_json_dict(ctx.paths.state / FILE)
+    return doc if boot and doc.get("boot_id") == boot else None
 
 
 def _finish(ctx: Context, boot: str, data: dict, message: str) -> tuple[dict, list[str]]:
     keep = {"boot_id": boot, "at": utc_now(), **{k: data[k] for k in
                                                  ("outcome", "agent", "tries", "reason")}}
-    write_atomic(ctx.paths.state / FILE, json.dumps(keep, indent=2) + "\n", 0o644)
+    write_json(ctx.paths.state / FILE, keep, 0o644, indent=2)
     notice.journal(ctx, message, WHAT)
     return data, [message]
 

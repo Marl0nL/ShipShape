@@ -31,7 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from .context import Context, stamp
-from .fsutil import read_json, write_atomic
+from .fsutil import read_json_dict, write_json
 from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
 from .signins import Registry, SignIn, Status
 
@@ -231,8 +231,7 @@ def check(ctx: Context, reg: Registry, keys: list[str] | tuple[str, ...], *,
     """(entry, errors) for each key, in parallel. A command check's result comes from
     the cache while it is younger than its `every`, unless fresh; what ran is kept."""
     now = time.time()
-    cache = read_json(ctx.paths.signin_cache, {})
-    cache = cache if isinstance(cache, dict) else {}
+    cache = read_json_dict(ctx.paths.signin_cache)
     out: dict[str, tuple[dict, list[str]]] = {}
     todo = []
     for key in keys:
@@ -260,7 +259,7 @@ def check(ctx: Context, reg: Registry, keys: list[str] | tuple[str, ...], *,
             if found["state"] != "unknown":  # a timed-out check runs again next time
                 keep[key] = {"digest": signin.status.digest, "at": now, "entry": found}
         try:
-            write_atomic(ctx.paths.signin_cache, json.dumps(keep) + "\n", 0o600)
+            write_json(ctx.paths.signin_cache, keep, 0o600)
         except OSError as exc:
             ctx.log(f"cannot keep sign-in check results: {exc}")
     return {key: out[key] for key in keys}
