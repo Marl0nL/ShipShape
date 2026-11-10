@@ -10,7 +10,18 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fleetledger import concierge, enrol, ghscopes, images, ops, paths, schemas, signins, status
+from fleetledger import (
+    concierge,
+    enrol,
+    ghscopes,
+    images,
+    ops,
+    paths,
+    schemas,
+    signinreg,
+    signins,
+    status,
+)
 from fleetledger.catalogue import Catalogue
 from fleetledger.concierge import audit, providers
 from fleetledger.drivers import SeedFile
@@ -593,14 +604,15 @@ def cmd_ls(args, app) -> int:
     if not views:
         app.say("No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
         return 0
+    shorts = signinreg.registry().service_shorts
     rows = [
         [v.ship.name, ",".join(inv.effective_tags(v.ship)) or "-", v.state, agents_cell(v),
-         auth_cell(v, "claude"), auth_cell(v, "gcloud"), auth_cell(v, "gcloud_adc"),
-         auth_cell(v, "github"), usage_cell(v), notes_cell(v)]
+         *(auth_cell(v, key) for key in shorts), usage_cell(v), notes_cell(v)]
         for v in views
     ]
-    app.say(table(rows, ["SHIP", "TAGS", "STATE", "AGENTS", "CLAUDE", "GCLOUD", "ADC",
-                         "GITHUB", "CPU·MEM·DISK", "NOTES"]))
+    app.say(table(rows, ["SHIP", "TAGS", "STATE", "AGENTS",
+                         *(short.upper() for short in shorts.values()),
+                         "CPU·MEM·DISK", "NOTES"]))
     return 0
 
 

@@ -29,7 +29,17 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from fleetledger import attempts, commands, ghscopes, inbox, net, ops, signinlist, signins
+from fleetledger import (
+    attempts,
+    commands,
+    ghscopes,
+    inbox,
+    net,
+    ops,
+    signinlist,
+    signinreg,
+    signins,
+)
 from fleetledger import status as status_mod
 from fleetledger.concierge import audit, providers
 from fleetledger.concierge.redact import clean
@@ -63,8 +73,9 @@ HERE = Path(__file__).resolve().parent
 TAG_RE = NAME_RE
 FLOW_ID_RE = re.compile(r"^[0-9]{1,9}-[0-9a-f]{8}$")
 BATCH_RE = re.compile(r"^[0-9a-f]{12}$")
-SERVICES = ("claude", "gcloud", "gcloud-adc", "github", "all")
-AUTH_ORDER = ("claude", "gcloud", "gcloud_adc", "github")
+# Concierge providers (and "all") and status auth keys, from the sign-in registry.
+SERVICES = (*signinreg.registry().provider_ids, "all")
+AUTH_ORDER = signinreg.registry().service_keys
 NO_SUCH_SHIP = "No such Ship in the inventory."
 LOG_LINES = ("100", "300", "1000", "3000")  # the Logs tab's "last N lines" choices
 TABS = ("overview", "access", "settings", "inbox", "snapshots", "logs", "network")
@@ -159,6 +170,7 @@ def make_env() -> Environment:
         SIGNIN_GROUP_LABELS=signinlist.GROUP_LABELS,
         SIGNIN_SERVICES=signinlist.SERVICES,
         SIGNIN_SERVICE_LABELS=signinlist.SERVICE_LABELS,
+        SIGNIN_SERVICE_SHORTS=signinreg.registry().service_shorts,
     )
     env.filters["pill"] = _pill
     return env

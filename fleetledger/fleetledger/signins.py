@@ -11,18 +11,19 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from fleetledger import signinreg
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Ship
 
+# All from the sign-in registry (signinreg.py, the provider files).
+_REG = signinreg.registry()
 # What a Ship may sign in to, as people name them (the concierge's providers).
-CHOICES = ("claude", "gcloud", "github")
-LABELS = {"claude": "Claude", "gcloud": "Google Cloud", "github": "GitHub"}
+CHOICES = _REG.choices
+LABELS = _REG.labels
 # The status document's auth keys each one covers (gcloud also covers its ADC).
-STATUS_KEYS = {"claude": ("claude",), "gcloud": ("gcloud", "gcloud_adc"),
-               "github": ("github",)}
+STATUS_KEYS = _REG.status_keys
 # Concierge provider ids, for each choice.
-PROVIDERS = {"claude": ("claude",), "gcloud": ("gcloud", "gcloud-adc"),
-             "github": ("github",)}
+PROVIDERS = _REG.providers
 SIGNIN_CODES = ("signin-missing", "signin-expiring", "signin-expired", "signin-wrong-account",
                 "signin-scopes-differ")
 

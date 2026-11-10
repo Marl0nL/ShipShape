@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TextIO
 
-from fleetledger import __version__
+from fleetledger import __version__, signinreg
 from fleetledger.errors import FleetError
 
 COMMANDS = (
@@ -248,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait", action="store_true",
                    help="wait until it has provisioned, then finish enrolment")
 
-    services = "claude, gcloud (with ADC), gcloud-adc, github or all"
+    services = signinreg.registry().login_help()
     p = _add(sub, "login", "sign Ships in to a service through the concierge",
              "Sign Ships in to a service. FleetLedger runs the tool's own sign-in on the\n"
              "Ship, shows you the link, types the code you paste, and checks the account\n"

@@ -18,7 +18,7 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import PERMISSION_MODES, overlay
+from . import PERMISSION_MODES, overlay, signins
 from .context import Context, utc_now
 from .fsutil import read_json, write_atomic
 from .net import status_section as net_section
@@ -31,17 +31,12 @@ SCHEMA = "shipshape.ship-status/1"
 PROBE_TIMEOUT = 5.0
 if os.environ.get("SHIPSHAPE_ROOT") and os.environ.get("SHIPSHAPE_PROBE_TIMEOUT"):
     PROBE_TIMEOUT = float(os.environ["SHIPSHAPE_PROBE_TIMEOUT"])  # tests only
-AUTH_SERVICES = ("claude", "gcloud", "gcloud_adc", "github")
+AUTH_SERVICES = signins.KEYS
 AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
 SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$")
 COMMIT = re.compile(r"^[0-9a-f]{7,40}$")
 TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$")
-SERVICE_LABELS = {
-    "claude": "Claude Code",
-    "gcloud": "gcloud",
-    "gcloud_adc": "Application Default Credentials",
-    "github": "GitHub",
-}
+SERVICE_LABELS = signins.LABELS
 
 
 def _fail(what: str, result: Result) -> str:
@@ -382,12 +377,14 @@ def probe_github_auth(ctx: Context) -> tuple[dict, list[str]]:
     return entry, []
 
 
-AUTH_PROBES = {
+# The built-in checks a registered sign-in names (signins.py `probe`).
+BUILTIN_PROBES = {
     "claude": probe_claude_auth,
     "gcloud": probe_gcloud_auth,
-    "gcloud_adc": probe_adc,
+    "adc": probe_adc,
     "github": probe_github_auth,
 }
+AUTH_PROBES = {s.key: BUILTIN_PROBES[s.probe] for s in signins.SIGNINS}
 
 
 def probe_auth(ctx: Context, services: list[str]) -> dict[str, dict]:
@@ -490,7 +487,7 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             add("agent-waiting", f"Agent '{who}' is waiting for you{what}{said}", who)
     for svc, entry in doc["auth"].items():
         label = SERVICE_LABELS.get(svc, svc)
-        if svc == "claude" and entry["state"] == "missing":
+        if svc in signins.CORE and entry["state"] == "missing":
             add("signin-missing", f"{label} is not signed in.", svc)
         elif entry["state"] == "expiring":
             add("signin-expiring", f"The {label} sign-in expires soon.", svc)

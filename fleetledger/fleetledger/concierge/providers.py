@@ -21,12 +21,13 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
+from fleetledger import signinreg
 from fleetledger.errors import ConfigError, NotFound
 
-PROVIDERS_DIR = Path(__file__).resolve().parent.parent / "providers"
+PROVIDERS_DIR = signinreg.PROVIDERS_DIR
 
-# "all" signs in to these, in this order (gcloud covers ADC too).
-ALL = ("claude", "gcloud", "github")
+# "all" signs in to these, in this order (gcloud covers ADC too): every sign-in.
+ALL = signinreg.registry().choices
 
 SERVICE = {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}
 COMMAND = {"type": "string", "minLength": 1}
@@ -67,8 +68,32 @@ SCHEMA = {
                     "run": COMMAND,
                     "ok_json": {"type": "string"},
                     "account": {"type": "string", "pattern": "^(stdout|json:[A-Za-z0-9_.]+)$"},
+                    # How the sign-in registry names this status key (signinreg.py).
+                    "label": {"type": "string", "minLength": 1},
+                    "short": {"type": "string", "minLength": 1},
                 },
             },
+        },
+        # The sign-in registry (signinreg.py): a sign-in of its own (label, order),
+        # or a flow for part of another one (part_of).
+        "signin": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["label", "order"],
+                    "properties": {
+                        "label": {"type": "string", "minLength": 1},
+                        "order": {"type": "integer", "minimum": 0},
+                    },
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["part_of"],
+                    "properties": {"part_of": SERVICE},
+                },
+            ],
         },
         "logout": {
             "type": "object",
@@ -186,7 +211,8 @@ def parse(path: Path) -> Provider:
         prompt=_compile(path, "prompt", m["prompt"]) if "prompt" in m else None,
         failure=_compile(path, "failure", m["failure"]) if "failure" in m else None,
         send=tuple((_compile(path, "send", k), v) for k, v in m.get("send", {}).items()),
-        checks=tuple(Check(**c) for c in doc["check"]),
+        checks=tuple(Check(**{k: v for k, v in c.items() if k not in ("label", "short")})
+                     for c in doc["check"]),
         logout=doc["logout"]["run"],
         after=tuple(doc.get("after", ())),
         scopes_add=doc.get("scopes", {}).get("add"),

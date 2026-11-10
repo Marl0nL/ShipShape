@@ -22,18 +22,13 @@ from __future__ import annotations
 import re
 
 from . import record as agent_record
-from . import status
+from . import signins, status
 from .context import Context
 from .runtime import for_ship
 from .shiptoml import ShipToml
 
 # notify-signin SERVICE (FleetLedger's provider id) -> (status auth key, label)
-SERVICES = {
-    "claude": ("claude", "Claude Code"),
-    "gcloud": ("gcloud", "gcloud (with Application Default Credentials)"),
-    "gcloud-adc": ("gcloud_adc", "Google Application Default Credentials"),
-    "github": ("github", "GitHub"),
-}
+SERVICES = {n.service: (n.key, n.label) for n in signins.NOTICES}
 # herdr agent states it is safe to type into (Claude Code queues input mid-turn).
 READY_STATES = ("idle", "working", "done")
 # What may appear of an account name in the typed line: no newlines, quotes or

@@ -14,6 +14,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from fleetledger import signinreg
 from fleetledger.concierge import audit
 from fleetledger.concierge.engine import Child, Flow, FlowResult, Prompter, spawn
 from fleetledger.concierge.providers import Check, Provider
@@ -156,8 +157,8 @@ def with_chosen_scopes(ssh: SSH, inventory: Inventory, ship: Ship,
     return provider, []
 
 
-# Providers `ship-ctl notify-signin` knows (contracts/ship-ctl.md).
-NOTIFY_SERVICES = ("claude", "gcloud", "gcloud-adc", "github")
+# Providers `ship-ctl notify-signin` knows (contracts/ship-ctl.md): every registered flow.
+NOTIFY_SERVICES = signinreg.registry().provider_ids
 
 
 def notify_core_agents(ssh: SSH, ship: Ship, provider: Provider) -> list[str]:

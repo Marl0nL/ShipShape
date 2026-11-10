@@ -107,16 +107,12 @@
     "overlay": { "$ref": "#/$defs/overlay" },
     "tag": {
       "type": "object",
-      "description": "Expected accounts per tag. After every sign-in, and on every status poll, the signed-in account is compared with these.",
+      "description": "Expected accounts per tag, keyed by sign-in id (claude, gcloud, github, or any other sign-in FleetLedger knows; FleetLedger refuses an id it does not know when it loads the file). After every sign-in, and on every status poll, the signed-in account is compared with these.",
       "propertyNames": { "$ref": "#/$defs/tag" },
       "additionalProperties": {
         "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "claude": { "type": "string", "minLength": 1 },
-          "gcloud": { "type": "string", "minLength": 1 },
-          "github": { "type": "string", "minLength": 1 }
-        }
+        "propertyNames": { "$ref": "#/$defs/signinId" },
+        "additionalProperties": { "type": "string", "minLength": 1 }
       }
     },
     "profile_options": {
@@ -257,6 +253,11 @@
     }
   },
   "$defs": {
+    "signinId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "A sign-in id, as FleetLedger's sign-in registry names it (the built-ins: claude, gcloud, github)."
+    },
     "shipName": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
     "tag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
     "uuid": {
@@ -586,9 +587,9 @@
         },
         "signins": {
           "type": "array",
-          "items": { "enum": ["claude", "gcloud", "github"] },
+          "items": { "$ref": "#/$defs/signinId" },
           "uniqueItems": true,
-          "description": "The sign-ins this Ship uses (gcloud covers its application default credentials). Absent: all of them. A service left out gets no sign-in prompt, flow or attention item from FleetLedger, is shown as off, and is signed out on the Ship when it is turned off. Its tool may stay installed."
+          "description": "The sign-ins this Ship uses, by sign-in id (claude, gcloud, github, or any other sign-in FleetLedger knows; FleetLedger refuses an id it does not know when it loads the file; gcloud covers its application default credentials). Absent: all of them. A service left out gets no sign-in prompt, flow or attention item from FleetLedger, is shown as off, and is signed out on the Ship when it is turned off. Its tool may stay installed."
         },
         "github_scopes": {
           "type": "array",

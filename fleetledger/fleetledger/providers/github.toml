@@ -12,6 +12,10 @@ run = "GH_PROMPT_DISABLED=1 gh auth login --hostname github.com --git-protocol h
 timeout = 900
 after = ["gh auth setup-git --hostname github.com"]
 
+[signin]
+label = "GitHub"
+order = 3
+
 [match]
 url = 'https://github\.com/login/device'
 code = 'one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})'

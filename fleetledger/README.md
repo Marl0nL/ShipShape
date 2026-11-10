@@ -30,6 +30,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/lifecycle.py` | phase 4 | `ship-fleet destroy`, `resize`, `snapshot` and `image` |
 | `fleetledger/github.py` | | an autostart agent's GitHub repo: the name check, and whether it is public |
 | `fleetledger/signins.py` | | which sign-ins a Ship uses (`ship-fleet signins SHIP`) |
+| `fleetledger/signinreg.py` | | the sign-in registry: every sign-in and status key, from the provider files |
 | `fleetledger/signinlist.py` | | every sign-in on every Ship, most urgent first: the Sign-ins page and `ship-fleet signins` with no Ship |
 | `fleetledger/ghscopes.py` | | the extra GitHub scopes a Ship's GitHub sign-in may ask for (`--github-scopes`, `github_scopes=`) |
 | `fleetledger/history.py` | | the bounded history (`history.sqlite3`): Ship status for the dashboard's charts, and the web UI's finished operations for its Activity page |
@@ -301,6 +302,13 @@ Providers are one TOML file each in `fleetledger/providers/`: the command, mode
 (`paste-back` or `device-code`), timeout, `[match]` patterns (`url`, `code`,
 `prompt`, `success`, `failure`, `send`), `[[check]]` entries, `after` commands
 and `[logout]`. Adding a service is one file.
+
+The same files are the sign-in registry (`fleetledger/signinreg.py`): every list of
+sign-ins (the per-Ship choices, status keys, labels, which flow signs in which key,
+the ids `ships.toml` accepts in `signins` and `[tag.*]`) comes from them. A file's
+`[signin]` table makes it a sign-in of its own (`label`, `order`), or part of another
+(`part_of = "gcloud"`, as `gcloud-adc` is); a `[[check]]`'s `label` and `short` name
+that status key on the Sign-ins page and in the fleet table.
 
 The pattern tests replay sessions in a real pseudo-terminal from
 `tests/fixtures/concierge/`. The claude, gcloud and github sessions follow the
