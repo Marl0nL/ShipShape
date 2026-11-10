@@ -287,10 +287,13 @@ def write_cache(name: str, doc: dict[str, Any]) -> None:
 
 
 def read_cache(name: str) -> dict[str, Any] | None:
+    """The last status document saved for name, or None if there is none or it is
+    not one (unreadable, not UTF-8, not JSON, not an object): callers want a dict."""
     try:
-        return json.loads(cache_path(name).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        doc = json.loads(cache_path(name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # ValueError: JSONDecodeError and UnicodeDecodeError
         return None
+    return doc if isinstance(doc, dict) else None
 
 
 # --- since when each sign-in has been as it is ------------------------------------
