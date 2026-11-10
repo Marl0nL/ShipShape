@@ -740,3 +740,101 @@ def test_logs_core_reads_only_the_end_of_a_long_log(tmp_path, monkeypatch):
     # Exactly CORE_LOG_BYTES long: nothing was cut, so no line is dropped.
     (state / "core.log").write_text("first 789\nlast line\n")  # 20 bytes
     assert logs._home_tail(ctx, rel, 10) == ["first 789", "last line"]
+
+
+# --- what a failed start leaves in the record (characterisation) -------------------------
+def _fail_run(ship, *names: str) -> None:
+    s = ship.scenario()
+    s["hc"]["fail_run"] = list(names)
+    ship.set(hc=s["hc"])
+
+
+def _exited(ship, name: str) -> str:
+    """name was exited on purpose (its terminal finished, its session ended): the
+    refresh leaves it in the record, stopped. Returns its session."""
+    sid = ship.record()["agents"][name]["session"]
+    s = ship.scenario()
+    for t in s["hc"]["terminals"]:
+        if t["name"] == name:
+            t.update(state="finished", exit_code=0, reason="exited", foreground=None, status=None)
+    ship.set(hc=s["hc"])
+    ship.end_session(sid, "prompt_input_exit")
+    rc, _, out = ship.ctl("refresh")
+    assert rc == 0, out
+    assert ship.record()["agents"][name]["want"] == "stopped"
+    return sid
+
+
+def test_a_failed_autostart_on_core_leaves_no_record_of_it(ship):
+    """The record had the new session before the launch; nothing started, so the
+    agent is not recorded at all (it was not before)."""
+    ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    ship.use_core()
+    ship.ctl("apply", "--json")
+    _fail_run(ship, "grinder")
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert rc != 0 and doc["data"]["started"] == ["main"]
+    assert doc["data"]["skipped"][0]["name"] == "grinder"
+    assert set(ship.record()["agents"]) == {"main"}
+    never_killed(ship)
+
+
+def test_a_failed_autostart_on_core_puts_a_stopped_agent_back_as_it_was(core):
+    ship = core
+    _exited(ship, "grinder")
+    before = ship.record()["agents"]["grinder"]
+    _fail_run(ship, "grinder")
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert rc != 0
+    reasons = {s["name"]: s["reason"] for s in doc["data"]["skipped"]}
+    assert reasons["grinder"].startswith("agent start failed:"), reasons
+    assert ship.record()["agents"]["grinder"] == before
+    never_killed(ship)
+
+
+def test_a_failed_fresh_restart_on_core_keeps_the_old_session(core):
+    """A running agent stopped for a fresh restart whose new terminal did not start:
+    the record goes back to its old session and is not marked as a crash (a fresh
+    conversation is not resumed by the refresh)."""
+    ship = core
+    before = ship.record()["agents"]["main"]
+    _fail_run(ship, "main")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
+    assert rc != 0 and doc["error"]["code"] == "agent-failed"
+    after = ship.record()["agents"]["main"]
+    assert after["session"] == before["session"]
+    assert after["relaunch"]["last_error"] is None
+    assert hc(ship)["recorded_at_run"]["main"] == before["session"]  # only the first start
+    never_killed(ship)
+
+
+def test_a_failed_restart_on_core_is_recorded_as_a_crash(core):
+    """Not fresh: the record keeps its session in the new mode, as a crash, so the
+    next refresh resumes it."""
+    ship = core
+    sid = ship.record()["agents"]["main"]["session"]
+    _fail_run(ship, "main")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--mode", "plan", "--json")
+    assert rc != 0 and doc["error"]["code"] == "agent-failed"
+    after = ship.record()["agents"]["main"]
+    assert after["session"] == sid and after["mode"] == "plan" and after["want"] == "running"
+    assert after["relaunch"]["last_error"]
+    _fail_run(ship)
+    ship.ctl("refresh")
+    assert launched(ship, "main") == ["--permission-mode", "plan", "--resume", sid]
+    never_killed(ship)
+
+
+def test_a_failed_fresh_start_of_a_stopped_agent_on_core_keeps_its_session(core):
+    """A recorded agent that is not running, started fresh (record.relaunch): the
+    record had the new session before the launch, and gets its old one back."""
+    ship = core
+    sid = _exited(ship, "main")
+    before = ship.record()["agents"]["main"]
+    _fail_run(ship, "main")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
+    assert rc != 0 and doc["error"]["code"] == "agent-failed"
+    after = ship.record()["agents"]["main"]
+    assert after["session"] == sid
+    assert after == before
+    never_killed(ship)
