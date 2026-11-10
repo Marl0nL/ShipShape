@@ -29,12 +29,12 @@ from __future__ import annotations
 
 import re
 import shlex
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from fleetledger import paths
 from fleetledger.errors import ConfigError, FleetError
+from fleetledger.repo import git as git_in
 from fleetledger.service import DROP_IN, REBOOT_DROP_IN
 
 USER = "fleetledger"
@@ -134,8 +134,7 @@ def checkout_source(app: Any, url: str | None) -> tuple[str, str]:
     root = str(repo.root)
 
     def git(*args: str) -> str:
-        proc = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
-                              timeout=60, check=False)
+        proc = git_in(root, *args, timeout=60)
         if proc.returncode != 0:
             raise ConfigError(f"git {' '.join(args)} failed in the checkout.")
         return proc.stdout.strip()
