@@ -7,6 +7,7 @@ conftest.py only defines the fixtures. ship/tests does the same with ship_harnes
 
 from __future__ import annotations
 
+import socket
 import subprocess
 import tempfile
 import time
@@ -31,6 +32,16 @@ def short_folder() -> Path:
     return Path(tempfile.mkdtemp(prefix="fl-", dir="/tmp"))
 
 
+def _answers(sock: Path) -> bool:
+    """Something listens on the socket: it exists a moment before ssh-agent listens."""
+    with socket.socket(socket.AF_UNIX) as s:
+        try:
+            s.connect(str(sock))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False
+    return True
+
+
 class SSHAgents:
     """Private ssh-agents run as child processes (ssh-agent -D), so they can always be
     stopped: nothing outlives the test."""
@@ -43,11 +54,11 @@ class SSHAgents:
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         self.procs.append(proc)
         deadline = time.monotonic() + 10
-        while not sock.is_socket():
+        while not _answers(sock):
             if proc.poll() is not None:
                 raise RuntimeError(f"ssh-agent did not start: {proc.stderr.read()!r}")
             if time.monotonic() > deadline:
-                raise RuntimeError("ssh-agent did not make its socket in 10 s")
+                raise RuntimeError("ssh-agent did not answer on its socket in 10 s")
             time.sleep(0.01)
         return sock
 
