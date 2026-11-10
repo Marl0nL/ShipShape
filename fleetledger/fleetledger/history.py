@@ -271,9 +271,9 @@ def _label(text: str) -> str:
     """A title ("Take snapshot before-upgrade-2026-11-06-full"): written by FleetLedger
     from names it checked, so only addresses and link queries are taken out; long
     runs stay readable."""
-    from fleetledger.concierge.redact import EMAIL, QUERY, clean
+    from fleetledger.concierge.redact import QUERY, clean, redact_emails
 
-    return EMAIL.sub("[email]", QUERY.sub(r"\1?[…]", clean(text)))[:OPS_MAX_LINE]
+    return redact_emails(QUERY.sub(r"\1?[…]", clean(text)))[:OPS_MAX_LINE]
 
 
 def scrubbed(op: Operation) -> Operation:
