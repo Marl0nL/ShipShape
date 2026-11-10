@@ -28,7 +28,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from conftest import keygen
+from fl_harness import keygen
 from fleetledger.ssh import SSH
 
 from fleetledger import ca

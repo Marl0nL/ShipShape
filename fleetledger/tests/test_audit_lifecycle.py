@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import keygen
+from fl_harness import keygen
 from fleetledger.concierge import audit
 from test_ca import caenv, cakeys  # noqa: F401  (fixtures)
 from test_cli import RUNNING, env, stranger  # noqa: F401  (fixtures)

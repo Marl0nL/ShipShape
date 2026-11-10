@@ -17,7 +17,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from conftest import keygen
+from fl_harness import keygen
 from fleetledger.inventory import Ship
 from test_cli import RUNNING, env, result  # noqa: F401  (env is a fixture)
 

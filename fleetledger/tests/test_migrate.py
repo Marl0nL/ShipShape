@@ -38,7 +38,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from conftest import REPO_ROOT, keygen
+from fl_harness import REPO_ROOT, keygen
 from fleetledger.drivers import proxmox_api
 from fleetledger.errors import FleetError
 from fleetledger.overlay import secret_store

@@ -2030,7 +2030,7 @@ def test_doctor_lists_each_next_command_once(env, monkeypatch):
 
 def test_doctor_passes_a_set_up_computer_with_no_ships_yet(env, home, monkeypatch):
     """Ships are the next step, not a failure: exit 0, with ship-fleet new in Next."""
-    from conftest import keygen
+    from fl_harness import keygen
 
     doctor_tools(env, monkeypatch, loaded=True)
     monkeypatch.delenv("PYTHONPATH", raising=False)
