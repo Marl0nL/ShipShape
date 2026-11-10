@@ -6,6 +6,17 @@ import pytest
 from fleetledger.repo import GitState, Repo, git
 
 
+@pytest.fixture(autouse=True)
+def plain_git(monkeypatch, tmp_path):
+    """git as it comes: none of this computer's settings, hooks or signing, no
+    repository inherited from the environment, and none found above tmp_path."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def run(root, *args):
     subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
