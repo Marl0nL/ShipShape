@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths
+from fleetledger import paths, sshkeys
 from fleetledger.errors import FleetError
 
 
@@ -76,26 +76,14 @@ def computer(app) -> list[Item]:
 
 def fingerprint(public_key: str, run: Runner = _run) -> str | None:
     """SHA256 fingerprint of a public key file, via ssh-keygen -lf; None if that fails."""
-    try:
-        result = run(["ssh-keygen", "-lf", public_key])
-    except (OSError, subprocess.SubprocessError):
-        return None
-    parts = (result.stdout or "").split()
-    return parts[1] if result.returncode == 0 and len(parts) > 1 else None
+    return sshkeys.keygen_fingerprint(public_key, run)
 
 
 def agent_fingerprints(run: Runner = _run) -> list[str] | None:
     """Fingerprints ssh-agent holds; None if there is no agent."""
     if not os.environ.get("SSH_AUTH_SOCK"):
         return None
-    try:
-        result = run(["ssh-add", "-l"])
-    except (OSError, subprocess.SubprocessError):  # no ssh-add, or the agent hangs
-        return None
-    if result.returncode == 2:  # cannot connect to the agent
-        return None
-    return [line.split()[1] for line in (result.stdout or "").splitlines()
-            if len(line.split()) > 1]
+    return sshkeys.agent_fingerprints(run)
 
 
 def copy_items(store, inv) -> list[Item]:

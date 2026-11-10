@@ -37,7 +37,7 @@ import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from fleetledger import paths
+from fleetledger import paths, sshkeys
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.overlay import secret_store
 
@@ -354,22 +354,12 @@ def _agent_socket() -> Path:
 
 
 def loaded_fingerprints() -> set[str]:
-    try:
-        proc = subprocess.run(["ssh-add", "-l"], capture_output=True, text=True, timeout=10,
-                              check=False)
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    return {line.split()[1] for line in proc.stdout.splitlines() if len(line.split()) > 1}
+    return set(sshkeys.agent_fingerprints() or ())
 
 
 def fingerprint(path: Path) -> str | None:
-    try:
-        proc = subprocess.run(["ssh-keygen", "-lf", str(path.with_name(path.name + ".pub"))],
-                              capture_output=True, text=True, timeout=10, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    parts = proc.stdout.split()
-    return parts[1] if proc.returncode == 0 and len(parts) > 1 else None
+    """The fingerprint of the private key at path (from its .pub next to it)."""
+    return sshkeys.keygen_fingerprint(str(path.with_name(path.name + ".pub")))
 
 
 def add_to_agent(path: Path, passphrase: str) -> None:

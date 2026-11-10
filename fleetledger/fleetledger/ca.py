@@ -41,7 +41,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths
+from fleetledger import paths, sshkeys
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship
 
@@ -130,15 +130,8 @@ def require(inventory: Inventory) -> CAConfig:
     return ca
 
 
-def _blob(key_line: str) -> str:
-    parts = key_line.split()
-    return parts[1] if len(parts) > 1 else ""
-
-
-def fingerprint(key_line: str) -> str:
-    """OpenSSH SHA256 fingerprint of a public key line (as ssh-keygen -l prints it)."""
-    raw = base64.b64decode(_blob(key_line))
-    return "SHA256:" + base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+_blob = sshkeys.blob
+fingerprint = sshkeys.fingerprint  # OpenSSH SHA256 fingerprint of a public key line
 
 
 # --- machines ---------------------------------------------------------------------

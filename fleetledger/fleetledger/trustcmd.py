@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from fleetledger import attach, ca, paths, status
+from fleetledger import attach, ca, paths, sshkeys, status
 from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, now_timestamp
@@ -273,9 +273,9 @@ def cmd_trust(args, app) -> int:
                              hint="Make one on that machine: ssh-keygen -t ed25519 "
                              "-f ~/.ssh/shipshape/id_ed25519")
         key = _read_key(args.key)
-        if ca._blob(key) in {ca._blob(m.public_key) for m in ca.machines(inv)}:
+        if sshkeys.blob(key) in {sshkeys.blob(m.public_key) for m in ca.machines(inv)}:
             raise FleetError("That key is already trusted under another name.")
-        if ca._blob(key) in {ca._blob(k) for k in (cfg.host_public, cfg.user_public)}:
+        if sshkeys.blob(key) in {sshkeys.blob(k) for k in (cfg.host_public, cfg.user_public)}:
             raise FleetError("That is a CA key, not a machine key.")
         scope = args.scope or ["all"]
         for s in scope:
@@ -291,7 +291,7 @@ def cmd_trust(args, app) -> int:
         if existing.revoked:
             raise FleetError(f"{name} was untrusted on {existing.revoked}; it stays untrusted.",
                              hint="Trust the machine again under a new name with a new key.")
-        if args.key and ca._blob(_read_key(args.key)) != ca._blob(existing.public_key):
+        if args.key and sshkeys.blob(_read_key(args.key)) != sshkeys.blob(existing.public_key):
             raise FleetError(f"{name} is trusted with a different key.",
                              hint=f"`ship-fleet untrust {name}`, then trust the new key under a "
                              "new name.")
@@ -555,7 +555,7 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
 
         key = keys.public_line(key_path)
         m = next((x for x in ca.machines(inv)
-                  if not x.revoked and ca._blob(x.public_key) == ca._blob(key)), None)
+                  if not x.revoked and sshkeys.blob(x.public_key) == sshkeys.blob(key)), None)
         if m is None:
             name = _local_name(inv)
             with store.edit() as ed:
