@@ -131,7 +131,6 @@ def _signing_in(request: Request, name: str) -> bool:
     return any(f.ship == name for f in ui_of(request).concierge.active())
 
 
-
 async def tab_context(app: Any, name: str) -> dict[str, Any]:
     return await run_in_threadpool(listing, app, name)
 

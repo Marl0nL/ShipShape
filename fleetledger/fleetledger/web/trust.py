@@ -57,8 +57,6 @@ NOT_A_KEY = ("Paste the machine's public key: the one line in its .pub file, sta
              "ssh-ed25519. Never a private key, and not a file's path.")
 
 
-
-
 def public_key_line(text: str) -> str | None:
     """The one ed25519 public-key line pasted, or None for anything else (a path, a
     private key, several lines, another key type)."""

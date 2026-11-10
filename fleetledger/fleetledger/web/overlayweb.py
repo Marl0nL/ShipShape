@@ -33,8 +33,6 @@ TOO_BIG = ("That policy is too long to send from this page. Check it from a term
 TO_OVERLAY = "/settings?said=overlay#overlay"
 
 
-
-
 # --- a Ship's Access tab ----------------------------------------------------------------
 def tab_context(inv: Any, ship: Any, doc: dict | None) -> dict[str, Any]:
     """The Ship's host certificate, judged as Settings ▸ Certificates does (the cached

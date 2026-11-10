@@ -126,7 +126,6 @@ async def lock(request: Request) -> Response:
     return RedirectResponse("/", status_code=303)
 
 
-
 def routes() -> list[Route]:
     return [
         Route("/unlock", unlock_page),

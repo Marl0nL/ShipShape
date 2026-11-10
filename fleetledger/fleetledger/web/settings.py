@@ -62,7 +62,6 @@ class Health:
         return found
 
 
-
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
     from fleetledger.web import devicesweb, images, overlayweb, setup, trust

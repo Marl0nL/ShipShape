@@ -213,11 +213,9 @@ def unmanaged_keys(inv) -> list[tuple[str, Path]]:
 # --- handlers --------------------------------------------------------------------------------
 
 
-
 def _state(request: Request) -> SetupState:
     ui = ui_of(request)
     return ui.setups.get(request.scope["state"]["session"].id)
-
 
 
 def _back(anchor: str = "", fields: dict[str, list[str]] | None = None) -> RedirectResponse:

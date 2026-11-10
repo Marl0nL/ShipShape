@@ -33,11 +33,9 @@ from fleetledger.web.forms import NAME_RE, form, one
 TO_DEVICES = "/settings?said=devices#devices"
 
 
-
 def _store(ui: Any) -> Devices:
     # The running UI's own store when the remote address is on; else the same file.
     return ui.gate.devices or Devices()
-
 
 
 def machine_of(device: Any, inv: Any) -> Any:

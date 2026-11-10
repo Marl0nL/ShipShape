@@ -34,7 +34,6 @@ def _back() -> RedirectResponse:
     return RedirectResponse(BACK, status_code=303)
 
 
-
 async def _image_field(request: Request) -> tuple[dict[str, list[str]], str | None]:
     fields = await form(request)
     image = one(fields, "image")
