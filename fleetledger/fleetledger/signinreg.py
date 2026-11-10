@@ -190,6 +190,17 @@ def _build(folder: Path) -> Registry:
     return Registry(signins=tuple(signins), services=tuple(services))
 
 
+def merge(base: Registry, extra: Registry, where: str) -> Registry:
+    """base with extra's sign-ins after them (a toolkit's). Ids are flat and shared:
+    a sign-in, flow or status key both name stops it."""
+    clash = (set(base.provider_ids) & set(extra.provider_ids)) | (
+        set(base.service_keys) & set(extra.service_keys))
+    if clash:
+        raise ConfigError(f"{where}: sign-in {', '.join(sorted(clash))} is already known.")
+    return Registry(signins=base.signins + extra.signins,
+                    services=base.services + extra.services)
+
+
 @cache
 def registry() -> Registry:
     """The registry from the checkout's sign-in files."""

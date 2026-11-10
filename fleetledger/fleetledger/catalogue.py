@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fleetledger import schemas
+from fleetledger import schemas, signinreg
 from fleetledger.errors import ConfigError, FleetError, NotFound
 
 
@@ -91,6 +91,8 @@ class Catalogue:
         self.profiles = {pid: _profile(pid, d) for pid, d in raw_profiles.items()}
         self.toolkits: dict[str, Any] = {}  # id -> toolkits.Toolkit, loaded
         self.broken: dict[str, str] = {}  # id -> why it did not load
+        # Every sign-in known: FleetLedger's own, then each loaded toolkit's.
+        self.signins: signinreg.Registry = signinreg.registry()
         for profile in self.profiles.values():
             missing = [t for t in profile.tools if t not in self.recipes]
             if missing:
@@ -116,6 +118,8 @@ class Catalogue:
         """Merge a loaded toolkit's tools and profiles in, as <toolkit>/<id>."""
         if kit.id in self.toolkits:
             raise ConfigError(f"Toolkit {kit.id} is loaded twice.")
+        if kit.registry is not None:
+            self.signins = signinreg.merge(self.signins, kit.registry, f"toolkit {kit.id}")
         self.toolkits[kit.id] = kit
         for rid, doc in kit.recipes.items():
             self.recipes[kit.qualified(rid)] = _recipe(kit.qualified(rid), doc, kit.id)

@@ -89,9 +89,11 @@ UI say so, and the catalogue and other toolkits work as before.
 - `needs` names a sign-in FleetLedger knows or one of the toolkit's own.
 - A profile lists catalogue tools and its own toolkit's (bare or `mykit/...`), not
   another toolkit's.
-- A sign-in file has a `[signin]` table, and its `part_of` names one of the toolkit's
-  own sign-ins. Sign-in files are checked by FleetLedger's provider loader until the
-  shared sign-in contract lands.
+- Sign-in files follow the sign-in contract (`signin.schema.json`), as FleetLedger's
+  own do. Each has a `[signin]` table, and its `part_of` names one of the toolkit's own
+  sign-ins. A loaded toolkit's sign-ins join the catalogue's sign-in registry, so a
+  later toolkit's `needs` may name them; an id or status key already known stops the
+  toolkit loading.
 
 ## Moving FleetLedger
 

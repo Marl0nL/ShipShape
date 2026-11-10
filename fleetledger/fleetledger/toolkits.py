@@ -93,6 +93,7 @@ class Toolkit:
     instructions: tuple[str, ...]
     files: Mapping[str, str]  # files/... -> sha256
     config: Config | None = None
+    registry: signinreg.Registry | None = None  # its own sign-ins, as the registry has them
 
     def qualified(self, own_id: str) -> str:
         return f"{self.id}/{own_id}"
@@ -254,10 +255,8 @@ def _check_profile(kit_id: str, pid: str, doc: dict[str, Any], root: Path,
 
 def _load_signins(folder: Path, root: Path, registry: signinreg.Registry
                   ) -> tuple[signinreg.Registry | None, list[str]]:
-    """The toolkit's sign-in files, read as FleetLedger's provider files are.
-
-    TODO(toolkits PR 2): check them against contracts/signin.schema.json once the
-    sign-in contract lands; until then the provider loader is the check."""
+    """The toolkit's sign-in files, checked as FleetLedger's own are (the sign-in
+    contract, contracts/signin.schema.json, and its rules: concierge/providers.py)."""
     from fleetledger.concierge import providers
 
     problems: list[str] = []
@@ -268,6 +267,10 @@ def _load_signins(folder: Path, root: Path, registry: signinreg.Registry
         try:
             providers.parse(path)
         except ConfigError as exc:
+            if isinstance(exc.__cause__, OSError):
+                problems.append(f"{_rel(path, root)}: cannot be read "
+                                f"({exc.__cause__.strerror})")
+                continue
             problems.append(f"{_rel(path, root)}: {exc.message.replace(f'{path}: ', '')}")
         except tomllib.TOMLDecodeError as exc:
             problems.append(f"{_rel(path, root)}: not valid TOML: {exc}")
@@ -298,11 +301,14 @@ def _load_signins(folder: Path, root: Path, registry: signinreg.Registry
 
 def load(root: Path | str, *, expect_id: str | None = None, allow_root: bool = False,
          base: Any = None, contracts: Path | None = None,
-         taken: Mapping[str, str] | None = None, config: Config | None = None) -> Toolkit:
+         taken: Mapping[str, str] | None = None, config: Config | None = None,
+         signins: signinreg.Registry | None = None) -> Toolkit:
     """Read and check the toolkit in root. Raises ToolkitError with every problem.
 
     base: the Catalogue it joins (its tools and profiles may not reuse their ids);
-    taken: sign-in and status key ids other loaded toolkits use -> their toolkit."""
+    taken: sign-in and status key ids other loaded toolkits use -> their toolkit;
+    signins: the sign-ins known so far (FleetLedger's own and loaded toolkits'), which
+    `needs` may name besides the toolkit's own (default: FleetLedger's own)."""
     root = Path(root).expanduser()
     shown = paths.tilde(root)
     if not root.is_dir():
@@ -357,7 +363,7 @@ def load(root: Path | str, *, expect_id: str | None = None, allow_root: bool = F
                 problems.append(f"{where}: id '{doc['id']}' does not match the file name")
                 continue
             into[doc["id"]] = doc
-    known_needs = {*registry.service_keys, *own_services}
+    known_needs = {*(signins or registry).service_keys, *own_services}
     for rid, doc in recipes.items():
         problems += _check_recipe(rid, doc, root, allow_root, known_needs, base_tools)
     for pid, doc in profiles.items():
@@ -421,13 +427,15 @@ def load(root: Path | str, *, expect_id: str | None = None, allow_root: bool = F
         instructions=tuple(manifest.get("instructions", ())),
         files=pinned,
         config=config,
+        registry=own_signins,
     )
 
 
 def load_config(cfg: Config, *, base: Any = None, contracts: Path | None = None,
-                taken: Mapping[str, str] | None = None) -> Toolkit:
+                taken: Mapping[str, str] | None = None,
+                signins: signinreg.Registry | None = None) -> Toolkit:
     return load(cfg.path, expect_id=cfg.id, allow_root=cfg.allow_root, base=base,
-                contracts=contracts, taken=taken, config=cfg)
+                contracts=contracts, taken=taken, config=cfg, signins=signins)
 
 
 def load_configured(inventory: Any, base: Any = None, contracts: Path | None = None
@@ -439,9 +447,10 @@ def load_configured(inventory: Any, base: Any = None, contracts: Path | None = N
     loaded: list[Toolkit] = []
     broken: dict[str, str] = {}
     taken: dict[str, str] = {}
+    known = getattr(base, "signins", None) or signinreg.registry()
     for cfg in configured(inventory):
         try:
-            kit = load_config(cfg, base=base, contracts=contracts, taken=taken)
+            kit = load_config(cfg, base=base, contracts=contracts, taken=taken, signins=known)
         except ConfigError as exc:
             broken[cfg.id] = exc.message
             continue
@@ -450,6 +459,8 @@ def load_configured(inventory: Any, base: Any = None, contracts: Path | None = N
             continue
         for ident in (*kit.flows, *kit.services):
             taken[ident] = kit.id
+        if kit.registry is not None:
+            known = signinreg.merge(known, kit.registry, f"toolkit {kit.id}")
         loaded.append(kit)
     return loaded, broken
 

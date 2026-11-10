@@ -1,8 +1,9 @@
-# Example Docs device flow (a placeholder for tests).
+# Example Docs device flow (a placeholder for tests; contracts/signin.schema.json).
+schema = 1
 id = "exampledocs"
 label = "Example Docs"
 mode = "device-code"
-run = "example-cli auth login --no-browser"
+run = "example-cli auth login --no-browser --store file"
 timeout = 300
 
 [signin]
@@ -14,10 +15,17 @@ url = 'https://auth\.example\.com/device'
 code = 'code: ([A-Z0-9]{4}-[A-Z0-9]{4})'
 success = '(?i)signed in'
 
-[[check]]
-service = "exampledocs"
-run = "example-cli auth status --account"
-account = "stdout"
+# Run on the Ship by ship-ctl status and ship-ctl signin check.
+[status]
+run = "example-cli auth status --json"
+every = "5m"
+ok_json = "signed_in"
+account = "json:account.email"
+missing_exit = [1]
+
+[secrets]
+paths = ["~/.config/example-cli/tokens.json"]
+store = "file"
 
 [logout]
 run = "example-cli auth logout"

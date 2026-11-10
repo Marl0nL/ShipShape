@@ -20,7 +20,7 @@ from fleetledger.errors import ConfigError, FleetError, NotFound
 from fleetledger.inventory import Inventory
 from fleetledger.toolkits import ToolkitError
 
-from fleetledger import cli, toolkits
+from fleetledger import cli, signinreg, toolkits
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "toolkits" / "examplekit"
 
@@ -211,8 +211,9 @@ def _signin_builtin_id(kit):
 
 
 def _signin_builtin_status_key(kit):
-    edit(kit / "signins" / "exampledocs.toml", 'service = "exampledocs"', 'service = "github"')
-    edit(kit / "tools" / "example-cli.toml", 'needs = ["exampledocs"]', 'needs = []')
+    with (kit / "signins" / "exampledocs.toml").open("a") as fh:
+        fh.write('\n[[check]]\nservice = "exampledocs"\nrun = "example-cli auth status"\n'
+                 '\n[[check]]\nservice = "github"\nrun = "example-cli github status"\n')
 
 
 def _signin_not_flat(kit):
@@ -275,9 +276,9 @@ RULES = [
     (_profile_setup_outside, "setup '../../x.sh' is outside the toolkit"),
     (_signin_builtin_id, "'claude' is already one of FleetLedger's own sign-ins"),
     (_signin_builtin_status_key, "status key 'github' is already one of FleetLedger's"),
-    (_signin_not_flat, "is not a sign-in id"),
+    (_signin_not_flat, "id: 'example-docs' does not match"),
     (_signin_without_table, "needs a [signin] table"),
-    (_signin_bad_file, "signins/exampledocs.toml: 'magic' is not one of"),
+    (_signin_bad_file, "signins/exampledocs.toml: mode: 'magic' is not one of"),
     (_needs_unknown, "needs unknown sign-in otherdocs"),
     (_recipe_schema, "tools/example-cli.toml: kind"),
     (_recipe_file_name, "does not match the file name"),
@@ -377,6 +378,23 @@ def test_the_cli_takes_a_bare_id_when_only_one_toolkit_has_it(kit, fake_repo, st
         cat.resolve_profiles(["dev"])
     assert cat.resolve_profiles(["orchestrator", "otherkit/dev"]) == ["orchestrator",
                                                                      "otherkit/dev"]
+
+
+def test_toolkit_sign_ins_join_the_catalogue_s_registry(kit, fake_repo, store, tmp_path):
+    other = tmp_path / "toolkits" / "otherkit"  # loads after examplekit (id order)
+    shutil.copytree(FIXTURE, other)
+    edit(other / "toolkit.toml", 'id = "examplekit"', 'id = "otherkit"')
+    (other / "signins" / "exampledocs.toml").unlink()  # it needs examplekit's sign-in
+    edit(other / "profiles" / "dev.toml", '"examplekit/example-guide"', '"example-guide"')
+    inv = with_toolkits(store, examplekit={"path": str(kit)}, otherkit={"path": str(other)})
+    cat = Catalogue.from_repo(fake_repo, inv)
+    assert cat.broken == {}
+    assert cat.signins.choices[-1] == "exampledocs" and "claude" in cat.signins.choices
+    assert cat.signins.labels["exampledocs"] == "Example Docs"
+    assert cat.recipes["otherkit/example-cli"].needs == ("exampledocs",)
+    assert Catalogue.from_repo(fake_repo).signins.choices == ("claude", "gcloud", "github")
+    with pytest.raises(ConfigError, match="sign-in exampledocs is already known"):
+        signinreg.merge(cat.signins, cat.toolkits["examplekit"].registry, "toolkit again")
 
 
 def test_a_broken_toolkit_is_left_out_and_says_why(kit, fake_repo, store):

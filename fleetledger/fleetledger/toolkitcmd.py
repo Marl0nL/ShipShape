@@ -112,7 +112,7 @@ def _add(app, kit_id: str, folder: str, args) -> int:
                           only_tags=tuple(dict.fromkeys(args.only_tag)) or None,
                           options=_options(args.option))
     catalogue = _catalogue(app, inv)
-    kit = toolkits.load_config(cfg, base=catalogue,
+    kit = toolkits.load_config(cfg, base=catalogue, signins=catalogue.signins,
                                taken=toolkits.taken_by(catalogue.toolkits.values()))
     entry: dict[str, Any] = {"path": paths.tilde(kit.root)}
     if cfg.allow_root:
@@ -165,12 +165,14 @@ def _check(app, what: str, allow_root: bool) -> int:
     looks_like_path = "/" in what or what.startswith((".", "~"))
     if what in configs and not looks_like_path:
         cfg = configs[what]
-        kit = toolkits.load_config(cfg, base=catalogue, taken=toolkits.taken_by(
-            catalogue.toolkits.values(), but=cfg.id))
+        kit = toolkits.load_config(cfg, base=catalogue, signins=catalogue.signins,
+                                   taken=toolkits.taken_by(catalogue.toolkits.values(),
+                                                           but=cfg.id))
     elif Path(what).expanduser().is_dir():
         # A folder: checked as it would be added, against the toolkits already added
         # (bar one of its own id: the same toolkit elsewhere).
         kit = toolkits.load(Path(what).expanduser(), allow_root=allow_root, base=catalogue,
+                            signins=catalogue.signins,
                             taken=toolkits.taken_by(catalogue.toolkits.values()))
         other = configs.get(kit.id)
         if other is not None and other.path.resolve() != kit.root:
