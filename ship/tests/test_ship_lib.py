@@ -116,3 +116,18 @@ def test_set_keys_creates_and_preserves():
 def test_set_keys_empty_file():
     out = tomlw.set_keys("", {("", "onboarding"): False, ("update", "version_check"): False})
     assert tomllib.loads(out) == {"onboarding": False, "update": {"version_check": False}}
+
+
+# --- the Ship's UTC timestamps (context.stamp) -------------------------------------
+def test_stamp_and_parse_stamp_round_trip():
+    from datetime import UTC, datetime, timedelta, timezone
+
+    from shipctl.context import parse_stamp, stamp
+
+    assert stamp(1767323045) == "2026-01-02T03:04:05Z"
+    assert stamp(1767323045.9) == "2026-01-02T03:04:05Z"
+    plus2 = timezone(timedelta(hours=2))
+    assert stamp(datetime(2026, 1, 2, 5, 4, 5, tzinfo=plus2)) == "2026-01-02T03:04:05Z"
+    assert parse_stamp("2026-01-02T03:04:05Z") == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    with pytest.raises(ValueError):
+        parse_stamp("2026-01-02T03:04:05")

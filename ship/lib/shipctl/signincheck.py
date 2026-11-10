@@ -28,9 +28,9 @@ import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import datetime
 
-from .context import Context
+from .context import Context, stamp
 from .fsutil import read_json, write_atomic
 from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
 from .signins import Registry, SignIn, Status
@@ -50,10 +50,6 @@ def entry(state: str, account: object = None, detail: object = None,
     if expires_at:
         out["expires_at"] = expires_at
     return out
-
-
-def stamp(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _fail(what: str, result: Result) -> str:

@@ -14,9 +14,23 @@ from .homefs import HomeFS, UnsafePath
 from .paths import Paths
 from .runner import Runner
 
+STAMP = "%Y-%m-%dT%H:%M:%SZ"  # the Ship's one UTC timestamp format
+
+
+def stamp(when: datetime | float) -> str:
+    """A UTC timestamp, from epoch seconds or a datetime."""
+    if isinstance(when, datetime):
+        return when.astimezone(UTC).strftime(STAMP)
+    return datetime.fromtimestamp(when, UTC).strftime(STAMP)
+
+
+def parse_stamp(text: str) -> datetime:
+    """The UTC datetime a stamp() names; ValueError if it is not one."""
+    return datetime.strptime(text, STAMP).replace(tzinfo=UTC)
+
 
 def utc_now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return stamp(datetime.now(UTC))
 
 
 @dataclass

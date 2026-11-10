@@ -26,10 +26,9 @@ import secrets
 import stat
 import time
 import unicodedata
-from datetime import UTC, datetime
 from typing import BinaryIO
 
-from .context import Context
+from .context import Context, stamp
 from .errors import CtlError
 from .homefs import UnsafePath
 from .notice import record, send_to_cores
@@ -136,10 +135,6 @@ def _free_bytes(ctx: Context) -> int | None:
     return st.f_bavail * st.f_frsize
 
 
-def _when(seconds: float) -> str:
-    return datetime.fromtimestamp(seconds, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def listing(ctx: Context) -> dict:
     """What is in ~/inbox now: its plain files (no folder is entered, no link
     followed), newest first."""
@@ -163,7 +158,7 @@ def listing(ctx: Context) -> dict:
                     data["others"] += 1
                     continue
                 files.append({"name": entry.name, "size": st.st_size,
-                              "modified": _when(st.st_mtime), "_m": st.st_mtime})
+                              "modified": stamp(st.st_mtime), "_m": st.st_mtime})
     finally:
         os.close(fd)
     files.sort(key=lambda f: (-f["_m"], f["name"]))
