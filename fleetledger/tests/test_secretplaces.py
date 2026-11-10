@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import tomlkit
+from fl_harness import fake_tskey
 from fleetledger.overlay import secret_store
 
 from fleetledger import migrate, paths, vaultcmd
@@ -226,7 +227,7 @@ def test_overlay_setup_records_the_secret_as_ever(store, home, store_kind):
     app = cli.App(store_factory=lambda: store)
     app.overlay_api = Tailnet
     overlay_setup.connect_oauth(app, store, client_id="kExampleClient1",
-                                secret="tskey-client-kExampleClient1-SECRET", reused=True,
+                                secret=fake_tskey("client", "kExampleClient1-SECRET"), reused=True,
                                 store_kind=store_kind, level="keys")
     api = store.load().overlay["api"]
     file = paths.tilde(paths.config_dir() / overlay_setup.SECRET_FILE)

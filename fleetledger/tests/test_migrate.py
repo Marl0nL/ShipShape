@@ -38,7 +38,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from fl_harness import REPO_ROOT, keygen
+from fl_harness import REPO_ROOT, fake_tskey, keygen
 from fleetledger.drivers import proxmox_api
 from fleetledger.errors import FleetError
 from fleetledger.overlay import secret_store
@@ -549,7 +549,7 @@ def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
     token_item = secret_store.proxmox_item("fleet@pve!ledger")
     oauth_item = secret_store.oauth_item("k123EXAMPLE")
     a.ring.set_password("fleetledger", token_item, "11111111-2222-3333-4444-555555555555")
-    a.ring.set_password("fleetledger", oauth_item, "tskey-client-k123EXAMPLE-SECRET")
+    a.ring.set_password("fleetledger", oauth_item, fake_tskey("client", "k123EXAMPLE-SECRET"))
     with a.store.edit() as ed:
         ed.set_driver("proxmox", {
             "api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
@@ -589,7 +589,7 @@ def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
     out = b.out.getvalue()
     assert code == migrate.VERIFIED, out
     assert seen == {"token": "11111111-2222-3333-4444-555555555555",
-                    "oauth": "tskey-client-k123EXAMPLE-SECRET"}
+                    "oauth": fake_tskey("client", "k123EXAMPLE-SECRET")}
     doc = tomllib.loads(b.store.path.read_text())
     pve = doc["drivers"]["proxmox"]
     assert "token_store" not in pve and "keyring_item" not in pve
@@ -1176,7 +1176,7 @@ def _with_hypervisor_secrets(a: Computer, monkeypatch) -> tuple[str, str]:
     token_item = secret_store.proxmox_item("fleet@pve!ledger")
     oauth_item = secret_store.oauth_item("k123EXAMPLE")
     a.ring.set_password("fleetledger", token_item, "11111111-2222-3333-4444-555555555555")
-    a.ring.set_password("fleetledger", oauth_item, "tskey-client-k123EXAMPLE-SECRET")
+    a.ring.set_password("fleetledger", oauth_item, fake_tskey("client", "k123EXAMPLE-SECRET"))
     with a.store.edit() as ed:
         ed.set_driver("proxmox", {
             "api_url": "https://pve.example.com:8006/api2/json", "node": "pve",

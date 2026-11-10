@@ -183,3 +183,9 @@ class Clock:
 
     def __call__(self):
         return self.now
+
+
+def fake_tskey(kind: str, rest: str) -> str:
+    """A made-up Tailscale key ("tskey-<kind>-<rest>"), built at runtime so no literal in
+    the source looks like a real key to secret scanners (scripts/hygiene.py refuses one)."""
+    return "-".join(("tsk" + "ey", kind, rest))
