@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 import tomllib
 from pathlib import Path
 
@@ -186,3 +187,133 @@ def test_a_broken_provider_file_is_a_clean_ship_fleet_error(monkeypatch):
     assert code != 0
     assert err.getvalue().startswith("ship-fleet: example.toml: [signin] lacks")
     assert "Traceback" not in err.getvalue()
+
+
+# --- the Ship reads the same files the same way --------------------------------------
+# The Ship's registry (ship/lib/shipctl/signins.py) is its own stdlib-only copy, as its
+# bundle holds only ship/; these tests keep the two from drifting apart.
+sys.path.insert(0, str(signinreg.SIGNINS_DIR.parents[0] / "lib"))
+from shipctl import signins as ship_signins  # noqa: E402 - the Ship's registry
+
+SHIP_SCHEMA = signinreg.SIGNINS_DIR.parents[0] / "schemas" / "signin.schema.json"
+
+# The shapes a toolkit's files can take: a sign-in with two status keys, listed out of
+# alphabetical order, whose `order` puts it after a built-in it sorts before by id; the
+# flow that signs in one of its keys alone; and a sign-in whose `order` ties a
+# built-in's (the tie is broken by id).
+TWO_KEYS = """\
+schema = 1
+id = "exampledocs"
+label = "Example Docs"
+mode = "device-code"
+run = "example-cli auth login"
+timeout = 300
+
+[signin]
+label = "Example Docs"
+order = 4
+
+[match]
+url = 'https://auth\\.example\\.com/device'
+code = 'code: (\\S+)'
+success = 'signed in'
+
+[[check]]
+service = "exampledocs_api"
+short = "API"
+run = "example-cli api status"
+
+[[check]]
+service = "exampledocs"
+run = "example-cli auth status"
+account = "stdout"
+
+[status]
+run = "example-cli auth status --json"
+ok_json = "signed_in"
+
+[logout]
+run = "example-cli auth logout"
+"""
+
+API_PART = """\
+schema = 1
+id = "exampledocs-api"
+label = "Example Docs API"
+mode = "device-code"
+run = "example-cli api login"
+timeout = 300
+
+[signin]
+part_of = "exampledocs"
+
+[match]
+url = 'https://auth\\.example\\.com/device'
+code = 'code: (\\S+)'
+success = 'signed in'
+
+[status]
+run = "example-cli api status --json"
+ok_json = "signed_in"
+
+[logout]
+run = "example-cli api logout"
+"""
+
+
+TIED = """\
+schema = 1
+id = "zeta"
+label = "Zeta"
+mode = "device-code"
+run = "zeta-cli login"
+timeout = 300
+
+[signin]
+label = "Zeta"
+order = 1
+
+[match]
+url = 'https://zeta\\.example\\.com/device'
+code = 'code: (\\S+)'
+success = 'signed in'
+
+[status]
+run = "zeta-cli status --json"
+ok_json = "signed_in"
+
+[logout]
+run = "zeta-cli logout"
+"""
+
+
+def _both_sides(folder: Path) -> None:
+    fl = signinreg.build(folder)
+    ship = ship_signins.build(folder, SHIP_SCHEMA)
+    # The status document's auth keys, in the same order.
+    assert ship.keys == fl.service_keys
+    # Each sign-in file signs in the same keys, in the same order, on both sides.
+    docs = {p.stem: tomllib.loads(p.read_text()) for p in sorted(folder.glob("*.toml"))}
+    fl_flows = {fid: tuple(c["service"] for c in signinreg.checked(fid, doc))
+                for fid, doc in docs.items()}
+    assert {fid: f.keys for fid, f in ship.flows.items()} == fl_flows
+    assert set(ship.flows) == set(fl.provider_ids)
+    for s in fl.signins:
+        assert ship.flows[s.id].keys == s.services
+    # The flow FleetLedger runs to sign in one key alone signs in that key on the Ship.
+    for key, flow in fl.service_provider.items():
+        assert key in ship.flows[flow].keys
+
+
+def test_the_ship_derives_the_same_status_keys():
+    _both_sides(signinreg.SIGNINS_DIR)
+
+
+def test_the_ship_derives_the_same_status_keys_for_new_files(tmp_path):
+    folder = _copy(tmp_path)
+    (folder / "exampledocs.toml").write_text(TWO_KEYS)
+    (folder / "exampledocs-api.toml").write_text(API_PART)
+    (folder / "zeta.toml").write_text(TIED)
+    assert signinreg.build(folder).service_keys == (
+        "claude", "zeta", "gcloud", "gcloud_adc", "github", "exampledocs_api", "exampledocs")
+    _both_sides(folder)
