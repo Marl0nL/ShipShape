@@ -89,7 +89,7 @@ def fresh(home, fake_repo, monkeypatch, tmp_path):
     user_home = tmp_path / "userhome"
     (user_home / ".ssh").mkdir(parents=True, mode=0o700)
     monkeypatch.setenv("HOME", str(user_home))
-    from conftest import keygen
+    from fl_harness import keygen
 
     keygen(user_home / ".ssh" / "id_ed25519", "you")
     monkeypatch.setenv("SSH_AUTH_SOCK", "/nonexistent/agent.sock")

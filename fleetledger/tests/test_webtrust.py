@@ -9,7 +9,7 @@ import shutil
 import subprocess
 
 import pytest
-from conftest import keygen
+from fl_harness import keygen
 from fleetledger.web import dashboard, jobs, trust
 from test_ca import _with_ca, cakeys  # noqa: F401 - fixture
 from test_cli import ShipSSH, result

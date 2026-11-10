@@ -1,39 +1,19 @@
 """Shared fixtures: a private FleetLedger home and a small fake ShipShape repo.
 
-Nothing here touches your real ~/.config/fleetledger, keys or network.
+Nothing here touches your real ~/.config/fleetledger, keys or network. Helpers
+live in fl_harness.py: import them from there, never from conftest.
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 import textwrap
 from pathlib import Path
 
 import pytest
+from fl_harness import CONTRACTS, INVENTORY, REPO_ROOT, FakeSSH, NoKeyring, keygen
 from fleetledger.repo import Repo
 from fleetledger.store import TomlFileStore
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CONTRACTS = REPO_ROOT / "contracts"
-
-
-def keygen(path: Path, comment: str) -> Path:
-    subprocess.run(
-        ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(path)],
-        check=True,
-        capture_output=True,
-    )
-    return path
-
-
-class NoKeyring:
-    """What tests get by default: no usable keyring, so nothing ever reaches a real one."""
-
-    def get_password(self, service, item):
-        raise RuntimeError("no keyring in tests")
-
-    set_password = get_password
 
 
 @pytest.fixture(autouse=True)
@@ -58,51 +38,6 @@ def home(tmp_path, monkeypatch):
     keygen(keys / "fleet_admin", "fleet-admin")
     keygen(keys / "you", "you")
     return tmp_path
-
-
-INVENTORY = """\
-# My fleet (a comment that must survive edits)
-schema = 1
-
-[fleet]
-admin_key = "{keys}/fleet_admin"
-agent_keys = ["{keys}/you.pub"]
-
-[defaults]
-driver = "manual"
-tags = ["work"]
-claude = {{ remote_control = "on", default_mode = "auto" }}
-
-[tag.work]
-claude = "work@example.com"
-gcloud = "work@example.com"
-github = "example-work"
-
-[tag.personal]
-claude = "you@example.com"
-github = "example-user"
-
-[profile_options.orchestrator]
-repo_url = "https://example.com/orchestrator.git"
-
-[ship.ship-01]
-id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
-tags = ["work"]
-driver = "manual"
-names = ["ship-01.local"]
-host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5ZXhhbXBsZWhvc3RrZXlleGFt"
-profiles = ["orchestrator"]
-enrolled = "2026-01-01T00:00:00Z"
-
-[ship.ship-02]
-id = "2f1b8a54-3c6e-4d1f-9a2b-5e8c7d6f4a31"
-tags = ["personal"]
-driver = "manual"
-names = ["ship-02.local", "ship-02.example.net"]
-host_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0a2V5c2hpcDAyZXhhbXBsZWhvc3Rr"
-claude = {{ default_mode = "bypassPermissions", allow_bypass = true }}
-enrolled = "2026-01-01T00:00:00Z"
-"""
 
 
 @pytest.fixture
@@ -186,26 +121,6 @@ def fake_repo(tmp_path):
         """,
     )
     return Repo(root)
-
-
-class FakeSSH:
-    """Stands in for fleetledger.ssh.SSH: answers each remote command from a handler.
-
-    handler(ship, command, input) returns (returncode, stdout, stderr) or raises.
-    """
-
-    def __init__(self, handler):
-        self.handler = handler
-        self.calls = []
-
-    def run(self, ship, command, *, input=None, timeout=60):
-        from fleetledger.ssh import Result
-
-        self.calls.append((ship.name, list(command), input))
-        code, out, err = self.handler(ship, list(command), input)
-        if isinstance(out, str):
-            out = out.encode()
-        return Result(code, out, err, ship.names[0])
 
 
 @pytest.fixture
