@@ -4,7 +4,8 @@ Two runtimes, chosen per Ship by ship.toml `runtime` (contracts/settings.md):
 herdr's server (`herdr agent ...`, `herdr pane ...`, the default) and herdr-core
 (`hc ...`, `runtime = "core"`). Everything else (the agent record, autostart,
 restart, notices, the status document) reaches them only through `for_ship(ctx)`,
-and both classes here have the same methods.
+and both classes here have the same methods. What they do the same way (stopping an
+agent, the version, the agent list) lives once in AgentRuntime, over each one's calls.
 
 An agent, as every runtime reports it:
 
@@ -74,7 +75,73 @@ def launched(ok: bool, place: str | None = None, workspace: str | None = None,
     return {"ok": ok, "place": place, "workspace": workspace, "why": why, "step": step}
 
 
-class Herdr:
+class AgentRuntime:
+    """What every runtime does the same way, over its own calls.
+
+    A runtime class supplies kind, unit and chooses_session; _run, _call, view,
+    report, raw_agents, in_place, prompt, launch and the rest; and, for `stop`:
+    _keys and _force_keys (keys to the agent, and keys to its pane or terminal
+    even when no agent shows there), BLOCKED_WHY (the error its prompt gives an
+    agent still at a question) and UNKNOWN_NOTE (what `stop` says when it
+    interrupted an agent whose state it could not tell).
+    """
+
+    BLOCKED_WHY = ""
+    UNKNOWN_NOTE = ""
+
+    def __init__(self, ctx: Context):
+        self.ctx = ctx
+
+    def version(self, timeout: float) -> str | None:
+        r = self._run(["--version"], timeout)
+        return r.out.split()[-1] if r.ok and r.out.split() else None
+
+    def agents(self, timeout: float = 5.0) -> tuple[str, list[dict] | None, list[str]]:
+        server, raw, errors = self.raw_agents(timeout)
+        return server, (None if raw is None else [self.view(a) for a in raw]), errors
+
+    def claude_floor(self, strict: bool = False) -> str:
+        """Why claude is too old for this runtime ("": no floor here)."""
+        del strict
+        return ""
+
+    def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
+        """End the Claude agent in place, gracefully; (stopped, notes for the person).
+
+        Escape first if it is mid-turn or at a question, then Ctrl+C (clears a
+        half-typed line) and `/exit`; Ctrl+C twice if it is still there. Never a
+        kill (it would end claude with a signal)."""
+        notes: list[str] = []
+        ctx = self.ctx
+        settled = lambda: (self.in_place(place) or {}).get("state") in SETTLED  # noqa: E731
+        gone = lambda: self.in_place(place) is None  # noqa: E731
+        if state in ("working", "unknown", "blocked"):
+            self._keys(place, "esc")
+            notes.append({"blocked": "its open question was dismissed",
+                          "working": "its turn was interrupted"}.get(state, self.UNKNOWN_NOTE))
+            # Runtimes refuse a prompt to an agent they still see at a question, so
+            # /exit waits until Escape has visibly taken effect.
+            wait_until(ctx, SETTLE_TIMEOUT_S, settled)
+        self._keys(place, "ctrl+c")
+        sent, why = self.prompt(place, "/exit")
+        if not sent and why == self.BLOCKED_WHY:  # Escape had not shown yet: once more
+            wait_until(ctx, SETTLE_TIMEOUT_S, settled)
+            sent, why = self.prompt(place, "/exit")
+        if not sent:
+            ctx.log(f"/exit not typed into {place}: {why}")
+        if sent and wait_until(ctx, STOP_TIMEOUT_S, gone):
+            return True, notes
+        if gone():
+            return True, notes
+        self._force_keys(place, "ctrl+c", "ctrl+c")
+        if wait_until(ctx, SETTLE_TIMEOUT_S, gone):
+            return True, notes
+        if not sent:
+            notes.append(f"/exit was refused ({why})")
+        return False, notes
+
+
+class Herdr(AgentRuntime):
     """herdr 0.9 server: agents are panes herdr recognises; places are pane ids.
 
     Restoring after a restart, herdr brings every pane back under its old id, as a
@@ -85,13 +152,18 @@ class Herdr:
     kind = "herdr"
     unit = "herdr.service"  # the agent user's unit that runs it (ship/files/systemd/user)
     chooses_session = False  # herdr reports the session claude picked
-
-    def __init__(self, ctx: Context):
-        self.ctx = ctx
+    BLOCKED_WHY = "agent_blocked"
+    UNKNOWN_NOTE = "it was interrupted (herdr could not tell its state)"
 
     # --- calls ------------------------------------------------------------------
     def _run(self, argv: list[str], timeout: float):
         return self.ctx.runner.run(["herdr", *argv], timeout=timeout, agent=True)
+
+    def _keys(self, place: str, *keys: str) -> None:
+        self._call(["agent", "send-keys", place, *keys])
+
+    def _force_keys(self, place: str, *keys: str) -> None:
+        self._call(["pane", "send-keys", place, *keys])
 
     def _call(self, argv: list[str], timeout: float = 15) -> tuple[dict | None, str]:
         """(the JSON answer, or None on failure; herdr's error code or message)."""
@@ -109,10 +181,6 @@ class Herdr:
         except ValueError:
             doc = {}
         return (doc if isinstance(doc, dict) else {}), ""
-
-    def version(self, timeout: float) -> str | None:
-        r = self._run(["--version"], timeout)
-        return r.out.split()[-1] if r.ok and r.out.split() else None
 
     # --- what is running ----------------------------------------------------------
     def raw_agents(self, timeout: float) -> tuple[str, list[dict] | None, list[str]]:
@@ -167,10 +235,6 @@ class Herdr:
             if isinstance(raw.get(src), str):
                 entry[dst] = raw[src]
         return entry
-
-    def agents(self, timeout: float = 5.0) -> tuple[str, list[dict] | None, list[str]]:
-        server, raw, errors = self.raw_agents(timeout)
-        return server, (None if raw is None else [self.view(a) for a in raw]), errors
 
     def places(self) -> dict[str, dict] | None:
         """Every pane herdr has now, agent or not: {pane id: {workspace, cwd, agent,
@@ -271,40 +335,6 @@ class Herdr:
         del names
         return set()
 
-    def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
-        """End the Claude agent in place, gracefully; (stopped, notes for the person).
-
-        Escape first if it is mid-turn or at a question, then Ctrl+C (clears a
-        half-typed line) and `/exit`; Ctrl+C twice if it is still there."""
-        notes: list[str] = []
-        ctx = self.ctx
-        settled = lambda: (self.in_place(place) or {}).get("state") in SETTLED  # noqa: E731
-        gone = lambda: self.in_place(place) is None  # noqa: E731
-        if state in ("working", "unknown", "blocked"):
-            self._call(["agent", "send-keys", place, "esc"])
-            notes.append({"blocked": "its open question was dismissed",
-                          "working": "its turn was interrupted"}.get(
-                              state, "it was interrupted (herdr could not tell its state)"))
-            # herdr refuses a prompt to an agent it still sees at a question, so /exit
-            # waits until Escape has visibly taken effect.
-            wait_until(ctx, SETTLE_TIMEOUT_S, settled)
-        self._call(["agent", "send-keys", place, "ctrl+c"])
-        sent, why = self.prompt(place, "/exit")
-        if not sent and why == "agent_blocked":  # Escape had not shown yet: once more
-            wait_until(ctx, SETTLE_TIMEOUT_S, settled)
-            sent, why = self.prompt(place, "/exit")
-        if not sent:
-            ctx.log(f"/exit not typed into {place}: {why}")
-        if sent and wait_until(ctx, STOP_TIMEOUT_S, gone):
-            return True, notes
-        if gone():
-            return True, notes
-        self._call(["pane", "send-keys", place, "ctrl+c", "ctrl+c"])
-        if wait_until(ctx, SETTLE_TIMEOUT_S, gone):
-            return True, notes
-        if not sent:
-            notes.append(f"/exit was refused ({why})")
-        return False, notes
 
 
 # --- herdr-core ---------------------------------------------------------------------
@@ -321,7 +351,7 @@ CLAUDE_PROGRAMS = ("claude", "node", "agent-launch")  # claude's foreground whil
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 
 
-class Core:
+class Core(AgentRuntime):
     """herdr-core (`hc`): agents are terminals; places are terminal addresses (`t3`).
 
     ShipShape starts every agent with `hc run --bg --keep` through the agent
@@ -341,15 +371,22 @@ class Core:
     kind = "core"
     unit = "ship-core.service"  # starts the core at boot; stopping it stops nothing
     chooses_session = True  # new agents get `--session-id <uuid>` from ShipShape
+    BLOCKED_WHY = "blocked"  # hc send refuses while blocked
+    UNKNOWN_NOTE = "it was interrupted (Claude had not reported its state)"
 
     def __init__(self, ctx: Context):
-        self.ctx = ctx
+        super().__init__(ctx)
         self._claude_too_old: str | None = None  # "" once claude passed the floor
         self._claude_version: tuple[int, ...] | None = None
 
     # --- calls ------------------------------------------------------------------
     def _run(self, argv: list[str], timeout: float):
         return self.ctx.runner.run(["hc", *argv], timeout=timeout, agent=True)
+
+    def _keys(self, place: str, *keys: str) -> None:
+        self._call(["keys", place, *keys])
+
+    _force_keys = _keys  # hc keys reaches the terminal whatever runs in it
 
     def _call(self, argv: list[str], timeout: float = 15) -> tuple[dict | None, str]:
         """(the JSON answer, or None on failure; hc's error kind or message).
@@ -375,10 +412,6 @@ class Core:
         except ValueError:
             doc = {}
         return (doc if isinstance(doc, dict) else {}), ""
-
-    def version(self, timeout: float) -> str | None:
-        r = self._run(["--version"], timeout)
-        return r.out.split()[-1] if r.ok and r.out.split() else None
 
     # --- what is running ----------------------------------------------------------
     def terminals(self, timeout: float = 5.0, finished: bool = False
@@ -534,10 +567,6 @@ class Core:
         if v.get("message"):
             entry["message"] = v["message"][:500]
         return entry
-
-    def agents(self, timeout: float = 5.0) -> tuple[str, list[dict] | None, list[str]]:
-        server, raw, errors = self.raw_agents(timeout)
-        return server, (None if raw is None else [self.view(a) for a in raw]), errors
 
     def places(self) -> dict[str, dict] | None:
         """Every terminal, finished ones too: {address: {workspace, cwd, agent,
@@ -730,37 +759,6 @@ class Core:
                 out.add(v["name"])
         return out
 
-    def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
-        """End the Claude agent in place, gracefully, as Herdr.stop does: Escape
-        first if it is mid-turn or at a question, then Ctrl+C and `/exit`; Ctrl+C
-        twice if it is still there. Never `hc kill` (it ends claude with a signal)."""
-        notes: list[str] = []
-        ctx = self.ctx
-        settled = lambda: (self.in_place(place) or {}).get("state") in SETTLED  # noqa: E731
-        gone = lambda: self.in_place(place) is None  # noqa: E731
-        if state in ("working", "unknown", "blocked"):
-            self._call(["keys", place, "esc"])
-            notes.append({"blocked": "its open question was dismissed",
-                          "working": "its turn was interrupted"}.get(
-                              state, "it was interrupted (Claude had not reported its state)"))
-            wait_until(ctx, SETTLE_TIMEOUT_S, settled)  # hc send refuses while blocked
-        self._call(["keys", place, "ctrl+c"])
-        sent, why = self.prompt(place, "/exit")
-        if not sent and why == "blocked":  # Escape had not shown yet: once more
-            wait_until(ctx, SETTLE_TIMEOUT_S, settled)
-            sent, why = self.prompt(place, "/exit")
-        if not sent:
-            ctx.log(f"/exit not typed into {place}: {why}")
-        if sent and wait_until(ctx, STOP_TIMEOUT_S, gone):
-            return True, notes
-        if gone():
-            return True, notes
-        self._call(["keys", place, "ctrl+c", "ctrl+c"])
-        if wait_until(ctx, SETTLE_TIMEOUT_S, gone):
-            return True, notes
-        if not sent:
-            notes.append(f"/exit was refused ({why})")
-        return False, notes
 
 
 Runtime = Herdr | Core
