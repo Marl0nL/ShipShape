@@ -126,6 +126,7 @@ def build(
 
     tools = tools_for(inventory, ship, catalogue)
     profiles = profiles_for(inventory, ship)
+    catalogue.check_sendable(tools, profiles)
     catalogue.check_tools(tools)
     catalogue.check_profiles(profiles)
     doc["tools"] = {"install": tools, "profiles": profiles}

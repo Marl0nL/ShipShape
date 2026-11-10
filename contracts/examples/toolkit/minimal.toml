@@ -1,0 +1,4 @@
+schema = 1
+id = "mykit"
+version = "0.1.0"
+description = "Tools I use on my Ships."

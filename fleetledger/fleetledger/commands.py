@@ -300,7 +300,7 @@ def _new(args, app, progress: dict[str, Any]) -> int:
         _confirm_clearing(app, previous)  # asks as destroy does; refused: nothing saved
     progress["stage"] = "checks"
     repo = app.repo_factory()
-    catalogue = Catalogue.from_repo(repo)
+    catalogue = Catalogue.from_repo(repo, inv)
 
     claude: dict[str, Any] = {}
     if args.mode:
@@ -324,7 +324,7 @@ def _new(args, app, progress: dict[str, Any]) -> int:
         created=now_timestamp(),
         size=size,
         claude=claude,
-        profiles=tuple(args.profile) or None,
+        profiles=tuple(catalogue.resolve_profiles(args.profile)) or None,
         image=image_id,
         signins=(None if args.signins is None else
                  tuple(signins.check(args.signins.split(",")))),
@@ -332,7 +332,8 @@ def _new(args, app, progress: dict[str, Any]) -> int:
     )
     if args.tools is not None or args.no_default_tools:
         base = [] if args.no_default_tools else tools_for(inv, draft, catalogue)
-        extra = [t.strip() for t in (args.tools or "").split(",") if t.strip()]
+        extra = catalogue.resolve_tools(t.strip() for t in (args.tools or "").split(",")
+                                        if t.strip())
         draft = Ship(**{**draft.__dict__, "tools": tuple(dict.fromkeys([*base, *extra]))})
 
     if args.timezone is not None and not (
@@ -1029,20 +1030,35 @@ def cmd_tag(args, app) -> int:
     return 0 if outcome.ok else 1
 
 
+def _catalogue_order(items):
+    """The repo's catalogue first (as it reads), then each toolkit's, by id."""
+    items = list(items)
+    return ([i for i in items if i.toolkit is None]
+            + sorted((i for i in items if i.toolkit is not None), key=lambda i: i.id))
+
+
 def cmd_tools(args, app) -> int:
     if args.action == "ls":
         if args.rest or args.tag:
             raise FleetError("tools ls takes no arguments.")
-        catalogue = Catalogue.from_repo(app.repo_factory())
+        from fleetledger import toolkitcmd
+
+        catalogue = Catalogue.from_repo(app.repo_factory(), toolkitcmd.inventory_or_none(app))
         rows = [[r.id, r.kind, "yes" if r.default else "", ",".join(r.needs) or "-",
-                 r.description] for r in catalogue.recipes.values()]
+                 r.description] for r in _catalogue_order(catalogue.recipes.values())]
         app.say(table(rows, ["TOOL", "KIND", "DEFAULT", "NEEDS", "DESCRIPTION"])
                 if rows else "The catalogue (ship/tools/) is empty.")
         if catalogue.profiles:
             app.say("")
             app.say(table([[p.id, ",".join(p.tools), p.description]
-                           for p in catalogue.profiles.values()],
+                           for p in _catalogue_order(catalogue.profiles.values())],
                           ["PROFILE", "TOOLS", "DESCRIPTION"]))
+        if catalogue.toolkits:
+            app.say("\nToolkit tools and profiles (toolkit/id) are listed and checked; "
+                    "FleetLedger does not send toolkits to Ships yet.")
+        for kit_id, why in sorted(catalogue.broken.items()):
+            app.say(f"\nToolkit {kit_id} did not load (ship-fleet toolkit check {kit_id}):")
+            app.say(why)
         return 0
     if args.tag:
         names, ids = [], list(args.rest)

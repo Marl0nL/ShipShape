@@ -1,0 +1,5 @@
+# A toolkit id is one name; tools get the toolkit/ prefix, the toolkit does not.
+schema = 1
+id = "mykit/sub"
+version = "0.1.0"
+description = "Tools I use on my Ships."

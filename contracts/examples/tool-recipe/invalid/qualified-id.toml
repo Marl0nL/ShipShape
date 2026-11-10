@@ -1,0 +1,7 @@
+# A recipe's own id is its file name: the toolkit/ prefix is FleetLedger's to add.
+schema = 1
+id = "examplekit/example-cli"
+description = "Example CLI."
+kind = "script"
+script = "example-cli.sh"
+check = "example-cli --version"

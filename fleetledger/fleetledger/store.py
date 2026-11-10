@@ -193,6 +193,22 @@ class InventoryEditor:
             self.doc.add(tomlkit.nl())
             self.doc["overlay"] = table
 
+    def set_toolkit(self, toolkit_id: str, entry: Mapping[str, Any]) -> None:
+        """Create or replace [toolkit.<toolkit_id>] (options as its own sub-table)."""
+        if "toolkit" not in self.doc:
+            self.doc.add(tomlkit.nl())
+            self.doc["toolkit"] = tomlkit.table(is_super_table=True)
+        table = tomlkit.table()
+        for key, value in entry.items():
+            if key == "options":
+                sub = tomlkit.table()
+                for k, v in value.items():
+                    sub[k] = v
+                table["options"] = sub
+            else:
+                table[key] = _item(value)
+        self.doc["toolkit"][toolkit_id] = table
+
     def set_driver(self, driver_id: str, entry: Mapping[str, Any]) -> None:
         """Create or replace [drivers.<driver_id>]."""
         if "drivers" not in self.doc:

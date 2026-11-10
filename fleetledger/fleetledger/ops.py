@@ -1023,8 +1023,9 @@ def change_tools(
         raise FleetError(f"Unknown tools action '{action}'.")
     if not ids:
         raise FleetError("Which tools? Give at least one catalogue id.")
-    catalogue = Catalogue.from_repo(fleet.repo_factory())
-    catalogue.check_tools(ids)
+    catalogue = Catalogue.from_repo(fleet.repo_factory(), fleet.inventory)
+    ids = catalogue.resolve_tools(ids)
+    catalogue.check_sendable(ids)
 
     def one(ship: Ship, event: Event) -> Outcome:
         inv = fleet.inventory

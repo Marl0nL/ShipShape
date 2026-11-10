@@ -202,6 +202,7 @@ def build_plan(app, text: str, inv, *, with_images: bool = False,
     _plan_images(plan, inv, moving, with_images)
     _plan_config(plan, moving | secret_files, managed_names)
     _plan_data(plan, inv, moving)
+    _plan_toolkits(plan, inv)
     cfg = ca.config(inv)
     if cfg is not None:
         krl = ca.cached_krl(inv)
@@ -355,16 +356,44 @@ def _plan_images(plan: Plan, inv, moving: set[Path], with_images: bool) -> None:
             moving.add(side.resolve())
 
 
+def _toolkit_dirs(inv) -> dict[Path, str]:
+    """ships.toml's toolkit folders (resolved) -> toolkit id."""
+    from fleetledger import toolkits
+
+    return {cfg.path.resolve(): cfg.id for cfg in toolkits.configured(inv)}
+
+
+def _in_toolkit(f: Path, dirs: dict[Path, str]) -> str | None:
+    where = f.resolve()
+    return next((kid for d, kid in dirs.items() if where.is_relative_to(d)), None)
+
+
+def _plan_toolkits(plan: Plan, inv) -> None:
+    """Toolkit folders are yours, wherever they are: migrate names each one (said on
+    both computers) and copies none."""
+    from fleetledger import toolkits
+
+    for cfg in toolkits.configured(inv):
+        plan.notes.append(
+            f"Toolkit {cfg.id} is read from {paths.tilde(cfg.path)}, a folder of yours that "
+            "migrate does not copy: bring this folder to the new computer (to the same "
+            f"place, or change [toolkit.{cfg.id}] path there), then check it with "
+            f"ship-fleet toolkit check {cfg.id}.")
+
+
 def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None:
     from fleetledger import proxmox_setup, trustcmd
     from fleetledger.web import remote
 
     base = paths.config_dir()
+    kits = _toolkit_dirs(plan.inventory)
     for f in _files(base):
         rel = f.relative_to(base).as_posix()
         if f.resolve() in moving or rel == "ships.toml":
             continue
-        if rel == "ships.toml.lock":
+        if (kit := _in_toolkit(f, kits)) is not None:
+            plan.leave(f, f"part of toolkit {kit}'s folder, which migrate does not copy")
+        elif rel == "ships.toml.lock":
             plan.leave(f, "a lock")
         elif rel in (handover.STANDBY, handover.RETIRED):
             continue  # this copy's own marker: it stops the move ("this copy", above)
@@ -403,12 +432,15 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
 def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
     base = paths.data_dir()
     listed = {path for path, _ in plan.left_out}
+    kits = _toolkit_dirs(inv)
     for f in _files(base):
         rel = f.relative_to(base).as_posix()
         top = rel.split("/", 1)[0]
         if f.resolve() in moving:
             continue
-        if top == "seeds" and f.name.startswith("appliance-"):
+        if (kit := _in_toolkit(f, kits)) is not None:
+            plan.leave(f, f"part of toolkit {kit}'s folder, which migrate does not copy")
+        elif top == "seeds" and f.name.startswith("appliance-"):
             plan.skip(paths.tilde(f), "FleetLedger's own VM's seed holds that VM's private "
                        "host key: delete it once the VM has booted (and from Proxmox's storage)")
         elif top == "seeds":

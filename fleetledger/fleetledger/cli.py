@@ -23,10 +23,10 @@ from fleetledger.errors import FleetError
 
 COMMANDS = (
     "setup", "doctor", "init", "new", "adopt", "scan", "ls", "status", "login", "logout",
-    "signins", "owner", "set", "agent", "runtime", "tag", "tools", "update", "reboot",
-    "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui", "destroy",
-    "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service", "unlock",
-    "vault", "appliance", "backup", "self-update",
+    "signins", "owner", "set", "agent", "runtime", "tag", "tools", "toolkit", "update",
+    "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
+    "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
+    "unlock", "vault", "appliance", "backup", "self-update",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -34,7 +34,7 @@ COMMANDS = (
 EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
                          "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service",
                          "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
-                         "fleetledger.selfupdate")
+                         "fleetledger.selfupdate", "fleetledger.toolkitcmd")
 
 
 @dataclass
@@ -697,6 +697,8 @@ def _handed_over(args, app) -> None:
         return
     if args.command == "image" and args.action == "build" and getattr(args, "out", None):
         return  # an image file for another computer's FleetLedger touches no fleet here
+    if args.command == "toolkit" and args.action == "check":
+        return  # reads a folder of yours; touches no fleet
     store = app.store_factory()
     if getattr(store, "path", None) is not None:
         handover.gate(args.command, store)
@@ -720,6 +722,8 @@ def _vault_locked(args, app) -> None:
         return
     if args.command == "migrate" and getattr(args, "action", None) == "retire":
         return  # stepping aside needs no secret, and must not wait for an unlock
+    if args.command == "toolkit" and args.action in ("ls", "check", "show"):
+        return  # reads your toolkit folders and ships.toml only
     if vault.state() == "locked":
         raise FleetError("FleetLedger's vault is locked, so FleetLedger is read-only: it "
                          "changes nothing and reaches no Ship. Your Ships keep running.",

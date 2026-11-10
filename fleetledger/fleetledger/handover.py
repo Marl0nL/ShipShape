@@ -270,12 +270,22 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
         kept.append((paths.tilde(vault.vault_path()), "FleetLedger's vault: it still holds "
                      "your own key's passphrase (the fleet's secrets are deleted from it); "
                      "ship-fleet vault off moves that out, then delete it"))
+    from fleetledger.migrate import _in_toolkit, _toolkit_dirs
+
+    kits = _toolkit_dirs(inv)
+    for kit_dir, kit_id in sorted(kits.items()):
+        if any(kit_dir.is_relative_to(b.resolve()) for b in (paths.config_dir(),
+                                                              paths.data_dir())):
+            kept.append((paths.tilde(kit_dir), f"toolkit {kit_id}'s folder: yours, so wipe "
+                         "leaves it; delete it yourself if you no longer need it"))
     for base in (paths.config_dir(), paths.data_dir()):
         for f in _files(base):
             if f.name in (STANDBY, RETIRED) and f.parent == store.path.parent:
                 continue
             if f.resolve() in staying or f.resolve() in listed:
                 continue
+            if _in_toolkit(f, kits) is not None:
+                continue  # a toolkit folder of yours (kept, above)
             gone.append(Gone("the vault (every secret in it)" if f == vault.vault_path()
                              else "FleetLedger's own file", str(f)))
     return gone, kept

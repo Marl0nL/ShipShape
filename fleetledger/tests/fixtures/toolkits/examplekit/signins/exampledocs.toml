@@ -1,0 +1,23 @@
+# Example Docs device flow (a placeholder for tests).
+id = "exampledocs"
+label = "Example Docs"
+mode = "device-code"
+run = "example-cli auth login --no-browser"
+timeout = 300
+
+[signin]
+label = "Example Docs"
+order = 10
+
+[match]
+url = 'https://auth\.example\.com/device'
+code = 'code: ([A-Z0-9]{4}-[A-Z0-9]{4})'
+success = '(?i)signed in'
+
+[[check]]
+service = "exampledocs"
+run = "example-cli auth status --account"
+account = "stdout"
+
+[logout]
+run = "example-cli auth logout"

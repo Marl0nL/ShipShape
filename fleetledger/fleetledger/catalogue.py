@@ -2,19 +2,23 @@
 
 The Ship track owns these files (contracts/tools.md); FleetLedger only reads
 them to list them and to check --tools, --profile and profile options.
+
+Given the inventory, the catalogue also holds the tools and profiles of your own
+toolkits (toolkits.py, contracts/toolkit.md), named <toolkit>/<id>. Without one it
+is the repo's catalogue alone, as before.
 """
 
 from __future__ import annotations
 
 import re
 import tomllib
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from fleetledger import schemas
-from fleetledger.errors import ConfigError, NotFound
+from fleetledger.errors import ConfigError, FleetError, NotFound
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,7 @@ class Recipe:
     needs: tuple[str, ...]
     version: str | None
     bake: bool = False
+    toolkit: str | None = None  # None: the repo's catalogue
 
 
 @dataclass(frozen=True)
@@ -34,6 +39,29 @@ class Profile:
     description: str
     tools: tuple[str, ...]
     options: Mapping[str, Mapping[str, Any]]
+    toolkit: str | None = None
+
+
+NOT_SENT_YET = ("FleetLedger lists and checks toolkit tools and profiles, but does not send "
+                "toolkits to Ships yet")
+
+
+def _recipe(rid: str, d: Mapping[str, Any], toolkit: str | None = None) -> Recipe:
+    return Recipe(
+        id=rid,
+        description=d["description"],
+        kind=d["kind"],
+        default=d.get("default", False),
+        needs=tuple(d.get("needs", ())),
+        version=d.get("version"),
+        bake=d.get("bake", False),
+        toolkit=toolkit,
+    )
+
+
+def _profile(pid: str, d: Mapping[str, Any], toolkit: str | None = None) -> Profile:
+    return Profile(id=pid, description=d["description"], tools=tuple(d["tools"]),
+                   options=d.get("options", {}), toolkit=toolkit)
 
 
 def _load_dir(folder: Path, contract: str, contracts: Path | None) -> dict[str, dict]:
@@ -59,27 +87,10 @@ class Catalogue:
     ) -> None:
         raw_recipes = _load_dir(tools_dir, "tool-recipe", contracts)
         raw_profiles = _load_dir(profiles_dir, "profile", contracts)
-        self.recipes = {
-            rid: Recipe(
-                id=rid,
-                description=d["description"],
-                kind=d["kind"],
-                default=d.get("default", False),
-                needs=tuple(d.get("needs", ())),
-                version=d.get("version"),
-                bake=d.get("bake", False),
-            )
-            for rid, d in raw_recipes.items()
-        }
-        self.profiles = {
-            pid: Profile(
-                id=pid,
-                description=d["description"],
-                tools=tuple(d["tools"]),
-                options=d.get("options", {}),
-            )
-            for pid, d in raw_profiles.items()
-        }
+        self.recipes = {rid: _recipe(rid, d) for rid, d in raw_recipes.items()}
+        self.profiles = {pid: _profile(pid, d) for pid, d in raw_profiles.items()}
+        self.toolkits: dict[str, Any] = {}  # id -> toolkits.Toolkit, loaded
+        self.broken: dict[str, str] = {}  # id -> why it did not load
         for profile in self.profiles.values():
             missing = [t for t in profile.tools if t not in self.recipes]
             if missing:
@@ -88,15 +99,78 @@ class Catalogue:
                 )
 
     @classmethod
-    def from_repo(cls, repo: Any) -> Catalogue:
-        return cls(repo.tools_dir, repo.profiles_dir, repo.contracts)
+    def from_repo(cls, repo: Any, inventory: Any = None) -> Catalogue:
+        """The repo's catalogue; with the inventory, plus its toolkits that load
+        (the others are in .broken, with the reason)."""
+        catalogue = cls(repo.tools_dir, repo.profiles_dir, repo.contracts)
+        if inventory is not None:
+            from fleetledger import toolkits
+
+            loaded, broken = toolkits.load_configured(inventory, catalogue, repo.contracts)
+            for kit in loaded:
+                catalogue.add_toolkit(kit)
+            catalogue.broken.update(broken)
+        return catalogue
+
+    def add_toolkit(self, kit: Any) -> None:
+        """Merge a loaded toolkit's tools and profiles in, as <toolkit>/<id>."""
+        if kit.id in self.toolkits:
+            raise ConfigError(f"Toolkit {kit.id} is loaded twice.")
+        self.toolkits[kit.id] = kit
+        for rid, doc in kit.recipes.items():
+            self.recipes[kit.qualified(rid)] = _recipe(kit.qualified(rid), doc, kit.id)
+        for pid, doc in kit.profiles.items():
+            self.profiles[kit.qualified(pid)] = _profile(kit.qualified(pid), doc, kit.id)
+
+    def toolkit_of(self, item_id: str) -> str | None:
+        """The toolkit a tool or profile id names (toolkit/x), or None."""
+        kit, _, _ = item_id.rpartition("/")
+        return kit or None
+
+    def _resolve(self, ref: str, table: Mapping[str, Any], what: str) -> str | None:
+        """A tool or profile id as given (a bare id from one toolkit is enough)."""
+        if ref in table:
+            return ref
+        kit = self.toolkit_of(ref)
+        if kit is not None:
+            if kit in self.broken:
+                raise ConfigError(f"'{ref}': toolkit {kit} did not load.\n{self.broken[kit]}",
+                                  hint=f"ship-fleet toolkit check {kit}")
+            return None
+        hits = sorted(i for i, item in table.items()
+                      if item.toolkit is not None and i.rpartition("/")[2] == ref)
+        if len(hits) > 1:
+            raise FleetError(f"'{ref}' is a {what} of more than one toolkit: give one of "
+                             f"{', '.join(hits)}.")
+        return hits[0] if hits else None
+
+    def resolve_tools(self, refs: Iterable[str]) -> list[str]:
+        """Tool ids as the CLI takes them: catalogue ids, toolkit/tool, or a toolkit
+        tool's bare id when only one toolkit has it. Unknown ids stop it."""
+        refs = list(refs)
+        found = [self._resolve(r, self.recipes, "tool") for r in refs]
+        self.check_tools([f or r for f, r in zip(found, refs, strict=True)])
+        return [f for f in found if f is not None]
+
+    def resolve_profiles(self, refs: Iterable[str]) -> list[str]:
+        refs = list(refs)
+        found = [self._resolve(r, self.profiles, "profile") for r in refs]
+        self.check_profiles([f or r for f, r in zip(found, refs, strict=True)])
+        return [f for f in found if f is not None]
+
+    def check_sendable(self, tools: Sequence[str] = (), profiles: Sequence[str] = ()) -> None:
+        """Refuse toolkit tools and profiles where they would go to a Ship."""
+        kits = [i for i in (*tools, *profiles) if self.toolkit_of(i) is not None]
+        if kits:
+            raise FleetError(f"{', '.join(kits)}: {NOT_SENT_YET}.",
+                             hint="Use catalogue tools and profiles on Ships for now.")
 
     def default_tools(self) -> list[str]:
-        return sorted(r.id for r in self.recipes.values() if r.default)
+        return sorted(r.id for r in self.recipes.values() if r.default and r.toolkit is None)
 
     def bake_tools(self) -> list[str]:
         """Recipes whose system parts may go into a baked image (contracts/image.md)."""
-        return sorted(r.id for r in self.recipes.values() if r.bake)
+        return sorted(r.id for r in self.recipes.values() if r.bake and r.toolkit is None)
 
     def check_tools(self, ids: Iterable[str]) -> None:
         unknown = [i for i in ids if i not in self.recipes]

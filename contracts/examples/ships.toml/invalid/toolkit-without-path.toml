@@ -1,0 +1,9 @@
+# A toolkit needs the folder it is read from.
+schema = 1
+
+[fleet]
+admin_key = "~/.ssh/shipshape_fleet_ed25519"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+
+[toolkit.examplekit]
+only_tags = ["work"]

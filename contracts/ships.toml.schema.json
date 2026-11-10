@@ -125,6 +125,39 @@
         "additionalProperties": { "type": "string" }
       }
     },
+    "toolkit": {
+      "type": "object",
+      "description": "Your own toolkits (contracts/toolkit.md): local folders of tool recipes, profiles, sign-ins and skills, keyed by toolkit id. Their tools and profiles are named <toolkit>/<id>. Written by `ship-fleet toolkit add`; the folders stay yours (ship-fleet migrate names them, it does not copy them).",
+      "propertyNames": { "$ref": "#/$defs/toolkitId" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path",
+            "description": "The toolkit's folder (its toolkit.toml at the top); ~/ is expanded."
+          },
+          "allow_root": {
+            "type": "boolean",
+            "default": false,
+            "description": "Let this toolkit's recipes run as root (run_as = \"root\"); refused otherwise."
+          },
+          "only_tags": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/tag" },
+            "uniqueItems": true,
+            "description": "Only Ships with one of these tags may have this toolkit, its tools and its sign-ins. Absent: no limit."
+          },
+          "options": {
+            "type": "object",
+            "description": "Values the toolkit's sign-ins and profiles use, e.g. a site name. Never committed.",
+            "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      }
+    },
     "drivers": {
       "type": "object",
       "additionalProperties": false,
@@ -264,8 +297,21 @@
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     },
-    "toolId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
-    "profileId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "toolkitId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "A toolkit's id: its toolkit.toml id and the prefix of its tools and profiles."
+    },
+    "toolId": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "A catalogue recipe id, or toolkit/recipe for a recipe from one of your toolkits (contracts/toolkit.md)."
+    },
+    "profileId": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "A catalogue profile id, or toolkit/profile for a profile from one of your toolkits (contracts/toolkit.md)."
+    },
     "imageId": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$",

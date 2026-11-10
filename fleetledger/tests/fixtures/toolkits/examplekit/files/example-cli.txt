@@ -1,0 +1,1 @@
+example-cli 1.2.0 (a placeholder release file for tests)

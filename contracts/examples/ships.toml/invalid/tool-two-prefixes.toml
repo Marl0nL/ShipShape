@@ -1,0 +1,9 @@
+# A tool id has at most one toolkit/ prefix.
+schema = 1
+
+[fleet]
+admin_key = "~/.ssh/shipshape_fleet_ed25519"
+agent_keys = ["~/.ssh/id_ed25519.pub"]
+
+[defaults]
+tools = ["examplekit/sub/example-cli"]

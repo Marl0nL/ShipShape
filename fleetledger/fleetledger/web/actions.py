@@ -150,18 +150,40 @@ def start_operation(jobs: Any, app: Any, kind: str, ships: list[str],
 
 def tool_choices(app: Any, view: Any) -> dict[str, Any]:
     """The Settings tab's Tools: the catalogue's tools, each with its state on the
-    Ship (status `tools`; None while the Ship has not reported). No checkout: none."""
+    Ship (status `tools`; None while the Ship has not reported). No checkout: none.
+
+    `toolkits`: your toolkits' tools, grouped by toolkit, to show beside them (they
+    are not sent to Ships yet, so they are no choice)."""
+    from fleetledger import toolkitcmd
     from fleetledger.catalogue import Catalogue
 
     try:
-        recipes = Catalogue.from_repo(app.repo_factory()).recipes
+        try:
+            inv = toolkitcmd.inventory_or_none(app)
+        except FleetError:
+            inv = None  # the catalogue still lists; the page says what is wrong elsewhere
+        catalogue = Catalogue.from_repo(app.repo_factory(), inv)
     except FleetError as exc:
-        return {"list": [], "error": exc.message, "known": False}
+        return {"list": [], "error": exc.message, "known": False, "toolkits": []}
     doc = view.status if view is not None else None
     on_ship = (doc or {}).get("tools") or {}
+    recipes = sorted(catalogue.recipes.values(), key=lambda r: r.id)
     return {"list": [(r.id, r.description, (on_ship.get(r.id) or {}).get("state"))
-                     for r in sorted(recipes.values(), key=lambda r: r.id)],
-            "error": None, "known": doc is not None}
+                     for r in recipes if r.toolkit is None],
+            "error": None, "known": doc is not None,
+            "toolkits": toolkit_groups(catalogue)}
+
+
+def toolkit_groups(catalogue: Any) -> list[dict[str, Any]]:
+    """Each toolkit with its tools, in id order; one that does not load says why."""
+    groups = [{"id": kit.id, "version": kit.version, "description": kit.description,
+               "error": None,
+               "tools": [(r.id, r.description) for r in sorted(
+                   catalogue.recipes.values(), key=lambda r: r.id) if r.toolkit == kit.id]}
+              for kit in catalogue.toolkits.values()]
+    groups += [{"id": kid, "version": None, "description": None, "error": why, "tools": []}
+               for kid, why in catalogue.broken.items()]
+    return sorted(groups, key=lambda g: g["id"])
 
 
 def change_tools(jobs: Any, app: Any, name: str, ticked: list[str], view: Any):
