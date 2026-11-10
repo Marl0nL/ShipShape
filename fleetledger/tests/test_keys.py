@@ -15,6 +15,8 @@ from test_secret_store import fake_backend
 
 from fleetledger import keys
 
+DEFAULT_KDF_ROUNDS = keys.KDF_ROUNDS  # read before any fixture lowers it
+
 
 @pytest.fixture
 def agent(ssh_agent):
@@ -376,3 +378,56 @@ def test_a_failure_part_way_names_the_keys_already_handed_over(home, ring, monke
         keys.adopt_all(store, [(one, "first", str(one)), (two, "second", str(two))], "keyring")
     assert "Already handed over: one" in exc.value.message and "keyring" in exc.value.message
     assert keys.managed(store.load())[1] == [one]  # recorded the moment it was handed over
+
+
+def kdf_rounds(path) -> int:
+    """The bcrypt rounds recorded in an OpenSSH private key file."""
+    import base64
+    import struct
+
+    body = "".join(line for line in path.read_text().splitlines() if "-----" not in line)
+    blob = base64.b64decode(body)
+    magic = b"openssh-key-v1\0"
+    assert blob.startswith(magic)
+    pos = len(magic)
+
+    def string():
+        nonlocal pos
+        (n,) = struct.unpack(">I", blob[pos:pos + 4])
+        pos += 4 + n
+        return blob[pos - n:pos]
+
+    string()  # cipher
+    assert string() == b"bcrypt"
+    options = string()
+    (salt_len,) = struct.unpack(">I", options[:4])
+    (rounds,) = struct.unpack(">I", options[4 + salt_len:8 + salt_len])
+    return rounds
+
+
+def test_managed_keys_use_ssh_keygens_default_rounds_and_tests_lower_them(
+        home, ring, tmp_path, monkeypatch):
+    # A real FleetLedger leaves the rounds to ssh-keygen, whatever its version uses.
+    assert DEFAULT_KDF_ROUNDS is None
+    monkeypatch.setattr(keys, "KDF_ROUNDS", None)
+    plain = tmp_path / "plain"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "x", "-f", str(plain)],
+                   check=True)  # (a test fixture: not a secret)
+    made = tmp_path / "ssh" / "default"
+    keys.make(made, "default", "keyring")
+    assert kdf_rounds(made) == kdf_rounds(plain)
+    adopted = tmp_path / "ssh" / "adopted"
+    _key_with(adopted, "theirs-passphrase")
+    keys.adopt(adopted, "theirs-passphrase", "keyring")
+    assert kdf_rounds(adopted) == kdf_rounds(plain)
+
+    # Tests lower them (conftest's fast_keys): ssh-keygen is given them with -a.
+    monkeypatch.setattr(keys, "KDF_ROUNDS", 3)
+    key = tmp_path / "ssh" / "admin"
+    keys.make(key, "admin", "keyring")
+    assert kdf_rounds(key) == 3
+    other = tmp_path / "ssh" / "theirs"
+    _key_with(other, "theirs-passphrase")
+    monkeypatch.setattr(keys, "KDF_ROUNDS", 2)
+    keys.adopt(other, "theirs-passphrase", "keyring")
+    assert kdf_rounds(other) == 2
