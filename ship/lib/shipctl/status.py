@@ -174,9 +174,11 @@ def agent_entry(raw: dict, ledger: dict[str, str], rt=None) -> dict:
     mode from the mode ledger (build() falls back to the agent record's)."""
     if rt is None:
         from .runtime import Herdr as rt
-    entry = rt.report(raw)
+    report = rt.report(raw)
     sid = rt.view(raw)["session"]
+    entry = {k: report[k] for k in ("name", "kind", "state")}  # mode after state, as before
     entry["mode"] = ledger.get(sid) if entry["kind"] == "claude" and sid else None
+    entry.update(report)
     return entry
 
 

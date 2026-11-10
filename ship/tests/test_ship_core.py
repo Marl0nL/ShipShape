@@ -497,3 +497,150 @@ def test_the_wake_up_never_types_into_a_blocked_primary(core):
     assert data["outcome"] == "gave-up" and data["reason"] == "waiting-for-permission"
     assert not [x for x in hc(ship)["sent"] if x[1] == WAKE_LINE]
     never_killed(ship)
+
+
+# --- following the session, a live runtime switch, flaky reads (the Fable review) ---------
+def test_the_record_follows_clear_and_resumes_in_the_new_sessions_mode(core):
+    """/clear in grinder's terminal (bypass) starts a session the person then moves to
+    plan: the record follows it, so a crash brings back that session in plan, never
+    the cleared one in bypass."""
+    ship = core
+    old = ship.record()["agents"]["grinder"]["session"]
+    ship.core_clear("grinder", "sess-cleared", "plan")
+    agents = {a["name"]: a for a in status(ship)["herdr"]["agents"]}
+    assert agents["grinder"]["mode"] == "plan"
+    ship.ctl("refresh")
+    assert ship.record()["agents"]["grinder"]["session"] == "sess-cleared"
+    assert ship.record()["agents"]["grinder"]["mode"] == "plan"
+    ship.core_crash("grinder")
+    ship.ctl("refresh")
+    assert launched(ship, "grinder") == ["--permission-mode", "plan", "--resume", "sess-cleared"]
+    assert old not in launched(ship, "grinder")
+
+
+def test_a_claude_started_by_hand_in_a_terminal_is_picked_up(core):
+    ship = core
+    s = ship.scenario()
+    s["hc"]["terminals"].append({
+        "address": "t9", "name": None, "argv": ["claude"], "labels": {}, "cwd": "/home/agent/x",
+        "state": "live", "keep": False, "created_ms": 1,
+        "status": {"app": "claude-code", "state": "idle"},
+        "foreground": {"pid": 9, "name": "claude", "argv": ["claude"], "cwd": "/home/agent/x"}})
+    ship.set(hc=s["hc"])
+    path = ship.p("/home/agent/.local/state/shipshape/modes.json")
+    doc = json.loads(path.read_text())
+    doc["sessions"]["sess-hand"] = {"mode": "acceptEdits", "started_at": "2026-01-01T00:00:00Z",
+                                    "updated_at": "2026-01-01T00:00:00Z", "terminal": "t9"}
+    path.write_text(json.dumps(doc))
+    ship.ctl("refresh")
+    e = ship.record()["agents"]["x"]
+    assert e["session"] == "sess-hand" and e["mode"] == "acceptEdits"
+    assert e["origin"] == "adopted" and e["place"]["id"] == "t9"
+
+
+def test_the_hook_records_the_core_terminal(tmp_path, monkeypatch):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mode_ledger",
+                                                  SHIP_FILES / "hooks/mode_ledger.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setenv("HC_TERMINAL_ID", "t12")
+    mod.handle({"hook_event_name": "SessionStart", "session_id": "s1",
+                "permission_mode": "plan"}, str(tmp_path))
+    monkeypatch.setenv("HC_TERMINAL_ID", "$(reboot)")  # only an address is kept
+    mod.handle({"hook_event_name": "SessionStart", "session_id": "s2",
+                "permission_mode": "plan"}, str(tmp_path))
+    monkeypatch.delenv("HC_TERMINAL_ID")
+    mod.handle({"hook_event_name": "UserPromptSubmit", "session_id": "s1",
+                "permission_mode": "auto"}, str(tmp_path))
+    sessions = json.loads((tmp_path / "modes.json").read_text())["sessions"]
+    assert sessions["s1"]["terminal"] == "t12" and sessions["s1"]["mode"] == "auto"
+    assert "terminal" not in sessions["s2"]
+
+
+def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
+    """ship.toml says core while the herdr agents still run (no reboot): core starts
+    none of them this boot; the next boot resumes them on core."""
+    ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    ship.ctl("apply", "--json")
+    ship.ctl("refresh")
+    ship.use_core()
+    rc, _, out = ship.ctl("refresh")
+    assert rc == 0, out
+    assert runs(ship) == [] and len(ship.scenario()["herdr"]["agents"]) == 2
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert runs(ship) == []
+    assert {a["state"] for a in status(ship)["agent_record"]["agents"]} == {"unknown"}
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc != 0 and runs(ship) == []
+    ship.reboot()
+    ship.ctl("refresh")
+    assert launched(ship, "main")[-2:] == ["--resume", "sess-main"]
+
+
+def test_switching_back_to_herdr_while_core_agents_run_starts_nothing_twice(core):
+    ship = core
+    text = ship.p("/etc/shipshape/ship.toml").read_text()
+    ship.write_toml(text.replace('runtime = "core"\n', ""))
+    ship.ctl("refresh")
+    assert [c for c in ship.calls("herdr") if c[1:3] == ["agent", "start"]] == []
+
+
+def test_one_failed_hc_get_never_stops_or_drops_a_live_agent(core):
+    ship = core
+    before = ship.record()["agents"]["main"]
+    s = ship.scenario()
+    s["hc"]["get_fails"] = [ship.terminal("main")["address"]]
+    ship.set(hc=s["hc"])
+    rc, _, out = ship.ctl("refresh")
+    assert rc == 0, out
+    after = ship.record()["agents"]["main"]
+    assert after["want"] == "running" and after["origin"] == before["origin"] == "autostart"
+    assert after["prompt"] == before["prompt"]
+    assert len(runs(ship)) == 2
+    doc = status(ship)
+    assert doc["herdr"]["agents"] == [] and "hc get t1: no answer" in doc["errors"]
+
+
+def test_a_launch_is_typed_once_even_when_the_shell_is_slow(core):
+    """bash has not run the typed line yet: no second line in the same refresh (two
+    passes, two places to try) nor in the next one."""
+    ship = core
+    s = ship.scenario()
+    s["hc"]["slow_shell"] = ["main"]
+    ship.set(hc=s["hc"])
+    ship.core_reboot()
+    ship.ctl("refresh")
+    ship.ctl("refresh")
+    address = ship.terminal("main")["address"]
+    typed = [x for x in hc(ship)["sent"] if "exec " in x[1] and x[0] == address]
+    assert len(typed) == 1
+    assert ship.terminal("main")["labels"]["shipshape.launching"].isdigit()
+    assert len(runs(ship)) == 2
+
+
+def test_another_program_in_a_kept_terminal_is_not_claude(core):
+    ship = core
+    s = ship.scenario()
+    for t in s["hc"]["terminals"]:
+        if t["name"] == "main":
+            t.update(status=None, foreground={"pid": 5, "name": "vim", "argv": ["vim", "x"],
+                                              "cwd": t["cwd"]})
+    ship.set(hc=s["hc"])
+    doc = status(ship)
+    assert "main" not in {a["name"] for a in doc["herdr"]["agents"]}
+    assert {a["name"]: a["state"] for a in doc["agent_record"]["agents"]}["main"] == "starting"
+    ship.ctl("refresh")
+    assert not [x for x in hc(ship)["sent"] if "exec " in x[1]]  # never typed into vim
+
+
+def test_a_terminal_with_no_program_is_lost_whatever_its_last_word(core):
+    ship = core
+    s = ship.scenario()
+    for t in s["hc"]["terminals"]:
+        if t["name"] == "main":
+            t.update(foreground=None, recover_in=1)  # status left as Claude last said
+    ship.set(hc=s["hc"])
+    ship.ctl("refresh")
+    assert launched(ship, "main")[-2:] == ["--resume", ship.record()["agents"]["main"]["session"]]

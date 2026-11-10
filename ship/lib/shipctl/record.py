@@ -304,6 +304,15 @@ def own_place(rt: Runtime, e: dict) -> str | None:
     return place.get("id") if place.get("runtime") == rt.kind else None
 
 
+def elsewhere(rt: Runtime, ctx: Context, e: dict) -> bool:
+    """Entry e ran this boot under the other runtime (ship.toml's runtime changed
+    while it ran): it may run there still, so nothing starts it here until the
+    next boot, when only this runtime starts."""
+    place = e["place"] or {}
+    return (bool(place.get("runtime")) and place["runtime"] != rt.kind
+            and place.get("boot_id") == boot_id(ctx))
+
+
 def new_session(rt: Runtime) -> tuple[str | None, list[str]]:
     """(the session id ShipShape gives a new conversation, its claude arguments):
     on herdr-core ShipShape chooses it (`--session-id`), so the record has it
@@ -477,6 +486,9 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
     same_place (it died there this boot), else in its restored place if that is a
     free shell in its folder, else in a new one. (ok, why not)."""
     e = doc["agents"][name]
+    if elsewhere(rt, ctx, e):
+        return False, (f"it ran under {e['place']['runtime']} this boot and may still run "
+                       f"there; it moves to {rt.kind} at the next boot")
     # The ledger has the session's latest mode (a change in Claude reaches the record
     # only at the next sync), so it comes first.
     mode = mode or read_ledger(ctx).get(e["session"] or "") or e["mode"]
@@ -527,7 +539,8 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[d
     """Start again every agent that should run and does not (module docstring).
     Returns (started, failed, messages)."""
     found = match(doc, live)
-    wanted = [n for n, e in doc["agents"].items() if e["want"] == "running" and n not in found]
+    wanted = [n for n, e in doc["agents"].items() if e["want"] == "running" and n not in found
+              and not elsewhere(rt, ctx, e)]
     if not wanted:
         return 0, 0, []
     boot = boot_id(ctx)
@@ -767,6 +780,9 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
             state = "running"
         elif live is None:
             state = "unknown"
+        elif ((e["place"] or {}).get("runtime") not in (None, ship.runtime)
+              and e["place"].get("boot_id") == boot_id(ctx)):
+            state = "unknown"  # it may still run under the runtime it ran in (elsewhere)
         elif tries >= MAX_TRIES:
             state = "failed"
         else:

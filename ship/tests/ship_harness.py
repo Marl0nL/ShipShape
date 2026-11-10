@@ -210,6 +210,24 @@ class Ship:
                 t["status"] = status
         self._core_change(change)
 
+    def core_clear(self, name: str, session: str, mode: str) -> None:
+        """/clear in the agent's terminal: its session ends (clear) and a new one
+        starts there, in its terminal (the mode-ledger hook records the address),
+        then the person switches it to mode."""
+        from datetime import UTC, datetime
+
+        s = self.scenario()
+        t = next(t for t in s["hc"]["terminals"] if t.get("name") == name and t["state"] == "live")
+        old, t["session"] = t["session"], session
+        self.set(hc=s["hc"])
+        self.end_session(old, "clear")
+        path = self.p(LEDGER)
+        doc = json.loads(path.read_text())
+        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc["sessions"][session] = {"mode": mode, "started_at": now, "updated_at": now,
+                                    "terminal": t["address"]}
+        path.write_text(json.dumps(doc))
+
     def core_crash(self, name: str, how: str = "signal", recover_in: int = 1) -> None:
         """claude dies in its terminal without a SessionEnd. signal (killed, out of
         memory): the kept terminal loses its program and gets a shell after

@@ -47,7 +47,8 @@ def ledger_hook(event: dict) -> None:
     sid = event["session_id"]
     if event["hook_event_name"] == "SessionStart":
         mode = mod.mode_from_argv(event.pop("argv"))
-        mod.record(directory, sid, mode if mode in mod.MODES else None, started=True)
+        mod.record(directory, sid, mode if mode in mod.MODES else None, started=True,
+                   terminal=event.get("terminal"))
     else:
         mod.record(directory, sid, ended=event["reason"])
 
@@ -654,7 +655,8 @@ def hc_claude(s: dict, h: dict, t: dict, argv: list[str]) -> None:
     t["status"] = {"app": "claude-code", "state": "idle"}
     t["claude_args"] = rest
     t["session"] = sid  # what claude really runs (the label is what ShipShape said)
-    ledger_hook({"hook_event_name": "SessionStart", "session_id": sid, "argv": rest})
+    ledger_hook({"hook_event_name": "SessionStart", "session_id": sid, "argv": rest,
+                 "terminal": t["address"]})
 
 
 def hc_end(t: dict, code: int = 0) -> None:
@@ -696,6 +698,8 @@ def hc(s: dict, a: list[str]) -> int:
         t = hc_find(h, rest[0])
         if t is None:
             return hc_error("not_found")
+        if t["address"] in h.get("get_fails", []):
+            return hc_error("unavailable", "timed out")
         hc_tick(t)
         save(s)
         out({k: v for k, v in t.items() if k not in ("recover_in", "settle_in", "claude_args",
@@ -786,7 +790,9 @@ def hc(s: dict, a: list[str]) -> int:
             return hc_error("unavailable")
         h.setdefault("sent", []).append([t["address"], text])
         fg = t["foreground"]["name"]
-        if fg in SHELLS and "exec " in text:
+        if fg in SHELLS and "exec " in text and t.get("name") in h.get("slow_shell", []):
+            pass  # the shell has not read the line yet
+        elif fg in SHELLS and "exec " in text:
             import shlex
 
             words = shlex.split(text)

@@ -296,6 +296,9 @@ SHELLS = ("sh", "bash", "zsh", "fish", "nu", "dash", "ksh", "tcsh")  # as herdr-
 CORE_CLAUDE_FLOOR = (2, 1, 295)  # the first Claude Code to report its state (OSC 7501)
 SHELL_WAIT_S = 20  # for a kept terminal to get its new shell after a reboot or a crash
 LAUNCH_CHECK_S = 5  # for claude to be running in its terminal after a launch
+LAUNCHING_LABEL = "shipshape.launching"  # when the launch was typed into it (unix time)
+LAUNCH_GRACE_S = 120  # a launch typed this recently is never typed again
+CLAUDE_PROGRAMS = ("claude", "node", "agent-launch")  # claude's foreground while it starts
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 
 
@@ -377,14 +380,42 @@ class Core:
         except (ValueError, KeyError, TypeError):
             return "running", None, ["hc ls: unreadable output"]
         out = []
+        seen = self.ledger_terminals()
         for row in rows:
             if not isinstance(row, dict) or not isinstance(row.get("address"), str):
                 continue
             if row.get("state") == "live":  # hc ls leaves out labels and the foreground
                 full = self.get(row["address"], max(1.0, deadline - time.monotonic()))
-                row = full or row
+                if full is None:  # never guess what runs there from the short row
+                    return "running", None, [f"hc get {row['address']}: no answer"]
+                row = full
+                session = self._newest(seen.get(row["address"]), row)
+                if session:
+                    row = {**row, "ledger_session": session}
             out.append(row)
         return "running", out, []
+
+    def ledger_terminals(self) -> dict[str, list[tuple[str, str]]]:
+        """{terminal address: [(started_at, session)]}: the sessions the mode-ledger
+        hook saw start in each herdr-core terminal and not end."""
+        doc = self.ctx.read_home_json(self.ctx.paths.mode_ledger, {})
+        sessions = doc.get("sessions") if isinstance(doc, dict) else None
+        out: dict[str, list[tuple[str, str]]] = {}
+        for sid, e in (sessions.items() if isinstance(sessions, dict) else ()):
+            if (isinstance(e, dict) and isinstance(e.get("terminal"), str)
+                    and isinstance(e.get("started_at"), str) and not e.get("ended")):
+                out.setdefault(e["terminal"], []).append((e["started_at"], sid))
+        return out
+
+    @staticmethod
+    def _newest(seen: list[tuple[str, str]] | None, raw: dict) -> str | None:
+        """The session that started last in this terminal, after it was created (an
+        address from a core whose state was wiped is not this terminal)."""
+        created = raw.get("created_ms")
+        since = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created // 1000))
+                 if isinstance(created, int) and created > 0 else "")
+        found = [x for x in seen or [] if x[0] >= since]
+        return max(found)[1] if found else None
 
     def get(self, target: str, timeout: float = 10) -> dict | None:
         doc, _ = self._call(["get", target], timeout)
@@ -410,21 +441,29 @@ class Core:
         app = status.get("app") if isinstance(status, dict) else None
         labels = raw.get("labels") if isinstance(raw.get("labels"), dict) else {}
         fg = raw.get("foreground") if isinstance(raw.get("foreground"), dict) else {}
-        session = labels.get(SESSION_LABEL)
+        # The session it runs now, as the mode-ledger hook saw it start there (it
+        # follows /clear), else the one ShipShape started it with.
+        session = raw.get("ledger_session") or labels.get(SESSION_LABEL)
         session = session if isinstance(session, str) and session else None
         program = Core.program(raw)
+        argv = [os.path.basename(str(x)) for x in (fg.get("argv") or [])[:2]]
+        starting = program in CLAUDE_PROGRAMS or any(x in CLAUDE_PROGRAMS for x in argv)
         if raw.get("state") != "live":
             kind = "finished"
+        elif program is None:
+            kind = "lost"  # no program at all, whatever its last word was
+        elif program in SHELLS and not starting:
+            # Claude is a terminal's top program (it replaced the shell, or the
+            # launcher exec'd it), so a shell in front means it is gone, whatever its
+            # last word was. (The launcher is a sh script: that is not a free shell.)
+            kind = "shell"
         elif app == "claude-code":
             kind = "claude"
-        elif program is None:
-            kind = "lost"
-        elif program in SHELLS and not any(LAUNCHER in str(x) for x in fg.get("argv") or []):
-            kind = "shell"  # (the launcher is a sh script: its terminal is not a free shell)
-        elif session:
+        elif session and starting:
             kind = "claude"  # launched by ShipShape, before Claude's first report
         else:
             kind = str(app or program or "unknown")
+        launching = labels.get(LAUNCHING_LABEL)
 
         def text(value: object) -> str | None:
             return value if isinstance(value, str) and value else None
@@ -438,6 +477,8 @@ class Core:
             "workspace": text(labels.get("herdr.space")),
             "cwd": text(fg.get("cwd")) or text(raw.get("cwd")),
             "reporting": isinstance(word, str),
+            "launching": int(launching) if isinstance(launching, str) and launching.isdigit()
+            else None,
         }
         if out["state"] == "blocked" and isinstance(status, dict):
             out["blocked_kind"] = text(status.get("kind"))
@@ -564,12 +605,19 @@ class Core:
 
         if not wait_until(self.ctx, SHELL_WAIT_S, shell):
             return False, f"its terminal {place} did not get its shell back"
-        self._call(["label", place, *self._labels(name, args)])
+        self._call(["label", place, *self._labels(name, args),
+                    f"{LAUNCHING_LABEL}={int(time.time())}"])
         line = f"cd -- {shlex.quote(cwd)} && exec {shlex.join([LAUNCHER, *args])}"
         doc, why = self._call(["send", place, "--", line], 90)
         if doc is None:
             return False, f"the launch was not typed into {place}: {why}"
-        return self._running(place, name)
+        ok, why = self._running(place, name)
+        raw = self.get(place)
+        if not ok and raw is not None and raw.get("state") == "live":
+            # Typed, and the shell has not run it yet (a slow start): it is on its way,
+            # and typing it again would leave a second line for claude to read.
+            return True, ""
+        return ok, why
 
     def launch(self, name: str, cwd: str, args: list[str], place: str | None = None,
                workspace: str | None = None, settled: bool = True) -> dict:
@@ -590,6 +638,10 @@ class Core:
             if why:
                 return launched(False, why=why)
             if ours is not None:
+                typed = ours.get("launching")
+                if (ours["kind"] in ("shell", "lost") and typed is not None
+                        and 0 <= time.time() - typed < LAUNCH_GRACE_S):
+                    return launched(True, ours["place"], CORE_SPACE)  # typed already
                 if ours["kind"] in ("shell", "lost"):
                     ok, why = self._exec_in(ours["place"], name, cwd, args)
                     return launched(ok, ours["place"], CORE_SPACE, why)
@@ -603,7 +655,7 @@ class Core:
                                    *labels, "--", LAUNCHER, *args], 60)
             if doc is not None and isinstance(doc.get("address"), str):
                 ok, why = self._running(doc["address"], name)
-                if ok and place and place not in {v["place"] for v in live}:
+                if ok and place and terms is not None and place not in {v["place"] for v in live}:
                     self._call(["rm", place])  # its old, finished terminal (never a live one)
                 return launched(ok, doc["address"], CORE_SPACE, why)
             if why != "name_taken":

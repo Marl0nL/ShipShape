@@ -335,6 +335,16 @@ With ship.toml `runtime = "core"` the record works the same through herdr-core
   code leaves its terminal finished, and runs in a new one (the finished one is
   removed). All agents can die at once (one holder process carries every terminal):
   each comes back the same way.
+- **Which session a terminal runs** comes from the mode-ledger hook, which records
+  each session's terminal address (`$HC_TERMINAL_ID`) as it starts, so the record
+  follows `/clear` and a Claude restarted by hand there, as on herdr; the
+  `shipshape.session` label is the session it was started with. A launch typed
+  into a kept shell is labelled `shipshape.launching` and never typed again within
+  2 minutes, even if the shell is slow to run it.
+- **Changing the runtime** in ship.toml while agents run: an agent that ran this
+  boot under the other runtime may still run there, so neither runtime starts it
+  (its state is `unknown`) until the next boot, when only the new one starts and
+  resumes it.
 - **Stopping** is graceful only (`hc keys esc`, `ctrl+c`, `hc send /exit`). ship-ctl
   never calls `hc kill` or `hc server stop`: both end agents. Notices and first
   prompts use `hc send`, never `--force`, so a blocked agent is not typed into.

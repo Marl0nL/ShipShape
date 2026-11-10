@@ -17,7 +17,7 @@
     },
     "runtime": {
       "type": "string",
-      "description": "What runs the agents: herdr (its server, 0.9)."
+      "description": "What runs the agents: herdr (its server, 0.9) or core (herdr-core), following ship.toml runtime."
     },
     "agents": {
       "type": "object",

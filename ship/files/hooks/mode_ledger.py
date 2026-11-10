@@ -18,7 +18,9 @@ from one that died (ship-ctl's agent record).
 - SessionEnd carries `reason` (clear, resume, logout, prompt_input_exit, other):
   recorded as the session's `ended`, until the session starts again.
 - SessionStart also records `started_at`: this session runs under these hooks, so
-  its end will be recorded (Claude Code reads hooks when a session starts).
+  its end will be recorded (Claude Code reads hooks when a session starts). In a
+  herdr-core terminal it records the terminal's address too ($HC_TERMINAL_ID), so
+  ship-ctl knows which session each terminal runs now (after /clear, say).
 
 The hook never prints (SessionStart output would be added to Claude's context)
 and always exits 0: a broken ledger must never block a prompt.
@@ -79,10 +81,11 @@ def launch_mode(proc: str = "/proc", pid: int | None = None) -> str | None:
 
 
 def record(directory: str, session_id: str, mode: str | None = None,
-           ended: str | None = None, started: bool = False, now: float | None = None) -> None:
+           ended: str | None = None, started: bool = False, now: float | None = None,
+           terminal: str | None = None) -> None:
     """Set the session's mode (if given) and how it ended: `ended` given, or else
     cleared, since any other event means the session runs (again). started: it has
-    just started (SessionStart)."""
+    just started (SessionStart), in herdr-core terminal `terminal` if not None."""
     os.makedirs(directory, mode=0o700, exist_ok=True)
     path = os.path.join(directory, "modes.json")
     with open(os.path.join(directory, "modes.lock"), "w") as lock:
@@ -107,6 +110,10 @@ def record(directory: str, session_id: str, mode: str | None = None,
             entry.pop("ended", None)
         if started:
             entry["started_at"] = stamp
+            if terminal:
+                entry["terminal"] = terminal
+            else:
+                entry.pop("terminal", None)
         if entry == before and mode is None:
             return  # nothing to say
         entry["updated_at"] = stamp
@@ -127,6 +134,12 @@ def record(directory: str, session_id: str, mode: str | None = None,
 
 
 REASON = re.compile(r"^[a-z_]{1,40}$")
+TERMINAL = re.compile(r"^t[0-9][0-9a-z]{0,15}$")  # a herdr-core address on this machine
+
+
+def hc_terminal() -> str | None:
+    value = os.environ.get("HC_TERMINAL_ID", "")
+    return value if TERMINAL.match(value) else None
 
 
 def handle(event: dict, directory: str, proc: str = "/proc") -> str | None:
@@ -145,7 +158,8 @@ def handle(event: dict, directory: str, proc: str = "/proc") -> str | None:
         mode = launch_mode(proc)
     mode = mode if mode in MODES else None
     if mode is not None or name == "SessionStart":
-        record(directory, sid, mode, started=name == "SessionStart")
+        record(directory, sid, mode, started=name == "SessionStart",
+               terminal=hc_terminal() if name == "SessionStart" else None)
     return mode
 
 
