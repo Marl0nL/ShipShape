@@ -26,6 +26,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
+from fleetledger.web.common import session_of, ui_of
 
 AUDIT_SHOWN = 50
 # Doctor states -> (alert level for the icon, the word shown). ok and skip get no icon.
@@ -61,16 +62,13 @@ class Health:
         return found
 
 
-def _ui(request: Request):
-    return request.app.state.ui
-
 
 async def page(request: Request) -> Response:
     from fleetledger.concierge import audit
     from fleetledger.web import devicesweb, images, overlayweb, setup, trust
-    from fleetledger.web.app import render, session_of
+    from fleetledger.web.app import render
 
-    ui = _ui(request)
+    ui = ui_of(request)
     store = ui.app.store_factory()
     if not store.exists():
         return RedirectResponse("/setup", status_code=303)
@@ -101,7 +99,7 @@ async def check_health(request: Request) -> Response:
     """Run doctor now and keep the result (it may take a few seconds)."""
     from fleetledger import firstrun
 
-    ui = _ui(request)
+    ui = ui_of(request)
     try:
         items = await run_in_threadpool(firstrun.everything, ui.app)
         ui.health = Health(time.time(), items)

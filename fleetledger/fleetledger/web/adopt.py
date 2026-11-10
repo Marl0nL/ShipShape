@@ -25,6 +25,8 @@ from starlette.routing import Route
 
 from fleetledger.errors import FleetError
 from fleetledger.overlay import HOST_RE
+from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, ui_of
+from fleetledger.web.forms import NAME_RE, form, one
 
 TAG_LIMIT = 8
 
@@ -86,7 +88,7 @@ def _fingerprint(app: Any, host: str) -> str:
 
 
 def _page(request: Request, status_code: int = 200, **context: Any) -> Response:
-    from fleetledger.web.app import render, ui_of
+    from fleetledger.web.app import render
 
     ui = ui_of(request)
     job = last_scan(ui)
@@ -96,8 +98,6 @@ def _page(request: Request, status_code: int = 200, **context: Any) -> Response:
 
 
 async def page(request: Request) -> Response:
-    from fleetledger.web.app import ui_of
-
     ui = ui_of(request)
     if not await run_in_threadpool(ui.app.store_factory().exists):
         from starlette.responses import RedirectResponse
@@ -109,7 +109,6 @@ async def page(request: Request) -> Response:
 
 
 async def scan(request: Request) -> Response:
-    from fleetledger.web.app import back, session_of, ui_of
     from fleetledger.web.jobs import run_cli
 
     ui = ui_of(request)
@@ -127,7 +126,6 @@ async def scan(request: Request) -> Response:
 
 def _adopt_fields(fields: dict[str, list[str]], inv: Any) -> dict[str, Any]:
     from fleetledger import ops
-    from fleetledger.web.forms import NAME_RE, one
 
     name = one(fields, "name")
     if not NAME_RE.match(name):
@@ -144,16 +142,12 @@ def _adopt_fields(fields: dict[str, list[str]], inv: Any) -> dict[str, Any]:
 
 async def check(request: Request) -> Response:
     """Step 1: check the name and host, then show the key the host presents."""
-    from fleetledger.web.app import form, ui_of
-
     ui = ui_of(request)
     fields = await form(request)
     try:
         inv = await run_in_threadpool(ui.app.store_factory().load)
         chosen = _adopt_fields(fields, inv)
     except FleetError as exc:
-        from fleetledger.web.forms import one
-
         return _page(request, 400, flashes=[("bad", exc.message)],
                      form={k: one(fields, k) for k in ("name", "host", "tags")})
     try:
@@ -165,7 +159,6 @@ async def check(request: Request) -> Response:
 
 async def adopt(request: Request) -> Response:
     """Step 2, "It matches": `ship-fleet adopt` as a job."""
-    from fleetledger.web.app import back, form, one, session_of, ui_of
     from fleetledger.web.jobs import run_cli
 
     ui = ui_of(request)
@@ -194,18 +187,10 @@ async def adopt(request: Request) -> Response:
 async def repin_check(request: Request) -> Response:
     """Re-pin, step 1: the key its host presents now, beside the pinned one."""
     from fleetledger.seed import hostkey
-    from fleetledger.web.app import (
-        NO_SUCH_SHIP,
-        _known_ship,
-        back,
-        not_found,
-        render,
-        session_of,
-        ui_of,
-    )
+    from fleetledger.web.app import not_found, render
 
     ui = ui_of(request)
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     try:
@@ -226,20 +211,11 @@ async def repin_check(request: Request) -> Response:
 
 async def repin(request: Request) -> Response:
     """Re-pin, step 2: `ship-fleet adopt NAME --replace --fingerprint FP` as a job."""
-    from fleetledger.web.app import (
-        NO_SUCH_SHIP,
-        _known_ship,
-        back,
-        form,
-        not_found,
-        one,
-        session_of,
-        ui_of,
-    )
+    from fleetledger.web.app import not_found
     from fleetledger.web.jobs import run_cli
 
     ui = ui_of(request)
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)

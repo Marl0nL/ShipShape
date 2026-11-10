@@ -39,6 +39,16 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
+from fleetledger.web.common import (
+    NO_SUCH_SHIP,
+    NOT_FROM_A_DEVICE,
+    back,
+    flash,
+    known_ship,
+    session_of,
+    ui_of,
+)
+from fleetledger.web.forms import NAME_RE, form, one
 
 KINDS = ("certs", "trust")  # the jobs this module starts
 HOURS_MAX = 24 * 365
@@ -47,14 +57,6 @@ NOT_A_KEY = ("Paste the machine's public key: the one line in its .pub file, sta
              "ssh-ed25519. Never a private key, and not a file's path.")
 
 
-def _ui(request: Request):
-    return request.app.state.ui
-
-
-def _flash(request: Request, kind: str, text: str) -> None:
-    from fleetledger.web.app import session_of
-
-    _ui(request).flash(session_of(request), kind, text)
 
 
 def public_key_line(text: str) -> str | None:
@@ -117,7 +119,7 @@ def _start(request: Request, kind: str, ships: list[str], argv: list[str],
     """Start the command as a job; after(), if given, runs once it has succeeded."""
     from fleetledger.web import jobs
 
-    ui = _ui(request)
+    ui = ui_of(request)
 
     def run(job: Any) -> int:
         code = jobs.run_cli(ui.app, argv, job)
@@ -128,9 +130,9 @@ def _start(request: Request, kind: str, ships: list[str], argv: list[str],
     try:
         ui.jobs.start(kind, ships, run, title=title)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return False
-    _flash(request, "ok", f"{title}: started; it shows below.")
+    flash(request, "ok", f"{title}: started; it shows below.")
     return True
 
 
@@ -139,12 +141,12 @@ def _inventory(request: Request):
     from fleetledger import ca
 
     try:
-        inv = _ui(request).app.store_factory().load()
+        inv = ui_of(request).app.store_factory().load()
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return None
     if ca.config(inv) is None:
-        _flash(request, "bad", "The fleet has no certificate authority yet: make it first.")
+        flash(request, "bad", "The fleet has no certificate authority yet: make it first.")
         return None
     return inv
 
@@ -162,12 +164,10 @@ PLACED = ("certificates", "machines", "overlay", "devices")
 def placed_flashes(request: Request) -> dict[str, Any]:
     """For the Settings page: when an action here sent it back (?said=BLOCK), its
     flashes, to show in that block instead of the top of the page."""
-    from fleetledger.web.app import session_of
-
     said = request.query_params.get("said")
     if said not in PLACED:
         return {}
-    return {"flash_at": said, "placed": _ui(request).take_flashes(session_of(request)),
+    return {"flash_at": said, "placed": ui_of(request).take_flashes(session_of(request)),
             "flashes": []}
 
 
@@ -180,7 +180,6 @@ async def renew_all(request: Request) -> Response:
     """Every Ship's certificates (`ca sign`), or every Ship with a tag (`ca sign --tag
     T`, from the Fleet page's Every Ship menu, which says from=fleet)."""
     from fleetledger import ops
-    from fleetledger.web.app import back, form, one
 
     fields = await form(request)
     tag = one(fields, "tag")
@@ -189,7 +188,7 @@ async def renew_all(request: Request) -> Response:
     else:
         where = RedirectResponse(TO_CERTIFICATES, status_code=303)
     if tag and not ops.TAG_RE.match(tag):  # never widened to every Ship
-        _flash(request, "bad", "Choose every Ship or a tag.")
+        flash(request, "bad", "Choose every Ship or a tag.")
         return where
     inv = _inventory(request)
     if inv is not None:
@@ -197,7 +196,7 @@ async def renew_all(request: Request) -> Response:
         try:
             ships = ops.select(inv, [], tag) if tag else inv.ships()
         except FleetError as exc:  # no Ship has that tag (now)
-            _flash(request, "bad", exc.message)
+            flash(request, "bad", exc.message)
             return where
         title = ("Re-issue every certificate" if force else "Renew certificates") + (
             f" of every {tag} Ship" if tag else "")
@@ -206,16 +205,16 @@ async def renew_all(request: Request) -> Response:
                    ["ca", "sign", *(["--tag", tag] if tag else []),
                     *(["--force"] if force else [])], title)
         else:
-            _flash(request, "bad", "No Ships to renew.")
+            flash(request, "bad", "No Ships to renew.")
     return where
 
 
 async def renew_ship(request: Request) -> Response:
     """One Ship's certificates (`ca sign SHIP`): from its row under Certificates, its
     More menu, and its certificate alerts."""
-    from fleetledger.web.app import NO_SUCH_SHIP, _known_ship, back, form, not_found, one
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
@@ -234,7 +233,6 @@ async def renew_ship(request: Request) -> Response:
 # --- machines -----------------------------------------------------------------------
 async def trust_machine(request: Request) -> Response:
     from fleetledger import ca, trustcmd
-    from fleetledger.web.app import form, one, session_of
 
     fields = await form(request)
     inv = _inventory(request)
@@ -259,7 +257,7 @@ async def trust_machine(request: Request) -> Response:
     else:
         problem = None
     if problem:
-        _flash(request, "bad", problem)
+        flash(request, "bad", problem)
         return _to_machines()
     # --key=LINE: one argument, and it starts with ssh-, so the CLI never reads a file.
     argv = ["trust", name, f"--key={key}", *[f"--scope={s}" for s in scope],
@@ -278,7 +276,7 @@ def _runs_on(request: Request, device: Any, machine: str) -> Any:
     (devices.change, as ship-fleet ui devices DEVICE --machine NAME)."""
     from fleetledger.web import devices
 
-    ui = _ui(request)
+    ui = ui_of(request)
     store = ui.gate.devices or devices.Devices()
 
     def after(job: Any) -> None:
@@ -298,7 +296,7 @@ def _trusted(request: Request, inv: Any, name: str) -> Any:
 
     m = ca.machine(inv, name) if trustcmd.MACHINE_RE.match(name) else None
     if m is None or m.revoked:
-        _flash(request, "bad", f"No trusted machine called {name}.")
+        flash(request, "bad", f"No trusted machine called {name}.")
         return None
     return m
 
@@ -307,7 +305,6 @@ async def machine_scope(request: Request) -> Response:
     """The Ships a machine may reach (`trust NAME --scope ...`): narrowing revokes its
     wider certificates on every Ship at once, so the form has a dialog."""
     from fleetledger import trustcmd
-    from fleetledger.web.app import form, one
 
     fields = await form(request)
     inv = _inventory(request)
@@ -317,13 +314,13 @@ async def machine_scope(request: Request) -> Response:
     here = trustcmd.this_computer()
     scope = _scopes(fields)
     if here and here["machine"] == m.name:
-        _flash(request, "bad", "This computer reaches every Ship (it is yours).")
+        flash(request, "bad", "This computer reaches every Ship (it is yours).")
     elif scope is None:
-        _flash(request, "bad", SCOPE_HOW)
+        flash(request, "bad", SCOPE_HOW)
     elif set(scope) == set(m.scope):  # the form's order is not the CLI's
-        _flash(request, "ok", "No change.")
+        flash(request, "ok", "No change.")
     elif one(fields, "confirm") != "yes":
-        _flash(request, "bad", "Tick the box to confirm.")
+        flash(request, "bad", "Tick the box to confirm.")
     else:
         _start(request, "trust", [], ["trust", m.name, *[f"--scope={s}" for s in scope]],
                f"Change the Ships {m.name} reaches")
@@ -331,15 +328,13 @@ async def machine_scope(request: Request) -> Response:
 
 
 async def untrust(request: Request) -> Response:
-    from fleetledger.web.app import form, one
-
     fields = await form(request)
     inv = _inventory(request)
     m = inv and _trusted(request, inv, one(fields, "machine"))
     if not m:
         return _to_machines()
     if one(fields, "confirm") != "yes":
-        _flash(request, "bad", "Tick the box to confirm.")
+        flash(request, "bad", "Tick the box to confirm.")
     else:
         _start(request, "trust", [], ["untrust", m.name], f"Untrust {m.name}")
     return _to_machines()
@@ -348,11 +343,10 @@ async def untrust(request: Request) -> Response:
 async def renew_here(request: Request) -> Response:
     """This computer's certificate and SSH config, now (`trust --this-computer`). Never
     from a paired device: it is the FleetLedger computer's, not the device's."""
-    from fleetledger.web.app import NOT_FROM_A_DEVICE, form, session_of
 
     await form(request)
     if session_of(request).device is not None:
-        _flash(request, "bad", NOT_FROM_A_DEVICE)
+        flash(request, "bad", NOT_FROM_A_DEVICE)
     elif _inventory(request) is not None:
         _start(request, "trust", [], ["trust", "--this-computer"],
                "Renew this computer's certificate")
@@ -408,7 +402,6 @@ async def download_bundle(request: Request) -> Response:
     from fleetledger import trustcmd
     from fleetledger.concierge import audit
     from fleetledger.web import devicesweb, jobs
-    from fleetledger.web.app import NAME_RE, form, one, session_of
 
     fields = await form(request)
     ship = one(fields, "ship")
@@ -420,34 +413,34 @@ async def download_bundle(request: Request) -> Response:
         return RedirectResponse(where, status_code=303)
     here = trustcmd.this_computer()
     if here and here["machine"] == m.name:
-        _flash(request, "bad", f"{m.name} is this computer: FleetLedger renews its certificate "
-                               "itself (Renew now).")
+        flash(request, "bad", f"{m.name} is this computer: FleetLedger renews its certificate "
+                              "itself (Renew now).")
         return RedirectResponse(where, status_code=303)
     device = session_of(request).device
     if device is not None:  # a paired device gets its own machine's bundle, no other
         own = devicesweb.machine_of(device, inv)
         if own is None or own.name != m.name:
-            _flash(request, "bad", NOT_ITS_MACHINE.format(device=device.name, machine=m.name))
+            flash(request, "bad", NOT_ITS_MACHINE.format(device=device.name, machine=m.name))
             return RedirectResponse(where, status_code=303)
     identity = _identity_before(m.name)
     argv = ["trust", m.name, *([f"--identity={identity}"] if identity else []),
             *(["--hostnames=overlay"] if device is not None else [])]
     said = io.StringIO()
-    code = await run_in_threadpool(jobs.run_cli, _ui(request).app, argv, said)
+    code = await run_in_threadpool(jobs.run_cli, ui_of(request).app, argv, said)
     if code != 0:
         lines = [x for x in said.getvalue().splitlines() if x.strip()]
-        _flash(request, "bad", f"{m.name}'s bundle was not renewed: "
-                               + (lines[-1] if lines else "the command failed."))
+        flash(request, "bad", f"{m.name}'s bundle was not renewed: "
+                              + (lines[-1] if lines else "the command failed."))
         return RedirectResponse(where, status_code=303)
     audit.record("-", "ui-bundle", m.name, "ok", account=device.login if device else None)
     # The pages read the poller's inventory: take the new certificate's date in now
     # (no Ship is asked), so a "certificate due" banner goes at the next page.
-    await run_in_threadpool(_ui(request).fleet.poll, [])
+    await run_in_threadpool(ui_of(request).fleet.poll, [])
     try:
         data = await run_in_threadpool(bundle_archive, m.name)
     except OSError as exc:
-        _flash(request, "bad", f"{m.name}'s certificate was renewed, but its bundle could not "
-                               f"be read ({exc.strerror}).")
+        flash(request, "bad", f"{m.name}'s certificate was renewed, but its bundle could not "
+                              f"be read ({exc.strerror}).")
         return RedirectResponse(where, status_code=303)
     return Response(data, media_type="application/gzip", headers={
         "content-disposition": f'attachment; filename="shipshape-{m.name}.tar.gz"'})

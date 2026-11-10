@@ -28,6 +28,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.history import OUTCOMES
+from fleetledger.web.common import session_of, ui_of
 from fleetledger.web.forms import NAME_RE, form, one
 
 PAGE = 50
@@ -72,8 +73,6 @@ def _htmx(request: Request) -> bool:
 
 
 async def dismiss_one(request: Request) -> Response:
-    from fleetledger.web.app import session_of, ui_of
-
     ui = ui_of(request)
     fields = await form(request)
     back = local_path(one(fields, "next"))
@@ -94,8 +93,6 @@ async def dismiss_one(request: Request) -> Response:
 
 
 async def dismiss_finished(request: Request) -> Response:
-    from fleetledger.web.app import session_of, ui_of
-
     ui = ui_of(request)
     fields = await form(request)
     back = local_path(one(fields, "next"))
@@ -131,7 +128,7 @@ def _query(**params: Any) -> str:
 
 
 async def activity_page(request: Request) -> Response:
-    from fleetledger.web.app import render, ui_of
+    from fleetledger.web.app import render
 
     ui = ui_of(request)
     ship, outcome, before = _filters(request)
@@ -158,8 +155,6 @@ async def activity_page(request: Request) -> Response:
 
 
 def _record(request: Request) -> Any:
-    from fleetledger.web.app import ui_of
-
     store = ui_of(request).jobs.store
     raw = request.path_params.get("op", "")
     if store is None or not raw.isdigit():

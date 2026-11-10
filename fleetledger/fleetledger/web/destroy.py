@@ -23,6 +23,8 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
+from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, ui_of
+from fleetledger.web.forms import form, one
 
 REMEMBER = 3600  # seconds a destroyed Ship's address says so
 
@@ -35,7 +37,6 @@ def gone_since(ui: Any, name: str) -> tuple[float, bool] | None:
 
 def _start(request: Request, name: str, forget: bool) -> None:
     from fleetledger.web import jobs
-    from fleetledger.web.app import session_of, ui_of
 
     ui = ui_of(request)
     argv = ["destroy", name, "--yes", *(["--forget"] if forget else [])]
@@ -66,18 +67,9 @@ def _start(request: Request, name: str, forget: bool) -> None:
 
 
 async def _post(request: Request, forget: bool) -> Response:
-    from fleetledger.web.app import (
-        NO_SUCH_SHIP,
-        _known_ship,
-        back,
-        form,
-        not_found,
-        one,
-        session_of,
-        ui_of,
-    )
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     ui = ui_of(request)

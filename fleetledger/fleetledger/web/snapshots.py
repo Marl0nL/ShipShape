@@ -24,6 +24,8 @@ from starlette.routing import Route
 from fleetledger.drivers.base import NotSupported, check_snapshot_name
 from fleetledger.errors import FleetError
 from fleetledger.lifecycle import SNAPSHOT_WARNING
+from fleetledger.web.common import NO_SUCH_SHIP, back, flash, known_ship, session_of, ui_of
+from fleetledger.web.forms import form, one
 
 NOTE_MAX = 200
 
@@ -46,7 +48,6 @@ def listing(app: Any, name: str) -> dict[str, Any]:
 
 def _start(request: Request, name: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
-    from fleetledger.web.app import session_of, ui_of
 
     ui = ui_of(request)
 
@@ -69,15 +70,16 @@ def _snapshot_name(value: str) -> str | None:
 
 
 async def take(request: Request) -> Response:
-    from fleetledger.web.app import NO_SUCH_SHIP, _known_ship, back, form, not_found, one
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     snap, note = one(fields, "snapshot"), one(fields, "note")[:NOTE_MAX]
     if snap and _snapshot_name(snap) is None:
-        _bad(request, "A snapshot name is a letter, then letters, digits, - or _ (2 to 40).")
+        flash(request, "bad",
+              "A snapshot name is a letter, then letters, digits, - or _ (2 to 40).")
         return back(f"/ships/{name}/snapshots")
     # --note=TEXT, not --note TEXT: a note that starts with "-" stays a note.
     argv = ["snapshot", "take", name, *([snap] if snap else []),
@@ -87,21 +89,21 @@ async def take(request: Request) -> Response:
 
 
 async def rollback(request: Request) -> Response:
-    from fleetledger.web.app import NO_SUCH_SHIP, _known_ship, back, form, not_found, one
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     snap = _snapshot_name(one(fields, "snapshot"))
     if snap is None:
-        _bad(request, "Choose a snapshot to roll back to.")
+        flash(request, "bad", "Choose a snapshot to roll back to.")
     elif _signing_in(request, name):
         # A rollback restarts the VM: it would cut the sign-in's terminal mid-flow.
-        _bad(request, f"Not rolled back: a sign-in is open on {name}. Finish or cancel it "
-             "on the Sign-ins page first.")
+        flash(request, "bad", f"Not rolled back: a sign-in is open on {name}. Finish or "
+              "cancel it on the Sign-ins page first.")
     elif one(fields, "confirm_name") != name:
-        _bad(request, f"Not rolled back: type {name} to confirm.")
+        flash(request, "bad", f"Not rolled back: type {name} to confirm.")
     else:
         _start(request, name, ["snapshot", "rollback", name, snap, "--yes"],
                f"Roll {name} back to {snap}")
@@ -109,32 +111,25 @@ async def rollback(request: Request) -> Response:
 
 
 async def delete(request: Request) -> Response:
-    from fleetledger.web.app import NO_SUCH_SHIP, _known_ship, back, form, not_found, one
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     snap = _snapshot_name(one(fields, "snapshot"))
     if snap is None:
-        _bad(request, "Choose a snapshot to delete.")
+        flash(request, "bad", "Choose a snapshot to delete.")
     elif one(fields, "confirm") != "yes":
-        _bad(request, "Tick the box to confirm.")
+        flash(request, "bad", "Tick the box to confirm.")
     else:
         _start(request, name, ["snapshot", "rm", name, snap], f"Delete {snap} of {name}")
     return back(f"/ships/{name}/snapshots")
 
 
 def _signing_in(request: Request, name: str) -> bool:
-    from fleetledger.web.app import ui_of
-
     return any(f.ship == name for f in ui_of(request).concierge.active())
 
-
-def _bad(request: Request, text: str) -> None:
-    from fleetledger.web.app import session_of, ui_of
-
-    ui_of(request).flash(session_of(request), "bad", text)
 
 
 async def tab_context(app: Any, name: str) -> dict[str, Any]:

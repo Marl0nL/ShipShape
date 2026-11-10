@@ -23,6 +23,8 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
+from fleetledger.web.common import flash, ui_of
+from fleetledger.web.forms import form, one
 
 IMAGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 BACK = "/settings#images"
@@ -32,33 +34,25 @@ def _back() -> RedirectResponse:
     return RedirectResponse(BACK, status_code=303)
 
 
-def _flash(request: Request, kind: str, text: str) -> None:
-    from fleetledger.web.app import session_of, ui_of
-
-    ui_of(request).flash(session_of(request), kind, text)
-
 
 async def _image_field(request: Request) -> tuple[dict[str, list[str]], str | None]:
-    from fleetledger.web.forms import form, one
-
     fields = await form(request)
     image = one(fields, "image")
     return fields, image if IMAGE_ID.match(image) else None
 
 
 async def use(request: Request) -> Response:
-    from fleetledger.web.app import ui_of
     from fleetledger.web.runs import run_now
 
     _fields, image = await _image_field(request)
     if image is None:
-        _flash(request, "bad", "Choose an image (or the stock template).")
+        flash(request, "bad", "Choose an image (or the stock template).")
         return _back()
     if ui_of(request).jobs.busy([], [_lock(image)]):
-        _flash(request, "bad", f"{image} is being published or removed; wait for it to finish.")
+        flash(request, "bad", f"{image} is being published or removed; wait for it to finish.")
         return _back()
     code, lines = await run_in_threadpool(run_now, ui_of(request).app, ["image", "use", image])
-    _flash(request, "ok" if code == 0 else "bad", " ".join(lines) or "Done.")
+    flash(request, "ok" if code == 0 else "bad", " ".join(lines) or "Done.")
     return _back()
 
 
@@ -70,7 +64,6 @@ def _lock(image: str) -> str:
 
 def _start(request: Request, image: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
-    from fleetledger.web.app import ui_of
 
     ui = ui_of(request)
 
@@ -80,20 +73,18 @@ def _start(request: Request, image: str, argv: list[str], title: str) -> None:
     try:
         ui.jobs.start("image", [], run, title=title, locks=[_lock(image)])
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return
-    _flash(request, "ok", f"{title}: started; it shows under Images.")
+    flash(request, "ok", f"{title}: started; it shows under Images.")
 
 
 async def publish(request: Request) -> Response:
-    from fleetledger.web.forms import one
-
     fields, image = await _image_field(request)
     vmid = one(fields, "template_vmid")
     if image is None:
-        _flash(request, "bad", "Choose an image.")
+        flash(request, "bad", "Choose an image.")
     elif vmid and not (vmid.isascii() and vmid.isdigit()):
-        _flash(request, "bad", "A template VM id is a number, such as 9181.")
+        flash(request, "bad", "A template VM id is a number, such as 9181.")
     elif vmid:
         _start(request, image, ["image", "publish", image, "--template-vmid", vmid],
                f"Record template {vmid} for {image}")
@@ -103,13 +94,11 @@ async def publish(request: Request) -> Response:
 
 
 async def remove(request: Request) -> Response:
-    from fleetledger.web.forms import one
-
     fields, image = await _image_field(request)
     if image is None:
-        _flash(request, "bad", "Choose an image.")
+        flash(request, "bad", "Choose an image.")
     elif one(fields, "confirm") != "yes":
-        _flash(request, "bad", "Tick the box to confirm.")
+        flash(request, "bad", "Tick the box to confirm.")
     else:
         keep = one(fields, "keep_file") == "yes"
         _start(request, image, ["image", "rm", image, *(["--keep-file"] if keep else [])],
