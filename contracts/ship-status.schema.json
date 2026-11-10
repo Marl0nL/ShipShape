@@ -210,6 +210,22 @@
         }
       }
     },
+    "toolkits": {
+      "type": "array",
+      "description": "The toolkits in ship.toml [toolkits], by id (contracts/toolkit.md). Absent on Ships whose tooling predates toolkits. state missing: listed, but its release folder is not there (or not root's), so nothing of it runs.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "version", "release", "state", "allow_root"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+          "version": { "type": "string" },
+          "release": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?-[0-9a-f]{12}$" },
+          "state": { "enum": ["ok", "missing"] },
+          "allow_root": { "type": "boolean", "description": "Its run_as = \"root\" recipes may run: this release was applied with --allow-root." }
+        }
+      }
+    },
     "overlay": {
       "description": "The overlay network (phase 5). Absent or null on Ships whose tooling predates it.",
       "oneOf": [

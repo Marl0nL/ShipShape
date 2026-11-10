@@ -444,6 +444,13 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
                   "destinations": 10 + index, "connections": 200 * index}
     doc["tools"] = {"gh-axi": {"state": "ok", "version": "1.4.0"},  # catalogue tools
                     "tasks-axi": {"state": "ok", "version": "0.9.2"}}
+    if name != "ship-06":  # tooling that takes toolkits: the placeholder one where tagged work
+        doc["toolkits"] = [{"id": "examplekit", "version": "1.4.0",
+                            "release": "1.4.0-0a1b2c3d4e5f", "state": "ok",
+                            "allow_root": False}] \
+            if "work" in tags else []
+        if "work" in tags:
+            doc["tools"]["examplekit/example-lint"] = {"state": "ok", "version": "2.0.1"}
     if name != "ship-06":  # its settings, as newer tooling reports them; ship-06 is older
         settings = json.loads((EXAMPLES / "ship-status" / "running-settings.json")
                               .read_text())["settings"]

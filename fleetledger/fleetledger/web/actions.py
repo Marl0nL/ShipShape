@@ -152,8 +152,10 @@ def tool_choices(app: Any, view: Any) -> dict[str, Any]:
     """The Settings tab's Tools: the catalogue's tools, each with its state on the
     Ship (status `tools`; None while the Ship has not reported). No checkout: none.
 
-    `toolkits`: your toolkits' tools, grouped by toolkit, to show beside them (they
-    are not sent to Ships yet, so they are no choice)."""
+    `toolkits`: your toolkits' tools, grouped by toolkit, beside them. On a Ship's page
+    a toolkit's tools are a choice where the Ship may have the toolkit (its only_tags),
+    and say why not where it may not, or where its tooling predates toolkits; on the
+    fleet's page (no view) they are listed, to add per Ship."""
     from fleetledger import toolkitcmd
     from fleetledger.catalogue import Catalogue
 
@@ -168,21 +170,40 @@ def tool_choices(app: Any, view: Any) -> dict[str, Any]:
     doc = view.status if view is not None else None
     on_ship = (doc or {}).get("tools") or {}
     recipes = sorted(catalogue.recipes.values(), key=lambda r: r.id)
+    ship = view.ship if view is not None and inv is not None else None
     return {"list": [(r.id, r.description, (on_ship.get(r.id) or {}).get("state"))
                      for r in recipes if r.toolkit is None],
             "error": None, "known": doc is not None,
-            "toolkits": toolkit_groups(catalogue)}
+            "toolkits": toolkit_groups(catalogue, inv, ship, doc)}
 
 
-def toolkit_groups(catalogue: Any) -> list[dict[str, Any]]:
-    """Each toolkit with its tools, in id order; one that does not load says why."""
-    groups = [{"id": kit.id, "version": kit.version, "description": kit.description,
-               "error": None,
-               "tools": [(r.id, r.description) for r in sorted(
-                   catalogue.recipes.values(), key=lambda r: r.id) if r.toolkit == kit.id]}
-              for kit in catalogue.toolkits.values()]
-    groups += [{"id": kid, "version": None, "description": None, "error": why, "tools": []}
-               for kid, why in catalogue.broken.items()]
+def toolkit_groups(catalogue: Any, inv: Any = None, ship: Any = None,
+                   doc: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Each toolkit with its tools, in id order; one that does not load says why.
+
+    With a Ship (and its status), each group says whether its tools are a choice there:
+    `why_not` is None when they are, else the reason; each tool has its state there."""
+    on_ship = (doc or {}).get("tools") or {}
+    groups = []
+    for kit in catalogue.toolkits.values():
+        why = "Add them on a Ship's Settings, or with ship-fleet tools add."
+        if ship is not None and doc is not None:
+            from fleetledger.toolkitpush import why_not
+
+            why = why_not(kit.config, inv.effective_tags(ship), ship.name)
+            if why is None and "toolkits" not in doc:
+                why = (f"{ship.name}'s tooling predates toolkits: update it first "
+                       f"(ship-fleet update {ship.name}).")
+            elif why is not None:
+                why = why[:1].upper() + why[1:] + "."
+        groups.append({
+            "id": kit.id, "version": kit.version, "description": kit.description,
+            "error": None, "why_not": why,
+            "tools": [(r.id, r.description, (on_ship.get(r.id) or {}).get("state"))
+                      for r in sorted(catalogue.recipes.values(), key=lambda r: r.id)
+                      if r.toolkit == kit.id]})
+    groups += [{"id": kid, "version": None, "description": None, "error": why,
+                "why_not": None, "tools": []} for kid, why in catalogue.broken.items()]
     return sorted(groups, key=lambda g: g["id"])
 
 
@@ -194,10 +215,21 @@ def change_tools(jobs: Any, app: Any, name: str, ticked: list[str], view: Any):
     choices = tool_choices(app, view)
     if not choices["known"]:
         raise FleetError("Its tools are not known until it answers: Check now first.")
-    known = {t for t, _, _ in choices["list"]}
+    offered = list(choices["list"])
+    refused: dict[str, str] = {}
+    for group in choices["toolkits"]:
+        for tool in group["tools"]:
+            if group["why_not"] is None:
+                offered.append(tool)
+            else:
+                refused[tool[0]] = group["why_not"]
+    known = {t for t, _, _ in offered}
+    if set(ticked) & set(refused):
+        tool = sorted(set(ticked) & set(refused))[0]
+        raise FleetError(f"{tool}: {refused[tool]}")
     if set(ticked) - known:
-        raise FleetError("Tools: not one of the catalogue's.")
-    installed = {t for t, _, state in choices["list"] if state}
+        raise FleetError("Tools: not one of the catalogue's or your toolkits'.")
+    installed = {t for t, _, state in offered if state}
     add = sorted(set(ticked) - installed)
     remove = sorted(installed - set(ticked))
     if not add and not remove:

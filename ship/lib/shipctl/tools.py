@@ -1,5 +1,9 @@
 """`ship-ctl tools`: install and check catalogue recipes (contracts/tools.md).
 
+A recipe comes from the tooling bundle's catalogue, or from a toolkit in ship.toml
+[toolkits] when its id is `toolkit/recipe` (toolkits.py, contracts/toolkit.md): the
+same steps, with paths relative to that toolkit's release folder.
+
 Each recipe goes through the same steps: apt packages as root, the install for its
 kind as `run_as`, the agent environment file, the `after` commands once every
 sign-in in `needs` is ok, then `check`. Every step skips work already done, so a
@@ -19,7 +23,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import schema, signincheck
+from . import schema, signincheck, toolkits
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
@@ -37,9 +41,16 @@ _SAFE_ENV_VALUE = re.compile(r"^[^'\n\r]*$")
 class Recipe:
     doc: dict
     digest: str
+    rid: str = ""  # the id as ship.toml names it: own id, or toolkit/own id
+    root: Path | None = None  # the bundle, or the toolkit's release folder
+    kit: str | None = None  # None: the catalogue's
+
+    def __post_init__(self) -> None:
+        self.rid = self.rid or self.doc["id"]
 
     @property
     def id(self) -> str:
+        """Its own id (the file name): also its skill folder's name."""
         return self.doc["id"]
 
     def __getattr__(self, key: str):  # recipe fields with schema defaults
@@ -68,33 +79,74 @@ class Outcome:
     changed: bool = False
 
 
-def available(ctx: Context) -> list[str]:
-    return sorted(p.stem for p in ctx.paths.recipes.glob("*.toml"))
+def available(ctx: Context, ship: ShipToml | None = None) -> list[str]:
+    """Catalogue recipe ids, then toolkit/recipe for the toolkits in the allow-list."""
+    own = sorted(p.stem for p in ctx.paths.recipes.glob("*.toml"))
+    return own + (toolkits.available(ctx.paths, ship) if ship is not None else [])
 
 
-def load_recipe(ctx: Context, rid: str) -> Recipe:
-    path = ctx.paths.recipes / f"{rid}.toml"
+def load_recipe(ctx: Context, rid: str, ship: ShipToml | None = None) -> Recipe:
+    """A catalogue recipe, or toolkit/recipe from a toolkit in ship.toml [toolkits]:
+    never from one that is not there, whatever is on disk."""
+    kit, own = toolkits.split(rid)
+    if kit is None:
+        root = ctx.paths.bundle
+    elif ship is None:
+        raise CtlError("tool-failed", f"{rid}: a toolkit tool needs ship.toml")
+    else:
+        root = toolkits.root_of(ctx.paths, ship, kit)
+    path = root / "tools" / f"{own}.toml"
     try:
         raw = path.read_bytes()
         doc = tomllib.loads(raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        raise CtlError("tool-failed", f"{rid}: no readable recipe in this bundle") from exc
+        where = "this bundle" if kit is None else f"toolkit {kit}"
+        raise CtlError("tool-failed", f"{rid}: no readable recipe in {where}") from exc
     errors = schema.load(ctx.paths.schema("tool-recipe")).errors(doc)
-    if errors or doc.get("id") != rid:
+    if errors or doc.get("id") != own:
         raise CtlError("tool-failed", f"{rid}: invalid recipe: {'; '.join(errors[:3]) or 'id'}")
-    return Recipe(doc, hashlib.sha256(raw).hexdigest()[:16])
+    recipe = Recipe(doc, hashlib.sha256(raw).hexdigest()[:16], rid, root, kit)
+    if kit is not None:
+        _toolkit_rules(ctx, ship, recipe)
+    return recipe
 
 
-def load_profile(ctx: Context, pid: str) -> dict:
-    path = ctx.paths.profiles / f"{pid}.toml"
+def _toolkit_rules(ctx: Context, ship: ShipToml, recipe: Recipe) -> None:
+    """What FleetLedger checks in a toolkit recipe, checked again before anything runs."""
+    rid, kit = recipe.rid, recipe.kit
+    if (ctx.paths.recipes / f"{recipe.id}.toml").exists():
+        raise CtlError("tool-failed", f"{rid}: {recipe.id} is also a catalogue tool")
+    if recipe.run_as == "root":
+        release = toolkits.allowed(ship).get(kit, "")
+        if not toolkits.root_allowed(ctx.paths, kit, release):
+            raise CtlError("tool-failed", f"{rid}: runs as root, and toolkit {kit} was not "
+                                          "sent with allow_root (ships.toml [toolkit."
+                                          f"{kit}] allow_root = true, then push it again)")
+    apt = [*recipe.apt, *([recipe.package] if recipe.kind == "apt" else [])]
+    bad = [a for a in apt if not toolkits.APT_PACKAGE.match(a)]
+    if bad:
+        raise CtlError("tool-failed", f"{rid}: apt {bad[0]!r} is not a package name")
+
+
+def load_profile(ctx: Context, pid: str, ship: ShipToml | None = None) -> tuple[dict, Path]:
+    """A profile (its tools as ship.toml names them) and the folder its setup is in."""
+    try:
+        if ship is None and "/" in pid:
+            raise CtlError("tool-failed", f"profile {pid}: a toolkit profile needs ship.toml")
+        path, _ = (toolkits.profile_path(ctx.paths, ship, pid) if ship is not None
+                   else (ctx.paths.profiles / f"{pid}.toml", None))
+    except CtlError as exc:
+        raise CtlError("tool-failed", f"profile {pid}: {exc.message}") from None
     try:
         doc = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise CtlError("tool-failed", f"profile {pid}: not in this bundle") from exc
     errors = schema.load(ctx.paths.schema("profile")).errors(doc)
-    if errors or doc.get("id") != pid:
+    if errors or doc.get("id") != toolkits.split(pid)[1]:
         raise CtlError("tool-failed", f"profile {pid}: invalid: {'; '.join(errors[:3]) or 'id'}")
-    return doc
+    if ship is not None:
+        doc["tools"] = toolkits.profile_tools(ctx.paths, ship, pid, doc)
+    return doc, path.parent
 
 
 # --- logging ----------------------------------------------------------------
@@ -204,15 +256,16 @@ class Installer:
 
     # skill-dir -------------------------------------------------------------
     def skill_dir(self, recipe: Recipe) -> bool:
-        src = (self.ctx.paths.bundle / recipe.skill_dir).resolve()
-        if not src.is_dir() or self.ctx.paths.bundle.resolve() not in src.parents:
-            raise CtlError("tool-failed", f"{recipe.id}: skill folder {recipe.skill_dir} missing")
+        root = recipe.root or self.ctx.paths.bundle
+        src = (root / recipe.skill_dir).resolve()
+        if not src.is_dir() or root.resolve() not in src.parents:
+            raise CtlError("tool-failed", f"{recipe.rid}: skill folder {recipe.skill_dir} missing")
         try:  # never follows a symlink the agent put in the way (homefs.py)
             changed = self.ctx.home.sync_dir(src, f".claude/skills/{recipe.id}")
         except UnsafePath as exc:
-            raise CtlError("tool-failed", f"{recipe.id}: {exc}") from exc
+            raise CtlError("tool-failed", f"{recipe.rid}: {exc}") from exc
         if changed:
-            self.log.step(recipe.id, f"copied {recipe.skill_dir} to ~/.claude/skills/{recipe.id}")
+            self.log.step(recipe.rid, f"copied {recipe.skill_dir} to ~/.claude/skills/{recipe.id}")
         return changed
 
     # claude plugins and MCP servers ---------------------------------------
@@ -229,13 +282,13 @@ class Installer:
                 timeout=INSTALL_TIMEOUT,
                 agent=True,
             )
-            self.log.result(recipe.id, "claude plugin marketplace add", r)
+            self.log.result(recipe.rid, "claude plugin marketplace add", r)
         r = self.ctx.runner.run(
             ["claude", "plugin", "install", plugin["name"]], timeout=INSTALL_TIMEOUT, agent=True
         )
-        self.log.result(recipe.id, "claude plugin install", r)
+        self.log.result(recipe.rid, "claude plugin install", r)
         if not r.ok:
-            raise CtlError("tool-failed", f"{recipe.id}: claude plugin install failed")
+            raise CtlError("tool-failed", f"{recipe.rid}: claude plugin install failed")
         return True
 
     def mcp(self, recipe: Recipe) -> bool:
@@ -247,34 +300,35 @@ class Installer:
             return False
         argv = ["claude", "mcp", "add", "--scope", "user", spec["name"], "--", spec["command"]]
         r = self.ctx.runner.run([*argv, *spec.get("args", [])], timeout=CHECK_TIMEOUT, agent=True)
-        self.log.result(recipe.id, "claude mcp add", r)
+        self.log.result(recipe.rid, "claude mcp add", r)
         if not r.ok:
-            raise CtlError("tool-failed", f"{recipe.id}: claude mcp add failed")
+            raise CtlError("tool-failed", f"{recipe.rid}: claude mcp add failed")
         return True
 
     # one recipe --------------------------------------------------------------
     def install(self, recipe: Recipe) -> bool:
         changed = False
         if recipe.apt:
-            changed |= self.apt(recipe.id, list(recipe.apt))
+            changed |= self.apt(recipe.rid, list(recipe.apt))
         kind = recipe.kind
         if kind == "npm":
             changed |= self.npm(
-                recipe.id, [f"{recipe.package}@{recipe.version}", *recipe.also_npm], recipe.run_as
+                recipe.rid, [f"{recipe.package}@{recipe.version}", *recipe.also_npm], recipe.run_as
             )
         elif recipe.also_npm:
-            changed |= self.npm(recipe.id, list(recipe.also_npm), recipe.run_as)
+            changed |= self.npm(recipe.rid, list(recipe.also_npm), recipe.run_as)
         if kind == "apt":
-            changed |= self.apt(recipe.id, [recipe.package])
+            changed |= self.apt(recipe.rid, [recipe.package])
         elif kind == "script":
-            script = (self.ctx.paths.recipes / recipe.script).resolve()
-            if not script.is_file() or self.ctx.paths.recipes.resolve() not in script.parents:
-                raise CtlError("tool-failed", f"{recipe.id}: script {recipe.script} missing")
+            tools_dir = (recipe.root or self.ctx.paths.bundle) / "tools"
+            script = (tools_dir / recipe.script).resolve()
+            if not script.is_file() or tools_dir.resolve() not in script.parents:
+                raise CtlError("tool-failed", f"{recipe.rid}: script {recipe.script} missing")
             r = self.sh(
-                recipe.id, f"bash {_q(str(script))}", recipe.run_as, INSTALL_TIMEOUT, "script"
+                recipe.rid, f"bash {_q(str(script))}", recipe.run_as, INSTALL_TIMEOUT, "script"
             )
             if not r.ok:
-                raise CtlError("tool-failed", f"{recipe.id}: install script failed")
+                raise CtlError("tool-failed", f"{recipe.rid}: install script failed")
         elif kind == "skill-dir":
             changed |= self.skill_dir(recipe)
         elif kind == "claude-plugin":
@@ -302,7 +356,7 @@ def write_env_file(ctx: Context, recipes: list[Recipe]) -> bool:
         for key, value in sorted(recipe.env.items()):
             value = home + value[1:] if value.startswith("~/") else value
             if not _SAFE_ENV_VALUE.match(value):
-                raise CtlError("tool-failed", f"{recipe.id}: env {key} has an unsupported value")
+                raise CtlError("tool-failed", f"{recipe.rid}: env {key} has an unsupported value")
             env[key] = value
     lines = ["# Written by ship-ctl from the catalogue recipes. Do not edit."]
     lines += [f"{k}='{v}'" for k, v in sorted(env.items())]
@@ -316,7 +370,7 @@ def write_env_file(ctx: Context, recipes: list[Recipe]) -> bool:
 
 
 def check(inst: Installer, recipe: Recipe) -> tuple[bool, str | None]:
-    r = inst.sh(recipe.id, recipe.check, recipe.run_as, CHECK_TIMEOUT, "check")
+    r = inst.sh(recipe.rid, recipe.check, recipe.run_as, CHECK_TIMEOUT, "check")
     first = r.out.strip().splitlines()[0].strip()[:100] if r.out.strip() else None
     return r.ok, first
 
@@ -326,7 +380,7 @@ def run_one(ctx: Context, inst: Installer, recipe: Recipe, prev: dict) -> Outcom
     try:
         changed = inst.install(recipe)
     except CtlError as exc:
-        log.step(recipe.id, exc.message)
+        log.step(recipe.rid, exc.message)
         return Outcome("failed", message=exc.message)
 
     needs = list(recipe.needs)
@@ -337,7 +391,7 @@ def run_one(ctx: Context, inst: Installer, recipe: Recipe, prev: dict) -> Outcom
     after_key = f"{recipe.digest}"
     if recipe.after and not waiting and prev.get("after_done") != after_key:
         for command in recipe.after:
-            r = inst.sh(recipe.id, command, recipe.run_as, INSTALL_TIMEOUT, f"after: {command}")
+            r = inst.sh(recipe.rid, command, recipe.run_as, INSTALL_TIMEOUT, f"after: {command}")
             if not r.ok:
                 return Outcome("failed", message=f"`{command}` failed", changed=changed)
         changed = True
@@ -352,7 +406,7 @@ def run_one(ctx: Context, inst: Installer, recipe: Recipe, prev: dict) -> Outcom
 
 
 def run_profile(ctx: Context, inst: Installer, ship: ShipToml, pid: str) -> Outcome:
-    profile = load_profile(ctx, pid)
+    profile, folder = load_profile(ctx, pid, ship)
     options = ship.profile_options(pid)
     env = {}
     for name, spec in profile.get("options", {}).items():
@@ -366,8 +420,8 @@ def run_profile(ctx: Context, inst: Installer, ship: ShipToml, pid: str) -> Outc
         env[f"SHIPSHAPE_OPT_{name.upper()}"] = value
     if not profile.get("setup"):
         return Outcome("ok")
-    script = (ctx.paths.profiles / profile["setup"]).resolve()
-    if not script.is_file() or ctx.paths.profiles.resolve() not in script.parents:
+    script = (folder / profile["setup"]).resolve()
+    if not script.is_file() or folder.resolve() not in script.parents:
         return Outcome("failed", message=f"profile {pid}: setup script missing")
     r = ctx.runner.run(["bash", str(script)], timeout=INSTALL_TIMEOUT, agent=True, env=env)
     inst.log.result(f"profile:{pid}", "setup", r)
@@ -426,11 +480,24 @@ def run(
     loaded: dict[str, Recipe] = {}
     for rid in dict.fromkeys(requested + targets):
         try:
-            loaded[rid] = load_recipe(ctx, rid)
+            loaded[rid] = load_recipe(ctx, rid, ship)
         except CtlError as exc:
             if rid in targets:
                 failed.append(rid)
                 messages.append(exc.message)
+                state[rid] = {"state": "failed", "version": None, "updated_at": utc_now()}
+    # Two skill folders by one name (two toolkits' `x`): the first keeps it.
+    skills: dict[str, str] = {}
+    for rid, recipe in list(loaded.items()):
+        if recipe.kind != "skill-dir":
+            continue
+        first = skills.setdefault(recipe.id, rid)
+        if first != rid:
+            del loaded[rid]
+            if rid in targets:
+                failed.append(rid)
+                messages.append(f"{rid}: its skill folder ~/.claude/skills/{recipe.id} is "
+                                f"{first}'s")
                 state[rid] = {"state": "failed", "version": None, "updated_at": utc_now()}
 
     try:
@@ -496,3 +563,106 @@ def waiting_on(ctx: Context, services: set[str]) -> list[str]:
         and rec.get("state") == "waiting"
         and services.intersection(rec.get("waiting_for", []))
     )
+
+
+# --- removing (ship-ctl toolkit remove) ---------------------------------------------------
+def uninstall(ctx: Context, ship: ShipToml, ids: list[str]) -> tuple[list[str], list[str]]:
+    """Undo what installing these recipes did, where a kind says how: npm packages no
+    other recipe the Ship keeps uses, the skill folder, the MCP server or the plugin, and a
+    recipe's own `uninstall` command. apt packages stay (other tools may use them).
+    Returns (ids uninstalled, messages)."""
+    log = ToolLog(ctx)
+    inst = Installer(ctx, log)
+    keep, _ = requested_tools(ctx, ship)
+    keep = [k for k in keep if k not in ids]
+    kept_npm: set[str] = set()
+    for rid in keep:
+        try:
+            other = load_recipe(ctx, rid, ship)
+        except CtlError:
+            continue
+        if other.kind == "npm":
+            kept_npm.add(other.package)
+        kept_npm |= {split_spec(s)[0] for s in other.also_npm}
+    done: list[str] = []
+    messages: list[str] = []
+    for rid in ids:
+        try:
+            recipe = load_recipe(ctx, rid, ship)
+        except CtlError as exc:
+            messages.append(f"{rid}: not uninstalled ({exc.message})")
+            continue
+        try:
+            what = _uninstall_one(ctx, inst, recipe, kept_npm)
+        except CtlError as exc:
+            messages.append(exc.message)
+            continue
+        if what:
+            done.append(rid)
+            log.step(rid, f"uninstalled ({what})")
+        if recipe.apt or recipe.kind == "apt":
+            messages.append(f"{rid}: its apt packages stay installed")
+        if recipe.kind == "script" and not recipe.doc.get("uninstall"):
+            messages.append(f"{rid}: installed by a script with no `uninstall`; its files stay")
+    return done, messages
+
+
+def _uninstall_one(ctx: Context, inst: Installer, recipe: Recipe, kept_npm: set[str]) -> str:
+    rid, kind, did = recipe.rid, recipe.kind, []
+    names = [split_spec(s)[0] for s in recipe.also_npm]
+    if kind == "npm":
+        names.insert(0, recipe.package)
+    names = [n for n in names if n not in kept_npm]
+    if names:
+        prefix = ctx.paths.agent_path(inst.npm_prefix(recipe.run_as))
+        r = ctx.runner.run(["npm", "uninstall", "-g", "--prefix", prefix, *names],
+                           timeout=INSTALL_TIMEOUT, agent=recipe.run_as == "agent")
+        inst.log.result(rid, f"npm uninstall {' '.join(names)}", r)
+        if not r.ok:
+            raise CtlError("tool-failed", f"{rid}: npm uninstall failed")
+        did.append("npm")
+    if kind == "skill-dir":
+        try:
+            if ctx.home.remove(f".claude/skills/{recipe.id}"):
+                did.append(f"~/.claude/skills/{recipe.id}")
+        except UnsafePath as exc:
+            raise CtlError("tool-failed", f"{rid}: {exc}") from exc
+    elif kind == "mcp":
+        r = ctx.runner.run(["claude", "mcp", "remove", "--scope", "user", recipe.mcp["name"]],
+                           timeout=CHECK_TIMEOUT, agent=True)
+        inst.log.result(rid, "claude mcp remove", r)
+        did += ["mcp"] if r.ok else []
+    elif kind == "claude-plugin":
+        r = ctx.runner.run(["claude", "plugin", "uninstall", recipe.plugin["name"]],
+                           timeout=INSTALL_TIMEOUT, agent=True)
+        inst.log.result(rid, "claude plugin uninstall", r)
+        did += ["plugin"] if r.ok else []
+    if recipe.doc.get("uninstall"):
+        r = inst.sh(rid, recipe.doc["uninstall"], recipe.run_as, INSTALL_TIMEOUT, "uninstall")
+        if not r.ok:
+            raise CtlError("tool-failed", f"{rid}: its uninstall command failed")
+        did.append("uninstall")
+    return ", ".join(did)
+
+
+def forget(ctx: Context, ship: ShipToml, ids: list[str]) -> None:
+    """Drop these recipes' and profiles' records, and their lines in the agent's
+    environment file (ship: ship.toml without them)."""
+    for name in ("tools.json", "profiles.json"):
+        path = ctx.paths.state / name
+        doc = read_json(path, None)
+        if isinstance(doc, dict) and any(i in doc for i in ids):
+            for i in ids:
+                doc.pop(i, None)
+            write_atomic(path, json.dumps(doc, indent=2) + "\n", 0o644)
+    requested, _ = requested_tools(ctx, ship)
+    kept = []
+    for rid in requested:
+        try:
+            kept.append(load_recipe(ctx, rid, ship))
+        except CtlError:
+            continue
+    try:
+        write_env_file(ctx, kept)
+    except CtlError as exc:
+        ctx.log(f"tools: {exc.message}")

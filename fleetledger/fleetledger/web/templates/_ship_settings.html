@@ -134,17 +134,18 @@
     {% if tools.error %}<p class="flash bad">{{ tools.error }}</p>
     {% elif not tools.known %}<p class="hint">Its tools show once it answers.</p>
     {% else %}
-    <form method="post" action="/ships/{{ ship.name }}/tools" class="tools">
+    <form method="post" action="/ships/{{ ship.name }}/tools" class="tools" id="ship-tools">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       {% for id, description, state in tools.list %}
       <label title="{{ description }}"><input type="checkbox" name="tool" value="{{ id }}"{% if state %} checked{% endif %}> {{ id }}{% if state %} <span class="pill {{ state|pill }}">{{ state }}</span>{% endif %}</label>
       {% endfor %}
+      {% with toolkits = tools.toolkits, form = "ship-tools" %}{% include "_toolkit_tools.html" %}{% endwith %}
       <button type="submit" title="ship-fleet tools add|remove {{ ship.name }} ...">Save tools</button>
     </form>
     <p class="hint">Ticked tools are installed on {{ ship.name }}; untick one to remove it. It
       runs as a job (<code>ship-fleet tools add|remove</code>), with its progress above.</p>
     {% endif %}
-    {% with toolkits = tools.toolkits %}{% include "_toolkit_tools.html" %}{% endwith %}
+    {% if tools.error or not tools.known %}{% with toolkits = tools.toolkits, form = none %}{% include "_toolkit_tools.html" %}{% endwith %}{% endif %}
   </section>
   {% set ssh_form %}{% if on_overlay %}
     {% set now = setting_now(view, SSH_LISTEN) %}

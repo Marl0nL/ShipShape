@@ -75,6 +75,7 @@ integration and agents edit these files too):
 | `network.ssh_listen` | `/etc/ssh/sshd_config.d/20-shipshape-listen.conf`: absent for `any`; for `overlay`, a `Match LocalAddress` block that denies every user on any local address other than loopback and the Ship's own overlay addresses (phase 5, `ship-ctl.md` overlay) |
 | `wake.after_boot`, `wake.delay_minutes` | `ship-wake.timer` enabled or disabled, its `OnBootSec` in `/etc/systemd/system/ship-wake.timer.d/50-shipshape.conf` (see "Waking the primary agent after a boot") |
 | `tools`, `profiles`, `profile_options` | `ship-ctl tools run` (see `tools.md`) |
+| `toolkits` | the toolkit allow-list: written only by `ship-ctl toolkit apply\|remove`, kept by `set --file`; ship-ctl runs nothing from a toolkit not listed (`toolkit.md`) |
 | `github.scopes` | nothing on disk: FleetLedger's GitHub sign-in asks for these extra scopes, and `ship-ctl status` compares them with the token's (see "Extra GitHub scopes") |
 | `autostart` | used by `ship-ctl autostart`: at boot, once Claude becomes signed in, and on demand |
 

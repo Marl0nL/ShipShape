@@ -1,8 +1,8 @@
-"""ship-fleet toolkit: add, list, check and show your own toolkits (toolkits.py).
+"""ship-fleet toolkit: add, list, check, show and push your own toolkits (toolkits.py).
 
 A toolkit is a folder of yours (contracts/toolkit.md); ships.toml [toolkit.<id>]
-names it. FleetLedger reads and checks it, and lists its tools and profiles beside
-the catalogue's. It does not send toolkits to Ships yet.
+names it. FleetLedger reads and checks it, lists its tools and profiles beside the
+catalogue's, and sends it to the Ships its only_tags allow (toolkitpush.py).
 """
 
 from __future__ import annotations
@@ -27,20 +27,25 @@ def add_parsers(sub, add) -> None:
             "Your own toolkits: folders of tool recipes, profiles, sign-ins and skills,\n"
             "laid out like ShipShape's catalogue (" + DOC + "). FleetLedger reads them\n"
             "from the folder ships.toml [toolkit.<id>] names, checks them, and lists\n"
-            "their tools and profiles as <toolkit>/<id>. It does not send toolkits to\n"
-            "Ships yet.\n\n"
+            "their tools and profiles as <toolkit>/<id>. It sends a toolkit only to Ships\n"
+            "with one of its only_tags: on new, update and tools add, or with push.\n\n"
             "  ship-fleet toolkit add mykit ~/toolkits/mykit   check it, then add it\n"
             "  ship-fleet toolkit ls                           every toolkit, and its state\n"
             "  ship-fleet toolkit check mykit                  check an added toolkit\n"
             "  ship-fleet toolkit check ./mykit                check a folder (its own CI)\n"
-            "  ship-fleet toolkit show mykit                   its tools, profiles, sign-ins")
-    p.add_argument("action", choices=("add", "ls", "check", "show"))
+            "  ship-fleet toolkit show mykit                   its tools, profiles, sign-ins\n"
+            "  ship-fleet toolkit push mykit [--tag work]      send it to the Ships it may\n"
+            "                                                  go to (all, or those tagged)")
+    p.add_argument("action", choices=("add", "ls", "check", "show", "push"))
     p.add_argument("rest", nargs="*", metavar="ID|PATH")
     p.add_argument("--allow-root", action="store_true",
                    help="add, or check a folder: let its recipes run as root")
     p.add_argument("--only-tag", action="append", default=[], metavar="TAG",
-                   help="add: only Ships with this tag may have it (repeatable; enforced "
-                   "once toolkits reach Ships)")
+                   help="add: only Ships with this tag may have it (repeatable)")
+    p.add_argument("--tag", metavar="TAG",
+                   help="push: only to Ships with this tag (still only those it may go to)")
+    p.add_argument("--force", action="store_true",
+                   help="push: also roll a Ship back to a lower version of the toolkit")
     p.add_argument("--option", action="append", default=[], metavar="NAME=VALUE",
                    help="add: a value its sign-ins and profiles use (repeatable)")
 
@@ -55,6 +60,12 @@ def cmd_toolkit(args, app) -> int:
         if len(rest) != 2:
             raise FleetError("Usage: ship-fleet toolkit add ID PATH")
         return _add(app, rest[0], rest[1], args)
+    if args.action == "push":
+        if len(rest) != 1:
+            raise FleetError("Usage: ship-fleet toolkit push ID [--tag TAG] [--force]")
+        return _push(app, rest[0], args.tag, args.force)
+    if args.tag or args.force:
+        raise FleetError("--tag and --force go with toolkit push.")
     if len(rest) != 1:
         raise FleetError(f"Usage: ship-fleet toolkit {args.action} "
                          f"{'ID|PATH' if args.action == 'check' else 'ID'}")
@@ -125,10 +136,23 @@ def _add(app, kit_id: str, folder: str, args) -> int:
         ed.set_toolkit(kit_id, entry)
     app.say(f"Added toolkit {kit.id} {kit.version} ({_summary(kit)}) from "
             f"{paths.tilde(kit.root)}.")
-    app.say("Its tools and profiles are listed as "
-            f"{kit.id}/<id> (ship-fleet tools ls); FleetLedger does not send toolkits to "
-            "Ships yet.")
+    where = (f"Ships tagged {' or '.join(cfg.only_tags)}" if cfg.only_tags
+             else "any Ship")
+    app.say(f"Its tools and profiles are {kit.id}/<id> (ship-fleet tools ls). It goes to "
+            f"{where}: with ship-fleet toolkit push {kit.id}, an update, or a tool of it "
+            "added there.")
     return 0
+
+
+def _push(app, kit_id: str, tag: str | None, force: bool) -> int:
+    from fleetledger import ops, toolkitpush
+    from fleetledger.commands import _progress, _report
+
+    fleet = ops.Fleet.from_app(app)
+    inv = fleet.inventory
+    ships = ops.select(inv, tag=tag) if tag else ops.select(inv, everything=True)
+    outcomes = toolkitpush.push(fleet, ships, kit_id, force=force, on_event=_progress(app))
+    return _report(app, outcomes)
 
 
 def _ls(app) -> int:

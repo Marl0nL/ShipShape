@@ -42,10 +42,6 @@ class Profile:
     toolkit: str | None = None
 
 
-NOT_SENT_YET = ("FleetLedger lists and checks toolkit tools and profiles, but does not send "
-                "toolkits to Ships yet")
-
-
 def _recipe(rid: str, d: Mapping[str, Any], toolkit: str | None = None) -> Recipe:
     return Recipe(
         id=rid,
@@ -162,12 +158,29 @@ class Catalogue:
         self.check_profiles([f or r for f, r in zip(found, refs, strict=True)])
         return [f for f in found if f is not None]
 
-    def check_sendable(self, tools: Sequence[str] = (), profiles: Sequence[str] = ()) -> None:
-        """Refuse toolkit tools and profiles where they would go to a Ship."""
-        kits = [i for i in (*tools, *profiles) if self.toolkit_of(i) is not None]
-        if kits:
-            raise FleetError(f"{', '.join(kits)}: {NOT_SENT_YET}.",
-                             hint="Use catalogue tools and profiles on Ships for now.")
+    def why_not_on(self, item_id: str, tags: Iterable[str], ship_name: str) -> str | None:
+        """Why a Ship with these tags may not have this tool or profile (its toolkit's
+        only_tags in ships.toml), or None: it may (every catalogue item may)."""
+        from fleetledger.toolkitpush import why_not
+
+        kit = self.toolkit_of(item_id)
+        if kit is None:
+            return None
+        loaded = self.toolkits.get(kit)
+        if loaded is None:
+            return f"toolkit {kit} did not load"
+        return why_not(loaded.config, tags, ship_name)
+
+    def check_allowed(self, tags: Iterable[str], tools: Sequence[str] = (),
+                      profiles: Sequence[str] = (), ship_name: str = "this Ship") -> None:
+        """Refuse toolkit tools and profiles on a Ship that may not have their toolkit."""
+        tags = list(tags)
+        problems = [f"{i}: {why}" for i in dict.fromkeys((*tools, *profiles))
+                    if (why := self.why_not_on(i, tags, ship_name)) is not None]
+        if problems:
+            raise FleetError("; ".join(problems) + ".",
+                             hint="A toolkit goes only to Ships with one of its only_tags "
+                             "(ships.toml [toolkit.<id>]): tag the Ship, or leave it out.")
 
     def default_tools(self) -> list[str]:
         return sorted(r.id for r in self.recipes.values() if r.default and r.toolkit is None)

@@ -45,6 +45,13 @@ For each id in `ship.toml` `[tools].install`, plus the tools of each listed prof
 Recipes must be safe to run again: running them twice changes nothing the second
 time.
 
+A recipe from one of your toolkits (`<toolkit>/<id>` in ship.toml) runs the same way,
+from the toolkit's release folder on the Ship (`toolkit.md`, "On a Ship"). When the
+toolkit is removed (`ship-ctl toolkit remove`), ship-ctl undoes what it can: npm
+packages no other tool uses, the skill folder, the MCP server, the plugin, and runs
+the recipe's optional `uninstall` command (as `run_as`) for what a script left.
+`tools remove` only stops managing a tool.
+
 ## Profiles
 
 A profile is a list of recipe ids plus an optional setup script:

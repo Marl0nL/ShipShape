@@ -33,6 +33,7 @@ from . import (
     sshtrust,
     status,
     switch,
+    toolkits,
     tools,
     wake,
 )
@@ -149,6 +150,14 @@ def build_parser() -> Parser:
     t = cmd("tools", "List, install or check catalogue tools.")
     t.add_argument("action", choices=["list", "run", "add", "remove"])
     t.add_argument("ids", nargs="*", metavar="ID")
+    tk = cmd("toolkit", "Apply, remove or list your toolkits (sent by FleetLedger).")
+    tk.add_argument("action", choices=["apply", "remove", "list"])
+    tk.add_argument("id", nargs="?", metavar="ID", help="remove: the toolkit's id")
+    tk.add_argument("--archive", metavar="PATH", help="apply: the toolkit archive")
+    tk.add_argument("--force", action="store_true",
+                    help="apply: also roll the toolkit back to a lower version")
+    tk.add_argument("--allow-root", action="store_true",
+                    help="apply: its run_as = \"root\" recipes may run (ships.toml allow_root)")
     lg = cmd("logs", "Show recent log lines.")
     lg.add_argument("source", choices=logs.SOURCES)
     lg.add_argument("--lines", type=int, default=200)
@@ -255,6 +264,13 @@ def cmd_set(ctx: Context, args) -> dict:
         new = shiptoml.parse(sys.stdin.read(), ctx.paths).doc
         if new["ship"]["name"] != current.name or new["ship"]["id"] != current.id:
             raise CtlError("invalid-ship-toml", "ship.name and ship.id must not change")
+        # The toolkit allow-list changes only with `toolkit apply|remove`: kept as it is.
+        kept = current.doc.get("toolkits")
+        if "toolkits" in new and new["toolkits"] != (kept or {}):
+            raise CtlError("usage", "[toolkits] changes only through ship-ctl toolkit "
+                                    "apply|remove")
+        if kept:
+            new["toolkits"] = kept
     else:
         if not args.pairs:
             raise CtlError("usage", "nothing to set: give KEY=VALUE pairs or --file -")
@@ -446,15 +462,21 @@ def cmd_tools(ctx: Context, args) -> dict:
         if args.ids:
             raise CtlError("usage", "tools list takes no ids")
         installed, _ = status.tool_states(ctx, ship)
-        return result("tools", data={"installed": installed, "available": tools.available(ctx)})
+        return result("tools", data={"installed": installed,
+                                     "available": tools.available(ctx, ship)})
     if args.action == "run":
         data, changed, messages = tools.run(ctx, ship, args.ids or None)
         return result("tools", changed=changed, messages=messages, data=data)
     if not args.ids:
         raise CtlError("usage", f"tools {args.action} needs at least one id")
-    known = set(tools.available(ctx))
+    known = set(tools.available(ctx, ship))
     unknown = [i for i in args.ids if i not in known]
     if unknown and args.action == "add":
+        missing = sorted({k for k, _ in map(toolkits.split, unknown)
+                          if k is not None and k not in toolkits.allowed(ship)})
+        if missing:
+            raise CtlError("usage", f"not on this Ship: toolkit {', '.join(missing)} (in no "
+                                    "ship.toml [toolkits]; FleetLedger sends it)")
         raise CtlError("usage", f"not in the catalogue: {', '.join(unknown)}")
     doc = json.loads(json.dumps(ship.doc))
     install = doc.setdefault("tools", {}).setdefault("install", [])
@@ -477,6 +499,28 @@ def cmd_tools(ctx: Context, args) -> dict:
         changed=changed,
         messages=["Stopped managing: " + ", ".join(args.ids) + " (not uninstalled)."],
     )
+
+
+def cmd_toolkit(ctx: Context, args) -> dict:
+    ship = shiptoml.load(ctx.paths)
+    if args.action != "apply" and (args.archive or args.force or args.allow_root):
+        raise CtlError("usage", "--archive, --force and --allow-root go with toolkit apply")
+    if args.action == "apply":
+        if not args.archive or args.id:
+            raise CtlError("usage", "toolkit apply takes --archive PATH (and no id)")
+        data, changed, messages = toolkits.apply(ctx, ship, args.archive, force=args.force,
+                                                 allow_root=args.allow_root)
+        return result("toolkit", changed=changed, messages=messages, data=data)
+    if args.action == "remove":
+        if not args.id:
+            raise CtlError("usage", "toolkit remove needs the toolkit's id")
+        data, changed, messages = toolkits.remove(ctx, ship, args.id)
+        return result("toolkit", changed=changed, messages=messages, data=data)
+    if args.id:
+        raise CtlError("usage", "toolkit list takes no id")
+    listed = toolkits.listing(ctx, ship)
+    messages = [f"{k['id']} {k['version']} ({k['state']})" for k in listed] or ["No toolkits."]
+    return result("toolkit", messages=messages, data={"toolkits": listed})
 
 
 def cmd_ssh_trust(ctx: Context, args) -> dict:
@@ -624,6 +668,7 @@ COMMANDS = {
     "signin": cmd_signin,
     "converge": cmd_converge,
     "tools": cmd_tools,
+    "toolkit": cmd_toolkit,
     "logs": cmd_logs,
     "version": cmd_version,
     "refresh": cmd_refresh,
@@ -653,6 +698,8 @@ def _print_human(doc: dict) -> None:
             print(f"  agent {who}: {agent['state']} {agent['mode'] or ''}")
         for tid, tool in doc["tools"].items():
             print(f"  tool {tid}: {tool['state']}")
+        for kit in doc.get("toolkits", []):
+            print(f"  toolkit {kit['id']} {kit['version']}: {kit['state']}")
         return
     for m in doc["messages"]:
         print(m)
@@ -672,7 +719,7 @@ def _print_human(doc: dict) -> None:
             print(f"  {f['size']:>12}  {f['modified']}  {f['name']}")
         if not data["files"]:
             print(f"{data['path']} is empty.")
-    elif doc["command"] in ("tools", "autostart", "ssh-trust", "agent", "inbox",
+    elif doc["command"] in ("tools", "toolkit", "autostart", "ssh-trust", "agent", "inbox",
                             "runtime") and data:
         print(json.dumps(data, indent=2))
     if doc["error"]:

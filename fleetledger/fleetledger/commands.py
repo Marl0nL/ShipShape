@@ -485,6 +485,9 @@ def _enrol(app, store, name: str, say=None, overlay: bool = True) -> int:
 
         join_after_enrol(app, store, name, say)  # before certifying: its overlay name too
     after_enrol(app, store, name, say)
+    from fleetledger.toolkitpush import after_enrol as send_toolkits
+
+    send_toolkits(app, store, name, say)
     say(f"Next: ship-fleet login {name} all")
     return 0
 
@@ -1059,8 +1062,8 @@ def cmd_tools(args, app) -> int:
                            for p in _catalogue_order(catalogue.profiles.values())],
                           ["PROFILE", "TOOLS", "DESCRIPTION"]))
         if catalogue.toolkits:
-            app.say("\nToolkit tools and profiles (toolkit/id) are listed and checked; "
-                    "FleetLedger does not send toolkits to Ships yet.")
+            app.say("\nToolkit tools and profiles (toolkit/id) go only to Ships their "
+                    "toolkit's only_tags allow; FleetLedger sends the toolkit with them.")
         for kit_id, why in sorted(catalogue.broken.items()):
             app.say(f"\nToolkit {kit_id} did not load (ship-fleet toolkit check {kit_id}):")
             app.say(why)

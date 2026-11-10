@@ -407,11 +407,17 @@ def test_a_broken_toolkit_is_left_out_and_says_why(kit, fake_repo, store):
         cat.resolve_tools(["examplekit/example-cli"])
 
 
-def test_toolkit_items_are_not_sent_to_ships_yet(kit, fake_repo, store):
+def test_toolkit_items_go_only_where_only_tags_allow(kit, fake_repo, store):
     cat = Catalogue.from_repo(fake_repo, with_toolkits(store, examplekit={"path": str(kit)}))
-    cat.check_sendable(["gh-axi"], ["orchestrator"])
-    with pytest.raises(FleetError, match="examplekit/dev: .*does not send toolkits"):
-        cat.check_sendable(["gh-axi"], ["examplekit/dev"])
+    cat.check_allowed([], ["gh-axi", "examplekit/example-cli"], ["examplekit/dev"])  # any
+    cat = Catalogue.from_repo(fake_repo, with_toolkits(
+        store, examplekit={"path": str(kit), "only_tags": ["work", "lab"]}))
+    cat.check_allowed(["personal", "lab"], ["examplekit/example-cli"], ["examplekit/dev"])
+    cat.check_allowed(["personal"], ["gh-axi"], ["orchestrator"])  # the catalogue's: anywhere
+    with pytest.raises(FleetError, match="examplekit/dev: toolkit examplekit is only for Ships "
+                       "tagged work or lab .*, and ship-02 is tagged personal") as exc:
+        cat.check_allowed(["personal"], ["gh-axi"], ["examplekit/dev"], "ship-02")
+    assert "only_tags" in exc.value.hint
 
 
 def test_ships_toml_takes_toolkits_and_qualified_ids(kit, store):
@@ -546,7 +552,7 @@ def test_tools_ls_lists_toolkit_tools_after_the_catalogue(run, kit, store):
     cli_row = next(x for x in lines if x.startswith("examplekit/example-cli"))
     assert "script" in cli_row and "exampledocs" in cli_row
     assert any(x.startswith("examplekit/dev") and "examplekit/example-cli" in x for x in lines)
-    assert "does not send toolkits to Ships yet" in out
+    assert "go only to Ships their toolkit's only_tags allow" in out
     _default(kit)
     code, out, err = run("tools", "ls")
     assert code == 0 and "Toolkit examplekit did not load" in out and "default = true" in out
@@ -555,14 +561,18 @@ def test_tools_ls_lists_toolkit_tools_after_the_catalogue(run, kit, store):
     assert code == 0 and "gh-axi" in out and "toolkits not listed" in err
 
 
-def test_toolkit_tools_are_refused_where_they_would_reach_a_ship(run, kit, store):
-    with_toolkits(store, examplekit={"path": str(kit)})
-    code, out, err = run("tools", "add", "ship-01", "example-lint")  # a bare id resolves
-    assert code == 1 and "examplekit/example-lint: FleetLedger lists and checks" in err
-    code, out, err = run("new", "ship-09", "--tools", "examplekit/example-cli")
-    assert code == 1 and "does not send toolkits to Ships yet" in err
-    code, out, err = run("new", "ship-09", "--profile", "dev")
-    assert code == 1 and "examplekit/dev" in err and "does not send toolkits" in err
+def test_toolkit_tools_are_refused_on_ships_only_tags_leave_out(run, kit, store):
+    with_toolkits(store, examplekit={"path": str(kit), "only_tags": ["work"]})
+    code, out, err = run("tools", "add", "ship-02", "example-lint")  # a bare id resolves
+    assert code == 1
+    assert ("examplekit/example-lint: toolkit examplekit is only for Ships tagged work "
+            "(ships.toml only_tags), and ship-02 is tagged personal") in out + err
+    code, out, err = run("new", "ship-09", "--tag", "personal", "--tools",
+                         "examplekit/example-cli")
+    assert code == 1 and "toolkit examplekit is only for Ships tagged work" in err
+    assert "and ship-09 is tagged personal" in err
+    code, out, err = run("new", "ship-09", "--tag", "personal", "--profile", "dev")
+    assert code == 1 and "examplekit/dev: toolkit examplekit is only for" in err
     assert not store.load().has_ship("ship-09")
 
 
@@ -573,11 +583,11 @@ from test_web import _reporting, web  # noqa: E402, F401 - the web UI fixture
 
 
 def test_the_tools_lists_group_toolkit_tools_by_toolkit(web, kit):  # noqa: F811
-    _reporting(web)
+    _reporting(web)  # tooling from before toolkits: no `toolkits` in its status
     web.sign_in()
     page = web.client.get("/ships/ship-01/settings").text
     assert 'data-toolkit="examplekit"' not in page  # none yet: as before
-    with_toolkits(web.store, examplekit={"path": str(kit)})
+    with_toolkits(web.store, examplekit={"path": str(kit), "only_tags": ["work"]})
     page = web.client.get("/ships/ship-01/settings").text
     assert 'name="tool" value="gh-axi" checked' in page  # the catalogue, as before
     group = page[page.index('data-toolkit="examplekit"'):]
@@ -585,12 +595,32 @@ def test_the_tools_lists_group_toolkit_tools_by_toolkit(web, kit):  # noqa: F811
     assert "Toolkit examplekit 1.4.0" in group
     for tool in ("examplekit/example-cli", "examplekit/example-guide", "examplekit/example-lint"):
         assert f"<input type=\"checkbox\" disabled> {tool}" in group
+    assert "ship-01&#39;s tooling predates toolkits: update it first" in group
     assert 'name="tool" value="examplekit/' not in page  # listed, not offered
-    assert "does not send toolkits to Ships yet" in page
     page = web.client.get("/fleet/actions").text
     assert 'data-toolkit="examplekit"' in page and "examplekit/example-cli" in page
+    assert 'name="tool" value="examplekit/' not in page  # added per Ship
     web.post("/ships/ship-01/tools", {"tool": ["gh-axi", "examplekit/example-cli"]})
-    assert "not one of the catalogue" in web.client.get("/ships/ship-01/settings").text
+    assert "predates toolkits" in web.client.get("/ships/ship-01/settings").text
+
+    # Tooling that takes toolkits: a choice on a Ship tagged work, not on one tagged personal.
+    _reporting(web, toolkits=[], tools={"gh-axi": {"state": "ok"},
+                                        "examplekit/example-lint": {"state": "ok"}})
+    page = web.client.get("/ships/ship-01/settings").text
+    form = page[page.index('id="ship-tools"'):]
+    form = form[:form.index("</form>")]
+    assert ('<input type="checkbox" name="tool" value="examplekit/example-cli" '
+            'form="ship-tools"> examplekit/example-cli') in form
+    assert 'value="examplekit/example-lint" form="ship-tools" checked' in form
+    _reporting(web, ship="ship-02", toolkits=[])
+    page = web.client.get("/ships/ship-02/settings").text
+    group = page[page.index('data-toolkit="examplekit"'):]
+    group = group[:group.index("</fieldset>")]
+    assert 'name="tool" value="examplekit/' not in page
+    assert "Toolkit examplekit is only for Ships tagged work" in group
+    web.post("/ships/ship-02/tools", {"tool": ["examplekit/example-cli"]})
+    page = web.client.get("/ships/ship-02/settings").text
+    assert "examplekit/example-cli: Toolkit examplekit is only for Ships tagged work" in page
 
     _sha_mismatch(kit)
     page = web.client.get("/ships/ship-01/settings").text

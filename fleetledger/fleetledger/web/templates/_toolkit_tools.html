@@ -1,6 +1,6 @@
 {# Your toolkits' tools, grouped by toolkit (web.actions.toolkit_groups), beside the
-   catalogue's. FleetLedger does not send toolkits to Ships yet, so they are listed, not
-   offered. #}
+   catalogue's. A group whose why_not is None offers its tools as choices in the form
+   `form` names (a Ship this toolkit may go to); any other says why not. #}
 {% if toolkits %}
 <div class="toolkit-tools">
   {% for kit in toolkits %}
@@ -9,14 +9,19 @@
     {% if kit.error %}
     <p class="flash bad">Does not load: {{ kit.error }}</p>
     {% else %}
-    {% for id, description in kit.tools %}
-    <label title="{{ description }}"><input type="checkbox" disabled> {{ id }}</label>
+    {% for id, description, state in kit.tools %}
+    {% if kit.why_not is none and form %}
+    <label title="{{ description }}"><input type="checkbox" name="tool" value="{{ id }}" form="{{ form }}"{% if state %} checked{% endif %}> {{ id }}{% if state %} <span class="pill {{ state|pill }}">{{ state }}</span>{% endif %}</label>
+    {% else %}
+    <label title="{{ description }}"><input type="checkbox" disabled{% if state %} checked{% endif %}> {{ id }}{% if state %} <span class="pill {{ state|pill }}">{{ state }}</span>{% endif %}</label>
+    {% endif %}
     {% else %}
     <p class="quiet">No tools (profiles or sign-ins only).</p>
     {% endfor %}
+    {% if kit.why_not and kit.tools %}<p class="hint">{{ kit.why_not }}</p>{% endif %}
     {% endif %}
   </fieldset>
   {% endfor %}
-  <p class="hint">Your toolkits' tools are listed and checked here (<code>ship-fleet toolkit ls</code>); FleetLedger does not send toolkits to Ships yet.</p>
+  <p class="hint">Your toolkits' tools (<code>ship-fleet toolkit ls</code>). A toolkit goes only to Ships with one of its <code>only_tags</code>; FleetLedger sends it with its tools (<code>ship-fleet toolkit push</code>).</p>
 </div>
 {% endif %}
