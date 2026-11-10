@@ -79,7 +79,7 @@ from fleetledger.web.common import (
 )
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
-from fleetledger.web.forms import NAME_RE, form, one
+from fleetledger.web.forms import NAME_RE, form, one, size_from_form
 from fleetledger.web.jobs import Jobs
 from fleetledger.web.security import Gate, GateMiddleware, Session
 
@@ -717,7 +717,7 @@ async def ship_size(request: Request) -> Response:
 
     ui, name, fields, session = await ship_form(request)
     try:
-        size = setup.size_from_form(fields)
+        size = size_from_form(fields)
         current = ui.app.store_factory().load()
         before = current.effective_size(current.ship(name))
         size = {k: v for k, v in size.items() if v != before.get(k)}
@@ -799,7 +799,7 @@ async def ship_power(request: Request) -> Response:
     if verb == "stop" and one(fields, "confirm") != "yes":
         ui.flash(session, "bad", "Tick the box to confirm.")
         return back(f"/ships/{name}")
-    if verb == "stop" and any(f.ship == name for f in ui.concierge.active()):
+    if verb == "stop" and ui.concierge.open_on(name):
         # A shutdown would cut the sign-in's terminal mid-flow (as a rollback would).
         ui.flash(session, "bad", f"Not stopped: a sign-in is open on {name}. Finish or "
                  "cancel it on the Sign-ins page first.")
@@ -957,6 +957,15 @@ def _on_ship_page(request: Request, ships: list[str]) -> bool:
     return any(path == f"/ships/{s}" or path.startswith(f"/ships/{s}/") for s in ships)
 
 
+# The jobs whose page changes once they are done, so their card redraws it.
+REFRESH_WHEN_DONE = frozenset({
+    *actions.POWER,  # the VM is on or off now: the action bar
+    *trust.KINDS, "leave",  # the Access tables, the overlay header and tab
+    "agent-restart",  # the agent list shows the new modes
+    "scan",  # the adopt page lists what it heard, with Adopt
+})
+
+
 async def job_card(request: Request) -> Response:
     """One job's card, for htmx polling: 204 while unchanged, 286 (stop) once gone."""
     ui = ui_of(request)
@@ -970,13 +979,7 @@ async def job_card(request: Request) -> Response:
     response = partial(request, "_job.html", job=job, on_ship_page=on_ship_page)
     if job.done and job.result.get("gone") and on_ship_page:
         response.headers["HX-Redirect"] = "/"  # destroyed: the page it was on is gone too
-    if job.done and job.kind in actions.POWER:  # the VM is on or off now: redraw the bar
-        response.headers["HX-Refresh"] = "true"
-    if job.done and job.kind in (*trust.KINDS, "leave"):  # what the page shows changed
-        response.headers["HX-Refresh"] = "true"
-    if job.done and job.kind == "agent-restart":  # the agent list shows the new modes
-        response.headers["HX-Refresh"] = "true"
-    if job.done and job.kind == "scan":  # the page lists what it heard, with Adopt
+    if job.done and job.kind in REFRESH_WHEN_DONE:
         response.headers["HX-Refresh"] = "true"
     if job.done and job.kind == "inbox" and _on_ship_page(request, job.ships):
         response.headers["HX-Refresh"] = "true"  # the Inbox tab lists the new files

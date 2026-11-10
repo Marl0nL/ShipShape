@@ -63,7 +63,7 @@ async def leave(request: Request) -> Response:
     if one(fields, "confirm") != "yes":
         flash(request, "bad", "Tick the box to confirm.")
         return back(where)
-    if any(f.ship == name for f in ui.concierge.active()):
+    if ui.concierge.open_on(name):
         flash(request, "bad", f"Not left: a sign-in is open on {name}. Finish or cancel it "
               "on the Sign-ins page first.")
         return back(where)

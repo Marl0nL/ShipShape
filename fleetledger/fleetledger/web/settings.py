@@ -25,6 +25,7 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
+from fleetledger import paths
 from fleetledger.errors import FleetError
 from fleetledger.web.common import session_of, ui_of
 
@@ -90,7 +91,7 @@ async def page(request: Request) -> Response:
         context["flashes"] = context.pop("placed")
     return render(request, "settings.html", inv=inv, health=ui.health, STATES=STATES,
                   FIX=FIX, entries=list(reversed(entries)), back="settings",
-                  inventory_path=setup._tilde(store.path),
+                  inventory_path=paths.tilde(store.path),
                   proxmox=inv.driver_config("proxmox") or {}, **context)
 
 

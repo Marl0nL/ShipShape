@@ -246,12 +246,12 @@ async def page(request: Request) -> Response:
     found_steps, inv = await run_in_threadpool(steps, ui.app, state)
     context: dict[str, Any] = {"steps": found_steps, "inv": inv, "state": state,
                                "setup_job": setup_job(ui, state),
-                               "inventory_path": _tilde(ui.app.store_factory().path),
+                               "inventory_path": paths.tilde(ui.app.store_factory().path),
                                "TAILSCALE_ACLS": TAILSCALE_ACLS,
                                "TAILSCALE_OAUTH": TAILSCALE_OAUTH}
     context.update(await access_context(inv))
     if inv is None:
-        context["your_keys"] = [_tilde(p) for p in await run_in_threadpool(your_key_choices)]
+        context["your_keys"] = [paths.tilde(p) for p in await run_in_threadpool(your_key_choices)]
     else:
         context["agent_ok"] = await run_in_threadpool(agent_holds_admin, inv)
         context["policy"] = _policy_text()
@@ -266,7 +266,7 @@ async def page(request: Request) -> Response:
         if posted is not None and context["new_form"] is not None:
             context["new_form"] = newship.refill(context["new_form"], posted)
             context["new_clearing"] = await run_in_threadpool(
-                newship.clearing, None, newship.one_field(posted, "name"))
+                newship.clearing, None, _one(posted, "name"))
     from fleetledger import proxmox_setup
 
     context["px"] = state.proxmox
@@ -288,7 +288,7 @@ async def access_context(inv) -> dict[str, Any]:
     context: dict[str, Any] = {"keyring_usable": usable, "keyring_why": why,
                                "default_store": "keyring" if usable else "file"}
     if inv is not None:
-        context["unmanaged"] = [(what, _tilde(p)) for what, p in
+        context["unmanaged"] = [(what, paths.tilde(p)) for what, p in
                                 await run_in_threadpool(unmanaged_keys, inv)]
         context["desktop_agent"] = keys.desktop_agent_preloads()
         context["admin_managed"] = inv.admin_key in keys.managed(inv)[1]
@@ -306,13 +306,6 @@ def _policy_text() -> str:
     from fleetledger import overlay
 
     return overlay.policy({"provider": "tailscale", "tags": ["tag:ship"]}).rstrip()
-
-
-def _tilde(path) -> str:
-    try:
-        return "~/" + str(Path(path).resolve().relative_to(Path.home().resolve()))
-    except ValueError:
-        return str(path)
 
 
 def _store_choice(fields) -> str:
@@ -451,7 +444,7 @@ def _adopt(app, fields, secrets_: dict[str, str]) -> list[str]:
     store = app.store_factory()
     inv = store.load()
     managed = keys.managed(inv)[0] or _store_choice(fields)  # one store per fleet
-    chosen = [(path, secrets_.get(str(index), ""), _tilde(path))
+    chosen = [(path, secrets_.get(str(index), ""), paths.tilde(path))
               for index, (_what, path) in enumerate(unmanaged_keys(inv))
               if _one(fields, f"take_{index}") == "yes"]
     return keys.adopt_all(store, chosen, managed)
@@ -657,7 +650,7 @@ def proxmox_on_this_computer(app, px: dict[str, Any]) -> dict[str, Any]:
     stored_file = _stored_token_file(old, token_id)
     return {"address": _address_of(old.get("api_url")), "token_id": token_id,
             "token_ids": ids, "in_keyring": bool(token_id) and in_keyring,
-            "file": _tilde(stored_file) if stored_file else None,
+            "file": paths.tilde(stored_file) if stored_file else None,
             "listable": listed is not None}
 
 
@@ -924,7 +917,8 @@ def overlay_on_this_computer() -> dict[str, Any]:
     file_client = from_file[1] if from_file else None
     client_id = ids[0] if len(ids) == 1 else (file_client or "") if not ids else ""
     return {"client_ids": ids, "client_id": client_id,
-            "file": _tilde(paths.config_dir() / overlay_setup.SECRET_FILE) if from_file else None,
+            "file": (paths.tilde(paths.config_dir() / overlay_setup.SECRET_FILE)
+                     if from_file else None),
             "file_client": file_client, "listable": listed is not None}
 
 
@@ -997,23 +991,6 @@ def setup_job(ui, state):
     """The session's first-Ship job, as the page shows it (None: not started)."""
     job = ui.jobs.get(state.ship) if state.ship is not None else None
     return SetupShipView(job) if job is not None else None
-
-
-def size_from_form(fields) -> dict[str, int]:
-    """cores / memory_mb / disk_gb from a form (memory typed in GB), checked."""
-    from fleetledger.lifecycle import check_size
-
-    def number(key: str) -> int | None:
-        value = _one(fields, key)
-        if not value:
-            return None
-        if not value.isdigit():
-            raise FleetError(f"{key.replace('_', ' ')}: a whole number.")
-        return int(value)
-
-    memory_gb = number("memory_gb")
-    return check_size({"cores": number("cores"), "disk_gb": number("disk_gb"),
-                       "memory_mb": memory_gb * 1024 if memory_gb is not None else None})
 
 
 async def ship_start(request: Request) -> Response:

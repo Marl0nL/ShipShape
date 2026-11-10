@@ -88,8 +88,7 @@ def _scopes(fields: dict[str, list[str]]) -> list[str] | None:
 
 def section_context(ui: Any, inv: Any) -> dict[str, Any]:
     """What Settings ▸ Access shows about certificates and machines. Reads files only."""
-    from fleetledger import ca, trustcmd
-    from fleetledger.web.setup import _tilde
+    from fleetledger import ca, paths, trustcmd
 
     jobs = {kind: [j for j in ui.jobs.shown() if j.kind == kind][:3] for kind in KINDS}
     if ca.config(inv) is None:
@@ -99,7 +98,7 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
     for m in machines:
         folder = ca.bundle_dir(m.name)
         if (folder / "install.sh").is_file():
-            bundles[m.name] = _tilde(folder)
+            bundles[m.name] = paths.tilde(folder)
     return {
         "certs": trustcmd.ca_rows(inv, ca.cached_krl(inv)),
         "revoked": [m for m in machines if m.revoked],

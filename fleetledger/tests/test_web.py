@@ -1499,6 +1499,34 @@ def test_an_unreachable_ship_on_a_hypervisor_offers_start_the_vm(web, store):
     assert card.headers.get("HX-Refresh") == "true"  # on now: the page redraws its bar
 
 
+@pytest.mark.parametrize("kind, refresh", [
+    ("start", True), ("stop", True),  # the VM is on or off: the action bar changes
+    ("certs", True), ("trust", True), ("leave", True),  # the Access tables change
+    ("agent-restart", True),  # the agent list shows the new modes
+    ("scan", True),  # the adopt page lists what it heard
+    ("update", False), ("reboot", False), ("snapshot", False), ("image", False),
+    ("destroy", False), ("enrol", False), ("repin", False),
+])
+def test_a_finished_job_card_redraws_the_page_only_when_the_page_changed(web, kind, refresh):
+    web.sign_in()
+    job = web.app_ui.jobs.start(kind, ["ship-01"], lambda job: 0, kind)
+    wait_for(lambda: job.done)
+    for where in (f"{BASE}/ships/ship-01", f"{BASE}/"):
+        card = web.client.get(f"/jobs/{job.id}", headers={"HX-Current-URL": where})
+        assert card.status_code == 200
+        assert card.headers.get("HX-Refresh") == ("true" if refresh else None)
+
+
+def test_a_finished_inbox_job_redraws_only_that_ships_page(web):
+    web.sign_in()
+    job = web.app_ui.jobs.start("inbox", ["ship-01"], lambda job: 0, "inbox")
+    wait_for(lambda: job.done)
+    seen = {where: web.client.get(f"/jobs/{job.id}", headers={
+        "HX-Current-URL": f"{BASE}{where}"}).headers.get("HX-Refresh")
+        for where in ("/ships/ship-01/inbox", "/ships/ship-02/inbox", "/")}
+    assert seen == {"/ships/ship-01/inbox": "true", "/ships/ship-02/inbox": None, "/": None}
+
+
 def test_stop_needs_its_dialog_and_runs_ship_fleet_stop(web, store):
     driver = _on_a_fake_hypervisor(web, store)
     web.fleet.poll()
