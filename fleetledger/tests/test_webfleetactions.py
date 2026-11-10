@@ -7,7 +7,8 @@ from __future__ import annotations
 import re
 
 import pytest
-from test_web import wait_for, web  # noqa: F401 - the web UI fixture
+from fl_harness import finished
+from test_web import web  # noqa: F401 - the web UI fixture
 from test_webtrust import cakeys, caweb  # noqa: F401 - the web UI with a CA
 
 from fleetledger import ops
@@ -35,12 +36,6 @@ def fa(web, monkeypatch):  # noqa: F811
     return web
 
 
-def _finished(web, count=1):  # noqa: F811
-    wait_for(lambda: len(web.app_ui.jobs.recent()) >= count
-             and all(j.done for j in web.app_ui.jobs.recent()))
-    return web.app_ui.jobs.recent()[0]
-
-
 def _form(page, action):
     start = page.index(f'action="{action}"')
     return page[page.rindex("<form", 0, start):page.index("</form>", start)]
@@ -63,7 +58,7 @@ def test_update_with_options_runs_ops_update_over_the_tags_ships(fa):
     response = fa.post("/fleet/actions/update", {"ships": "tag:work", "reboot": "never",
                                                  "force": "yes", "confirm": "yes"})
     assert response.headers["location"] == "/fleet/actions?tag=work"
-    job = _finished(fa)
+    job = finished(fa)
     name, ships, _, kwargs = fa.calls[0]
     assert (name, ships) == ("update", ["ship-01"])
     assert (kwargs["reboot_policy"], kwargs["force"], kwargs["wait"]) == ("never", True, True)
@@ -79,7 +74,7 @@ def test_selection_is_ops_select(fa):
     for value, tag in (("all", None), ("tag:work", "work"), ("tag:personal", "personal")):
         fa.calls.clear()
         fa.post("/fleet/actions/update", {"ships": value, "reboot": "auto", "confirm": "yes"})
-        _finished(fa, len(fa.app_ui.jobs.recent()))
+        finished(fa, len(fa.app_ui.jobs.recent()))
         expected = [s.name for s in ops.select(inv, [], tag, everything=tag is None)]
         assert fa.calls[0][1] == expected
     fa.post("/fleet/actions/update", {"ships": "tag:Bad!", "reboot": "auto", "confirm": "yes"})
@@ -96,7 +91,7 @@ def test_a_setting_sends_only_what_was_chosen(fa):
     assert "Choose at least one setting" in fa.client.get("/fleet/actions").text
     fa.post("/fleet/actions/set", {"ships": "all", "remote_control": "off", "sudo": "",
                                    "reboot_time": "03:30", "confirm": "yes"})
-    job = _finished(fa)
+    job = finished(fa)
     name, ships, args, _ = fa.calls[0]
     assert (name, ships) == ("set_settings", ["ship-01", "ship-02"])
     assert args[0] == ["remote_control=off", "reboot_time=03:30"]
@@ -110,7 +105,7 @@ def test_tools_add_and_remove_for_a_tag(fa):
     assert fa.app_ui.jobs.recent() == []  # no tick: nothing
     fa.post("/fleet/actions/tools", {"ships": "tag:work", "do": "add", "tool": ["gh-axi"],
                                      "confirm": "yes"})
-    _finished(fa)
+    finished(fa)
     name, ships, args, _ = fa.calls[0]
     assert (name, ships, args[:2]) == ("change_tools", ["ship-01"], ("add", ["gh-axi"]))
     fa.post("/fleet/actions/tools", {"ships": "tag:work", "do": "remove",
@@ -125,7 +120,7 @@ def test_tools_add_and_remove_for_a_tag(fa):
 def test_logs_from_every_ship_show_per_ship(fa):
     fa.failing.add("ship-02")
     fa.post("/fleet/actions/logs", {"ships": "all", "source": "herdr", "lines": "50"})
-    job = _finished(fa)
+    job = finished(fa)
     name, ships, args, _ = fa.calls[0]
     assert (name, ships, args[:2]) == ("fleet_logs", ["ship-01", "ship-02"], ("herdr", 50))
     card = fa.client.get(f"/jobs/{job.id}?v=0").text
@@ -154,14 +149,14 @@ def test_renew_certificates_for_a_tag_from_the_menu(caweb, monkeypatch):  # noqa
     assert re.search(r'name="tag" value="work"', renew) and 'value="fleet"' in renew
     response = caweb.post("/settings/certs/renew", {"tag": "work", "from": "fleet"})
     assert response.headers["location"] == "/?tag=work"
-    job = _finished(caweb)
+    job = finished(caweb)
     assert argvs == [["ca", "sign", "--tag", "work"]] and job.ships == ["ship-01"]
 
 
 def test_one_ship_that_fails_fails_the_job(fa):
     fa.failing.add("ship-02")
     fa.post("/fleet/actions/update", {"ships": "all", "reboot": "auto", "confirm": "yes"})
-    job = _finished(fa)
+    job = finished(fa)
     assert not job.ok and [o.ok for o in job.outcomes] == [True, False]
     card = fa.client.get(f"/jobs/{job.id}?v=0").text
     assert ">failed<" in card and 'class="flash bad">ship-02: cannot reach it' in card

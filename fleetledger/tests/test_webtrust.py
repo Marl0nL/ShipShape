@@ -9,11 +9,11 @@ import shutil
 import subprocess
 
 import pytest
-from fl_harness import keygen
+from fl_harness import finished, keygen
 from fleetledger.web import dashboard, jobs, trust
 from test_ca import _with_ca, cakeys  # noqa: F401 - fixture
 from test_cli import ShipSSH, result
-from test_web import wait_for, web  # noqa: F401 - the web UI fixture
+from test_web import web  # noqa: F401 - the web UI fixture
 
 from fleetledger import ca
 
@@ -69,12 +69,6 @@ def _key(caweb, name):
     return (caweb.tmp / f"{name}.pub").read_text().strip()
 
 
-def _finished(web, count=1):  # noqa: F811
-    wait_for(lambda: len(web.app_ui.jobs.recent()) >= count
-             and all(j.done for j in web.app_ui.jobs.recent()))
-    return web.app_ui.jobs.recent()[0]
-
-
 def _settings(web):  # noqa: F811
     return web.client.get("/settings").text
 
@@ -125,7 +119,7 @@ def test_trusting_a_machine_writes_its_bundle_and_shows_its_folder(caweb):
     response = _trust(caweb, "laptop", key + "\n", scope="tag:work", logins="agent",
                       hours="12")
     assert response.headers["location"] == "/settings?said=machines#machines"
-    job = _finished(caweb)
+    job = finished(caweb)
     assert job.ok, job.snapshot()
     m = ca.machine(caweb.store.load(), "laptop")
     assert m.scope == ("tag:work",) and m.logins == ("agent",) and m.cert_hours == 12
@@ -188,14 +182,14 @@ def test_trust_refuses_bad_fields(caweb, field, value, said):
 
 def test_trusting_a_name_already_trusted_is_refused(caweb):
     _trust(caweb, "laptop", _key(caweb, "laptop"))
-    _finished(caweb)
+    finished(caweb)
     _trust(caweb, "laptop", _key(caweb, "other"))
     assert len(caweb.app_ui.jobs.recent()) == 1 and "trusted already" in _settings(caweb)
 
 
 def test_changing_a_machines_ships_needs_the_tick(caweb):
     _trust(caweb, "laptop", _key(caweb, "laptop"))
-    _finished(caweb)
+    finished(caweb)
     caweb.post("/settings/machines/scope", {"machine": "laptop", "scope": "tag:work"})
     assert "Tick the box" in _settings(caweb) and len(caweb.app_ui.jobs.recent()) == 1
     caweb.post("/settings/machines/scope", {"machine": "laptop", "scope": "all",
@@ -203,7 +197,7 @@ def test_changing_a_machines_ships_needs_the_tick(caweb):
     assert "No change." in _settings(caweb)
     caweb.post("/settings/machines/scope", {"machine": "laptop", "scope": "tag:work",
                                             "confirm": "yes"})
-    job = _finished(caweb, 2)
+    job = finished(caweb, 2)
     assert job.ok, job.snapshot()
     assert ca.machine(caweb.store.load(), "laptop").scope == ("tag:work",)
     caweb.post("/settings/machines/scope", {"machine": "nobody", "scope": "all",
@@ -214,14 +208,14 @@ def test_changing_a_machines_ships_needs_the_tick(caweb):
 def test_untrust_revokes_and_pushes_the_list_and_names_ships_not_updated(caweb):
     key = _key(caweb, "laptop")
     _trust(caweb, "laptop", key)
-    _finished(caweb)
+    finished(caweb)
     caweb.post("/settings/machines/untrust", {"machine": "laptop"})
     assert "Tick the box" in _settings(caweb)
     assert not ca.machine(caweb.store.load(), "laptop").revoked
     caweb.ship.down.add("ship-02")
     caweb.trusted.clear()
     caweb.post("/settings/machines/untrust", {"machine": "laptop", "confirm": "yes"})
-    job = _finished(caweb, 2)
+    job = finished(caweb, 2)
     assert job.kind == "trust" and job.title == "Untrust laptop"
     assert ca.machine(caweb.store.load(), "laptop").revoked
     krl = __import__("base64").b64decode(dict(caweb.trusted)["ship-01"]["revoked_keys"])
@@ -239,13 +233,13 @@ def test_untrust_revokes_and_pushes_the_list_and_names_ships_not_updated(caweb):
 def test_renew_one_ship_from_its_row_its_menu_or_an_alert(caweb):
     assert caweb.post("/ships/ship-01/certs/renew", {"from": "settings"}).headers[
         "location"] == "/settings?said=certificates#certificates"
-    job = _finished(caweb)
+    job = finished(caweb)
     assert job.ok, job.snapshot()
     assert job.kind == "certs" and job.ships == ["ship-01"]
     assert [name for name, _ in caweb.trusted] == ["ship-01"]
     assert caweb.post("/ships/ship-01/certs/renew", {"from": "fleet"}).headers[
         "location"] == "/"
-    _finished(caweb, 2)
+    finished(caweb, 2)
     assert caweb.post("/ships/ship-01/certs/renew").headers["location"] == "/ships/ship-01"
     assert caweb.post("/ships/nope/certs/renew").status_code == 404
 
@@ -254,10 +248,10 @@ def test_renew_all_and_re_issue_even_if_current(caweb, monkeypatch):
     argvs = []
     monkeypatch.setattr(jobs, "run_cli", lambda app, argv, job: argvs.append(argv) or 0)
     caweb.post("/settings/certs/renew")
-    job = _finished(caweb)
+    job = finished(caweb)
     assert job.ships == ["ship-01", "ship-02"] and job.title == "Renew certificates"
     caweb.post("/settings/certs/renew", {"force": "yes"})
-    _finished(caweb, 2)
+    finished(caweb, 2)
     assert argvs == [["ca", "sign"], ["ca", "sign", "--force"]]
 
 
@@ -267,7 +261,7 @@ def test_renewing_this_computer_runs_trust_this_computer(caweb, monkeypatch):
     page = _settings(caweb)
     assert "Let this computer use ssh" in page  # not trusted yet
     caweb.post("/settings/machines/renew-here")
-    _finished(caweb)
+    finished(caweb)
     assert argvs == [["trust", "--this-computer"]]
 
 
@@ -319,18 +313,18 @@ def test_a_refusal_shows_in_the_block_it_came_from(caweb):
 def test_a_finished_certificate_or_machine_job_redraws_the_page(caweb, monkeypatch):
     monkeypatch.setattr(jobs, "run_cli", lambda app, argv, job: 0)
     caweb.post("/settings/machines/renew-here")
-    job = _finished(caweb)
+    job = finished(caweb)
     response = caweb.client.get(f"/jobs/{job.id}?v=0")
     assert response.headers.get("HX-Refresh") == "true"  # the tables show the change
 
 
 def test_a_narrowing_that_does_not_reach_every_ship_fails(caweb):
     _trust(caweb, "laptop", _key(caweb, "laptop"))
-    _finished(caweb)
+    finished(caweb)
     caweb.ship.down.add("ship-02")
     caweb.post("/settings/machines/scope", {"machine": "laptop", "scope": "ship:ship-01",
                                             "confirm": "yes"})
-    job = _finished(caweb, 2)
+    job = finished(caweb, 2)
     log = "\n".join(job.snapshot())
     assert not job.ok and "NOT YET REVOKED on ship-02" in log  # never a green card
     assert ca.machine(caweb.store.load(), "laptop").scope == ("ship:ship-01",)  # recorded
@@ -382,7 +376,7 @@ def test_the_more_menu_hides_renew_for_a_ship_that_does_not_answer(caweb):
 def test_a_fleet_level_job_card_has_no_stray_separator(caweb, monkeypatch):
     monkeypatch.setattr(jobs, "run_cli", lambda app, argv, job: 0)
     caweb.post("/settings/machines/renew-here")
-    job = _finished(caweb)
+    job = finished(caweb)
     header = caweb.client.get(f"/jobs/{job.id}?v=0").text.split("</header>")[0]
     assert "Renew this computer" in header and " · " not in header
 

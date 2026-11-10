@@ -6,10 +6,11 @@ from __future__ import annotations
 import threading
 import time
 
+from fl_harness import last_job, wait_for
 from fleetledger.concierge import audit
 from fleetledger.drivers import get_driver
 from test_cli import FakeDriver
-from test_web import _action_bar, wait_for, web  # noqa: F401  (web is a fixture)
+from test_web import _action_bar, web  # noqa: F401  (web is a fixture)
 
 
 def on_a_fake_hypervisor(web, ship="ship-02"):  # noqa: F811
@@ -21,11 +22,6 @@ def on_a_fake_hypervisor(web, ship="ship-02"):  # noqa: F811
         driver if d == "proxmox" else get_driver(inv, d, **kw))
     web.fleet.poll()
     return driver
-
-
-def last_job(web):  # noqa: F811
-    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
-    return web.app_ui.jobs.recent()[0]
 
 
 def _form(page, action):

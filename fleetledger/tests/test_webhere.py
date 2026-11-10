@@ -19,9 +19,9 @@ import re
 import shutil
 import subprocess
 import tarfile
-import time
 
 import pytest
+from fl_harness import Clock, finished
 from fleetledger.concierge import audit
 from fleetledger.web import app as webapp
 from fleetledger.web import devices as devices_mod
@@ -31,20 +31,12 @@ from starlette.testclient import TestClient
 from test_ca import cakeys  # noqa: F401 - fixture
 from test_web import ORIGIN, web  # noqa: F401 - the web UI fixture
 from test_webremote import LOGIN, ON, REMOTE, REMOTE_ORIGIN, SERVE
-from test_webtrust import _finished, _key, caweb  # noqa: F401 - fixture
+from test_webtrust import _key, caweb  # noqa: F401 - fixture
 
 from fleetledger import ca, cli, trustcmd
 
 pytestmark = pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="needs ssh-keygen")
 OVERLAY_NAME = "ship-01.example-tailnet.ts.net"
-
-
-class Wall:
-    def __init__(self):
-        self.now = time.time()
-
-    def __call__(self):
-        return self.now
 
 
 @pytest.fixture
@@ -54,7 +46,7 @@ def here(caweb, monkeypatch):  # noqa: F811
     `lap` (both logins, every Ship). ship-01 is on the overlay."""
     env = caweb
     remote.save(ON)
-    env.wall = Wall()
+    env.wall = Clock()
     env.devices = Devices(wall=env.wall)
     env.gate.remote, env.gate.devices = ON, env.devices
     asgi = env.client.app
@@ -409,7 +401,7 @@ def test_the_attention_cards_follow_the_devices_machine(here, monkeypatch):
 def test_trusting_from_a_device_without_the_tick_says_nothing_about_it(here):
     here.rpost("/settings/machines/trust", {"machine": "work", "key": _key(here, "w2"),
                                             "scope": "all", "logins": "both"})
-    assert _finished(here).ok
+    assert finished(here).ok
     assert here.devices.all()[0].machine is None
 
 
@@ -436,7 +428,7 @@ def test_trusting_a_machine_from_a_device_can_say_it_runs_on_it(here):
     key = _key(here, "phone-lap")
     here.rpost("/settings/machines/trust", {"machine": "work", "key": key, "scope": "all",
                                             "logins": "both", "mine": "yes"})
-    job = _finished(here)
+    job = finished(here)
     assert job.ok, job.snapshot()
     assert here.devices.all()[0].machine == "work"
     assert "browser runs on work" in "\n".join(job.snapshot())

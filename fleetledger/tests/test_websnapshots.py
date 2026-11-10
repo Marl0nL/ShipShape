@@ -4,12 +4,13 @@
 import re
 
 import pytest
+from fl_harness import finished, wait_for
 from fleetledger.drivers.base import Outcome, Snapshot
 from fleetledger.errors import FleetError
 from fleetledger.lifecycle import SNAPSHOT_WARNING
 from fleetledger.web import flows
 from markupsafe import escape
-from test_web import _action_bar, flow_of, wait_for, web  # noqa: F401 - the web UI fixture
+from test_web import _action_bar, flow_of, web  # noqa: F401 - the web UI fixture
 
 
 class FakeDriver:
@@ -50,12 +51,6 @@ def driven(web):  # noqa: F811
     return web
 
 
-def _finished(web, count=1):  # noqa: F811
-    wait_for(lambda: len(web.app_ui.jobs.recent()) >= count
-             and all(j.done for j in web.app_ui.jobs.recent()))
-    return web.app_ui.jobs.recent()[0]
-
-
 def test_the_tab_lists_snapshots_and_offers_take_rollback_delete(driven):
     page = driven.client.get("/ships/ship-01/snapshots").text
     assert "before-upgrade" in page and "a note" in page and str(escape(SNAPSHOT_WARNING)) in page
@@ -71,7 +66,7 @@ def test_the_tab_lists_snapshots_and_offers_take_rollback_delete(driven):
 
 def test_take_runs_the_cli_command_as_a_job(driven):
     driven.post("/ships/ship-01/snapshots/take", {"snapshot": "", "note": "-- before work"})
-    job = _finished(driven)
+    job = finished(driven)
     assert job.ok and job.kind == "snapshot" and job.ships == ["ship-01"]
     (call,) = driven.fake.calls
     assert call[0] == "take" and re.fullmatch(r"snap-\d{8}-\d{6}", call[2])
@@ -89,7 +84,7 @@ def test_rollback_needs_the_ships_name_typed(driven):
     assert driven.app_ui.jobs.recent() == [] and driven.fake.calls == []
     driven.post("/ships/ship-01/snapshots/rollback",
                 {"snapshot": "before-upgrade", "confirm_name": "ship-01"})
-    assert _finished(driven).ok
+    assert finished(driven).ok
     assert driven.fake.calls == [("rollback", "ship-01", "before-upgrade")]
 
 
@@ -98,7 +93,7 @@ def test_delete_needs_the_tick(driven):
     assert driven.app_ui.jobs.recent() == []
     driven.post("/ships/ship-01/snapshots/delete", {"snapshot": "before-upgrade",
                                                     "confirm": "yes"})
-    assert _finished(driven).ok and driven.fake.calls == [("rm", "ship-01", "before-upgrade")]
+    assert finished(driven).ok and driven.fake.calls == [("rm", "ship-01", "before-upgrade")]
 
 
 @pytest.mark.parametrize("bad", ["1st", "x", "current", "a b", "--yes"])
@@ -117,7 +112,7 @@ def test_the_manual_driver_cannot_list_and_shows_the_steps(driven):
     outside_more = bar[:bar.index('<details class="menu">')]
     assert "snapshots#take" not in outside_more  # no primary Snapshot on a by-hand driver
     driven.post("/ships/ship-02/snapshots/take", {"snapshot": "before-work"})
-    job = _finished(driven)
+    job = finished(driven)
     assert job.result["outcome"].done is False
     card = driven.client.get(f"/jobs/{job.id}").text
     assert "Do this on your hypervisor" in card and "before-work" in card
@@ -141,7 +136,7 @@ def test_one_job_at_a_time_per_ship(driven, monkeypatch):
     page = driven.client.get("/ships/ship-01/snapshots").text
     assert "already running" in page
     release.set()
-    assert _finished(driven).ok
+    assert finished(driven).ok
     assert [c[2] for c in driven.fake.calls] == ["first"]
 
 

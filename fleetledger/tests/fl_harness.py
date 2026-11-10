@@ -147,3 +147,39 @@ class FakeSSH:
         if isinstance(out, str):
             out = out.encode()
         return Result(code, out, err, ship.names[0])
+
+
+# --- the web UI ------------------------------------------------------------------------------
+
+
+def wait_for(predicate, timeout=20.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    raise AssertionError("timed out")
+
+
+def finished(web, count=1):
+    """The newest web job, once at least count jobs have run and all of them are done."""
+    wait_for(lambda: len(web.app_ui.jobs.recent()) >= count
+             and all(j.done for j in web.app_ui.jobs.recent()))
+    return web.app_ui.jobs.recent()[0]
+
+
+def last_job(web):
+    """The newest web job, once it is done."""
+    wait_for(lambda: web.app_ui.jobs.recent() and web.app_ui.jobs.recent()[0].done)
+    return web.app_ui.jobs.recent()[0]
+
+
+class Clock:
+    """A clock a test moves by hand: clock.now += seconds. Starts at start, or at
+    the real time."""
+
+    def __init__(self, start: float | None = None):
+        self.now = time.time() if start is None else start
+
+    def __call__(self):
+        return self.now
