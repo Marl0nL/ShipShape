@@ -9,6 +9,10 @@ mode = "paste-back"
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default login --no-launch-browser"
 timeout = 600
 
+# Signs in only the ADC part of gcloud; no sign-in of its own.
+[signin]
+part_of = "gcloud"
+
 [match]
 url = 'https://accounts\.google\.com/o/oauth2/\S+'
 prompt = '(?i)enter (?:the )?(?:verification|authorization) code'

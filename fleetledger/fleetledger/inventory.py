@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths
+from fleetledger import paths, signinreg
 from fleetledger.errors import NotFound
 
 SIZE_DEFAULTS = {"cores": 4, "memory_mb": 8192, "disk_gb": 40}
@@ -217,10 +217,11 @@ class Inventory:
     def expected_account(self, ship: Ship, service: str) -> ExpectedAccount:
         """The account the Ship's tags expect for a service (claude, gcloud, github).
 
-        gcloud_adc follows gcloud. A Ship with no tags, or tags that name no
-        account for the service, has no expectation. Tags follow effective_tags.
+        A status key follows its sign-in's account (gcloud_adc follows gcloud). A Ship
+        with no tags, or tags that name no account for the service, has no
+        expectation. Tags follow effective_tags.
         """
-        key = "gcloud" if service == "gcloud_adc" else service
+        key = signinreg.registry().signin_of_service(service)
         accounts = {
             self.tag_accounts[t][key]
             for t in self.effective_tags(ship)

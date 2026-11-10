@@ -9,6 +9,10 @@ mode = "paste-back"
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth login --no-launch-browser --update-adc"
 timeout = 600
 
+[signin]
+label = "Google Cloud"
+order = 2
+
 [match]
 url = 'https://accounts\.google\.com/o/oauth2/\S+'
 prompt = '(?i)enter (?:the )?(?:verification|authorization) code'
@@ -17,11 +21,14 @@ failure = '(?i)(?:invalid_grant|ERROR: \(gcloud\.auth)'
 
 [[check]]
 service = "gcloud"
+short = "gcloud"
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth list --filter=status:ACTIVE --format='value(account)'"
 account = "stdout"
 
 [[check]]
 service = "gcloud_adc"
+label = "Google Cloud ADC"
+short = "ADC"
 # The token goes to /dev/null on the Ship; only the exit code comes back.
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default print-access-token >/dev/null"
 

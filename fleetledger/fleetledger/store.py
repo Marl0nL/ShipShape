@@ -20,7 +20,7 @@ from typing import Any, Protocol
 import tomlkit
 from tomlkit.items import Table
 
-from fleetledger import paths, schemas
+from fleetledger import paths, schemas, signinreg
 from fleetledger.errors import ConfigError, FleetError, NotFound
 from fleetledger.inventory import Inventory, Ship
 
@@ -38,6 +38,10 @@ class Store(Protocol):
 def semantic_errors(doc: Mapping[str, Any]) -> list[str]:
     """Rules the schema cannot express."""
     problems: list[str] = []
+    reg = signinreg.registry()
+    for tag, accounts in sorted(doc.get("tag", {}).items()):
+        if reg.unknown(accounts):
+            problems.append(reg.unknown_message(f"tag.{tag}", accounts))
     seen_names: dict[str, str] = {}
     seen_ids: dict[str, str] = {}
     seen_keys: dict[str, str] = {}
@@ -46,6 +50,8 @@ def semantic_errors(doc: Mapping[str, Any]) -> list[str]:
             other = seen_names.setdefault(host.lower(), ship_name)
             if other != ship_name:
                 problems.append(f"ship.{ship_name}.names: '{host}' is also used by {other}")
+        if reg.unknown(entry.get("signins", [])):
+            problems.append(reg.unknown_message(f"ship.{ship_name}.signins", entry["signins"]))
         other = seen_ids.setdefault(entry.get("id", ""), ship_name)
         if other != ship_name:
             problems.append(f"ship.{ship_name}.id: same id as {other}")

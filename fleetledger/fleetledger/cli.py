@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TextIO
 
-from fleetledger import __version__
+from fleetledger import __version__, signinreg
 from fleetledger.errors import FleetError
 
 COMMANDS = (
@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", metavar="OWNER/NAME",
                    help="a GitHub repo for the first agent to work in: cloned into "
                    "~/work/NAME first (a private one after the GitHub sign-in)")
-    p.add_argument("--signins", metavar="claude,gcloud,github",
+    p.add_argument("--signins", metavar=",".join(signinreg.registry().choices),
                    help="the sign-ins it uses (default: all); see ship-fleet signins")
     p.add_argument("--github-scopes", metavar="workflow,...",
                    help="extra GitHub scopes its GitHub sign-in asks for (default: none, "
@@ -248,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait", action="store_true",
                    help="wait until it has provisioned, then finish enrolment")
 
-    services = "claude, gcloud (with ADC), gcloud-adc, github or all"
+    services = signinreg.registry().login_help()
     p = _add(sub, "login", "sign Ships in to a service through the concierge",
              "Sign Ships in to a service. FleetLedger runs the tool's own sign-in on the\n"
              "Ship, shows you the link, types the code you paste, and checks the account\n"
@@ -290,7 +290,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--only", metavar="NAME,NAME", help="exactly these (empty: none)")
     p.add_argument("--tag", help="list: only Ships with this tag")
     p.add_argument("--service", metavar="SERVICE",
-                   help="list: only this service (claude, gcloud, gcloud_adc, github)")
+                   help="list: only this service "
+                   f"({', '.join(signinreg.registry().service_keys)})")
     p.add_argument("--group", choices=("action", "underway", "degraded", "healthy", "off"),
                    help="list: only this group (action: what needs you)")
     p.add_argument("--json", action="store_true", help="list: print JSON")
@@ -710,9 +711,16 @@ def _vault_locked(args, app) -> None:
 
 
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
-    from fleetledger import commands
+    try:  # both build the sign-in registry, which a broken provider file stops
+        from fleetledger import commands
 
-    parser = build_parser()
+        parser = build_parser()
+    except FleetError as exc:
+        app = app or App()
+        app.note(f"ship-fleet: {exc.message}")
+        if exc.hint:
+            app.note(f"  {exc.hint}")
+        return exc.exit_code
     argv = list(sys.argv[1:] if argv is None else argv)
     remote = None
     if argv[:1] == ["ssh"] and "--" in argv:  # everything after -- runs on the Ship

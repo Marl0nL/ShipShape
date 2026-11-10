@@ -33,11 +33,11 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
-from fleetledger import ghscopes, signins
+from fleetledger import ghscopes, signinreg, signins
 from fleetledger.inventory import Inventory
 from fleetledger.status import SIGNED_IN, ShipView
 
-SERVICES = ("claude", "gcloud", "gcloud_adc", "github")
+SERVICES = signinreg.registry().service_keys
 GROUPS = ("action", "underway", "degraded", "healthy", "off")
 GROUP_LABELS = {
     "action": "Needs you",
@@ -46,12 +46,9 @@ GROUP_LABELS = {
     "healthy": "Healthy",
     "off": "Not used",
 }
-SERVICE_LABELS = {"claude": "Claude", "gcloud": "Google Cloud",
-                  "gcloud_adc": "Google Cloud ADC", "github": "GitHub"}
+SERVICE_LABELS = signinreg.registry().service_labels
 # Status auth key -> the concierge provider that signs it in.
-PROVIDER = {key: provider for choice in signins.CHOICES
-            for key, provider in zip(signins.STATUS_KEYS[choice], signins.PROVIDERS[choice],
-                                     strict=True)}
+PROVIDER = signinreg.registry().service_provider
 SERVICE_OF_PROVIDER = {p: k for k, p in PROVIDER.items()}
 # A last sign-in that ended so, while the sign-in is still not done, is the row's
 # state: it needs you. One that timed out does not (you left it, as a cancelled one):
@@ -333,4 +330,4 @@ def fix_command(row: Row) -> str:
 
 
 def _choice(service: str) -> str:
-    return next((c for c, keys in signins.STATUS_KEYS.items() if service in keys), service)
+    return signinreg.registry().signin_of_service(service)

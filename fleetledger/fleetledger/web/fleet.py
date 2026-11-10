@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from fleetledger import ops, status
+from fleetledger import ops, signinreg, status
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory
 
@@ -34,12 +34,7 @@ POLL_INTERVAL = 30.0
 IDLE_AFTER = 120.0
 
 # Status auth service -> concierge provider that signs it in.
-SERVICE_PROVIDER = {
-    "claude": "claude",
-    "gcloud": "gcloud",
-    "gcloud_adc": "gcloud-adc",
-    "github": "github",
-}
+SERVICE_PROVIDER = signinreg.registry().service_provider
 SIGNIN_CODES = ("signin-missing", "signin-expired", "signin-expiring", "signin-wrong-account",
                 "signin-scopes-differ")
 

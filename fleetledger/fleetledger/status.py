@@ -24,13 +24,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fleetledger import ca, paths, schemas, signins
+from fleetledger import ca, paths, schemas, signinreg, signins
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
 from fleetledger.shipctl import RESULT_SCHEMA, STATUS_SCHEMA, not_installed
 from fleetledger.ssh import SSH, HostKeyMismatch, Unreachable, ship_ctl
 
-AUTH_SERVICES = ("claude", "gcloud", "gcloud_adc", "github")
+AUTH_SERVICES = signinreg.registry().service_keys
 SIGNED_IN = ("ok", "expiring")
 
 # What runs a Ship's agents (status herdr.runtime, from ship.toml runtime), as shown.

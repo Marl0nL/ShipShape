@@ -28,6 +28,7 @@ from . import (
     notice,
     overlay,
     shiptoml,
+    signins,
     sshtrust,
     status,
     tools,
@@ -130,7 +131,7 @@ def build_parser() -> Parser:
     ag.add_argument("--clear", action="store_true",
                     help="primary: unmark it (the first autostart agent is the primary)")
     ns = cmd("notify-signin", "Tell the [[autostart]] agents that a sign-in has completed.")
-    ns.add_argument("service", choices=sorted(notice.SERVICES))
+    ns.add_argument("service", choices=sorted(signins.NOTIFY))
     c = cmd("converge", "Apply a tooling bundle.")
     c.add_argument("--bundle", required=True, metavar="PATH")
     t = cmd("tools", "List, install or check catalogue tools.")

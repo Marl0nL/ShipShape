@@ -6,6 +6,11 @@ mode = "paste-back"
 run = "claude auth login"
 timeout = 600
 
+# As a Ship's sign-ins list names it (signinreg.py).
+[signin]
+label = "Claude"
+order = 1
+
 [match]
 url = 'https://(?:claude\.ai|claude\.com|platform\.claude\.com|console\.anthropic\.com)/\S*oauth\S*'
 prompt = '(?i)paste (?:the |your )?code'
