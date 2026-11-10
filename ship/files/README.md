@@ -17,6 +17,7 @@ Files ship-provision installs (paths on the Ship: `contracts/ship-runtime.md`).
 | `ssh/10-shipshape.conf` | `/etc/ssh/sshd_config.d/` |
 | `logind/50-shipshape.conf`, `journald/50-shipshape.conf` | `/etc/systemd/*.conf.d/` |
 | `profile.d/shipshape.sh` | `/etc/profile.d/`: the agent's PATH, npm prefix and tool environment |
+| `tmpfiles/tmp.conf` | `/etc/tmpfiles.d/tmp.conf`: `/tmp` 1777 at boot and its 10-day clean-up, now that `/tmp` is on the disk (ship-provision masks `tmp.mount`) |
 
 The avahi announcement is not here: it carries the Ship's name and id, so
 `ship-ctl apply` writes it from `ship.toml`.

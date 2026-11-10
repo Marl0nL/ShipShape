@@ -439,6 +439,15 @@ def test_confirm_texts_for_a_core_ship_name_no_herdr_and_herdr_ones_are_unchange
         "join", "ship-01")
 
 
+def test_a_tmp_waiting_for_its_reboot_offers_a_reboot_that_is_not_urgent(store):
+    action = dashboard.action_for("tmp-reboot-pending", "ship-01", view(store), None)
+    assert action.kind == "post" and dict(action.fields)["operation"] == "reboot"
+    assert action.hint.startswith("/tmp moves to the disk at the next reboot")
+    from fleetledger import ops
+
+    assert ops.SEVERITY["tmp-reboot-pending"] == "low"
+
+
 def test_a_pending_core_restart_offers_a_reboot_that_is_not_urgent(store):
     from test_cli import RUNNING_CORE
 

@@ -185,6 +185,7 @@
         <dt>Size</dt><dd>{{ doc.host.cpus }} CPUs, {{ doc.host.mem_total_mb }} MB, {{ doc.host.disk_total_gb }} GB</dd>
         <dt>Up</dt><dd>{{ doc.host.uptime_s // 3600 }} h{% if doc.host.reboot_required %}, <span class="pill warn">reboot required</span>{% endif %}</dd>
         <dt>Updates pending</dt><dd>{{ doc.host.updates_pending if doc.host.updates_pending is not none else "?" }}</dd>
+        {% if doc.host.tmp and doc.host.tmp.fs != "unknown" %}<dt>/tmp</dt><dd>{{ "on the disk" if doc.host.tmp.fs == "disk" else "in memory (tmpfs)" }}{% if doc.host.tmp.fs == "tmpfs" and doc.host.tmp.next_boot == "disk" %}, <span class="pill warn">on the disk after a reboot</span>{% endif %}</dd>{% endif %}
       </dl>
     </div>
     <div>

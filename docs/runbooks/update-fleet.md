@@ -55,6 +55,14 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   `core-restart-pending`, a notice, and the result says "herdr-core was updated".
   Reboot when it suits you (`ship-fleet reboot ship-01`), or update with
   `--reboot always`. Its core's own log is `ship-fleet logs ship-01 core`.
+- The first update with the disk-backed `/tmp` masks `tmp.mount` (systemd's tmpfs on
+  `/tmp`) but unmounts nothing: running agents and their sockets live in `/tmp`. The
+  result says "/tmp moves from memory (tmpfs) to the disk at the next reboot", and
+  the Ship shows `tmp-reboot-pending` (low, with a Reboot button) until it reboots.
+  The update does not reboot for it, as for a new herdr-core: the tmpfs keeps
+  working until then. Reboot when it suits you; after that `/tmp` is a folder on
+  the root disk, keeps its files across reboots, and anything nothing used for
+  10 days is cleaned up daily.
 - `FAILED` with `agent X came back in auto, was bypassPermissions` means the Ship
   did not resume it in its recorded mode: look at `ship-fleet logs ship-01 resume`
   and `herdr` (`core` on a herdr-core Ship) before going further (and check that
@@ -112,7 +120,8 @@ ship-fleet attention
 ```
 
 `behind-tooling` and `herdr-restart-pending` should be gone (`core-restart-pending`
-stays on herdr-core Ships until their next reboot; that is expected).
+stays on herdr-core Ships until their next reboot, `tmp-reboot-pending` on every Ship
+whose `/tmp` was moved to the disk; both are expected).
 
 ## OS updates and reboots
 

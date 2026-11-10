@@ -675,6 +675,14 @@ def test_status(env):
     assert code == 1 and "unreachable" in out
 
 
+def test_status_says_tmp_waits_for_its_reboot(env):
+    assert "/tmp in memory" not in env.run("status", "ship-01")[1]
+    doc = copy.deepcopy(RUNNING)
+    doc["host"]["tmp"] = {"fs": "tmpfs", "next_boot": "disk"}
+    env.ship.status_override["ship-01"] = doc
+    assert "/tmp in memory until the next reboot" in env.run("status", "ship-01")[1]
+
+
 def test_status_shows_recorded_agents_that_are_not_running(env):
     doc = copy.deepcopy(RUNNING)
     stamp = "2026-01-02T00:00:00Z"

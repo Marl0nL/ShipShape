@@ -65,7 +65,7 @@ How fields are worked out:
 | `agent_record` | The agent record (see "The agent record" below): each recorded agent's name, folder, mode, whether it is an `[[autostart]]` agent, its state (`running`, `starting`, `failed`, `stopped`, or `unknown` while herdr does not answer), failed tries this boot, and the last boot's resume (`method` `ship-ctl`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
-| `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown). |
+| `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown); `tmp`: whether `/tmp` is a tmpfs or on the disk, now and from the next boot (the mount table, and `tmp.mount`'s mask). |
 | `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
 | `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
 | `settings` | `ship.toml` with its defaults filled in: the values `set` manages (tags, time zone, the Claude settings, agent sudo, LAN guard and its allowed addresses, SSH listen, OS-update reboots, the extra GitHub scopes), the owner login's name, and the `[[autostart]]` agents (name, folder, mode, repo). Optional in the schema: Ships with older tooling leave it out, and FleetLedger then shows their settings as unknown. |
@@ -73,7 +73,7 @@ How fields are worked out:
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
-`reboot-required`, `herdr-restart-pending`, `core-restart-pending`, `provision-failed`, `tool-waiting`,
+`reboot-required`, `herdr-restart-pending`, `core-restart-pending`, `tmp-reboot-pending`, `provision-failed`, `tool-waiting`,
 `tool-failed`, `signin-scopes-differ` (GitHub is signed in, and its token lacks an
 extra scope `github.scopes` chooses, or has a catalogue scope it no longer chooses;
 `settings.md`, "Extra GitHub scopes"; for a scope it has but does not choose, the message says to tick it to keep it before it says that signing in again drops it), `host-cert-expiring` (the host certificate ends within 14 days),
@@ -95,6 +95,12 @@ mode; `ship-fleet update` does that for you unless told not to.
 installed `/usr/local/bin/herdr-core`. Its agents are not affected: the old core
 keeps serving them, and the new one takes over at the next reboot. `ship-fleet
 update` does not reboot for it (`--reboot always` does).
+
+`tmp-reboot-pending` (subject `/tmp`): `/tmp` is still a tmpfs (in memory, with a
+fixed number of files), and ship-provision has already masked `tmp.mount`, so the
+next reboot leaves it a folder on the root disk (status `host.tmp`). Nothing is
+unmounted before then: running agents and their sockets use the live `/tmp`.
+`ship-fleet update` does not reboot for it (`--reboot always` does).
 
 ### `ship-ctl apply [--dry-run] [--json]`
 
@@ -421,7 +427,8 @@ exits 1. `data`: `{ "from": release, "to": release }`.
 
 Converge never restarts herdr or reboots: agents keep running. When it replaced
 the herdr binary, the status document reports `herdr-restart-pending` until the
-next reboot (`core-restart-pending` for the herdr-core binary). Its `apply` records every running agent in the agent record first, so
+next reboot (`core-restart-pending` for the herdr-core binary;
+`tmp-reboot-pending` when it has just moved `/tmp` to the disk). Its `apply` records every running agent in the agent record first, so
 the next reboot brings them back in their modes.
 
 ### `ship-ctl tools list|run|add|remove [ID...] [--json]`

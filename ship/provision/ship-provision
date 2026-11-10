@@ -403,6 +403,32 @@ step_uv() {
   rm -rf "$tmp"
 }
 
+# --- /tmp on the disk ------------------------------------------------------------------
+# Ubuntu mounts a tmpfs on /tmp: systemd's tmp.mount, pulled in by
+# /usr/lib/systemd/system/local-fs.target.wants/ (no fstab line). A tmpfs has a
+# fixed inode cap that parallel test runs use up (every new file then fails while
+# bytes are free), and it is wiped at each boot. Masking the unit, the distro's own
+# opt-out, leaves /tmp a plain folder on the root disk from the next boot; a mask in
+# /etc also wins over a tmp.mount the fstab generator would make. Nothing is
+# unmounted now: running agents and their sockets use the live /tmp. ship-ctl
+# status reports tmp-reboot-pending until the reboot.
+TMP_MASK=/etc/systemd/system/tmp.mount
+
+# The filesystem type mounted on /tmp ("" when /tmp is a plain folder of /). Read
+# only; the last mount on /tmp is the one in use.
+tmp_fstype() {
+  awk '$2 == "/tmp" { t = $3 } END { print t }' "$ROOT/proc/self/mounts" 2>/dev/null || true
+}
+
+step_disk_tmp() {
+  put_link /dev/null "$TMP_MASK"
+  if [ "$CHANGED" = 1 ] && [ "$MODE" != bake ] && [ "$(tmp_fstype)" = tmpfs ]; then
+    log "/tmp stays in memory (tmpfs) until the next reboot, which puts it on the disk"
+  fi
+  # Its 1777 mode at every boot and the age-based clean-up, owned here so they stay.
+  put_file "$FILES/tmpfiles/tmp.conf" /etc/tmpfiles.d/tmp.conf 0644
+}
+
 # ship-axi's Node dependencies, from its lockfile, into this release (root-owned).
 step_ship_axi() {
   local dir=$BUNDLE/axi want have
@@ -758,6 +784,7 @@ main() {
   step_herdr
   step_herdr_core
   step_uv
+  step_disk_tmp
   if [ "$MODE" = bake ]; then
     step_bake_recipes
     [ "$SANDBOX" = 1 ] || [ "$DRY" = 1 ] || sys apt-get clean

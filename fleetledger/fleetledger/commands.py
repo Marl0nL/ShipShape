@@ -668,7 +668,8 @@ def cmd_status(args, app) -> int:
     pending = host.get("updates_pending")
     app.say(f"Host: {usage_cell(view)} (cpu · memory · disk), up {host['uptime_s'] // 3600} h"
             + (", reboot required" if host["reboot_required"] else "")
-            + (f", {pending} OS updates pending" if pending else ""))
+            + (f", {pending} OS updates pending" if pending else "")
+            + (", /tmp in memory until the next reboot" if status.tmp_pending(doc) else ""))
     app.say(f"Claude {doc['claude']['version'] or '?'} ({doc['claude']['channel']}), "
             f"default mode {doc['claude']['default_mode']}, "
             f"Remote Control {doc['claude']['remote_control']}")
