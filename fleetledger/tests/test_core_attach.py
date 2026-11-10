@@ -20,8 +20,8 @@ import pytest
 from fleetledger.inventory import Ship
 from fleetledger.web import dashboard
 from fleetledger.web.fleet import attention_items
-from test_ca import cakeys, ship_key  # noqa: F401 - fixtures
-from test_cli import RUNNING
+from test_ca import caenv, cakeys, here, ship_key  # noqa: F401 - fixtures
+from test_cli import RUNNING, env  # noqa: F401 - env is a fixture
 from test_dashboard import view
 from test_web import _action_bar, web  # noqa: F401 - the web UI fixture
 
@@ -103,6 +103,7 @@ def test_a_mixed_fleets_script_gives_core_ships_to_hc_only():
     before = (FIXTURES / "herdr-two-ships.sh").read_text()
     head = before[:before.index('if [ "$herdr" = 1 ]; then')]
     assert script.replace("herdr and hc saved", "herdr saved").replace(
+        "except herdr and hc\n", "except herdr\n").replace(
         '"$HOME/.ssh/x"', '"$HOME/.ssh/shipshape/id_ed25519"').startswith(head)
     # A first Ship on herdr keeps herdr's hint.
     script = ca.install_script("laptop", ["ship-02", "ship-01"], "~/.ssh/x", core={"ship-01"})
@@ -127,14 +128,14 @@ def test_mixed_fleet_install_scripts_pass_shellcheck(tmp_path, ships, core):
 
 
 FAKE_HERDR = r"""#!/bin/sh
-# herdr's saved machines, one "id label" line each, in $state/herdr.
+# herdr's saved machines, one "id label [session]" line each, in $state/herdr.
 echo "$*" >> "$state/herdr.log"
 case "$1 $2" in
   "machine list")
     printf '['; sep=''
-    while read -r id label; do
+    while read -r id label session; do
       printf '%s\n  {"id": "%s", "label": "%s", "target": "%s",' "$sep" "$id" "$label" "$label"
-      printf ' "session": "default", "enabled": true}'; sep=','
+      printf ' "session": "%s", "enabled": true}' "${session:-default}"; sep=','
     done < "$state/herdr"; printf '\n]\n' ;;
   "machine add") echo "$(printf '%032d' "$(wc -l < "$state/herdr")") $3" >> "$state/herdr" ;;
   "machine remove")
@@ -157,7 +158,8 @@ case "$1 $2" in
     done < "$state/hc"; printf ']}\n' ;;
   "machine add")
     if grep -qx "$3" "$state/hc"; then
-      echo '{"error":{"kind":"already_added","message":"'"$3"' is already a machine here"}}' >&2
+      said='{"error":{"kind":"already_added","message":"'"$3"' is already a machine here"}}'
+      if [ -n "${HC_ERR_STDOUT:-}" ]; then echo "$said"; else echo "$said" >&2; fi
       exit 1
     fi
     [ "$3" = ship-unreachable ] && { echo '{"error":{"kind":"unreachable"}}' >&2; exit 1; }
@@ -242,12 +244,44 @@ def test_install_moves_core_ships_from_herdr_to_hc_and_is_idempotent(
     assert "hc already has ship-01." in proc.stdout and "herdr already has ship-02." in proc.stdout
 
 
-def test_hc_saying_already_added_counts_as_done(tmp_path, cakeys, ship_key, laptop):  # noqa: F811
+@pytest.mark.parametrize("on_stdout", [False, True])
+def test_hc_saying_already_added_counts_as_done(tmp_path, cakeys, ship_key, laptop,  # noqa: F811
+                                                on_stdout):
     folder = _bundle(tmp_path, cakeys, ship_key, ["ship-01"], core={"ship-01"})
     (laptop.state / "hc").write_text("ship-01\n")
     laptop.env["HC_LS_EMPTY"] = "1"  # its listing misses it: add says already_added
+    if on_stdout:  # wherever hc writes its error
+        laptop.env["HC_ERR_STDOUT"] = "1"
     proc = laptop.run(folder)
     assert "hc already has ship-01." in proc.stdout and "could not add" not in proc.stderr
+
+
+def test_only_the_ships_own_herdr_entry_goes(tmp_path, cakeys, ship_key, laptop):  # noqa: F811
+    # Another profile whose session is named like the Ship stays; so does every profile
+    # for a core Ship named like a field value they all share ("default").
+    third = "00112233445566778899aabbccddeeff"
+    (laptop.state / "herdr").write_text(
+        f"{HERDR_ID} ship-01\n{OTHER_ID} elsewhere ship-01\n{third} default-box\n")
+    folder = _bundle(tmp_path, cakeys, ship_key, ["ship-01", "default"],
+                     core={"ship-01", "default"})
+    laptop.run(folder)
+    assert [c for c in laptop.log("herdr") if c.startswith("machine remove")] == [
+        f"machine remove {HERDR_ID}"]
+    left = (laptop.state / "herdr").read_text()
+    assert OTHER_ID in left and third in left
+
+
+def test_a_herdr_entry_without_a_readable_id_is_said_not_guessed(
+        tmp_path, cakeys, ship_key, laptop):  # noqa: F811
+    nested = laptop.bindir / "herdr"  # a listing whose id sits in another object
+    nested.write_text('#!/bin/sh\necho "$*" >> "$state/herdr.log"\n'
+                      'if [ "$1 $2" = "machine list" ]; then\n'
+                      f'  echo \'[{{"profile": {{"id": "{HERDR_ID}"}}, "label": "ship-01"}}]\'\n'
+                      'fi\n')
+    folder = _bundle(tmp_path, cakeys, ship_key, ["ship-01"], core={"ship-01"})
+    proc = laptop.run(folder)
+    assert not [c for c in laptop.log("herdr") if c.startswith("machine remove")]
+    assert "herdr still lists ship-01, which runs herdr-core: remove it" in proc.stderr
 
 
 def test_without_hc_core_ships_are_skipped_with_a_note(tmp_path, cakeys, ship_key, laptop):  # noqa: F811
@@ -313,3 +347,37 @@ def test_a_core_ships_pages_attach_with_hc(web, monkeypatch):  # noqa: F811
     # A herdr Ship beside it is as before.
     bar = _action_bar(web.client.get("/ships/ship-02").text)
     assert "hc attach" not in bar
+
+
+def test_a_down_core_ship_keeps_its_last_known_attach(web, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(trustcmd, "attaches_here", lambda inv, ship: True)
+    status.write_cache("ship-02", core_doc())
+    web.ship.down.add("ship-02")
+    web.fleet.poll()
+    web.sign_in()
+    bar = _action_bar(web.client.get("/ships/ship-02").text)
+    assert 'data-copy="hc attach ship-02/main"' in bar and "herdr --remote" not in bar
+
+
+# --- this computer ---------------------------------------------------------------------
+
+
+def test_this_computer_says_hc_for_a_core_ship(here):  # noqa: F811
+    status.write_cache("ship-01", core_doc())
+    code, out, err = here.run("trust", "--this-computer")
+    assert code == 0, err
+    assert "can attach: ssh ship-01, hc attach ship-01/main" in out
+
+
+def test_a_slow_install_is_said_not_raised(here, monkeypatch):  # noqa: F811
+    run = subprocess.run
+
+    def slow(argv, *a, **kw):
+        if argv[0] == "sh":  # install.sh, waiting on a Ship that does not answer
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        return run(argv, *a, **kw)
+
+    monkeypatch.setattr(trustcmd.subprocess, "run", slow)
+    said = []
+    assert trustcmd.trust_this_computer(here.app, here.store, said.append) is False
+    assert any("took over 120 s" in line and "install.sh" in line for line in said)

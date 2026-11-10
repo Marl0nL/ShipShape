@@ -717,9 +717,11 @@ echo "Done. Try: ssh @FIRST@ true   (then herdr --remote @FIRST@)"
 # herdr-core Ships (ship.toml runtime = "core"): the herdr TUI cannot attach to them,
 # and a herdr TUI that lists one starts a stray herdr server there over SSH, which
 # could resume sessions herdr-core is running. So their herdr saved machine goes,
-# found by its label or SSH target (both the Ship's name, as this script adds them)
-# and removed by its profile id (32 hex digits), and hc gets the Ship instead, when
-# it is installed here. Nothing is installed: no --install, which would copy hc over.
+# found by its label or SSH target (both the Ship's name, as this script adds them;
+# never another field, such as its session) and removed by that profile's id (32 hex
+# digits; an entry whose id cannot be read is said, not guessed at), and hc gets
+# the Ship instead, when it is installed here. Nothing is installed: no --install,
+# which would copy hc over.
 INSTALL_CORE_SH = r"""
 # herdr-core Ships: hc attaches to them, the herdr TUI cannot.
 core=@CORE@
@@ -728,7 +730,8 @@ if [ "$herdr" = 1 ]; then
     known=$(herdr machine list --json 2>/dev/null || true)
     for ship in $core; do
       ids=$(printf '%s' "$known" | tr -d '\n' | tr '{' '\n' | tr '}' '\n' \
-        | grep -F "\"$ship\"" | grep -oE '"[0-9a-f]{32}"' | tr -d '"')
+        | grep -E "\"(label|target)\" *: *\"$ship\"" \
+        | grep -oE '"([a-z_]*_)?id" *: *"[0-9a-f]{32}"' | grep -oE '[0-9a-f]{32}' || true)
       for id in $ids; do
         if herdr machine remove "$id" </dev/null >/dev/null; then
           echo "Removed $ship from herdr's saved machines: it runs herdr-core (use hc)."
@@ -736,7 +739,7 @@ if [ "$herdr" = 1 ]; then
           echo "herdr could not remove $ship; run: herdr machine remove $id" >&2
         fi
       done
-      if [ -z "$ids" ] && printf '%s' "$known" | grep -qF "\"$ship\""; then
+      if [ -z "$ids" ] && printf '%s' "$known" | grep -qE "\"(label|target)\" *: *\"$ship\""; then
         echo "herdr still lists $ship, which runs herdr-core: remove it" \
           "(herdr machine list, then herdr machine remove <id>)." >&2
       fi
@@ -745,9 +748,9 @@ if [ "$herdr" = 1 ]; then
   if command -v hc >/dev/null 2>&1; then
     known=$(hc machine ls --json 2>/dev/null || true)
     for ship in $core; do
-      if printf '%s' "$known" | grep -qF "\"$ship\""; then
+      if printf '%s' "$known" | grep -qE "\"name\" *: *\"$ship\""; then
         echo "hc already has $ship."
-      elif err=$(hc machine add "$ship" --name "$ship" </dev/null 2>&1 >/dev/null); then
+      elif err=$(hc machine add "$ship" --name "$ship" </dev/null 2>&1); then
         echo "hc added $ship."
       elif printf '%s' "$err" | grep -q already; then
         echo "hc already has $ship."
@@ -790,6 +793,7 @@ def install_script(machine_name: str, ships: Sequence[str], identity: str, *,
         block = (INSTALL_CORE_SH.replace("@CORE@", "'" + " ".join(on_core).replace("'", "") + "'")
                  .replace("@CORE_SAID@", ", ".join(on_core)))
         script = (script.replace("herdr saved machines\n", "herdr and hc saved machines\n", 1)
+                  .replace("# everything except herdr\n", "# everything except herdr and hc\n", 1)
                   .replace("\necho \"Done. Try:", block.rstrip("\n") + "\necho \"Done. Try:", 1))
         if first in on_core:
             script = script.replace("   (then herdr --remote " + first + ")",

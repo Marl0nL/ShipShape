@@ -429,6 +429,12 @@ async def charts_partial(request: Request) -> Response:
 # --- one Ship ------------------------------------------------------------------------
 
 
+def status_cache(name: str) -> dict[str, Any] | None:
+    from fleetledger import status
+
+    return status.read_cache(name)
+
+
 def _ship_context(ui: UI, name: str, session: Session | None = None) -> dict[str, Any] | None:
     snap = ui.fleet.snapshot
     view = snap.by_name.get(name)
@@ -457,7 +463,8 @@ def _ship_context(ui: UI, name: str, session: Session | None = None) -> dict[str
         "jobs": ui.jobs.for_ship(name, shown=True),
         "workspaces": workspaces,
         "snap": snap,
-        **_attach_context(inv, view.ship, session, view.status),
+        # A Ship that does not answer now keeps its last known runtime.
+        **_attach_context(inv, view.ship, session, view.status or status_cache(name)),
         "signins_used": signins.used(view.ship),
         "gh": ghscopes.summary(view.ship, view.status),
     }

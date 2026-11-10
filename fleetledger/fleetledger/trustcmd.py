@@ -401,6 +401,9 @@ def bundle_user(inv: Inventory, m: ca.Machine) -> str:
     return "agent" if "agent" in m.logins else inv.owner
 
 
+INSTALL_TIMEOUT = 120  # seconds for this computer's install.sh
+
+
 def core_ships(ships) -> set[str]:
     """The Ships that run herdr-core, by their last fetched status (none fetched:
     herdr). install.sh gives these to hc and takes them out of herdr."""
@@ -580,8 +583,16 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
     argv = ["sh", str(bundle.folder / "install.sh")]
     if not getattr(app, "herdr", True):
         argv.append("--no-herdr")
-    proc = subprocess.run(argv, cwd=bundle.folder, capture_output=True, text=True,
-                          timeout=120, check=False)
+    try:
+        proc = subprocess.run(argv, cwd=bundle.folder, capture_output=True, text=True,
+                              timeout=INSTALL_TIMEOUT, check=False)
+    except subprocess.TimeoutExpired:
+        # A saved machine that does not answer (herdr and hc dial the Ship when adding
+        # it). The SSH files come first in install.sh, so those are most likely in.
+        say(f"Setting this computer up took over {INSTALL_TIMEOUT} s, most likely a Ship "
+            "that does not answer while herdr or hc added it. Run "
+            f"`sh {bundle.folder / 'install.sh'}` here to see which.")
+        return False
     if proc.returncode != 0:
         why = (proc.stderr or proc.stdout or "").strip().splitlines()
         say("Could not set this computer up for plain ssh" + (f": {why[-1]}" if why else "."))
