@@ -304,6 +304,12 @@ def wipe(store, gone: list[Gone]) -> None:
     for g in gone:
         if g.keyring and secret_store.existing_in_keyring(g.where) is not None:
             secret_store.delete_from_keyring(g.where)
+    from fleetledger.migrate import _in_toolkit, _toolkit_dirs
+
+    try:  # read before ships.toml goes: its toolkit folders stay whole, empty ones too
+        kits = _toolkit_dirs(store.load())
+    except FleetError:
+        kits = {}
     for g in dict.fromkeys(g.where for g in gone if not g.keyring):
         Path(g).unlink(missing_ok=True)
     if not vault.is_on():
@@ -312,6 +318,9 @@ def wipe(store, gone: list[Gone]) -> None:
         if base.is_dir():
             folders = sorted((d for d in base.rglob("*") if d.is_dir()), reverse=True)
             for folder in [*folders, *([base] if base != store.path.parent else [])]:
+                if _in_toolkit(folder, kits) is not None or any(
+                        d.is_relative_to(folder.resolve()) for d in kits):
+                    continue  # a toolkit folder of yours, or a folder holding one
                 try:
                     folder.rmdir()
                 except OSError:

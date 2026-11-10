@@ -295,6 +295,31 @@ def test_each_rule_refuses_the_toolkit(kit, fake_repo, breaks, said):
     assert any(said in p for p in found), found
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+@pytest.mark.parametrize("where", ["signins/exampledocs.toml", "files/example-cli.txt"])
+def test_an_unreadable_file_is_a_problem_not_a_crash(kit, fake_repo, store, where):
+    (kit / where).chmod(0)
+    try:
+        assert any("cannot be read" in p for p in problems(kit, base=Catalogue.from_repo(
+            fake_repo)))
+        cat = Catalogue.from_repo(fake_repo, with_toolkits(store, examplekit={"path": str(kit)}))
+        assert "cannot be read" in cat.broken["examplekit"] and "gh-axi" in cat.recipes
+    finally:
+        (kit / where).chmod(0o644)
+
+
+def test_a_folder_named_like_a_sign_in_file_is_a_problem(kit, fake_repo):
+    (kit / "signins" / "dir.toml").mkdir()
+    assert any("signins/dir.toml: cannot be read" in p
+               for p in problems(kit, base=Catalogue.from_repo(fake_repo)))
+
+
+def test_hidden_files_in_skills_are_no_skill(kit, fake_repo):
+    (kit / "skills" / ".DS_Store").write_bytes(b"\0")
+    (kit / "skills" / ".gitkeep").write_text("")
+    assert toolkits.load(kit, base=Catalogue.from_repo(fake_repo)).skills == ("example-docs",)
+
+
 def test_root_is_allowed_when_local_config_says_so(kit, fake_repo):
     _root(kit)
     toolkits.load(kit, allow_root=True, base=Catalogue.from_repo(fake_repo))
@@ -507,6 +532,9 @@ def test_tools_ls_lists_toolkit_tools_after_the_catalogue(run, kit, store):
     _default(kit)
     code, out, err = run("tools", "ls")
     assert code == 0 and "Toolkit examplekit did not load" in out and "default = true" in out
+    store.path.write_text(store.path.read_text() + "\n[nonsense]\n")
+    code, out, err = run("tools", "ls")  # a broken ships.toml: the catalogue still lists
+    assert code == 0 and "gh-axi" in out and "toolkits not listed" in err
 
 
 def test_toolkit_tools_are_refused_where_they_would_reach_a_ship(run, kit, store):

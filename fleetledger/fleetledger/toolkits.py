@@ -272,6 +272,9 @@ def _load_signins(folder: Path, root: Path, registry: signinreg.Registry
         except tomllib.TOMLDecodeError as exc:
             problems.append(f"{_rel(path, root)}: not valid TOML: {exc}")
             continue
+        except OSError as exc:
+            problems.append(f"{_rel(path, root)}: cannot be read ({exc.strerror})")
+            continue
         doc = _toml(path, [], root) or {}
         if "signin" not in doc:
             problems.append(f"{_rel(path, root)}: needs a [signin] table (label and order, "
@@ -365,6 +368,8 @@ def load(root: Path | str, *, expect_id: str | None = None, allow_root: bool = F
     if skills_dir.is_dir():
         for entry in sorted(skills_dir.iterdir()):
             where = _rel(entry, root)
+            if entry.name.startswith("."):
+                continue  # .DS_Store, .gitkeep and the like: no skill
             if not entry.is_dir():
                 problems.append(f"{where}: skills/ holds one folder per skill")
             elif not SKILL_NAME.match(entry.name):
@@ -386,8 +391,14 @@ def load(root: Path | str, *, expect_id: str | None = None, allow_root: bool = F
             problems.append(f"{MANIFEST}: files '{rel}' is outside the toolkit")
         elif not target.is_file():
             problems.append(f"{MANIFEST}: files '{rel}' is missing")
-        elif sha256(target) != digest:
-            problems.append(f"{rel}: its SHA-256 is not the one {MANIFEST} pins")
+        else:
+            try:
+                matches = sha256(target) == digest
+            except OSError as exc:
+                problems.append(f"{rel}: cannot be read ({exc.strerror})")
+                continue
+            if not matches:
+                problems.append(f"{rel}: its SHA-256 is not the one {MANIFEST} pins")
     vendored = root / "files"
     for f in files:
         if f.is_relative_to(vendored) and _rel(f, root) not in pinned:
@@ -433,6 +444,9 @@ def load_configured(inventory: Any, base: Any = None, contracts: Path | None = N
             kit = load_config(cfg, base=base, contracts=contracts, taken=taken)
         except ConfigError as exc:
             broken[cfg.id] = exc.message
+            continue
+        except OSError as exc:  # anything the checks above did not turn into a problem
+            broken[cfg.id] = f"{paths.tilde(cfg.path)} cannot be read: {exc}"
             continue
         for ident in (*kit.flows, *kit.services):
             taken[ident] = kit.id

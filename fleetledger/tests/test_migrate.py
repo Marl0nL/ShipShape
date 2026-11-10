@@ -1608,3 +1608,7 @@ def test_toolkit_folders_are_named_in_the_plan_and_never_copied(computers, monke
     gone, kept = handover.wipe_plan(a.store)  # a wipe leaves a toolkit folder of yours
     assert not [g for g in gone if "otherkit" in g.where]
     assert any("toolkit otherkit's folder: yours" in why for _, why in kept)
+    (inside / "files").mkdir()  # an empty folder of the toolkit's (a git checkout has some)
+    handover.wipe(a.store, gone)
+    assert (inside / "toolkit.toml").exists() and (inside / "files").is_dir()
+    assert not a.store.path.exists()

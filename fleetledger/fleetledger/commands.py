@@ -1043,7 +1043,12 @@ def cmd_tools(args, app) -> int:
             raise FleetError("tools ls takes no arguments.")
         from fleetledger import toolkitcmd
 
-        catalogue = Catalogue.from_repo(app.repo_factory(), toolkitcmd.inventory_or_none(app))
+        try:
+            inv = toolkitcmd.inventory_or_none(app)
+        except FleetError as exc:  # the catalogue still lists; your toolkits cannot
+            app.note(f"ship-fleet: toolkits not listed: {exc.message}")
+            inv = None
+        catalogue = Catalogue.from_repo(app.repo_factory(), inv)
         rows = [[r.id, r.kind, "yes" if r.default else "", ",".join(r.needs) or "-",
                  r.description] for r in _catalogue_order(catalogue.recipes.values())]
         app.say(table(rows, ["TOOL", "KIND", "DEFAULT", "NEEDS", "DESCRIPTION"])
