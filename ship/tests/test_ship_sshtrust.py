@@ -312,3 +312,19 @@ def test_parse_listing_variants():
     after = parse_cert_listing(text.replace("Valid: forever", "Valid: after 2026-01-01T00:00:00"))
     assert after["valid_after"] == "2026-01-01T00:00:00Z" and after["valid_before"] is None
     assert parse_cert_listing("not a certificate") is None
+
+
+OWNER_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVvd25lcmtleWV4YW1wbGVvd25lcmtl you"
+
+
+def test_rolls_back_the_old_owners_files_when_sshd_refuses(ship, keys):  # noqa: F811
+    rc, doc, _ = ship.ctl("set", "owner.name=human", f"owner.keys={OWNER_KEY}", "--json")
+    assert rc == 0, doc
+    before = snapshot(ship)
+    assert "shipshape/keys/human" in before and "shipshape/principals/human" in before
+    ship.set(sshd_refuses="/etc/ssh/sshd_config.d/20-shipshape-ca.conf line 5: Bad option")
+    rc, doc, _ = ship.ctl("set", "owner.name=other", "--json")
+    assert rc != 0
+    assert "Bad option" in doc["error"]["message"]
+    # Every file under /etc/ssh is back, the old owner's keys and principals included.
+    assert snapshot(ship) == before
