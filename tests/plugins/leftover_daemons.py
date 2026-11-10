@@ -82,7 +82,8 @@ def stop_agents(root: Path, wait: float = 10.0) -> dict[int, Path]:
     return agents_under(root)
 
 
-@pytest.hookimpl(trylast=True)
+# tryfirst: before pytest's own sessionfinish, which may delete the base temp folder.
+@pytest.hookimpl(tryfirst=True)
 def pytest_sessionfinish(session):
     if shutil.which("gpgconf") is None:
         return

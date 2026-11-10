@@ -25,14 +25,14 @@ def start_agent(home: Path) -> Path:
 def test_stops_the_agents_under_the_folder_and_removes_their_socket_folders(tmp_path):
     root = tmp_path / "run"
     socketdir = start_agent(root / "test0" / "gpg")
-    agent = start_agent(root / "deeper" / "test1" / "gnupg")
+    socketdir2 = start_agent(root / "deeper" / "test1" / "gnupg")
     assert set(leftover_daemons.agents_under(root.resolve()).values()) == {
         (root / "test0" / "gpg").resolve(), (root / "deeper" / "test1" / "gnupg").resolve()}
 
     assert leftover_daemons.stop_agents(root) == {}
     assert leftover_daemons.agents_under(root.resolve()) == {}
     if socketdir != root / "test0" / "gpg":  # gpg keeps sockets in /run/user when it can
-        assert not socketdir.exists() and not agent.exists()
+        assert not socketdir.exists() and not socketdir2.exists()
 
 
 def test_leaves_agents_outside_the_folder_alone(tmp_path):
