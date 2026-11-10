@@ -24,21 +24,13 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
+from fleetledger.web.common import NO_SUCH_SHIP, back, flash, known_ship, ui_of
+from fleetledger.web.forms import form, one
 
 POLICY_BYTES = 60 * 1024  # the pasted policy, form-encoded
 TOO_BIG = ("That policy is too long to send from this page. Check it from a terminal: "
            "ship-fleet overlay check --policy FILE")
 TO_OVERLAY = "/settings?said=overlay#overlay"
-
-
-def _ui(request: Request):
-    return request.app.state.ui
-
-
-def _flash(request: Request, kind: str, text: str) -> None:
-    from fleetledger.web.app import session_of
-
-    _ui(request).flash(session_of(request), kind, text)
 
 
 # --- a Ship's Access tab ----------------------------------------------------------------
@@ -61,20 +53,20 @@ def tab_context(inv: Any, ship: Any, doc: dict | None) -> dict[str, Any]:
 # --- leave ------------------------------------------------------------------------------
 async def leave(request: Request) -> Response:
     from fleetledger.web import jobs
-    from fleetledger.web.app import NO_SUCH_SHIP, _known_ship, back, form, not_found, one
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     fields = await form(request)
     where = f"/ships/{name}/access" if one(fields, "from") == "access" else f"/ships/{name}"
-    ui = _ui(request)
+    ui = ui_of(request)
     if one(fields, "confirm") != "yes":
-        _flash(request, "bad", "Tick the box to confirm.")
+        flash(request, "bad", "Tick the box to confirm.")
         return back(where)
     if any(f.ship == name for f in ui.concierge.active()):
-        _flash(request, "bad", f"Not left: a sign-in is open on {name}. Finish or cancel it "
-               "on the Sign-ins page first.")
+        flash(request, "bad", f"Not left: a sign-in is open on {name}. Finish or cancel it "
+              "on the Sign-ins page first.")
         return back(where)
 
     def run(job: Any) -> int:
@@ -83,9 +75,9 @@ async def leave(request: Request) -> Response:
     try:
         ui.jobs.start("leave", [name], run, title=f"{name} leaves the overlay")
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return back(where)
-    _flash(request, "ok", f"{name} is leaving the overlay; its progress is below.")
+    flash(request, "ok", f"{name} is leaving the overlay; its progress is below.")
     return back(where)
 
 
@@ -106,25 +98,24 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
 
 async def check(request: Request) -> Response:
     from fleetledger import overlay_setup
-    from fleetledger.web.app import form, one
     from fleetledger.web.jobs import BrowserApp
 
     fields = await form(request)
-    ui = _ui(request)
+    ui = ui_of(request)
     policy = one(fields, "policy")
     probe = one(fields, "probe") == "yes"
     if len(quote_plus(policy)) > POLICY_BYTES:
-        _flash(request, "bad", TOO_BIG)
+        flash(request, "bad", TOO_BIG)
         return RedirectResponse(TO_OVERLAY, status_code=303)
     if any(j.kind == "overlay-check" and j.running for j in ui.jobs.recent()):
         # No await since this read, so no other request starts one in between.
-        _flash(request, "bad", "A check of the overlay is already running; it shows below.")
+        flash(request, "bad", "A check of the overlay is already running; it shows below.")
         return RedirectResponse(TO_OVERLAY, status_code=303)
     try:
         if not ui.app.store_factory().load().overlay:
             raise FleetError("No overlay is set up: set it up in Setup first.")
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return RedirectResponse(TO_OVERLAY, status_code=303)
 
     def run(job: Any) -> bool:
@@ -137,9 +128,9 @@ async def check(request: Request) -> Response:
     try:
         ui.jobs.start("overlay-check", [], run, title=title)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return RedirectResponse(TO_OVERLAY, status_code=303)
-    _flash(request, "ok", f"{title}: started; it shows below.")
+    flash(request, "ok", f"{title}: started; it shows below.")
     return RedirectResponse(TO_OVERLAY, status_code=303)
 
 

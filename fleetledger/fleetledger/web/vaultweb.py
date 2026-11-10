@@ -25,6 +25,8 @@ from starlette.routing import Route
 
 from fleetledger import vault, vaultcmd
 from fleetledger.errors import FleetError
+from fleetledger.web.common import flash, session_of, ui_of
+from fleetledger.web.forms import form, one
 
 LOCKED_OK = ("/unlock", "/vault/lock", "/settings/devices/pair", "/settings/devices/rename",
              "/settings/devices/machine", "/settings/devices/revoke",
@@ -67,8 +69,6 @@ class VaultGuard:
 
 
 def _account(request: Request) -> str | None:
-    from fleetledger.web.app import session_of
-
     device = session_of(request).device
     return device.login if device is not None else None
 
@@ -85,55 +85,45 @@ async def unlock_page(request: Request) -> Response:
 
 
 async def unlock(request: Request) -> Response:
-    from fleetledger.web.app import form, one, ui_of
-
     ui = ui_of(request)
     fields = await form(request)
     recovery = one(fields, "with") == "recovery"
     secret = one(fields, "code" if recovery else "passphrase") or ""
     if not secret:
-        _flash(request, "bad", "Type the " + ("recovery code." if recovery else "passphrase."))
+        flash(request, "bad", "Type the " + ("recovery code." if recovery else "passphrase."))
         return RedirectResponse("/unlock", status_code=303)
     try:
         done = await run_in_threadpool(vaultcmd.unlock, secret, recovery=recovery,
                                        account=_account(request))
     except FleetError as exc:  # with its hint: after wrong tries, the way out of the wait
-        _flash(request, "bad", exc.message + (f" {exc.hint}" if isinstance(
+        flash(request, "bad", exc.message + (f" {exc.hint}" if isinstance(
             exc, vault.Waiting) and exc.hint else ""))
         return RedirectResponse("/unlock", status_code=303)
     finally:
         del secret
     if done == "unlocked":
         ui.fleet.wake()  # check every Ship now, not at the next interval
-    _flash(request, "ok", "Unlocked, until the next boot: FleetLedger acts on the fleet again."
-           + (" Set a new passphrase now: ship-fleet vault passphrase --recovery (over ssh)."
-              if recovery and done == "unlocked" else ""))
+    flash(request, "ok", "Unlocked, until the next boot: FleetLedger acts on the fleet again."
+          + (" Set a new passphrase now: ship-fleet vault passphrase --recovery (over ssh)."
+             if recovery and done == "unlocked" else ""))
     return RedirectResponse("/", status_code=303)
 
 
 async def lock(request: Request) -> Response:
-    from fleetledger.web.app import form, one, ui_of
-
     ui = ui_of(request)
     fields = await form(request)
     if one(fields, "confirm") != "yes":
-        _flash(request, "bad", "Tick the box to confirm.")
+        flash(request, "bad", "Tick the box to confirm.")
         return RedirectResponse("/settings#vault", status_code=303)
     try:
         was = await run_in_threadpool(vaultcmd.lock, ui.app.store_factory(),
                                       _account(request))
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return RedirectResponse("/settings#vault", status_code=303)
-    _flash(request, "ok", "Locked: FleetLedger is read-only until it is unlocked again. Your "
-           "Ships keep running." if was else "The vault was locked already.")
+    flash(request, "ok", "Locked: FleetLedger is read-only until it is unlocked again. Your "
+          "Ships keep running." if was else "The vault was locked already.")
     return RedirectResponse("/", status_code=303)
-
-
-def _flash(request: Request, kind: str, text: str) -> None:
-    from fleetledger.web.app import session_of, ui_of
-
-    ui_of(request).flash(session_of(request), kind, text)
 
 
 def routes() -> list[Route]:

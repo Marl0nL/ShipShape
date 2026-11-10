@@ -63,6 +63,15 @@ from fleetledger.web import (
     trust,
     vaultweb,
 )
+from fleetledger.web.common import (
+    NO_SUCH_SHIP,
+    NOT_FROM_A_DEVICE,
+    back,
+    known_ship,
+    session_of,
+    ship_name,
+    ui_of,
+)
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
 from fleetledger.web.flows import Concierge, WebFlow
 from fleetledger.web.forms import NAME_RE, form, one
@@ -76,9 +85,10 @@ BATCH_RE = re.compile(r"^[0-9a-f]{12}$")
 # Concierge providers (and "all") and status auth keys, from the sign-in registry.
 SERVICES = (*signinreg.registry().provider_ids, "all")
 AUTH_ORDER = signinreg.registry().service_keys
-NO_SUCH_SHIP = "No such Ship in the inventory."
 LOG_LINES = ("100", "300", "1000", "3000")  # the Logs tab's "last N lines" choices
 TABS = ("overview", "access", "settings", "inbox", "snapshots", "logs", "network")
+_ship_name = ship_name
+_known_ship = known_ship
 
 
 @dataclasses.dataclass
@@ -195,14 +205,6 @@ def _flash_outcome(ui: UI, session: Session, outcome: actions.Outcome) -> None:
     ui.flash(session, "ok" if outcome.ok else "bad", f"{outcome.ship}: {text}")
 
 
-def session_of(request: Request | WebSocket) -> Session:
-    return request.scope["state"]["session"]
-
-
-def ui_of(request: Request | WebSocket) -> UI:
-    return request.app.state.ui
-
-
 def _size_limits_for_forms() -> dict[str, int]:
     """The size contract's limits, as the forms ask (memory in whole GB)."""
     from fleetledger import lifecycle
@@ -250,11 +252,6 @@ def _vault_context() -> dict[str, Any]:
             "keyring_label": "FleetLedger's vault" if state != "off" else "your OS keyring"}
 
 
-NOT_FROM_A_DEVICE = ("That sets up the FleetLedger computer itself, not this device: open the "
-                     "UI on that computer for it. For this device, choose its trusted machine "
-                     "and download that machine's bundle (a Ship's Access tab).")
-
-
 def _machine_due(ui: UI, session: Session) -> dict[str, Any] | None:
     """On a paired device whose machine you said: that machine's certificate, if it lapses
     within a day or has (a banner offers its bundle). Read from the poller's inventory."""
@@ -279,22 +276,6 @@ def partial(request: Request, template: str, **context: Any) -> Response:
     html = ui.env.get_template(template).render(csrf=session_of(request).csrf,
                                                 here=activity.here(request), **context)
     return HTMLResponse(html)
-
-
-def back(path: str, **query: str) -> RedirectResponse:
-    query = {k: v for k, v in query.items() if v}
-    return RedirectResponse(path + (f"?{urlencode(query)}" if query else ""), status_code=303)
-
-
-def _ship_name(request: Request) -> str | None:
-    name = request.path_params.get("name", "")
-    return name if NAME_RE.match(name) else None
-
-
-def _known_ship(request: Request) -> str | None:
-    """The {name} in the path, if it is a Ship the poller knows."""
-    name = _ship_name(request)
-    return name if name and name in ui_of(request).fleet.snapshot.by_name else None
 
 
 def not_found(request: Request, what: str) -> Response:

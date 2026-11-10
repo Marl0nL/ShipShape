@@ -30,6 +30,7 @@ from starlette.routing import Route
 
 from fleetledger import keys, paths
 from fleetledger.errors import FleetError
+from fleetledger.web.common import flash, ui_of
 from fleetledger.web.forms import form as _form
 from fleetledger.web.forms import one as _one
 
@@ -212,17 +213,9 @@ def unmanaged_keys(inv) -> list[tuple[str, Path]]:
 # --- handlers --------------------------------------------------------------------------------
 
 
-def _ui(request: Request):
-    return request.app.state.ui
-
-
 def _state(request: Request) -> SetupState:
-    ui = _ui(request)
+    ui = ui_of(request)
     return ui.setups.get(request.scope["state"]["session"].id)
-
-
-def _flash(request: Request, kind: str, text: str) -> None:
-    _ui(request).flash(request.scope["state"]["session"], kind, text)
 
 
 def _back(anchor: str = "", fields: dict[str, list[str]] | None = None) -> RedirectResponse:
@@ -248,7 +241,7 @@ def _passphrase_field(fields, key: str) -> str:
 async def page(request: Request) -> Response:
     from fleetledger.web.app import render
 
-    ui = _ui(request)
+    ui = ui_of(request)
     state = _state(request)
     found_steps, inv = await run_in_threadpool(steps, ui.app, state)
     context: dict[str, Any] = {"steps": found_steps, "inv": inv, "state": state,
@@ -430,12 +423,12 @@ def _import_fleet(app, fields, secrets_: dict[str, str]) -> None:
 async def fleet_new(request: Request) -> Response:
     fields = await _form(request)
     try:
-        managed = await run_in_threadpool(_new_fleet, _ui(request).app, fields)
+        managed = await run_in_threadpool(_new_fleet, ui_of(request).app, fields)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("fleet")
-    _flash(request, "ok", f"Your fleet is set up. FleetLedger made its keys and keeps their "
-           f"passphrases in {keys.describe(managed)}.")
+    flash(request, "ok", f"Your fleet is set up. FleetLedger made its keys and keeps their "
+          f"passphrases in {keys.describe(managed)}.")
     return _back("hypervisor")
 
 
@@ -444,13 +437,13 @@ async def fleet_import(request: Request) -> Response:
     secrets_ = {what: _passphrase_field(fields, f"{what}_passphrase")
                 for what in ("admin", "host", "user")}
     try:
-        await run_in_threadpool(_import_fleet, _ui(request).app, fields, secrets_)
+        await run_in_threadpool(_import_fleet, ui_of(request).app, fields, secrets_)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("fleet")
     finally:
         secrets_.clear()
-    _flash(request, "ok", "Your fleet is set up with the keys you brought.")
+    flash(request, "ok", "Your fleet is set up with the keys you brought.")
     return _back("hypervisor")
 
 
@@ -467,38 +460,38 @@ def _adopt(app, fields, secrets_: dict[str, str]) -> list[str]:
 async def fleet_adopt(request: Request) -> Response:
     fields = await _form(request)
     if _one(fields, "confirm") != "yes":
-        _flash(request, "bad", "Tick the box to confirm: FleetLedger re-encrypts these key "
-               "files (the keys themselves stay the same).")
+        flash(request, "bad", "Tick the box to confirm: FleetLedger re-encrypts these key "
+              "files (the keys themselves stay the same).")
         return _back("fleet", fields)
     secrets_ = {str(i): _passphrase_field(fields, f"passphrase_{i}") for i in range(3)}
     try:
-        taken = await run_in_threadpool(_adopt, _ui(request).app, fields, secrets_)
+        taken = await run_in_threadpool(_adopt, ui_of(request).app, fields, secrets_)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("fleet", fields)
     finally:
         secrets_.clear()
     if taken:
-        _flash(request, "ok", "FleetLedger now looks after " + ", ".join(taken) +
-               ". Their old passphrases no longer open them.")
+        flash(request, "ok", "FleetLedger now looks after " + ", ".join(taken) +
+              ". Their old passphrases no longer open them.")
     else:
-        _flash(request, "muted", "Nothing chosen.")
+        flash(request, "muted", "Nothing chosen.")
     return _back("fleet", fields)
 
 
 async def fleet_ca(request: Request) -> Response:
     from fleetledger.trustcmd import make_ca
 
-    app = _ui(request).app
+    app = ui_of(request).app
     fields = await _form(request)
     try:
         store = app.store_factory()
         managed = keys.managed(store.load())[0] or keys.default_store()  # the fleet's store
         await run_in_threadpool(make_ca, app, store, HOST_CA_KEY, USER_CA_KEY, managed=managed)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("fleet", fields)
-    _flash(request, "ok", "Made the certificate authority.")
+    flash(request, "ok", "Made the certificate authority.")
     return _back("hypervisor", fields)
 
 
@@ -516,7 +509,7 @@ async def machine_logins(request: Request) -> Response:
     """What one trusted machine may log in as (the agent's login, yours, or both)."""
     from fleetledger import ca, trustcmd
 
-    app = _ui(request).app
+    app = ui_of(request).app
     fields = await _form(request)
     said: list[str] = []
     try:
@@ -528,7 +521,7 @@ async def machine_logins(request: Request) -> Response:
         ok = False  # recorded; what was said names the Ships still to update
     except FleetError as exc:
         ok, said = False, [*said, exc.message]
-    _flash(request, "ok" if ok else "bad", " ".join(said) or "No change.")
+    flash(request, "ok" if ok else "bad", " ".join(said) or "No change.")
     return _back("fleet", fields)
 
 
@@ -536,7 +529,7 @@ async def owner_name(request: Request) -> Response:
     """Your own login name on Ships (fleet.owner), set on every Ship."""
     from fleetledger import commands
 
-    app = _ui(request).app
+    app = ui_of(request).app
     fields = await _form(request)
     said: list[str] = []
     try:
@@ -544,20 +537,20 @@ async def owner_name(request: Request) -> Response:
                                      _one(fields, "owner"), said.append)
     except FleetError as exc:
         ok, said = False, [exc.message]
-    _flash(request, "ok" if ok else "bad", " ".join(said))
+    flash(request, "ok" if ok else "bad", " ".join(said))
     return _back("fleet", fields)
 
 
 async def load_keys(request: Request) -> Response:
-    app = _ui(request).app
+    app = ui_of(request).app
     try:
         inv = app.store_factory().load()
         loaded = await run_in_threadpool(keys.ensure_loaded, inv)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("ship")
-    _flash(request, "ok", ("Loaded " + ", ".join(loaded) + " into ssh-agent.") if loaded
-           else "ssh-agent already holds FleetLedger's keys.")
+    flash(request, "ok", ("Loaded " + ", ".join(loaded) + " into ssh-agent.") if loaded
+          else "ssh-agent already holds FleetLedger's keys.")
     return _back("ship")
 
 
@@ -565,12 +558,12 @@ async def load_keys(request: Request) -> Response:
 
 
 async def hypervisor_manual(request: Request) -> Response:
-    app = _ui(request).app
+    app = ui_of(request).app
     with app.store_factory().edit() as ed:
         ed.set_default("driver", "manual")
     _state(request).proxmox.clear()
-    _flash(request, "ok", "Manual: for each new Ship, FleetLedger writes its seed ISO and "
-           "prints the steps to make the VM.")
+    flash(request, "ok", "Manual: for each new Ship, FleetLedger writes its seed ISO and "
+          "prints the steps to make the VM.")
     return _back("overlay")
 
 
@@ -596,7 +589,7 @@ async def proxmox_address(request: Request) -> Response:
     from fleetledger import proxmox_setup
     from fleetledger.drivers import proxmox_api
 
-    app = _ui(request).app
+    app = ui_of(request).app
     state = _state(request)
     fields = await _form(request)
     try:
@@ -604,7 +597,7 @@ async def proxmox_address(request: Request) -> Response:
         fetch = getattr(app, "cert_fingerprint", None) or proxmox_api.server_fingerprint
         fingerprint = await run_in_threadpool(fetch, host, port)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("hypervisor")
     old = await run_in_threadpool(_old_proxmox, app)
     before = old.get("tls_fingerprint") if old.get("api_url") == api_url else None
@@ -744,7 +737,7 @@ def _problems(app, px: dict[str, Any], chosen: dict[str, Any]) -> list[tuple[str
 
 
 async def proxmox_token(request: Request) -> Response:
-    app = _ui(request).app
+    app = ui_of(request).app
     state = _state(request)
     px = state.proxmox
     fields = await _form(request)
@@ -752,8 +745,8 @@ async def proxmox_token(request: Request) -> Response:
         return _back("hypervisor")
     if _one(fields, "matches") != "yes" or (px.get("pinned") and
                                            _one(fields, "changed_ok") != "yes"):
-        _flash(request, "bad", "Not pinned: confirm the fingerprint matches the one on the "
-               "host. Nothing was sent to it.")
+        flash(request, "bad", "Not pinned: confirm the fingerprint matches the one on the "
+              "host. Nothing was sent to it.")
         return _back("hypervisor")
     secret = _secret_field(fields, "secret")
     reuse = not secret  # empty: the secret already stored for this token (checked first)
@@ -761,15 +754,15 @@ async def proxmox_token(request: Request) -> Response:
         result = await run_in_threadpool(_check_token, app, px, _one(fields, "token_id"),
                                          secret, reuse, _store_choice(fields))
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("hypervisor")
     finally:
         secret = ""
     state.proxmox = result
     state.proxmox["problems"] = await run_in_threadpool(_problems, app, result,
                                                         result["proposed"])
-    _flash(request, "ok", f"The token works (Proxmox VE {result['version']}); its secret is "
-           f"in {result['where']}.")
+    flash(request, "ok", f"The token works (Proxmox VE {result['version']}); its secret is "
+          f"in {result['where']}.")
     return _back("hypervisor")
 
 
@@ -810,7 +803,7 @@ def _chosen(fields, px) -> dict[str, Any]:
 
 
 async def proxmox_recheck(request: Request) -> Response:
-    app = _ui(request).app
+    app = ui_of(request).app
     px = _state(request).proxmox
     if px.get("stage") != "choose":
         return _back("hypervisor")
@@ -822,7 +815,7 @@ async def proxmox_recheck(request: Request) -> Response:
                                           px["old"]))
         px["problems"] = await run_in_threadpool(_problems, app, px, px["proposed"])
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
     return _back("hypervisor")
 
 
@@ -850,7 +843,7 @@ def _save_proxmox(app, px, chosen) -> None:
 async def proxmox_save(request: Request) -> Response:
     from fleetledger import proxmox_setup
 
-    app = _ui(request).app
+    app = ui_of(request).app
     state = _state(request)
     px = state.proxmox
     if px.get("stage") != "choose":
@@ -861,7 +854,7 @@ async def proxmox_save(request: Request) -> Response:
         chosen = _chosen(fields, px)
         await run_in_threadpool(_save_proxmox, app, px, chosen)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         px["problems"] = await run_in_threadpool(_problems, app, px, px["proposed"])
         return _back("hypervisor")
     before = proxmox_setup._secret_location(saved_before)
@@ -869,7 +862,7 @@ async def proxmox_save(request: Request) -> Response:
     state.proxmox = {}
     state.old_copy = ({"kind": before[0], "where": before[1]}
                       if before and after and before != after else None)
-    _flash(request, "ok", "Connected and saved: new Ships are made on Proxmox.")
+    flash(request, "ok", "Connected and saved: new Ships are made on Proxmox.")
     return _back("overlay")
 
 
@@ -885,9 +878,9 @@ async def proxmox_forget_old(request: Request) -> Response:
                 Path(old["where"]).unlink(missing_ok=True)
             else:
                 secret_store.delete_from_keyring(old["where"])
-            _flash(request, "ok", "Removed the previous token secret.")
+            flash(request, "ok", "Removed the previous token secret.")
         except (FleetError, OSError):
-            _flash(request, "bad", "Could not remove the previous token secret.")
+            flash(request, "bad", "Could not remove the previous token secret.")
     state.old_copy = None
     return _back("hypervisor")
 
@@ -976,7 +969,7 @@ def _connect_overlay(app, fields, secret: str) -> list[tuple[bool, str]]:
 
 
 async def overlay_save(request: Request) -> Response:
-    app = _ui(request).app
+    app = ui_of(request).app
     state = _state(request)
     fields = await _form(request)
     secret = _secret_field(fields, "secret")
@@ -984,11 +977,11 @@ async def overlay_save(request: Request) -> Response:
         state.overlay_checks = await run_in_threadpool(_connect_overlay, app, fields, secret)
     except FleetError as exc:
         state.overlay_checks = []
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("overlay")
     finally:
         secret = ""
-    _flash(request, "ok", "The overlay is set up. Each new Ship joins it after it enrols.")
+    flash(request, "ok", "The overlay is set up. Each new Ship joins it after it enrols.")
     return _back("ship")
 
 
@@ -1027,7 +1020,7 @@ async def ship_start(request: Request) -> Response:
     """Setup's first Ship: the New Ship form without its Advanced part (web.newship)."""
     from fleetledger.web import newship
 
-    ui = _ui(request)
+    ui = ui_of(request)
     state = _state(request)
     fields = await _form(request)
     current = setup_job(ui, state)
@@ -1048,7 +1041,7 @@ async def ship_start(request: Request) -> Response:
         job = newship.start(ui, name, argv, cleared=cleared,
                             from_device=request.scope["state"]["session"].device is not None)
     except FleetError as exc:
-        _flash(request, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return _back("ship")
     state.ship = job.id
     return _back("ship")
@@ -1057,7 +1050,7 @@ async def ship_start(request: Request) -> Response:
 async def ship_progress(request: Request) -> Response:
     from fleetledger.web.app import partial
 
-    job = setup_job(_ui(request), _state(request))
+    job = setup_job(ui_of(request), _state(request))
     if job is None:
         return Response(status_code=286)
     # The finished card has no polling attributes, so swapping it in stops the polling.

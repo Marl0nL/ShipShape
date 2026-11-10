@@ -36,6 +36,8 @@ from starlette.routing import Route
 
 from fleetledger import inbox, paths
 from fleetledger.errors import FleetError
+from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, ui_of
+from fleetledger.web.forms import form, one
 from fleetledger.web.security import MAX_UPLOAD
 
 SPOOL_TTL = 3600  # seconds an upload waits to be sent
@@ -164,9 +166,7 @@ def _json_error(status: int, text: str) -> JSONResponse:
 
 async def upload(request: Request) -> Response:
     """One file's bytes, streamed to the spool (the gate checked CSRF and the size)."""
-    from fleetledger.web.app import _known_ship, session_of, ui_of
-
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return _json_error(404, "No such Ship in the inventory.")
     ui = ui_of(request)
@@ -247,18 +247,9 @@ def start_send(ui: Any, name: str, items: list[Spooled], tell: bool) -> Any:
 
 async def send(request: Request) -> Response:
     """The spooled files, sent to the Ship as a job (the drop zone posts this form)."""
-    from fleetledger.web.app import (
-        NO_SUCH_SHIP,
-        _known_ship,
-        back,
-        form,
-        not_found,
-        one,
-        session_of,
-        ui_of,
-    )
+    from fleetledger.web.app import not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     ui = ui_of(request)
@@ -284,19 +275,9 @@ async def remove(request: Request) -> Response:
     """Remove one file from the inbox (ship-fleet inbox rm), after the confirm dialog."""
     from fleetledger.ops import Fleet
     from fleetledger.web.actions import Outcome
-    from fleetledger.web.app import (
-        NO_SUCH_SHIP,
-        _flash_outcome,
-        _known_ship,
-        back,
-        form,
-        not_found,
-        one,
-        session_of,
-        ui_of,
-    )
+    from fleetledger.web.app import _flash_outcome, not_found
 
-    name = _known_ship(request)
+    name = known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
     ui = ui_of(request)
