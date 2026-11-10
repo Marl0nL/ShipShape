@@ -7,6 +7,7 @@ it, and checks the target is untouched.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -194,6 +195,13 @@ def test_homefs_writes_atomically_and_reports_changes(tmp_path):
         fs.write("../escape", "x")
 
 
+def bind_unix(sock, path):
+    """Bind a Unix socket at path by its relative name from path's folder: a socket path
+    is limited to about 108 bytes, and a long TMPDIR makes the full path longer."""
+    with contextlib.chdir(path.parent):
+        sock.bind(path.name)
+
+
 def test_homefs_refuses_sockets(tmp_path):
     import socket
 
@@ -201,7 +209,7 @@ def test_homefs_refuses_sockets(tmp_path):
     home.mkdir()
     sock = socket.socket(socket.AF_UNIX)
     try:
-        sock.bind(str(home / "sock"))
+        bind_unix(sock, home / "sock")
         with pytest.raises(UnsafePath):
             HomeFS(home).read("sock")
         with pytest.raises(UnsafePath):
@@ -215,7 +223,7 @@ def test_apply_leaves_a_socket_alone(ship):
 
     sock = socket.socket(socket.AF_UNIX)
     try:
-        sock.bind(str(ship.p("/home/agent/.claude.json")))
+        bind_unix(sock, ship.p("/home/agent/.claude.json"))
         rc, doc, _ = ship.ctl("apply", "--json")
         assert rc == 0
         assert any(".claude.json: a symlink or special file" in m for m in doc["messages"])

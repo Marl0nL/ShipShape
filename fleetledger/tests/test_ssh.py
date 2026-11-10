@@ -4,7 +4,6 @@ import shutil
 import socket
 import stat
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
@@ -156,12 +155,10 @@ def _free_port():
 
 
 @pytest.fixture
-def short_runtime(monkeypatch):
+def short_runtime(monkeypatch, short_dir):
     """A runtime folder short enough for an SSH control socket."""
-    folder = tempfile.mkdtemp(prefix="fl-", dir="/tmp")
-    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", folder)
-    yield Path(folder)
-    shutil.rmtree(folder, ignore_errors=True)
+    monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(short_dir))
+    return short_dir
 
 
 @pytest.fixture
@@ -263,33 +260,28 @@ def test_real_ssh_refuses_impostor(store, sshd, tmp_path):
 
 
 
-def test_probe_certificate_never_shares_a_connection(store, monkeypatch):
+def test_probe_certificate_never_shares_a_connection(store, short_runtime):
     """The CA-only check must open its own connection, even where options() would
     multiplex (a short runtime dir): an open pinned connection cannot answer for it."""
-    short = Path(tempfile.mkdtemp(prefix="fl-"))
-    try:
-        monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(short))
-        inv = store.load()
-        ship = inv.ship("ship-02")
-        normal = SSH(inv).options(ship)
-        assert opt(normal, "ControlMaster") == "auto" and opt(normal, "ControlPersist")
-        seen = []
+    inv = store.load()
+    ship = inv.ship("ship-02")
+    normal = SSH(inv).options(ship)
+    assert opt(normal, "ControlMaster") == "auto" and opt(normal, "ControlPersist")
+    seen = []
 
-        def run(argv, **kw):
-            seen.append(argv)
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
+    def run(argv, **kw):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
 
-        kh = short / "kh"
-        kh.write_text("@cert-authority ship-02 ssh-ed25519 AAAA\n")
-        assert SSH(inv, runner=run).probe_certificate(ship, kh) is None
-        argv = seen[-1]
-        assert opt(argv, "ControlMaster") == "no"
-        assert opt(argv, "ControlPath") == "none"
-        assert not any(a.startswith("ControlPersist=") for a in argv)
-        assert sum(1 for a in argv if a.startswith("ControlMaster=")) == 1
-        assert sum(1 for a in argv if a.startswith("ControlPath=")) == 1
-    finally:
-        shutil.rmtree(short, ignore_errors=True)
+    kh = short_runtime / "kh"
+    kh.write_text("@cert-authority ship-02 ssh-ed25519 AAAA\n")
+    assert SSH(inv, runner=run).probe_certificate(ship, kh) is None
+    argv = seen[-1]
+    assert opt(argv, "ControlMaster") == "no"
+    assert opt(argv, "ControlPath") == "none"
+    assert not any(a.startswith("ControlPersist=") for a in argv)
+    assert sum(1 for a in argv if a.startswith("ControlMaster=")) == 1
+    assert sum(1 for a in argv if a.startswith("ControlPath=")) == 1
 
 
 def test_probe_certificate_tries_each_name_and_stops_on_a_bad_key(store, tmp_path):

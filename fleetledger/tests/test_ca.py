@@ -704,23 +704,14 @@ def test_a_key_fleetledger_made_is_not_promised_to_plain_ssh_without_an_agent(he
 
 
 def test_a_key_fleetledger_made_is_loaded_into_your_agent_for_plain_ssh(here, tmp_path,
-                                                                       monkeypatch):
-    import signal
-
+                                                                       monkeypatch, ssh_agent):
     from fleetledger import keys
 
     you = _managed_you(here, tmp_path)
-    sock = tmp_path / "agent.sock"
-    out = subprocess.run(["ssh-agent", "-a", str(sock)], capture_output=True, text=True,
-                         check=True).stdout
-    pid = int(out.split("SSH_AGENT_PID=")[1].split(";")[0])
-    monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+    sock = ssh_agent()
     monkeypatch.setattr(keys, "USERS_AGENT", str(sock))
-    try:
-        code, out, _ = here.run("trust", "--this-computer")
-        held = subprocess.run(["ssh-add", "-l"], capture_output=True, text=True).stdout
-    finally:
-        os.kill(pid, signal.SIGTERM)
+    code, out, _ = here.run("trust", "--this-computer")
+    held = subprocess.run(["ssh-add", "-l"], capture_output=True, text=True).stdout
     assert code == 0 and "can attach" in out and "from your ssh-agent" in out
     assert keys.fingerprint(you) in held
 

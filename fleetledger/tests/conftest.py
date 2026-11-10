@@ -11,7 +11,16 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from fl_harness import CONTRACTS, INVENTORY, REPO_ROOT, FakeSSH, NoKeyring, keygen
+from fl_harness import (
+    CONTRACTS,
+    INVENTORY,
+    REPO_ROOT,
+    FakeSSH,
+    NoKeyring,
+    SSHAgents,
+    keygen,
+    short_folder,
+)
 from fleetledger.repo import Repo
 from fleetledger.store import TomlFileStore
 
@@ -126,3 +135,27 @@ def fake_repo(tmp_path):
 @pytest.fixture
 def fake_ssh():
     return FakeSSH
+
+
+@pytest.fixture
+def short_dir():
+    """A private folder under /tmp short enough for Unix sockets, removed afterwards."""
+    folder = short_folder()
+    yield folder
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.fixture
+def ssh_agent(short_dir, monkeypatch):
+    """Start a private ssh-agent: ssh_agent(sock=None) -> its socket, which
+    SSH_AUTH_SOCK then points at. The socket goes in short_dir unless given; every
+    agent started is stopped when the test ends."""
+    agents = SSHAgents()
+
+    def start(sock: Path | None = None) -> Path:
+        sock = agents.start(sock or short_dir / f"agent{len(agents.procs)}.sock")
+        monkeypatch.setenv("SSH_AUTH_SOCK", str(sock))
+        return sock
+
+    yield start
+    agents.stop_all()
