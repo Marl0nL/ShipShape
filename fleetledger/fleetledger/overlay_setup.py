@@ -15,16 +15,14 @@ line, a message or the audit log. See docs/guide/your-own-fleet.md.
 from __future__ import annotations
 
 import difflib
-import getpass
 import ipaddress
 import re
 import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from fleetledger import overlay, paths
+from fleetledger import overlay, paths, prompts
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 from fleetledger.overlay import hujson, secret_store
@@ -49,23 +47,10 @@ MANAGE_WARNING = (
 # --- small prompts --------------------------------------------------------------
 
 
-def _ask(app, prompt: str, default: str = "") -> str:
-    answer = app.confirm(prompt).strip()
-    return answer or default
-
-
-def _choose(app, prompt: str, choices: tuple[str, ...], default: str) -> str:
-    while True:
-        answer = _ask(app, f"{prompt} [{'/'.join(choices)}] ({default}): ", default).lower()
-        if answer in choices:
-            return answer
-        app.note(f"Please answer one of: {', '.join(choices)}.")
-
-
-def _secret(app, prompt: str) -> str:
-    ask = getattr(app, "ask_secret", None) or (
-        lambda p: getpass.getpass(p, stream=sys.stderr))
-    return ask(prompt).strip()
+# Old names for prompts.ask, choose and secret (stripped).
+_ask = prompts.ask
+_choose = prompts.choose
+_secret = prompts.secret
 
 
 def _api(app, api_cfg: dict, secret: Callable[[], str] | None = None):

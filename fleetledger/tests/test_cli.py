@@ -2198,3 +2198,35 @@ def test_ship_fleet_attention_agrees_on_not_enrolled(env):
     env.ship.down.add("ship-02")
     code, out, _ = env.run("attention")
     assert "not-enrolled" in out and "Not enrolled yet" in out
+
+
+def test_rollback_asks_for_yes_in_a_terminal(env):
+    env.run("new", "ship-04", "--on", "proxmox")
+    code, out, err = env.run("snapshot", "rollback", "ship-04", "before")
+    assert code != 0 and ("Rolling back discards everything since the snapshot; rerun with "
+                          "--yes.") in err
+    asked = []
+    env.app.stdin_isatty = lambda: True
+    env.app.confirm = lambda prompt: asked.append(prompt) or "no"
+    code, out, err = env.run("snapshot", "rollback", "ship-04", "before")
+    assert code != 0 and "Not rolled back." in err
+    assert asked == ["Roll ship-04 back to before? Everything since then is lost, sign-ins "
+                     "included. Type yes: "]
+    assert ("rollback", "ship-04", "before") not in env.driver.snaps
+    env.app.confirm = lambda prompt: " YES "  # yes in any case
+    assert env.run("snapshot", "rollback", "ship-04", "before")[0] == 0
+    assert env.driver.snaps[-1] == ("rollback", "ship-04", "before")
+
+
+def test_destroy_takes_the_name_exactly(env):
+    env.run("new", "ship-04", "--on", "proxmox")
+    asked = []
+    env.app.stdin_isatty = lambda: True
+    env.app.confirm = lambda prompt: asked.append(prompt) or "SHIP-04"
+    code, out, err = env.run("destroy", "ship-04")
+    assert code != 0 and "Not destroyed." in err and env.driver.destroyed == []
+    assert asked == ["This deletes ship-04's VM, disks and sign-ins. Type its name to go on: "]
+    env.app.stdin_isatty = lambda: False
+    code, out, err = env.run("destroy", "ship-04")
+    assert code != 0 and ("Destroying ship-04 deletes its VM and disks; rerun with --yes."
+                          in err)
