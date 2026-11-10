@@ -67,9 +67,11 @@ from fleetledger.web.common import (
     NO_SUCH_SHIP,
     NOT_FROM_A_DEVICE,
     back,
+    flash,
     known_ship,
     session_of,
     ship_name,
+    start_cli_job,
     ui_of,
 )
 from fleetledger.web.fleet import SERVICE_PROVIDER, Fleet, attention_items
@@ -968,25 +970,20 @@ async def discard_attempt(request: Request) -> Response:
 
 async def finish_enrolling(request: Request) -> Response:
     """A Ship in the inventory but not enrolled: `ship-fleet status N --wait` as a job."""
-    from fleetledger.web.jobs import run_cli
-
     ui = ui_of(request)
     name = _known_ship(request)
     if name is None:
         return not_found(request, NO_SUCH_SHIP)
-    session = session_of(request)
     try:
         ship = ui.app.store_factory().load().ship(name)
         if ship.enrolled is not None:
             raise FleetError(f"{name} is enrolled already.")
-        ui.jobs.start("enrol", [name],
-                      lambda job: run_cli(ui.app, ["status", name, "--wait"], job),
-                      f"Finish enrolling {name}")
     except FleetError as exc:
-        ui.flash(session, "bad", exc.message)
+        flash(request, "bad", exc.message)
         return back(f"/ships/{name}")
-    ui.flash(session, "ok", f"Waiting for {name} to finish its first boot, then enrolling "
-             "it; its progress is below.")
+    start_cli_job(request, "enrol", [name], ["status", name, "--wait"], f"Finish enrolling {name}",
+                  said=f"Waiting for {name} to finish its first boot, then enrolling it; its "
+                  "progress is below.")
     return back(f"/ships/{name}")
 
 

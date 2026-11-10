@@ -25,7 +25,7 @@ from starlette.routing import Route
 
 from fleetledger.errors import FleetError
 from fleetledger.overlay import HOST_RE
-from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, ui_of
+from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, start_cli_job, ui_of
 from fleetledger.web.forms import NAME_RE, form, one
 
 TAG_LIMIT = 8
@@ -109,18 +109,12 @@ async def page(request: Request) -> Response:
 
 
 async def scan(request: Request) -> Response:
-    from fleetledger.web.jobs import run_cli
-
     ui = ui_of(request)
     running = last_scan(ui)
     if running is not None and not running.done:  # no Ship to lock: refuse a second one here
         ui.flash(session_of(request), "bad", "A scan is already running; its results show here.")
         return back("/new/existing")
-    try:
-        ui.jobs.start("scan", [], lambda job: run_cli(_ScanApp(ui.app, job), ["scan"], job),
-                      "Scan the LAN for Ships")
-    except FleetError as exc:
-        ui.flash(session_of(request), "bad", exc.message)
+    start_cli_job(request, "scan", [], ["scan"], "Scan the LAN for Ships", wrap=_ScanApp)
     return back("/new/existing")
 
 
@@ -159,7 +153,6 @@ async def check(request: Request) -> Response:
 
 async def adopt(request: Request) -> Response:
     """Step 2, "It matches": `ship-fleet adopt` as a job."""
-    from fleetledger.web.jobs import run_cli
 
     ui = ui_of(request)
     fields = await form(request)
@@ -170,14 +163,14 @@ async def adopt(request: Request) -> Response:
         fp = one(fields, "fingerprint")
         if not fp.startswith("SHA256:") or one(fields, "matches") != "yes":
             raise FleetError("Compare the fingerprint with the VM console first.")
-        argv = ["adopt", chosen["name"], "--host", chosen["host"], "--fingerprint", fp,
-                *[a for t in chosen["tags"].split() for a in ("--tag", t)]]
-        ui.jobs.start("adopt", [chosen["name"]], lambda job: run_cli(ui.app, argv, job),
-                      f"Adopt {chosen['name']}")
     except FleetError as exc:
         ui.flash(session, "bad", exc.message)
         return back("/new/existing")
-    ui.flash(session, "ok", f"Adopting {chosen['name']}; its progress is under Activity.")
+    argv = ["adopt", chosen["name"], "--host", chosen["host"], "--fingerprint", fp,
+            *[a for t in chosen["tags"].split() for a in ("--tag", t)]]
+    if not start_cli_job(request, "adopt", [chosen["name"]], argv, f"Adopt {chosen['name']}",
+                         said=f"Adopting {chosen['name']}; its progress is under Activity."):
+        return back("/new/existing")
     return back("/")
 
 
@@ -212,7 +205,6 @@ async def repin_check(request: Request) -> Response:
 async def repin(request: Request) -> Response:
     """Re-pin, step 2: `ship-fleet adopt NAME --replace --fingerprint FP` as a job."""
     from fleetledger.web.app import not_found
-    from fleetledger.web.jobs import run_cli
 
     ui = ui_of(request)
     name = known_ship(request)
@@ -224,14 +216,9 @@ async def repin(request: Request) -> Response:
     if not fp.startswith("SHA256:") or one(fields, "matches") != "yes":
         ui.flash(session, "bad", "Compare the fingerprint with the VM console first.")
         return back(f"/ships/{name}")
-    try:
-        ui.jobs.start("repin", [name], lambda job: run_cli(
-            ui.app, ["adopt", name, "--replace", "--fingerprint", fp], job),
-            f"Re-pin {name}'s host key")
-    except FleetError as exc:
-        ui.flash(session, "bad", exc.message)
-        return back(f"/ships/{name}")
-    ui.flash(session, "ok", f"Re-pinning {name}'s host key; its progress is below.")
+    start_cli_job(request, "repin", [name], ["adopt", name, "--replace", "--fingerprint", fp],
+                  f"Re-pin {name}'s host key",
+                  said=f"Re-pinning {name}'s host key; its progress is below.")
     return back(f"/ships/{name}")
 
 

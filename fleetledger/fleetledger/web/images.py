@@ -22,8 +22,7 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
-from fleetledger.errors import FleetError
-from fleetledger.web.common import flash, ui_of
+from fleetledger.web.common import flash, start_cli_job, ui_of
 from fleetledger.web.forms import form, one
 
 IMAGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -64,17 +63,8 @@ def _lock(image: str) -> str:
 def _start(request: Request, image: str, argv: list[str], title: str) -> None:
     from fleetledger.web import jobs
 
-    ui = ui_of(request)
-
-    def run(job: Any) -> int:
-        return jobs.run_cli(jobs.RecordingApp(ui.app, job), argv, job)
-
-    try:
-        ui.jobs.start("image", [], run, title=title, locks=[_lock(image)])
-    except FleetError as exc:
-        flash(request, "bad", exc.message)
-        return
-    flash(request, "ok", f"{title}: started; it shows under Images.")
+    start_cli_job(request, "image", [], argv, title, wrap=jobs.RecordingApp,
+                  locks=[_lock(image)], said=f"{title}: started; it shows under Images.")
 
 
 async def publish(request: Request) -> Response:
