@@ -31,14 +31,14 @@ import subprocess
 from typing import Any
 
 from fleetledger.errors import ConfigError, FleetError
+from fleetledger.repo import git as git_in
 
 DEFAULT = "origin/main"
 INSTALL_FILES = ("fleetledger/pyproject.toml", "fleetledger/install.sh")
 
 
 def _git(root: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    proc = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True,
-                          timeout=300, check=False)
+    proc = git_in(root, *args, timeout=300)
     if check and proc.returncode != 0:
         lines = (proc.stderr or proc.stdout or "").strip().splitlines()
         raise FleetError(f"git {' '.join(args)} failed" + (f": {lines[-1]}" if lines else "."))

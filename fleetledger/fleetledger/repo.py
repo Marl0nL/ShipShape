@@ -127,8 +127,7 @@ class Repo:
         if not (COMMIT_RE.match(older) and COMMIT_RE.match(newer)):
             return None
         try:
-            proc = subprocess.run(["git", "-C", str(self.root), "merge-base", "--is-ancestor",
-                                   older, newer], capture_output=True, check=False)
+            proc = git(self.root, "merge-base", "--is-ancestor", older, newer)
         except OSError:
             return None
         return {0: True, 1: False}.get(proc.returncode)
@@ -145,10 +144,15 @@ class Repo:
         return sorted({f for f in out.split("\0") if f and (self.root / f).is_file()})
 
 
+def git(root: Path | str, *args: str, timeout: float | None = None,
+        check: bool = False) -> subprocess.CompletedProcess:
+    """git -C root args, its output captured as text. The one way FleetLedger runs git
+    in a checkout; each caller keeps its own timeout and turns failures into its own
+    errors. check=True raises CalledProcessError on a non-zero exit; OSError (no git)
+    and TimeoutExpired come through as subprocess.run raises them."""
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                          timeout=timeout, check=check)
+
+
 def _git(root: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(root), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
+    return git(root, *args, check=True).stdout
