@@ -167,3 +167,21 @@ def test_a_misshapen_signin_table_is_a_config_error(tmp_path):
     (folder / "exampledocs.toml").write_text(EXTRA.replace("order = 0\n", ""))
     with pytest.raises(ConfigError, match="lacks or misshapes 'order'"):
         signinreg.build(folder)
+
+
+def test_a_broken_provider_file_is_a_clean_ship_fleet_error(monkeypatch):
+    # Every ship-fleet command builds the registry; a broken provider file must say
+    # so in one line, not as a traceback.
+    import io
+
+    from fleetledger import cli
+
+    def broken():
+        raise ConfigError("example.toml: [signin] lacks or misshapes 'order'")
+
+    monkeypatch.setattr(signinreg, "registry", broken)
+    out, err = io.StringIO(), io.StringIO()
+    code = cli.main(["ls"], cli.App(out=out, err=err))
+    assert code != 0
+    assert err.getvalue().startswith("ship-fleet: example.toml: [signin] lacks")
+    assert "Traceback" not in err.getvalue()

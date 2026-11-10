@@ -711,9 +711,16 @@ def _vault_locked(args, app) -> None:
 
 
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
-    from fleetledger import commands
+    try:  # both build the sign-in registry, which a broken provider file stops
+        from fleetledger import commands
 
-    parser = build_parser()
+        parser = build_parser()
+    except FleetError as exc:
+        app = app or App()
+        app.note(f"ship-fleet: {exc.message}")
+        if exc.hint:
+            app.note(f"  {exc.hint}")
+        return exc.exit_code
     argv = list(sys.argv[1:] if argv is None else argv)
     remote = None
     if argv[:1] == ["ssh"] and "--" in argv:  # everything after -- runs on the Ship
