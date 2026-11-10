@@ -7,13 +7,12 @@ temporary folder that is removed straight away.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fleetledger import sshkeys
 from fleetledger.errors import FleetError
 
 
@@ -27,14 +26,7 @@ class HostKey:
         return fingerprint(self.public)
 
 
-def fingerprint(public_key: str) -> str:
-    """OpenSSH SHA256 fingerprint of a public key line: 'SHA256:...'."""
-    try:
-        blob = base64.b64decode(public_key.split()[1], validate=True)
-    except (IndexError, ValueError) as exc:
-        raise FleetError("Not an OpenSSH public key line.") from exc
-    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
-    return f"SHA256:{digest}"
+fingerprint = sshkeys.checked_fingerprint  # 'SHA256:...'; FleetError on a bad line
 
 
 def generate(comment: str) -> HostKey:
