@@ -30,10 +30,6 @@ def start_core_agents(ship, extra=()):
     ship.set(herdr=s["herdr"])
 
 
-def prompts(ship):
-    return ship.scenario()["herdr"].get("prompts", [])
-
-
 def test_only_the_autostart_agents_get_the_notice(ship):
     start_core_agents(ship, extra=("worker-1", "worker-2", "firstmate"))
     rc, doc, out = ship.ctl("notify-signin", "github", "--json")
@@ -42,8 +38,8 @@ def test_only_the_autostart_agents_get_the_notice(ship):
     assert doc["command"] == "notify-signin"
     assert doc["data"] == {"service": "github", "account": "example-user",
                            "sent": ["main", "grinder"], "skipped": []}
-    assert prompts(ship) == [["main", LINE], ["grinder", LINE]]
-    assert not any(p[0].startswith(("worker", "firstmate")) for p in prompts(ship))
+    assert ship.prompts() == [["main", LINE], ["grinder", LINE]]
+    assert not any(p[0].startswith(("worker", "firstmate")) for p in ship.prompts())
 
 
 def test_the_notice_is_recorded_in_the_ships_journal(ship):
@@ -65,7 +61,7 @@ def test_a_core_agent_that_is_not_running_is_skipped_with_a_note(ship):
     assert doc["data"]["sent"] == ["main"]
     assert doc["data"]["skipped"] == [{"name": "grinder", "reason": "not-running"}]
     assert "grinder: not sent (not-running)." in doc["messages"]
-    assert [p[0] for p in prompts(ship)] == ["main"]
+    assert [p[0] for p in ship.prompts()] == ["main"]
 
 
 def test_an_agent_at_a_permission_prompt_is_not_typed_into(ship):
@@ -79,7 +75,7 @@ def test_an_agent_at_a_permission_prompt_is_not_typed_into(ship):
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["grinder"]
     assert doc["data"]["skipped"] == [{"name": "main", "reason": "waiting-for-permission"}]
-    assert [p[0] for p in prompts(ship)] == ["grinder"]
+    assert [p[0] for p in ship.prompts()] == ["grinder"]
 
 
 def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
@@ -93,7 +89,7 @@ def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["main"]
     assert doc["data"]["skipped"] == [{"name": "grinder", "reason": "not-ready"}]
-    assert [p[0] for p in prompts(ship)] == ["main"]
+    assert [p[0] for p in ship.prompts()] == ["main"]
 
 
 def test_nothing_is_sent_while_this_boots_resume_is_pending(ship):
@@ -110,7 +106,7 @@ def test_nothing_is_sent_while_this_boots_resume_is_pending(ship):
     assert doc["data"]["skipped"] == [{"name": "main", "reason": "resume-pending"},
                                       {"name": "grinder", "reason": "resume-pending"}]
     assert doc["messages"] == ["This boot's resume is not done yet; no notice sent."]
-    assert prompts(ship) == []
+    assert ship.prompts() == []
 
 
 def test_the_line_is_typed_as_the_agent_user_and_logged_as_root(ship):
@@ -146,7 +142,7 @@ def test_a_core_agent_that_lost_its_name_is_still_found(ship):
     ship.set(herdr=s["herdr"])
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["main", "grinder"]
-    targets = [p[0] for p in prompts(ship)]
+    targets = [p[0] for p in ship.prompts()]
     assert len(targets) == 2 and "worker-1" not in targets
 
 
@@ -157,7 +153,7 @@ def test_nothing_is_sent_for_a_service_that_is_not_signed_in(ship):
     assert rc == 0
     assert doc["data"]["sent"] == [] and doc["data"]["account"] is None
     assert doc["messages"] == ["GitHub is not signed in on this Ship; no notice sent."]
-    assert prompts(ship) == []
+    assert ship.prompts() == []
 
 
 def test_a_failed_send_is_reported(ship):
@@ -179,7 +175,7 @@ def test_a_ship_without_autostart_messages_nobody(ship):
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert rc == 0
     assert doc["messages"] == ["This Ship has no [[autostart]] agents; no notice sent."]
-    assert prompts(ship) == []
+    assert ship.prompts() == []
 
 
 @pytest.mark.parametrize("printed,shown", [

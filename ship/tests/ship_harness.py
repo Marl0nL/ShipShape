@@ -111,6 +111,10 @@ class Ship:
         s.update(kwargs)
         (self.fake_dir / "scenario.json").write_text(json.dumps(s))
 
+    def prompts(self) -> list[list[str]]:
+        """What was typed into herdr panes, in order."""
+        return self.scenario()["herdr"].get("prompts", [])
+
     def homes(self, command: str) -> list[tuple[list[str], str | None]]:
         """(argv, HOME) for each call of `command`: whose environment it ran in."""
         path = self.fake_dir / "homes.jsonl"
@@ -127,6 +131,14 @@ class Ship:
     # --- what happens to agents -----------------------------------------------------
     def agent(self, name: str) -> dict:
         return next(a for a in self.scenario()["herdr"]["agents"] if a.get("name") == name)
+
+    def set_state(self, name: str, state: str) -> None:
+        """herdr reports the named agent in this state (idle, working, blocked, ...)."""
+        s = self.scenario()
+        for a in s["herdr"]["agents"]:
+            if a.get("name") == name:
+                a["agent_status"] = state
+        self.set(herdr=s["herdr"])
 
     def crash(self, name: str) -> None:
         """claude dies in its pane (killed, out of memory): no SessionEnd, and the
@@ -165,6 +177,10 @@ class Ship:
         h["agents"] = []
         h["exited"] = []
         self.set(herdr=h)
+        self._new_boot(uptime)
+
+    def _new_boot(self, uptime: float) -> None:
+        """What every boot changes: a new boot id, the uptime, and an empty /run."""
         boot = self.p("/proc/sys/kernel/random/boot_id")
         n = int(boot.read_text().strip()[-4:], 16) + 1
         boot.write_text(BOOT_ID[:-4] + f"{n:04x}\n")
@@ -263,13 +279,7 @@ class Ship:
             else:
                 t.update(state="finished", reason="host_shutdown", foreground=None, status=None)
         self._core_change(change)
-        boot = self.p("/proc/sys/kernel/random/boot_id")
-        n = int(boot.read_text().strip()[-4:], 16) + 1
-        boot.write_text(BOOT_ID[:-4] + f"{n:04x}\n")
-        self.p("/proc/uptime").write_text(f"{uptime} 1.0\n")
-        run = self.p("/run")
-        if run.exists():
-            shutil.rmtree(run)
+        self._new_boot(uptime)
 
     # --- files ----------------------------------------------------------------------
     def p(self, path: str) -> Path:
@@ -282,6 +292,13 @@ class Ship:
         return json.loads(self.p(path).read_text())
 
     # --- running ship-ctl ---------------------------------------------------------
+    def status(self) -> dict:
+        """ship-ctl status --json, checked against the ship-status schema."""
+        rc, doc, _ = self.ctl("status", "--json")
+        assert rc == 0
+        assert_valid("ship-status", doc)
+        return doc
+
     def ctl(self, *args: str, input: str | None = None) -> tuple[int, dict | None, str]:
         proc = subprocess.run(
             [sys.executable, "-I", str(self.bundle / "bin/ship-ctl"), *args],
@@ -347,6 +364,16 @@ def ship(tmp_path: Path) -> Ship:
         "LANG": "C.UTF-8",
     }
     return Ship(root, bundle, fake_dir, env)
+
+
+PROVISION = SHIP / "provision" / "ship-provision"
+
+
+def provision(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    """Run ship-provision with a minimal environment (plus env)."""
+    full = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", **(env or {})}
+    return subprocess.run([str(PROVISION), *args], env=full, capture_output=True, text=True,
+                          timeout=60)
 
 
 def validator(name: str):

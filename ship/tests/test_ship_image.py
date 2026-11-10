@@ -12,17 +12,11 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from ship_harness import provision
 
 SHIP = Path(__file__).resolve().parents[1]
-PROVISION = SHIP / "provision" / "ship-provision"
 BAKE = SHIP / "image" / "bake"
 CLEAN = SHIP / "image" / "image-clean.sh"
-
-
-def provision(*args: str) -> subprocess.CompletedProcess:
-    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
-    return subprocess.run([str(PROVISION), *args], env=env, capture_output=True, text=True,
-                          timeout=60)
 
 
 # --- ship-provision --bake ----------------------------------------------------------

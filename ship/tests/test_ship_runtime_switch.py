@@ -25,13 +25,6 @@ def switch(ship, target: str, *extra: str):
     return rc, doc, out
 
 
-def status(ship) -> dict:
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert rc == 0
-    assert_valid("ship-status", doc)
-    return doc
-
-
 def ledger(ship) -> dict:
     return json.loads(ship.p(LEDGER).read_text())["sessions"]
 
@@ -94,7 +87,7 @@ def intact(ship, runtime: str, expect: dict[str, tuple[str, str]],
         assert record["agents"][name]["place"]["runtime"] == runtime
     units = ship.scenario().get("global_units", ["herdr.service"])
     assert units == ["herdr.service" if runtime == "herdr" else "ship-core.service"]
-    modes = {a["name"]: a["mode"] for a in status(ship)["herdr"]["agents"] if a["name"]}
+    modes = {a["name"]: a["mode"] for a in ship.status()["herdr"]["agents"] if a["name"]}
     assert modes == {n: m for n, (_, m) in expect.items()}
     assert_valid("agent-record", record)
 
@@ -293,7 +286,7 @@ def test_herdr_to_core(herdr_ship):
     for name, (session, _) in expect.items():
         labels = core_agents(ship)[name][0]["labels"]
         assert labels["shipshape.session"] == session and labels["herdr.space"] == "shipshape"
-    last = status(ship)["agent_record"]["last_switch"]
+    last = ship.status()["agent_record"]["last_switch"]
     assert last["outcome"] == "switched" and (last["from"], last["to"]) == ("herdr", "core")
     assert ship.record()["switches"][-1]["agents"] == 2
     # Afterwards the refresh starts nothing more, and a reboot resumes them on core.
@@ -395,9 +388,9 @@ def test_a_failed_launch_rolls_back_to_herdr(herdr_ship):
     assert any(text == "/exit" for _, text in hc["sent"])
     assert ship.scenario()["user_unit_calls"] == [
         ["stop", "herdr.service"], ["start", "ship-core.service"], ["start", "herdr.service"]]
-    last = status(ship)["agent_record"]["last_switch"]
+    last = ship.status()["agent_record"]["last_switch"]
     assert last["outcome"] == "rolled-back"
-    assert "runtime-switch-failed" not in {a["code"] for a in status(ship)["attention"]}
+    assert "runtime-switch-failed" not in {a["code"] for a in ship.status()["attention"]}
 
 
 def test_a_lost_session_on_the_target_rolls_back(core_ship):
@@ -500,7 +493,7 @@ def test_an_agent_stuck_on_the_target_is_never_started_twice(herdr_ship):
     assert "grinder" not in herdr_agents(ship) and len(core_agents(ship)["grinder"]) == 1
     assert herdr_agents(ship)["main"]["args"][-2:] == ["--resume", expect["main"][0]]
     assert not ship.scenario()["hc"].get("forbidden")
-    doc = status(ship)
+    doc = ship.status()
     assert doc["agent_record"]["last_switch"]["outcome"] == "rollback-failed"
     assert "runtime-switch-failed" in {a["code"] for a in doc["attention"]}
     # The record keeps grinder on core this boot, so herdr never starts it twice.
@@ -517,7 +510,7 @@ def test_an_interrupted_switch_is_recorded_and_shown(herdr_ship):
                         "agents": {"main": {"cwd": "/home/agent/work/main",
                                             "session": "sess-main", "mode": "auto"}}}
     ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(record))
-    doc = status(ship)
+    doc = ship.status()
     assert doc["agent_record"]["last_switch"]["outcome"] == "in-progress"
     assert "runtime-switch-unfinished" in {a["code"] for a in doc["attention"]}
     rc, doc, out = switch(ship, "core")
@@ -578,7 +571,7 @@ def test_switching_again_after_a_failed_rollback_puts_it_right(herdr_ship):
     assert runtime_in_toml(ship) == "herdr" and herdr_agents(ship) == {}
     assert ship.scenario()["herdr"]["server"] is False
     assert not any(m.endswith("were not started on herdr") for m in doc["messages"])
-    assert "runtime-switch-failed" in {a["code"] for a in status(ship)["attention"]}
+    assert "runtime-switch-failed" in {a["code"] for a in ship.status()["attention"]}
     ship.set(unit_fails=[])
     # Switching to core refuses (herdr, which runs the agents' record, is down) and
     # says how to put it right.
@@ -588,9 +581,9 @@ def test_switching_again_after_a_failed_rollback_puts_it_right(herdr_ship):
     assert rc == 0 and doc["data"]["outcome"] == "repaired", out
     intact(ship, "herdr", expect)
     assert hc_runs(ship) == []
-    last = status(ship)["agent_record"]["last_switch"]
+    last = ship.status()["agent_record"]["last_switch"]
     assert (last["outcome"], last["from"], last["to"]) == ("repaired", "herdr", "herdr")
-    assert "runtime-switch-failed" not in {a["code"] for a in status(ship)["attention"]}
+    assert "runtime-switch-failed" not in {a["code"] for a in ship.status()["attention"]}
     rc, doc, _ = switch(ship, "herdr")  # nothing left to put right
     assert rc == 0 and doc["data"]["outcome"] == "already"
 
@@ -602,7 +595,7 @@ def test_a_repair_that_fails_says_so(herdr_ship):
     rc, doc, _ = switch(ship, "herdr")
     assert rc != 0 and doc["error"]["code"] == "switch-failed"
     assert doc["data"]["outcome"] == "rollback-failed"
-    attention = {a["code"]: a["message"] for a in status(ship)["attention"]}
+    attention = {a["code"]: a["message"] for a in ship.status()["attention"]}
     assert attention["runtime-switch-failed"].startswith("herdr could not be put right")
 
 
