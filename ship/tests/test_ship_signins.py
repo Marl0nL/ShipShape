@@ -454,3 +454,62 @@ def test_an_expiring_sign_in_releases_waiting_tools(ship):
     rc, doc, out = ship.ctl("refresh", "--json")
     assert rc == 0, out
     assert status_doc(ship)["tools"]["example-tool"]["state"] == "ok"
+
+
+# --- review follow-ups ---------------------------------------------------------------------
+@pytest.mark.parametrize("out", [
+    native(state="ok", expires_at="9999-12-31T23:59:59-05:00"),  # past what can be written
+    native(state="ok", expires_at="0001-01-01T00:00:00+05:00"),
+    "[" * 60000,  # JSON nested too deep to parse
+])
+def test_no_output_stops_the_status_document(ship, out):
+    add_file(ship, NATIVE if out.startswith("starting") else GOOD)
+    answer(ship, "status" if out.startswith("starting") else "auth status --json", out=out)
+    entry = status_doc(ship)["auth"]["exampledocs"]
+    assert entry["state"] in ("ok", "error")
+
+
+def test_a_kept_result_still_expires(ship):
+    add_file(ship, GOOD.replace("[status]\n", '[status]\nevery = "1h"\nexpiring_within = "1s"\n'))
+    answer(ship, out=signed_in(expires=iso(time.time() + 3)))
+    assert status_doc(ship)["auth"]["exampledocs"]["state"] == "ok"
+    time.sleep(4)
+    doc = status_doc(ship)
+    assert doc["auth"]["exampledocs"]["state"] == "expired"
+    assert len(cli_calls(ship)) == 1  # from the kept result
+    assert any(a["code"] == "signin-expired" for a in doc["attention"])
+
+
+def test_the_runner_keeps_output_a_helper_outlives(tmp_path):
+    """A helper left holding stdout: what was printed is kept, and the helper ends."""
+    from shipctl.runner import Runner
+
+    runner = Runner(Paths(root=tmp_path, bundle=tmp_path))
+    mark = tmp_path / "late"
+    started = time.monotonic()
+    r = runner.run(["bash", "-c", f"echo hi; (sleep 3; touch {mark}) & exit 0"],
+                   limit=1024, timeout=10)
+    assert r.ok and r.out == "hi\n" and time.monotonic() - started < 3
+    time.sleep(3.5)
+    assert not mark.exists()
+
+
+def test_a_bad_duration_is_refused_not_crashed_on(tmp_path):
+    with pytest.raises(CtlError, match="not a duration"):
+        signins.seconds("5m\n")
+    folder = folder_with(tmp_path, "exampledocs.toml",
+                         GOOD.replace("[status]\n", '[status]\nevery = "5m\\n"\n'))
+    with pytest.raises(CtlError, match="exampledocs.toml: status: "):
+        build(folder)
+
+
+def test_a_notice_for_a_flow_without_its_own_status(ship):
+    """A flow that signs in another file's key (here gcloud_adc) reads that key."""
+    text = (SHIP / "signins" / "gcloud-adc.toml").read_text()
+    text = text.replace('id = "gcloud-adc"', 'id = "adc-again"')
+    text = text[:text.index("# The Ship's check")] + text[text.index("# Where the sign-in"):]
+    add_file(ship, text, "adc-again.toml")
+    ship.ctl("autostart", "--json")
+    rc, doc, out = ship.ctl("notify-signin", "adc-again", "--json")
+    assert rc == 0, out
+    assert sorted(doc["data"]["sent"]) == ["grinder", "main"]

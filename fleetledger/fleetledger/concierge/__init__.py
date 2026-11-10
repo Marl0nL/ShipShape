@@ -108,9 +108,14 @@ def verify(ssh: SSH, inventory: Inventory, ship: Ship, provider: Provider) -> li
     if asks:
         try:
             done = ctl.call("signin", "check", provider.id, timeout=90)
-        except FleetError:
-            return [CheckResult(key, False, None, None, state="error") for key in provider.keys]
-        return from_ship(inventory, ship, provider, done.data)
+        except FleetError as exc:
+            # usage: the Ship's bundle predates this sign-in file (its checks follow).
+            if getattr(exc, "code", None) != "usage" or not provider.checks:
+                state = TOO_OLD if getattr(exc, "code", None) == "usage" else "error"
+                return [CheckResult(key, False, None, None, state=state)
+                        for key in provider.keys]
+        else:
+            return from_ship(inventory, ship, provider, done.data)
     if not provider.checks:
         return [CheckResult(key, False, None, None, state=TOO_OLD) for key in provider.keys]
     return [run_check(ssh, inventory, ship, c) for c in provider.checks]

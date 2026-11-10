@@ -59,7 +59,7 @@ def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]
     SERVICE is any sign-in file's id (signins.py); the account is the one its own
     status key reports, checked now, and the notice names every key it signs in."""
     reg = signins.registry(ctx.paths)
-    key = signins.status_key(service)
+    key = reg.flows[service].keys[0]  # the account of the first key the flow signs in
     label = reg.notice_label(service)
     entry, _ = signincheck.check(ctx, reg, [key], fresh=True)[key]
     data: dict = {"service": service, "account": None, "sent": [], "skipped": []}

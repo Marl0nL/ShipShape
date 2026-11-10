@@ -39,7 +39,10 @@ _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 def seconds(duration: str) -> int:
     """'90s', '5m', '24h', '2d' in seconds."""
-    return int(duration[:-1]) * _UNITS[duration[-1]]
+    m = re.fullmatch(r"([0-9]{1,6})([smhd])", duration)
+    if not m:
+        raise CtlError("internal", f"{duration!r} is not a duration such as 30s, 5m, 24h or 2d")
+    return int(m.group(1)) * _UNITS[m.group(2)]
 
 
 def status_key(file_id: str) -> str:
@@ -183,8 +186,11 @@ def build(folder: Path, schema_path: Path) -> Registry:
         flows[fid] = Flow(fid, doc["label"], keys)
         if "status" in doc:
             key = status_key(fid)
-            checks[key] = SignIn(key, doc["status"].get("label", doc["label"]),
-                                 _status(doc["status"]), fid)
+            try:
+                st = _status(doc["status"])
+            except CtlError as exc:
+                raise _fail(folder / f"{fid}.toml", f"status: {exc.message}") from None
+            checks[key] = SignIn(key, doc["status"].get("label", doc["label"]), st, fid)
     for flow in flows.values():
         unchecked = [k for k in flow.keys if k not in checks]
         if unchecked:

@@ -499,15 +499,16 @@ file signs in (its `[[check]]` services, or its own key). ID is a sign-in file's
 `gcloud-adc` file). An unknown ID is a `usage` error. FleetLedger runs it after
 every sign-in it ran, so the check after a sign-in, the status document and the
 Sign-ins page cannot disagree; for a Ship without it (no `signin` in `ship-ctl
-version`'s contracts) FleetLedger runs the file's `[[check]]` commands over SSH
-instead.
+version`'s contracts), or whose bundle predates the file (a `usage` error),
+FleetLedger runs the file's `[[check]]` commands over SSH instead.
 
 A key's `[status]` is a built-in check (`builtin`, the `auth.*` rows above), or a
 command run as `agent` with `bash -c`:
 
 - **5 seconds**, as every probe: one that takes longer is `unknown` (and a line in
   `errors`), and never holds up the status document. Command checks run in
-  parallel.
+  parallel. Whatever a check prints, the worst it does is make its own key
+  `error`; a helper it leaves running is ended with it.
 - **Output:** only stdout, at most 64 KiB, parsed and then dropped: only the state,
   account, expiry and detail are kept. stderr is never read. With `discard_output`
   nothing is read and only the exit code counts (for a check whose output is a
@@ -526,6 +527,7 @@ command run as `agent` with `bash -c`:
 - **Kept** in `/run/shipshape/signin-checks.json` (root, 0600, cleared at boot) for
   the check's `every` (default 5m), so the status refresh does not run every check
   each time; a changed `[status]` runs again, and an `unknown` result is not kept.
+  A kept result still turns `expiring` or `expired` as its `expires_at` comes.
   `signin check` always runs the checks and keeps what it found. Built-in checks
   run every time.
 
@@ -561,7 +563,7 @@ once.
 Applies a tooling bundle:
 
 1. Check `bundle.json` against `bundle-manifest.schema.json` and the required
-   entries (`seed.md`).
+   entries (`seed.md`), and that its sign-in files (`signins/`) load.
 2. Unpack it and switch `/opt/shipshape/current` to the new release.
 3. Run `ship-provision --converge`, then `apply`, then `tools run`.
 

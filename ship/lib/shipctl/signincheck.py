@@ -88,7 +88,8 @@ def parse_time(value: object) -> float | None:
         return None
     if when.tzinfo is None:
         return None  # no offset: cannot tell when
-    return when.timestamp()
+    epoch = when.timestamp()
+    return epoch if 0 < epoch < 1e11 else None  # a year stamp() can write back
 
 
 def _extract(spec: str, out: str, doc: object) -> object:
@@ -194,13 +195,17 @@ def run_command(ctx: Context, key: str, st: Status, now: float) -> tuple[dict, l
 
 
 def check_one(ctx: Context, signin: SignIn, now: float) -> tuple[dict, list[str]]:
-    """One key's entry, checked now, with checked_at."""
-    if signin.status.builtin:
-        from .status import BUILTIN_PROBES
+    """One key's entry, checked now, with checked_at. Whatever a check prints, it
+    never stops the status document: anything unforeseen is that key's error."""
+    try:
+        if signin.status.builtin:
+            from .status import BUILTIN_PROBES
 
-        found, errors = BUILTIN_PROBES[signin.status.builtin](ctx)
-    else:
-        found, errors = run_command(ctx, signin.key, signin.status, now)
+            found, errors = BUILTIN_PROBES[signin.status.builtin](ctx)
+        else:
+            found, errors = run_command(ctx, signin.key, signin.status, now)
+    except Exception as exc:  # noqa: BLE001 (a check's output must not end status)
+        found, errors = entry("error"), [f"{signin.key} sign-in check: {type(exc).__name__}"]
     found["checked_at"] = stamp(now)
     return found, errors
 
@@ -213,7 +218,16 @@ def _cache_hit(cache: dict, signin: SignIn, now: float) -> dict | None:
     if not isinstance(at, int | float) or not 0 <= now - at < signin.status.every:
         return None
     found = kept.get("entry")
-    return dict(found) if isinstance(found, dict) and "state" in found else None
+    if not isinstance(found, dict) or "state" not in found:
+        return None
+    found = dict(found)
+    # Time has moved on since: a kept sign-in may be ending now, or have ended.
+    expires = parse_time(found.get("expires_at"))
+    if found["state"] in ("ok", "expiring") and expires is not None:
+        later = _expiry("ok", expires, signin.status, now)
+        order = ("ok", "expiring", "expired")
+        found["state"] = max(found["state"], later, key=order.index)
+    return found
 
 
 def check(ctx: Context, reg: Registry, keys: list[str] | tuple[str, ...], *,
@@ -237,7 +251,8 @@ def check(ctx: Context, reg: Registry, keys: list[str] | tuple[str, ...], *,
         else:
             todo.append(signin)
     if todo:
-        with ThreadPoolExecutor(max_workers=min(10, len(todo))) as pool:
+        # One thread each: checks that all hang still end together, in one timeout.
+        with ThreadPoolExecutor(max_workers=min(32, len(todo))) as pool:
             futures = {s.key: pool.submit(check_one, ctx, s, now) for s in todo}
             for key, fut in futures.items():
                 out[key] = fut.result()

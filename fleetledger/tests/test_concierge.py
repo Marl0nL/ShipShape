@@ -819,3 +819,16 @@ def test_sign_in_files_are_refused_like_on_the_ship(tmp_path, change, message):
     path.write_text(text)
     with pytest.raises(Exception, match=message):
         providers.parse(path)
+
+
+def test_a_ship_without_this_file_gets_the_files_checks(store, fake_ssh):
+    """The Ship has signin check, but its bundle predates this sign-in file."""
+    inv = store.load()
+    ran: list[str] = []
+    ssh = fake_ssh(new_ship_side({}, ran, code="usage"))
+    concierge.verify(ssh, inv, inv.ship("ship-01"), provider("claude"))
+    assert ran == ["claude auth status --json"]
+    native = providers.parse(EXAMPLES / "example-native.toml")
+    checks = concierge.verify(fake_ssh(new_ship_side({}, [], code="usage")), inv,
+                              inv.ship("ship-01"), native)
+    assert [c.state for c in checks] == [concierge.TOO_OLD]

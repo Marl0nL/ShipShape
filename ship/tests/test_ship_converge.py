@@ -116,6 +116,8 @@ def test_converge_checks_sidecar_checksum(ship, tmp_path):
         ({"extra": {"/abs": b"x"}}, "unsafe path"),
         ({"drop": "bin/ship-ctl"}, "missing bin/ship-ctl"),
         ({"commit": "not-a-commit"}, "bundle.json"),
+        # every status reads the sign-in files: one that does not load is refused here
+        ({"extra": {"signins/broken.toml": b'schema = 1\nid = "broken"\n'}}, "broken.toml"),
     ],
 )
 def test_converge_rejects_bad_bundles(ship, tmp_path, kwargs, needle):

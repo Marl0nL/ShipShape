@@ -86,6 +86,15 @@ def check_unpacked(ctx: Context, root: Path) -> dict:
     errors = schema.load(ctx.paths.schema("bundle-manifest")).errors(manifest)
     if errors:
         raise CtlError("invalid-bundle", "bundle.json: " + "; ".join(errors[:3]))
+    if (root / "signins").is_dir():
+        # Every status and sign-in command reads these: a bundle whose sign-in files
+        # do not load is refused here, not installed to break them.
+        from .signins import build
+
+        try:
+            build(root / "signins", root / "schemas" / "signin.schema.json")
+        except (CtlError, OSError, ValueError) as exc:
+            raise CtlError("invalid-bundle", getattr(exc, "message", str(exc))) from None
     return manifest
 
 

@@ -164,11 +164,14 @@ def _capped(proc: subprocess.Popen, name: str, timeout: float, limit: int,
             input: str | None) -> Result:
     """Wait for proc, keeping the first `limit` bytes of its stdout."""
     kept = bytearray()
+    fd = proc.stdout.fileno()
 
     def read() -> None:
-        while chunk := proc.stdout.read(65536):
-            if len(kept) < limit:
-                kept.extend(chunk[: limit - len(kept)])
+        # os.read returns what is there now: nothing printed waits in a buffer.
+        with contextlib.suppress(OSError):
+            while chunk := os.read(fd, 65536):
+                if len(kept) < limit:
+                    kept.extend(chunk[: limit - len(kept)])
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
@@ -184,6 +187,9 @@ def _capped(proc: subprocess.Popen, name: str, timeout: float, limit: int,
         proc.wait()
         reader.join(1)
         return Result(TIMEOUT_RC, "", f"{name}: timed out after {timeout:g}s")
-    # A child that keeps stdout open past the command's exit must not hold us up.
+    # A helper the command left behind (holding stdout open, say) ends with it.
+    reader.join(0.5)
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
     reader.join(1)
     return Result(proc.returncode, bytes(kept).decode("utf-8", "replace"), "")
