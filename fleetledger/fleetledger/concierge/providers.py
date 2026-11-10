@@ -1,8 +1,10 @@
-"""Sign-in providers: one TOML file per service in fleetledger/providers/.
+"""Sign-in providers: one sign-in file per flow, in ship/signins/.
 
-Adding a service is one file. Each names the command run on the Ship (as
-agent, in a terminal), the patterns that find the link, code, prompt and
-outcome in its output, the checks that confirm the result, and how to sign out.
+The files are a contract (contracts/signin.schema.json) shared with the Ship, which
+reads them from its tooling bundle for its status checks. Adding a service is one
+file. Each names the command run on the Ship (as agent, in a terminal), the patterns
+that find the link, code, prompt and outcome in its output, the status keys it signs
+in, how the Ship checks them, and how to sign out.
 
 Modes:
 - paste-back: you open the link, approve, and paste the code shown back;
@@ -19,113 +21,21 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
-
-from fleetledger import signinreg
+from fleetledger import schemas, signinreg
 from fleetledger.errors import ConfigError, NotFound
 
-PROVIDERS_DIR = signinreg.PROVIDERS_DIR
+PROVIDERS_DIR = signinreg.SIGNINS_DIR
+CONTRACTS = PROVIDERS_DIR.parents[1] / "contracts"
 
 # "all" signs in to these, in this order (gcloud covers ADC too): every sign-in.
 ALL = signinreg.registry().choices
 
-SERVICE = {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}
-COMMAND = {"type": "string", "minLength": 1}
-FLAG = {"type": "string", "pattern": "^--[a-z][a-z-]{0,31}$"}
-SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["id", "label", "mode", "run", "timeout", "match", "check", "logout"],
-    "properties": {
-        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
-        "label": {"type": "string", "minLength": 1},
-        "mode": {"enum": ["paste-back", "device-code"]},
-        "run": COMMAND,
-        "timeout": {"type": "integer", "minimum": 30, "maximum": 3600},
-        "after": {"type": "array", "items": COMMAND},
-        "match": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["url", "success"],
-            "properties": {
-                "url": {"type": "string"},
-                "code": {"type": "string"},
-                "prompt": {"type": "string"},
-                "success": {"type": "string"},
-                "failure": {"type": "string"},
-                "send": {"type": "object", "additionalProperties": {"type": "string"}},
-            },
-        },
-        "check": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["service", "run"],
-                "properties": {
-                    "service": SERVICE,
-                    "run": COMMAND,
-                    "ok_json": {"type": "string"},
-                    "account": {"type": "string", "pattern": "^(stdout|json:[A-Za-z0-9_.]+)$"},
-                    # How the sign-in registry names this status key (signinreg.py).
-                    "label": {"type": "string", "minLength": 1},
-                    "short": {"type": "string", "minLength": 1},
-                },
-            },
-        },
-        # The sign-in registry (signinreg.py): a sign-in of its own (label, order),
-        # or a flow for part of another one (part_of).
-        "signin": {
-            "oneOf": [
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["label", "order"],
-                    "properties": {
-                        "label": {"type": "string", "minLength": 1},
-                        "order": {"type": "integer", "minimum": 0},
-                    },
-                },
-                {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["part_of"],
-                    "properties": {"part_of": SERVICE},
-                },
-            ],
-        },
-        "logout": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["run"],
-            "properties": {"run": COMMAND},
-        },
-        # Extra scopes (ghscopes): `add` is the flag run takes them with; `refresh`
-        # changes a signed-in token's scopes in the same kind of flow, with `add` for
-        # the ones to add and `remove` for the ones to drop.
-        "scopes": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["add", "refresh", "remove"],
-            "properties": {"add": FLAG, "refresh": COMMAND, "remove": FLAG},
-        },
-    },
-    "allOf": [
-        {
-            "if": {"properties": {"mode": {"const": "paste-back"}}},
-            "then": {"properties": {"match": {"required": ["prompt"]}}},
-        },
-        {
-            "if": {"properties": {"mode": {"const": "device-code"}}},
-            "then": {"properties": {"match": {"required": ["code"]}}},
-        },
-    ],
-}
-
 
 @dataclass(frozen=True)
 class Check:
+    """A [[check]]: what FleetLedger runs itself after a sign-in on a Ship whose ship-ctl
+    has no `signin check` (older tooling)."""
+
     service: str
     run: str
     ok_json: str | None = None
@@ -141,8 +51,9 @@ class Provider:
     timeout: int
     url: re.Pattern[str]
     success: re.Pattern[str]
-    checks: tuple[Check, ...]
+    checks: tuple[Check, ...]  # may be empty: the Ship checks it (ship-ctl signin check)
     logout: str
+    keys: tuple[str, ...] = ()  # the status keys it signs in
     code: re.Pattern[str] | None = None
     prompt: re.Pattern[str] | None = None
     failure: re.Pattern[str] | None = None
@@ -154,7 +65,7 @@ class Provider:
 
     @property
     def services(self) -> list[str]:
-        return [c.service for c in self.checks]
+        return list(self.keys)
 
     @property
     def takes_scopes(self) -> bool:
@@ -190,14 +101,40 @@ def _compile(path: Path, key: str, pattern: str) -> re.Pattern[str]:
         raise ConfigError(f"{path}: match.{key} is not a valid pattern: {exc}") from exc
 
 
-def parse(path: Path) -> Provider:
-    with path.open("rb") as fh:
-        doc = tomllib.load(fh)
-    errors = sorted(Draft202012Validator(SCHEMA).iter_errors(doc), key=lambda e: e.path)
-    if errors:
-        raise ConfigError(f"{path}: {errors[0].message}")
+def _one_group(path: Path, what: str, spec: str | None) -> None:
+    if spec and spec.startswith("re:") and _compile(path, what, spec[3:]).groups != 1:
+        raise ConfigError(f"{path}: {what} needs exactly one group in its pattern.")
+
+
+def check_rules(path: Path, doc: dict) -> None:
+    """What the contract's schema cannot say (the Ship checks the same: shipctl/signins.py)."""
     if doc["id"] != path.stem:
         raise ConfigError(f"{path}: id '{doc['id']}' does not match the file name.")
+    status = doc.get("status")
+    if status is None:
+        return
+    key = doc["id"].replace("-", "_")
+    listed = [c["service"] for c in doc.get("check", [])]
+    if listed and key not in listed:
+        raise ConfigError(f"{path}: [status] checks {key}, which is none of its [[check]] "
+                          "services.")
+    _one_group(path, "status.account", status.get("account"))
+    _one_group(path, "status.expires_at", status.get("expires_at"))
+
+
+def parse(path: Path) -> Provider:
+    try:
+        with path.open("rb") as fh:
+            doc = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
+    if (doc.get("secrets") or {}).get("store") == "keyring":
+        raise ConfigError(f"{path}: secrets.store = keyring: a Ship has no unlocked password "
+                          "store; pin the tool to its file store.")
+    errors = schemas.errors("signin", doc, CONTRACTS)
+    if errors:
+        raise ConfigError(f"{path}: {errors[0]}")
+    check_rules(path, doc)
     m = doc["match"]
     return Provider(
         id=doc["id"],
@@ -212,8 +149,9 @@ def parse(path: Path) -> Provider:
         failure=_compile(path, "failure", m["failure"]) if "failure" in m else None,
         send=tuple((_compile(path, "send", k), v) for k, v in m.get("send", {}).items()),
         checks=tuple(Check(**{k: v for k, v in c.items() if k not in ("label", "short")})
-                     for c in doc["check"]),
+                     for c in doc.get("check", ())),
         logout=doc["logout"]["run"],
+        keys=tuple(c["service"] for c in signinreg.checked(doc["id"], doc)),
         after=tuple(doc.get("after", ())),
         scopes_add=doc.get("scopes", {}).get("add"),
         scopes_refresh=doc.get("scopes", {}).get("refresh"),

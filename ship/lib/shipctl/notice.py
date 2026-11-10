@@ -22,13 +22,11 @@ from __future__ import annotations
 import re
 
 from . import record as agent_record
-from . import signins, status
+from . import signincheck, signins
 from .context import Context
 from .runtime import for_ship
 from .shiptoml import ShipToml
 
-# notify-signin SERVICE (FleetLedger's provider id) -> (status auth key, label)
-SERVICES = {n.service: (n.key, n.label) for n in signins.NOTICES}
 # herdr agent states it is safe to type into (Claude Code queues input mid-turn).
 READY_STATES = ("idle", "working", "done")
 # What may appear of an account name in the typed line: no newlines, quotes or
@@ -43,8 +41,7 @@ def record(ctx: Context, message: str, what: str = "notify-signin") -> None:
     ctx.runner.run(["logger", "-t", "ship-ctl", "--", f"{what}: {message}"], timeout=10)
 
 
-def text(service: str, account: str | None) -> str:
-    label = SERVICES[service][1]
+def text(label: str, account: str | None) -> str:
     who = f" as {account}" if account else ""
     return f"ShipShape: {label} is now signed in{who}. Re-check it if you need it."
 
@@ -57,17 +54,22 @@ def clean_account(account: str | None) -> str | None:
 
 
 def notify(ctx: Context, ship: ShipToml, service: str) -> tuple[dict, list[str]]:
-    """Send the notice to each live core agent. Returns (data, messages)."""
-    key, label = SERVICES[service]
-    entry, _ = status.AUTH_PROBES[key](ctx)
+    """Send the notice to each live core agent. Returns (data, messages).
+
+    SERVICE is any sign-in file's id (signins.py); the account is the one its own
+    status key reports, checked now, and the notice names every key it signs in."""
+    reg = signins.registry(ctx.paths)
+    key = reg.flows[service].keys[0]  # the account of the first key the flow signs in
+    label = reg.notice_label(service)
+    entry, _ = signincheck.check(ctx, reg, [key], fresh=True)[key]
     data: dict = {"service": service, "account": None, "sent": [], "skipped": []}
-    if entry.get("state") != "ok":
+    if not signincheck.signed_in(entry):
         msg = f"{label} is not signed in on this Ship; no notice sent."
         record(ctx, f"{service}: {msg}")
         return data, [msg]
     account = clean_account(entry.get("account"))
     data["account"] = account
-    line = text(service, account)
+    line = text(label, account)
 
     note = send_to_cores(ctx, ship, line, data)
     if note:

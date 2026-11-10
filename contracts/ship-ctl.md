@@ -57,6 +57,7 @@ How fields are worked out:
 |---|---|
 | `ship.bundle_commit` | `commit` from the installed `bundle.json`; the value `unknown` becomes `null`. |
 | `state` | First match: `provisioning` if `provision.result` is `running` or `never`, or cloud-init is running; `needs-sign-in` if `auth.claude.state` is `missing`, `expired` or `error`; `running` if herdr lists at least one agent; `ready` if the herdr server is running; else `unknown`. |
+| `auth` | One entry per status key of the sign-in files in the bundle (`signins/*.toml`, `signin.schema.json`): each sign-in's keys in its `[signin] order`. Each key is checked as the `[status]` of the file whose own key it is (its id with `-` as `_`): a built-in check below, or a command run as `agent` (see `signin check` below). |
 | `auth.claude` | `claude auth status --json` as `agent`: `loggedIn` gives `ok` or `missing`; `account` is the email; `detail` is the plan or method. |
 | `auth.gcloud` | `gcloud auth list --filter=status:ACTIVE --format="value(account)"` as `agent`. |
 | `auth.gcloud_adc` | `gcloud auth application-default print-access-token` as `agent`, output discarded: exit 0 gives `ok`. `account` may be null. |
@@ -459,8 +460,9 @@ With ship.toml `runtime = "core"` the record works the same through herdr-core
 
 ### `ship-ctl notify-signin SERVICE [--json]`
 
-Tells the Ship's core agents that a sign-in has completed. SERVICE is `claude`,
-`gcloud`, `gcloud-adc` or `github`. FleetLedger runs it once a sign-in it ran
+Tells the Ship's core agents that a sign-in has completed. SERVICE is the id of
+any sign-in file in the bundle (`claude`, `gcloud`, `gcloud-adc`, `github`, ...);
+any other is a `usage` error. FleetLedger runs it once a sign-in it ran
 (`ship-fleet login`, the web UI's concierge) checks out with the expected
 account, because agents started before that sign-in may already have found it
 missing.
@@ -469,9 +471,10 @@ missing.
   through the agent record. No other agent is ever messaged (a Ship running a
   firstmate may have many worker agents).
 - **One line**, typed with `herdr agent prompt`:
-  `ShipShape: <service> is now signed in as <account>. Re-check it if you need it.`
-  The account is read on the Ship from the service's own status probe and cut
-  down to letters, digits and `@._+-`. It carries nothing else.
+  `ShipShape: <what> is now signed in as <account>. Re-check it if you need it.`
+  `<what>` names the status keys the flow signs in (`[status] label`, joined with
+  "and"). The account is read on the Ship from the file's own status key, checked
+  now, and cut down to letters, digits and `@._+-`. It carries nothing else.
 - **Typed only into an agent herdr reports as `idle`, `working` or `done`.**
   Claude Code queues the line while a turn is running. Skipped, with a reason
   in `data`:
@@ -488,6 +491,50 @@ missing.
 `data`: `{ "service": ..., "account": ... or null, "sent": [names], "skipped":
 [{ "name": ..., "reason": ... }] }`.
 
+### `ship-ctl signin check ID [--json]`
+
+Checks a sign-in now, as its sign-in file says, and reports every status key the
+file signs in (its `[[check]]` services, or its own key). ID is a sign-in file's id
+(`gcloud`: `gcloud` and `gcloud_adc`), or a status key (`gcloud_adc`: the
+`gcloud-adc` file). An unknown ID is a `usage` error. FleetLedger runs it after
+every sign-in it ran, so the check after a sign-in, the status document and the
+Sign-ins page cannot disagree; for a Ship without it (no `signin` in `ship-ctl
+version`'s contracts), or whose bundle predates the file (a `usage` error),
+FleetLedger runs the file's `[[check]]` commands over SSH instead.
+
+A key's `[status]` is a built-in check (`builtin`, the `auth.*` rows above), or a
+command run as `agent` with `bash -c`:
+
+- **5 seconds**, as every probe: one that takes longer is `unknown` (and a line in
+  `errors`), and never holds up the status document. Command checks run in
+  parallel. Whatever a check prints, the worst it does is make its own key
+  `error`; a helper it leaves running is ended with it.
+- **Output:** only stdout, at most 64 KiB, parsed and then dropped: only the state,
+  account, expiry and detail are kept. stderr is never read. With `discard_output`
+  nothing is read and only the exit code counts (for a check whose output is a
+  token).
+- **Adapter** (`format = "adapter"`, the default): exit 0 is signed in, exit codes in
+  `missing_exit` (default: any non-zero) are `missing`, any other is `error`; then
+  `ok_json` (a false value is `missing`), `account` (`stdout`, `json:<path>`,
+  `re:<pattern with one group>`) and `expires_at` (`json:<path>` or `re:...`, RFC
+  3339 or epoch seconds).
+- **Native** (`format = "shipshape"`): a line of JSON on stdout,
+  `{"shipshape_signin": 1, "state": "ok|missing|expiring|expired|error", "account":
+  ..., "expires_at": ..., "detail": ...}`; no such line is `error`.
+- **Expiry:** signed in, with an `expires_at` within `expiring_within` (default 24h)
+  is `expiring` (attention `signin-expiring`); past it, `expired`
+  (`signin-expired`).
+- **Kept** in `/run/shipshape/signin-checks.json` (root, 0600, cleared at boot) for
+  the check's `every` (default 5m), so the status refresh does not run every check
+  each time; a changed `[status]` runs again, and an `unknown` result is not kept.
+  A kept result still turns `expiring` or `expired` as its `expires_at` comes.
+  `signin check` always runs the checks and keeps what it found. Built-in checks
+  run every time.
+
+`data`: `{ "signin": <file id>, "auth": { <key>: <auth entry, as in the status
+document> } }`. `messages`: one line per key (`gcloud: ok (you@example.com)`), then
+any check errors.
+
 ### Reacting to sign-ins
 
 The Ship reacts to sign-ins by itself (below). The only thing FleetLedger adds
@@ -497,7 +544,8 @@ Each time the status timer refreshes `/run/shipshape/status.json` (at
 least every 60 seconds), ship-ctl compares every `auth` service's state with the
 previous refresh:
 
-- a service that changed to `ok`: run `tools run` for the recipes waiting on it;
+- a service that changed to signed in (`ok`, or `expiring`): run `tools run` for
+  the recipes waiting on it;
 - `claude` changed to `ok`: then run `autostart` once;
 - `github` changed to `ok`: clone the repos that waited for it, then start just
   those agents (never one you stopped).
@@ -515,7 +563,7 @@ once.
 Applies a tooling bundle:
 
 1. Check `bundle.json` against `bundle-manifest.schema.json` and the required
-   entries (`seed.md`).
+   entries (`seed.md`), and that its sign-in files (`signins/`) load.
 2. Unpack it and switch `/opt/shipshape/current` to the new release.
 3. Run `ship-provision --converge`, then `apply`, then `tools run`.
 
@@ -726,7 +774,7 @@ Needs no root. `data`:
   "tooling": "0.1.0",
   "commit": "0123456789ab",
   "contracts": { "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1, "runtime": 1,
-                 "ssh-trust": 1, "net-summary": 1, "inbox": 1 }
+                 "ssh-trust": 1, "net-summary": 1, "inbox": 1, "signin": 1 }
 }
 ```
 
@@ -734,4 +782,6 @@ FleetLedger checks `contracts` before using a Ship and refuses (with a clear
 message) any major version it does not know. A Ship without `ssh-trust` or
 `net-summary` predates phase 3: FleetLedger skips certificates and network
 visibility for it until it is updated. A Ship without `inbox` predates the file
-inbox: `ship-fleet put` says to update it first.
+inbox: `ship-fleet put` says to update it first. A Ship without `signin` predates
+`ship-ctl signin check` and sign-in files in its bundle: FleetLedger checks a
+sign-in there with the file's own `[[check]]` commands.

@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/signin.schema.json",
+  "title": "Sign-in file (ship/signins/<id>.toml): how to sign a Ship in to a service, and how the Ship checks it",
+  "description": "One file per sign-in flow; the file name must be <id>.toml. FleetLedger reads it to drive the login on the Ship (mode, run, match, after, logout, scopes) and to build its sign-in registry (signin, check); the Ship reads the same file, from its tooling bundle, for its status check (status). A file's status key is its id with '-' as '_' (gcloud-adc checks auth.gcloud_adc). The tables secret, params and levels are reserved for later login modes and are refused until then.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "label", "mode", "run", "timeout", "match", "logout"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "The flow's id (ship-fleet login SHIP <id>, ship-ctl notify-signin <id>); equal to the file name."
+    },
+    "label": { "type": "string", "minLength": 1, "maxLength": 80, "description": "How FleetLedger names the flow." },
+    "mode": {
+      "enum": ["paste-back", "device-code"],
+      "description": "paste-back: open the link, approve, paste the code shown back (match.prompt). device-code: the tool shows a code to type at the link (match.code)."
+    },
+    "run": { "$ref": "#/$defs/command", "description": "The login command, run on the Ship as agent in a terminal." },
+    "timeout": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Seconds the flow waits for the sign-in." },
+    "after": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/command" },
+      "description": "Commands run as agent once the login finished, before the checks."
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "success"],
+      "description": "Regular expressions over the login's terminal output.",
+      "properties": {
+        "url": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string", "minLength": 1 },
+        "success": { "type": "string", "minLength": 1 },
+        "failure": { "type": "string", "minLength": 1 },
+        "send": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Fixed answers: pattern = text typed once when it appears."
+        }
+      }
+    },
+    "check": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The status keys this flow signs in, in order, each with the command FleetLedger runs over SSH after a login on a Ship whose ship-ctl has no `signin check` (older tooling). Without it, the flow signs in its own status key only.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service", "run"],
+        "properties": {
+          "service": { "$ref": "#/$defs/statusKey" },
+          "run": { "$ref": "#/$defs/command" },
+          "ok_json": { "$ref": "#/$defs/jsonPath" },
+          "account": { "type": "string", "pattern": "^(stdout|json:[A-Za-z0-9_.]+)$" },
+          "label": { "type": "string", "minLength": 1, "description": "How the Sign-ins page names this status key (default: the sign-in's label)." },
+          "short": { "type": "string", "minLength": 1, "description": "How the fleet table names it (default: label)." }
+        }
+      }
+    },
+    "signin": {
+      "description": "FleetLedger's sign-in registry: a sign-in people turn on or off per Ship (label, order), or a flow that signs in part of another one again (part_of). Without it the file is a flow only.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["label", "order"],
+          "properties": {
+            "label": { "type": "string", "minLength": 1 },
+            "order": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["part_of"],
+          "properties": { "part_of": { "$ref": "#/$defs/statusKey" } }
+        }
+      ]
+    },
+    "logout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run"],
+      "properties": { "run": { "$ref": "#/$defs/command" } }
+    },
+    "scopes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["add", "refresh", "remove"],
+      "description": "Extra scopes (GitHub): `add` is the flag run takes them with; `refresh` changes a signed-in token's scopes in place, with `add` and `remove` for the ones to add and drop.",
+      "properties": {
+        "add": { "$ref": "#/$defs/flag" },
+        "refresh": { "$ref": "#/$defs/command" },
+        "remove": { "$ref": "#/$defs/flag" }
+      }
+    },
+    "status": {
+      "description": "How the Ship checks this file's status key, as agent, for `ship-ctl status` and `ship-ctl signin check`. Either a built-in check in ship-ctl (builtin), or a command (run) read as an adapter (exit code, ok_json, account, expires_at) or as the native status line (format = \"shipshape\": one line of JSON, {\"shipshape_signin\": 1, \"state\": ..., \"account\": ..., \"expires_at\": ..., \"detail\": ...}). A command check has 5 seconds; its result is kept for `every` between status refreshes; a check that times out shows unknown.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["builtin"],
+          "properties": {
+            "builtin": { "enum": ["claude", "gcloud", "adc", "github"], "description": "A check written in ship-ctl (status.py)." },
+            "label": { "$ref": "#/$defs/statusLabel" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["run"],
+          "properties": {
+            "run": { "$ref": "#/$defs/command", "description": "Run with bash -c as agent, stdin empty. Only stdout is read (at most 64 KiB), and dropped once parsed." },
+            "label": { "$ref": "#/$defs/statusLabel" },
+            "every": { "$ref": "#/$defs/duration", "description": "How long a result is kept before the check runs again (default 5m; 0s: every refresh). `ship-ctl signin check` always runs it." },
+            "format": { "enum": ["adapter", "shipshape"], "description": "adapter (default): exit code, ok_json, account, expires_at. shipshape: the native status line." },
+            "ok_json": { "$ref": "#/$defs/jsonPath", "description": "stdout is JSON; signed in when the value at this path is true (or any non-empty value)." },
+            "account": {
+              "type": "string",
+              "pattern": "^(stdout|json:[A-Za-z0-9_.]+|re:.+)$",
+              "description": "The account: stdout (its first non-empty line), json:<path>, or re:<regular expression with one group> over stdout."
+            },
+            "expires_at": {
+              "type": "string",
+              "pattern": "^(json:[A-Za-z0-9_.]+|re:.+)$",
+              "description": "When the sign-in ends, as RFC 3339 or epoch seconds: json:<path> or re:<one group>. Report the sign-in's end, never a short-lived access token's (a tool renews those by itself)."
+            },
+            "expiring_within": { "$ref": "#/$defs/duration", "description": "Signed in, but ending within this: state expiring (default 24h)." },
+            "missing_exit": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1, "maximum": 255 },
+              "uniqueItems": true,
+              "description": "Exit codes that mean not signed in (missing); any other non-zero exit is error. Default: every non-zero exit is missing."
+            },
+            "discard_output": { "type": "boolean", "description": "true for a check whose output may hold a token: stdout and stderr go to /dev/null and only the exit code counts." },
+            "env": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+              "additionalProperties": { "type": "string", "maxLength": 1000 },
+              "description": "Extra environment for the check."
+            }
+          },
+          "allOf": [
+            {
+              "if": { "required": ["discard_output"], "properties": { "discard_output": { "const": true } } },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["ok_json"] },
+                    { "required": ["account"] },
+                    { "required": ["expires_at"] },
+                    { "required": ["format"], "properties": { "format": { "const": "shipshape" } } }
+                  ]
+                }
+              }
+            },
+            {
+              "if": { "required": ["format"], "properties": { "format": { "const": "shipshape" } } },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["ok_json"] },
+                    { "required": ["account"] },
+                    { "required": ["expires_at"] },
+                    { "required": ["missing_exit"] }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Where the tool keeps this sign-in on the Ship: documentation and checks only, never values.",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^~/[^\\u0000]{1,200}$" },
+          "uniqueItems": true,
+          "description": "Files or folders under the agent's home that hold the sign-in."
+        },
+        "store": {
+          "enum": ["file"],
+          "description": "Where the tool stores it: its own files. A password store (keyring) is refused: a Ship has no unlocked one, so pin the tool to its file store."
+        }
+      }
+    }
+  },
+  "anyOf": [{ "required": ["check"] }, { "required": ["status"] }],
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "paste-back" } } },
+      "then": { "properties": { "match": { "required": ["prompt"] } } }
+    },
+    {
+      "if": { "properties": { "mode": { "const": "device-code" } } },
+      "then": { "properties": { "match": { "required": ["code"] } } }
+    },
+    {
+      "if": { "required": ["signin"], "properties": { "signin": { "required": ["order"] } } },
+      "then": { "properties": { "id": { "pattern": "^[a-z][a-z0-9]{0,31}$" } } },
+      "description": "A sign-in of its own is named by its id in ships.toml (signins, [tag.*]): no '-'."
+    }
+  ],
+  "$defs": {
+    "command": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "flag": { "type": "string", "pattern": "^--[a-z][a-z-]{0,31}$" },
+    "statusKey": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" },
+    "statusLabel": { "type": "string", "minLength": 1, "maxLength": 80, "description": "How the Ship's attention items and notices name the status key (default: the file's label)." },
+    "jsonPath": { "type": "string", "pattern": "^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*$" },
+    "duration": { "type": "string", "pattern": "^[0-9]{1,6}[smhd]$" }
+  }
+}

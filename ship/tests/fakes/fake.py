@@ -866,7 +866,26 @@ def hc(s: dict, a: list[str]) -> int:
     return 2
 
 
+def example_cli(s: dict, a: list[str]) -> int:
+    """A toolkit's CLI ShipShape knows nothing about (sign-in file tests): what each
+    command line prints and exits with comes from scenario["example-cli"][" ".join(a)]
+    ({"out": text, "rc": code, "big": bytes of filler before out}). The environment
+    variables it was given are recorded under "env" in example-cli.jsonl."""
+    answer = s.get("example-cli", {}).get(" ".join(a))
+    with (FAKE / "example-cli.jsonl").open("a") as fh:
+        fh.write(json.dumps({"argv": a, "env": {k: v for k, v in os.environ.items()
+                                                if k.startswith("EXAMPLE_")}}) + "\n")
+    if answer is None:
+        return 2
+    if answer.get("big"):
+        sys.stdout.write("x" * answer["big"] + "\n")
+    if "out" in answer:
+        print(answer["out"])
+    return answer.get("rc", 0)
+
+
 HANDLERS = {
+    "example-cli": example_cli,
     "herdr": herdr,
     "hc": hc,
     "claude": claude,
@@ -899,6 +918,12 @@ HANDLERS = {
 def main() -> int:
     name = Path(sys.argv[0]).name
     args = sys.argv[1:]
+    if name == "example-cli":  # hangs outside the lock, so other fakes keep answering
+        hang = load().get("example-cli", {}).get(" ".join(args), {}).get("hang")
+        if hang:
+            import time
+
+            time.sleep(hang)
     with (FAKE / "lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with (FAKE / "calls.jsonl").open("a") as fh:

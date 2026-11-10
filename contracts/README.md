@@ -15,6 +15,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | ship-ctl command line | `ship-ctl-result.schema.json` | Ship (W5) | Fleet (W8, W9, W10) |
 | Seed ISO and tooling bundle | `bundle-manifest.schema.json` | Fleet (W3, `ship-fleet update`) | Ship: seed bootstrap, ship-provision, `ship-ctl converge` (W4, W5) |
 | Ship runtime (users, paths, units, sudo) | prose only | Ship (W4) | Fleet (W8, W9) |
+| Sign-in files (`ship/signins/<id>.toml`) | `signin.schema.json` | shared: the files travel in the tooling bundle | Fleet: the login concierge and sign-in registry (W9); Ship: ship-ctl status, `signin check`, `notify-signin` |
 | Catalogue recipes and profiles | `tool-recipe.schema.json`, `profile.schema.json` | Ship (W6) | Ship: ship-ctl tools (W5); Fleet: `ship-fleet tools`, `new --profile` (W3, W10) |
 | Pinned versions (`/versions.toml`) | `versions.schema.json` | shared | Ship (W4), Fleet (W3, W8) |
 | SSH certificates for a Ship (`ship-ctl ssh-trust` stdin) | `ssh-trust.schema.json` | Fleet: the certificate authority (phase 3) | Ship: ship-ctl |

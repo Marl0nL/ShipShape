@@ -19,7 +19,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import schema
+from . import schema, signincheck
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
@@ -331,7 +331,7 @@ def run_one(ctx: Context, inst: Installer, recipe: Recipe, prev: dict) -> Outcom
     waiting = []
     if needs:
         auth = probe_auth(ctx, needs)
-        waiting = [s for s in needs if auth[s]["state"] != "ok"]
+        waiting = [s for s in needs if not signincheck.signed_in(auth[s])]
     after_key = f"{recipe.digest}"
     if recipe.after and not waiting and prev.get("after_done") != after_key:
         for command in recipe.after:

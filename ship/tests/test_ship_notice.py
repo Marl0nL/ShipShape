@@ -189,7 +189,7 @@ def test_a_ship_without_autostart_messages_nobody(ship):
 ])
 def test_the_account_in_the_line_carries_nothing_but_name_characters(printed, shown):
     assert notice.clean_account(printed) == shown
-    line = notice.text("github", notice.clean_account(printed))
+    line = notice.text("GitHub", notice.clean_account(printed))
     assert "\n" not in line and '"' not in line and "\x1b" not in line
 
 

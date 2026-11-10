@@ -22,6 +22,7 @@ REPO = Path(__file__).resolve().parents[2]
 SHIP = REPO / "ship"
 FAKE = Path(__file__).resolve().parent / "fakes" / "fake.py"
 FAKE_COMMANDS = [
+    "example-cli",
     "herdr",
     "hc",
     "claude",
@@ -81,7 +82,7 @@ def make_bundle(dest: Path, catalogue: bool = False) -> Path:
     With `catalogue`, the real recipes, profiles and skills come along; otherwise
     tools/ and profiles/ start empty for a test to fill.
     """
-    parts = ["lib", "bin", "schemas", "files"]
+    parts = ["lib", "bin", "schemas", "files", "signins"]
     if catalogue:
         parts += ["tools", "profiles", "skills"]
     for part in parts:

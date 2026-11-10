@@ -147,7 +147,7 @@ ship-fleet logout ship-01 all
 - **"No sign-in link appeared" / "The prompt for the code did not appear":** the
   tool changed its wording. Answer `y` to take over the Ship's terminal and
   finish by hand; FleetLedger still checks the account afterwards. Report it so
-  the provider file (`fleetledger/fleetledger/providers/<service>.toml`) can be
+  the sign-in file (`ship/signins/<service>.toml`) can be
   updated.
 - **"The sign-in code expired" / "window closed":** run the login again and paste
   sooner.

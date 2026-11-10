@@ -1,18 +1,21 @@
-"""The sign-in registry: every sign-in FleetLedger knows, from the provider files.
+"""The sign-in registry: every sign-in FleetLedger knows, from the sign-in files.
 
-Each provider file (fleetledger/providers/<id>.toml, concierge/providers.py) is one
-sign-in flow. Its optional [signin] table says how people see it:
+Each sign-in file (ship/signins/<id>.toml, contracts/signin.schema.json; parsed for
+logins by concierge/providers.py) is one sign-in flow. The Ship reads the same files
+from its tooling bundle for its status checks (ship/lib/shipctl/signins.py). A file's
+optional [signin] table says how people see it:
 
 - `label` and `order`: the flow is a sign-in people turn on or off per Ship
   (ships.toml ship.<name>.signins, tag accounts), named so and listed in that order;
 - `part_of = "<id>"`: the flow only signs in part of another sign-in again, as
   gcloud-adc does for gcloud. It is no choice of its own.
 
-A sign-in covers the status auth keys its own flow checks ([[check]] service, in
-order); a check's `label` and `short` name that key on the Sign-ins page and in the
-fleet table (default: the sign-in's label). Every other list (choices, status keys,
+A sign-in covers the status auth keys its own flow signs in ([[check]] service, in
+order; without [[check]], its own key: its id with '-' as '_'); a check's `label` and
+`short` name that key on the Sign-ins page and in the fleet table (default: the
+sign-in's label). Every other list (choices, status keys,
 labels, which flow signs in which key) is derived here, so adding a sign-in is one
-file. Only the provider files are read: this module imports no other FleetLedger
+file. Only the sign-in files are read: this module imports no other FleetLedger
 module, so anything may import it.
 """
 
@@ -26,7 +29,9 @@ from pathlib import Path
 
 from fleetledger.errors import ConfigError
 
-PROVIDERS_DIR = Path(__file__).resolve().parent / "providers"
+# In the checkout FleetLedger runs from (it is installed editable, fleetledger/install.sh),
+# beside the rest of ship/ that goes into tooling bundles.
+SIGNINS_DIR = Path(__file__).resolve().parents[2] / "ship" / "signins"
 # A sign-in id: what ships.toml, tags and status auth keys call it.
 ID = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 
@@ -125,14 +130,20 @@ def _read(path: Path) -> dict:
         raise ConfigError(f"{path}: {exc}") from exc
 
 
-def build(folder: Path = PROVIDERS_DIR) -> Registry:
-    """The registry from a folder of provider files."""
+def checked(file_id: str, doc: dict) -> list[dict]:
+    """The status keys a sign-in file signs in, as its [[check]] entries (or its own
+    key, an entry with only `service`, when it has none)."""
+    return doc.get("check") or [{"service": file_id.replace("-", "_")}]
+
+
+def build(folder: Path = SIGNINS_DIR) -> Registry:
+    """The registry from a folder of sign-in files."""
     try:
         return _build(folder)
     except (KeyError, TypeError) as exc:
-        # The provider schema (concierge/providers.py) says what a file needs.
-        raise ConfigError(f"{folder}: a provider file lacks or misshapes {exc} "
-                          "(see concierge/providers.py SCHEMA).") from exc
+        # The contract (contracts/signin.schema.json) says what a file needs.
+        raise ConfigError(f"{folder}: a sign-in file lacks or misshapes {exc} "
+                          "(see contracts/signin.schema.json).") from exc
 
 
 def _build(folder: Path) -> Registry:
@@ -162,7 +173,7 @@ def _build(folder: Path) -> Registry:
         label = doc["signin"]["label"]
         sub = sorted(parts.get(pid, []))
         keys = []
-        for check in doc["check"]:
+        for check in checked(pid, doc):
             key = check["service"]
             if key in seen:
                 raise ConfigError(f"{folder / (pid + '.toml')}: status key '{key}' is "
@@ -170,8 +181,8 @@ def _build(folder: Path) -> Registry:
             seen[key] = pid
             keys.append(key)
             # The flow that signs in this key alone, if one does; else the sign-in's own.
-            alone = next((p for p in sub if [c["service"] for c in docs[p]["check"]] == [key]),
-                         pid)
+            alone = next((p for p in sub
+                          if [c["service"] for c in checked(p, docs[p])] == [key]), pid)
             name = check.get("label", label)
             services.append(Service(key=key, label=name, short=check.get("short", name),
                                     signin=pid, provider=alone))
@@ -181,5 +192,5 @@ def _build(folder: Path) -> Registry:
 
 @cache
 def registry() -> Registry:
-    """The registry from FleetLedger's own provider files."""
+    """The registry from the checkout's sign-in files."""
     return build()

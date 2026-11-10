@@ -109,7 +109,8 @@ def test_providers_load():
 
 def test_provider_schema_rejects_bad_files(tmp_path):
     bad = tmp_path / "x.toml"
-    bad.write_text('id = "x"\nlabel = "X"\nmode = "paste-back"\nrun = "x"\ntimeout = 60\n'
+    bad.write_text('schema = 1\nid = "x"\nlabel = "X"\nmode = "paste-back"\nrun = "x"\n'
+                   'timeout = 60\n'
                    '[match]\nurl = "u"\nsuccess = "s"\n[[check]]\nservice = "x"\nrun = "x"\n'
                    '[logout]\nrun = "x"\n')
     with pytest.raises(Exception, match="prompt"):
@@ -198,7 +199,8 @@ def test_typed_code_gets_its_verdict_past_the_window(monkeypatch, tmp_path):
 def test_fixed_prompts_are_answered_once(monkeypatch, tmp_path):
     toml = tmp_path / "demo.toml"
     toml.write_text(
-        'id = "demo"\nlabel = "Demo"\nmode = "device-code"\nrun = "demo"\ntimeout = 60\n'
+        'schema = 1\nid = "demo"\nlabel = "Demo"\nmode = "device-code"\nrun = "demo"\n'
+        'timeout = 60\n'
         "[match]\nurl = 'https://example\\.com/device'\ncode = 'code: (\\S+)'\n"
         "success = 'Done'\n[match.send]\n'Press Enter' = \"\\r\"\n"
         '[[check]]\nservice = "demo"\nrun = "true"\n[logout]\nrun = "true"\n'
@@ -661,3 +663,172 @@ def test_scope_flags_are_never_free_text():
     assert gh.takes_scopes and not provider("claude").takes_scopes
     assert gh.with_scopes([]) is gh
     assert gh.with_scopes(["workflow; rm -rf ~"]).run.endswith("--scopes 'workflow; rm -rf ~'")
+
+
+# --- the check after a sign-in goes through the Ship (ship-ctl signin check) ------
+
+SIGNIN_CHECKS: list[list[str]] = []  # ship-ctl signin check calls the fake Ship received
+
+
+def new_ship_side(auth: dict, ran: list[str], *, code: str | None = None):
+    """A fake Ship whose ship-ctl has `signin check` (the signin contract): it answers
+    with `auth`, or fails with `code`. Every other command run over SSH lands in ran."""
+    from fleetledger.shipctl import KNOWN_CONTRACTS
+
+    def handler(ship, cmd, inp):
+        if cmd == ["true"]:
+            return 0, b"", ""
+        if cmd[:3] != ["sudo", "-n", "/usr/local/bin/ship-ctl"]:
+            ran.append(cmd[-1])
+            return 0, b"", ""
+        verb = cmd[3]
+        base = {"schema": "shipshape.ship-ctl-result/1", "command": verb, "ok": True,
+                "changed": [], "messages": [], "error": None}
+        if verb == "version":
+            contracts = {**KNOWN_CONTRACTS, "signin": 1}
+            return 0, json.dumps({**base, "data": {"tooling": "0.1.0",
+                                                   "commit": "0123456789ab",
+                                                   "contracts": contracts}}), ""
+        if verb == "signin":
+            SIGNIN_CHECKS.append(cmd[3:])
+            if code:
+                return 2, json.dumps({**base, "ok": False,
+                                      "error": {"code": code, "message": "no"}}), ""
+            return 0, json.dumps({**base, "data": {"signin": cmd[5], "auth": auth}}), ""
+        if verb == "notify-signin":
+            return 0, json.dumps({**base, "data": {"service": cmd[4], "account": None,
+                                                   "sent": [], "skipped": []}}), ""
+        raise AssertionError(cmd)
+
+    return handler
+
+
+def entry(state, account=None):
+    return {"state": state, "account": account, "checked_at": "2026-01-01T00:00:00Z"}
+
+
+def test_a_new_ship_checks_the_sign_in_itself(store, fake_ssh, monkeypatch, tmp_path):
+    """No claude auth status over SSH: the Ship's own check, as its status runs it."""
+    SIGNIN_CHECKS.clear()
+    inv = store.load()
+    ran: list[str] = []
+    ssh = RecordingSSH(fake_ssh(new_ship_side({"claude": entry("ok", "work@example.com")},
+                                              ran)), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("claude"),
+                             Prompter(code=CLAUDE_CODE),
+                             spawner=fake_spawner("claude.txt", monkeypatch, tmp_path))
+    assert result.outcome == "ok" and result.account == "work@example.com"
+    assert SIGNIN_CHECKS == [["signin", "check", "claude", "--json"]]
+    assert ran == []  # no [[check]] command ran over SSH
+    assert result.checks[0].state == "ok"
+
+
+def test_the_ships_check_flags_a_wrong_account(store, fake_ssh, monkeypatch, tmp_path):
+    inv = store.load()
+    ran: list[str] = []
+    auth = {"gcloud": entry("ok", "you@example.com"), "gcloud_adc": entry("ok")}
+    ssh = RecordingSSH(fake_ssh(new_ship_side(auth, ran)), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("gcloud"),
+                             Prompter(code=GCLOUD_CODE),
+                             spawner=fake_spawner("gcloud.txt", monkeypatch, tmp_path))
+    assert result.outcome == "wrong-account"
+    assert [(c.service, c.signed_in, c.matches) for c in result.checks] == [
+        ("gcloud", True, False), ("gcloud_adc", True, None)]
+
+
+@pytest.mark.parametrize("auth,code,words", [
+    ({"claude": entry("missing")}, None, "the check says it is not signed in"),
+    ({"claude": entry("unknown")}, None, "the Ship could not check claude"),
+    ({}, None, "the Ship could not check claude"),  # the Ship did not name it
+    ({}, "internal", "the Ship could not check claude"),
+])
+def test_a_ship_that_cannot_confirm_fails_the_sign_in(store, fake_ssh, monkeypatch, tmp_path,
+                                                      auth, code, words):
+    inv = store.load()
+    ssh = RecordingSSH(fake_ssh(new_ship_side(auth, [], code=code)), store)
+    result = concierge.login(ssh, inv, inv.ship("ship-01"), provider("claude"),
+                             Prompter(code=CLAUDE_CODE),
+                             spawner=fake_spawner("claude.txt", monkeypatch, tmp_path))
+    assert result.outcome == "failed" and words in result.detail
+
+
+def test_an_expiring_sign_in_counts_as_signed_in(store, fake_ssh):
+    inv = store.load()
+    ssh = fake_ssh(new_ship_side({"claude": {**entry("expiring", "work@example.com"),
+                                             "expires_at": "2026-01-02T00:00:00Z"}}, []))
+    [check] = concierge.verify(ssh, inv, inv.ship("ship-01"), provider("claude"))
+    assert check.signed_in and check.matches is True and check.state == "expiring"
+
+
+def test_the_account_from_the_ship_is_cleaned(store, fake_ssh):
+    inv = store.load()
+    ssh = fake_ssh(new_ship_side({"github": entry("ok", "\x1b[1mexample-user\x1b[0m")}, []))
+    [check] = concierge.verify(ssh, inv, inv.ship("ship-01"), provider("github"))
+    assert check.account == "example-user"
+
+
+EXAMPLES = HERE.parents[1] / "contracts" / "examples" / "signin"
+
+
+def test_a_toolkit_sign_in_is_checked_by_the_ship(store, fake_ssh):
+    """A file without [[check]]: its own key, checked only through ship-ctl."""
+    SIGNIN_CHECKS.clear()
+    inv = store.load()
+    native = providers.parse(EXAMPLES / "example-native.toml")
+    assert native.services == ["example_native"] and native.checks == ()
+    ssh = fake_ssh(new_ship_side({"example_native": entry("ok", "you@example.com")}, []))
+    [check] = concierge.verify(ssh, inv, inv.ship("ship-01"), native)
+    assert check.service == "example_native" and check.signed_in
+    assert SIGNIN_CHECKS == [["signin", "check", "example-native", "--json"]]
+
+
+def test_an_older_ship_cannot_check_a_toolkit_sign_in(store, fake_ssh):
+    inv = store.load()
+    native = providers.parse(EXAMPLES / "example-native.toml")
+    ssh = fake_ssh(ship_side({}))  # ship-ctl version without the signin contract
+    checks = concierge.verify(ssh, inv, inv.ship("ship-01"), native)
+    assert [c.state for c in checks] == [concierge.TOO_OLD]
+    assert "update it (ship-fleet update)" in concierge.not_signed_in_detail(checks)
+
+
+def test_an_older_ship_still_runs_the_files_checks(store, fake_ssh):
+    """Built-in behaviour unchanged on a Ship whose ship-ctl predates signin check."""
+    inv = store.load()
+    ssh = fake_ssh(ship_side({"claude auth status --json": (
+        0, json.dumps({"loggedIn": True, "email": "work@example.com"}), "")}))
+    [check] = concierge.verify(ssh, inv, inv.ship("ship-01"), provider("claude"))
+    assert check.signed_in and check.account == "work@example.com" and check.state is None
+
+
+def test_provider_files_are_the_shared_sign_in_files():
+    from fleetledger import signinreg
+
+    assert providers.PROVIDERS_DIR == signinreg.SIGNINS_DIR
+    assert providers.PROVIDERS_DIR == HERE.parents[1] / "ship" / "signins"
+    assert set(providers.load_all()) == {"claude", "gcloud", "gcloud-adc", "github"}
+
+
+@pytest.mark.parametrize("change,message", [
+    (('store = "file"', 'store = "keyring"'), "no unlocked password store"),
+    (('account = "json:account.email"', "account = 're:none'"), "exactly one group"),
+    (("[logout]", "[levels]\ndefault = \"x\"\n\n[logout]"), "levels"),
+])
+def test_sign_in_files_are_refused_like_on_the_ship(tmp_path, change, message):
+    text = (EXAMPLES / "exampledocs.toml").read_text().replace(*change)
+    path = tmp_path / "exampledocs.toml"
+    path.write_text(text)
+    with pytest.raises(Exception, match=message):
+        providers.parse(path)
+
+
+def test_a_ship_without_this_file_gets_the_files_checks(store, fake_ssh):
+    """The Ship has signin check, but its bundle predates this sign-in file."""
+    inv = store.load()
+    ran: list[str] = []
+    ssh = fake_ssh(new_ship_side({}, ran, code="usage"))
+    concierge.verify(ssh, inv, inv.ship("ship-01"), provider("claude"))
+    assert ran == ["claude auth status --json"]
+    native = providers.parse(EXAMPLES / "example-native.toml")
+    checks = concierge.verify(fake_ssh(new_ship_side({}, [], code="usage")), inv,
+                              inv.ship("ship-01"), native)
+    assert [c.state for c in checks] == [concierge.TOO_OLD]

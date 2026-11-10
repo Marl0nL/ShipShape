@@ -5,6 +5,7 @@
 # terminal for its cursor position (CSI 6n) and wait for an answer that only
 # a real terminal emulator gives. With prompts off, gh prints the code and the
 # link and goes straight to polling (as recorded in phase 0 spike S5).
+schema = 1
 id = "github"
 label = "GitHub"
 mode = "device-code"
@@ -26,6 +27,15 @@ failure = '(?i)(?:failed to authenticate|authentication failed|expired_token)'
 service = "github"
 run = "gh api user --jq .login"
 account = "stdout"
+
+# The Ship's check: account and token scopes from gh auth status.
+[status]
+builtin = "github"
+
+# Where the sign-in lives on the Ship (docs/security.md): documentation only.
+[secrets]
+paths = ["~/.config/gh/hosts.yml"]
+store = "file"
 
 [logout]
 run = "gh auth logout --hostname github.com"

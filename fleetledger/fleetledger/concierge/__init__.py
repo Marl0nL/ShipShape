@@ -3,7 +3,8 @@
 For each service FleetLedger runs the tool's own no-browser sign-in on the Ship,
 as agent, in a terminal over SSH; shows you the link (and device code); types
 the code you paste into that terminal; then checks the account now signed in
-against the one the Ship's tags expect. Tokens are created on the Ship and stay
+against the one the Ship's tags expect, by asking the Ship (`ship-ctl signin
+check`, the same check its status runs). Tokens are created on the Ship and stay
 there; only the one-time code crosses the network. The audit log records who,
 what and when, never a secret.
 """
@@ -34,6 +35,7 @@ class CheckResult:
     account: str | None
     matches: bool | None  # None: no account, or no expectation
     expected: tuple[str, ...] = ()
+    state: str | None = None  # the Ship's word for it (ok, missing, unknown, ...), if it said
 
 
 @dataclass
@@ -86,8 +88,69 @@ def run_check(ssh: SSH, inventory: Inventory, ship: Ship, check: Check) -> Check
     return CheckResult(check.service, signed_in, account, matches, tuple(sorted(expected.accounts)))
 
 
+# ship-ctl version's contracts: a Ship that lists this has `ship-ctl signin check`.
+SIGNIN_CHECK = ("signin", 1)
+TOO_OLD = "too-old"  # CheckResult.state: the Ship cannot check this sign-in
+
+
 def verify(ssh: SSH, inventory: Inventory, ship: Ship, provider: Provider) -> list[CheckResult]:
+    """Is the Ship signed in, and as whom, for each status key the flow signs in?
+
+    The Ship answers (`ship-ctl signin check`): it runs the check its status runs, so
+    this, `ship-ctl status` and the Sign-ins page cannot disagree. A Ship whose
+    ship-ctl predates that gets the file's [[check]] commands over SSH, as before."""
+    ctl = ShipCtl(ssh, ship)
+    try:
+        ctl.ensure_compatible()
+        asks = ctl.contracts.get(SIGNIN_CHECK[0]) == SIGNIN_CHECK[1]
+    except FleetError:
+        asks = False
+    if asks:
+        try:
+            done = ctl.call("signin", "check", provider.id, timeout=90)
+        except FleetError as exc:
+            # usage: the Ship's bundle predates this sign-in file (its checks follow).
+            if getattr(exc, "code", None) != "usage" or not provider.checks:
+                state = TOO_OLD if getattr(exc, "code", None) == "usage" else "error"
+                return [CheckResult(key, False, None, None, state=state)
+                        for key in provider.keys]
+        else:
+            return from_ship(inventory, ship, provider, done.data)
+    if not provider.checks:
+        return [CheckResult(key, False, None, None, state=TOO_OLD) for key in provider.keys]
     return [run_check(ssh, inventory, ship, c) for c in provider.checks]
+
+
+def from_ship(inventory: Inventory, ship: Ship, provider: Provider,
+              data: dict) -> list[CheckResult]:
+    """CheckResults from `ship-ctl signin check` data ({"signin", "auth": {key: entry}})."""
+    auth = data.get("auth") if isinstance(data, dict) else None
+    auth = auth if isinstance(auth, dict) else {}
+    out = []
+    for key in provider.keys:
+        entry = auth.get(key) if isinstance(auth.get(key), dict) else {}
+        state = entry.get("state") if isinstance(entry.get("state"), str) else "unknown"
+        signed_in = state in ("ok", "expiring")
+        account = entry.get("account") if signed_in else None
+        account = (clean(account).strip()[:254] or None) if isinstance(account, str) else None
+        expected = inventory.expected_account(ship, key)
+        out.append(CheckResult(key, signed_in, account,
+                               expected.matches(account) if signed_in else None,
+                               tuple(sorted(expected.accounts)), state=state))
+    return out
+
+
+def not_signed_in_detail(checks: list[CheckResult]) -> str:
+    """Why a finished sign-in did not check out, in words."""
+    old = [c.service for c in checks if c.state == TOO_OLD]
+    if old:
+        return (f"The sign-in finished, but this Ship's tooling cannot check {', '.join(old)}: "
+                "update it (ship-fleet update), then look at its status.")
+    unsure = [c.service for c in checks if c.state in ("unknown", "error")]
+    if unsure:
+        return (f"The sign-in finished, but the Ship could not check {', '.join(unsure)} "
+                "(see ship-fleet status).")
+    return "The sign-in finished, but the check says it is not signed in."
 
 
 def _outcome(checks: list[CheckResult]) -> str:
@@ -123,7 +186,7 @@ def login(
         result.checks = verify(ssh, inventory, ship, provider)
         result.outcome = _outcome(result.checks)
         if result.outcome == "failed" and not result.detail:
-            result.detail = "The sign-in finished, but the check says it is not signed in."
+            result.detail = not_signed_in_detail(result.checks)
     audit.record(ship.name, "login", provider.id, result.outcome, result.account)
     if result.outcome == "ok":
         result.notes += notify_core_agents(ssh, ship, provider)

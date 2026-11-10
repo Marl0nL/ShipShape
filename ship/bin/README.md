@@ -16,7 +16,8 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 | `languard.py` | the LAN guard: renders, checks (`nft -c`) and loads the `inet shipshape_lan_guard` table, enables its boot unit |
 | `autostart.py` | starts `[[autostart]]` agents that are not running |
 | `notice.py` | `notify-signin`: tells the `[[autostart]]` agents, and no others, that a sign-in has completed |
-| `signins.py` | the sign-in registry: the status auth keys (label, built-in check) and the services `notify-signin` takes |
+| `signins.py` | the sign-in registry, from the bundle's sign-in files (`signins/*.toml`, shared with FleetLedger): the status auth keys, how each is checked, the flows `notify-signin` and `signin check` take |
+| `signincheck.py` | the sign-in checks: built-in ones, or a command read as an adapter or as the native status line; 5 s timeout, capped output, results kept for `every`, expiry |
 | `naming.py` | the Claude session name for each agent (`<prefix>-<agent>`): the one place to change how it is applied |
 | `tools.py` | the catalogue runner (`contracts/tools.md`) |
 | `converge.py` | switches to a new tooling bundle, rolling back on failure |
