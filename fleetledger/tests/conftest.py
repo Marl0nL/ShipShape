@@ -32,6 +32,26 @@ def no_real_keyring(monkeypatch):
     monkeypatch.setattr(secret_store, "get_keyring", lambda: NoKeyring())
 
 
+@pytest.fixture(autouse=True)
+def fast_keys(monkeypatch):
+    """Managed keys made with 1 bcrypt round instead of 16, and no pause when a
+    pexpect-driven ssh-keygen or ssh-add closes: the same steps, much faster (as
+    test_vault.py's `fast` lowers the vault's scrypt cost)."""
+    from fleetledger import keys
+
+    monkeypatch.setattr(keys, "KDF_ROUNDS", 1)
+    spawn = keys._spawn
+
+    def quick(*args, **kwargs):
+        child = spawn(*args, **kwargs)
+        for proc in (child, child.ptyproc):
+            proc.delayafterclose = 0
+            proc.delayafterterminate = 0
+        return child
+
+    monkeypatch.setattr(keys, "_spawn", quick)
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """FleetLedger config/data/runtime dirs under tmp, with throwaway keys."""

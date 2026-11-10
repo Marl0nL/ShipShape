@@ -45,6 +45,9 @@ ITEM_PREFIX = "key-passphrase:"
 PASSPHRASE_DIR = "key-passphrases"
 AGENT_SOCKET = "agent.sock"
 TIMEOUT = 30
+# bcrypt rounds that protect a managed key's passphrase: ssh-keygen's own default,
+# written out so tests can lower it (each round costs every open of the key).
+KDF_ROUNDS = 16
 SWITCH_HINT = ("Unlock your keyring (log in to your desktop session), or load the key yourself: "
                "ssh-add <key>.")
 KEY_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -137,7 +140,8 @@ def _finish(child, what: str) -> None:
 def _keygen_new(path: Path, comment: str, passphrase: str) -> None:
     import pexpect
 
-    child = _spawn(["ssh-keygen", "-q", "-t", "ed25519", "-C", comment, "-f", str(path)])
+    child = _spawn(["ssh-keygen", "-q", "-t", "ed25519", "-a", str(KDF_ROUNDS), "-C", comment,
+                    "-f", str(path)])
     for _ in range(2):  # "Enter passphrase", then "Enter same passphrase again"
         if child.expect([r"(?i)passphrase.*:", pexpect.EOF]) != 0:
             raise FleetError("ssh-keygen did not ask for a passphrase.")
@@ -149,7 +153,7 @@ def _keygen_rekey(path: Path, old: str, new: str) -> None:
     """ssh-keygen -p: re-encrypt path from old (maybe empty) to new."""
     import pexpect
 
-    child = _spawn(["ssh-keygen", "-p", "-f", str(path)])
+    child = _spawn(["ssh-keygen", "-p", "-a", str(KDF_ROUNDS), "-f", str(path)])
     sent_new = 0
     while True:
         index = child.expect([r"(?i)old passphrase.*:", r"(?i)new passphrase.*:",
