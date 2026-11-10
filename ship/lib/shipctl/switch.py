@@ -89,6 +89,23 @@ def _systemctl(ctx: Context, *argv: str, agent: bool = False) -> None:
         raise Failed(f"{' '.join(full)} failed: {why[:200]}")
 
 
+def _swap_units(ctx: Context, frm: Runtime, to: Runtime) -> None:
+    """The boot units say `to`, and its unit runs and answers: frm's unit is
+    disabled and, unless frm stays running when left (herdr-core), stopped."""
+    _systemctl(ctx, "--global", "disable", frm.unit)
+    _systemctl(ctx, "--global", "enable", to.unit)
+    if not frm.stays_running_when_left:
+        _systemctl(ctx, "stop", frm.unit, agent=True)
+    _systemctl(ctx, "start", to.unit, agent=True)
+    if not wait_until(ctx, SERVER_WAIT_S, lambda: to.agents()[1] is not None):
+        raise Failed(f"{to.kind} did not answer after {to.unit} started")
+
+
+def _sentence(message: str) -> str:
+    """message as the first line of the result: capitalised, with a full stop."""
+    return message[0].upper() + message[1:] + "."
+
+
 def _new_ship(ship: ShipToml, target: str) -> ShipToml:
     doc = copy.deepcopy(ship.doc)
     doc["runtime"] = target
@@ -272,13 +289,7 @@ class Switch:
         self.doc["runtime"] = to.kind
         self.save()
         self.units_changed = True
-        _systemctl(ctx, "--global", "disable", frm.unit)
-        _systemctl(ctx, "--global", "enable", to.unit)
-        if not frm.stays_running_when_left:
-            _systemctl(ctx, "stop", frm.unit, agent=True)
-        _systemctl(ctx, "start", to.unit, agent=True)
-        if not wait_until(ctx, SERVER_WAIT_S, lambda: to.agents()[1] is not None):
-            raise Failed(f"{to.kind} did not answer after {to.unit} started")
+        _swap_units(ctx, frm, to)
 
     # --- 6. relaunch --------------------------------------------------------------------
     def running_on(self, rt: Runtime) -> set[str] | None:
@@ -522,7 +533,7 @@ class Switch:
                            "message": message[:300]})
             self.save()
         data = self.result(outcome, left)
-        messages = [message[0].upper() + message[1:] + ".", *self.notes]
+        messages = [_sentence(message), *self.notes]
         if outcome == "switched":
             messages.append(f"Each agent continues its conversation on {self.target}, in its "
                             "own mode. On each laptop that attaches to this Ship, install the "
@@ -555,13 +566,7 @@ class Switch:
         started = utc_now()
         try:
             apply.herdr_resume_off(ctx)
-            _systemctl(ctx, "--global", "disable", other.unit)
-            _systemctl(ctx, "--global", "enable", rt.unit)
-            if not other.stays_running_when_left:
-                _systemctl(ctx, "stop", other.unit, agent=True)
-            _systemctl(ctx, "start", rt.unit, agent=True)
-            if not wait_until(ctx, SERVER_WAIT_S, lambda: rt.agents()[1] is not None):
-                raise Failed(f"{rt.kind} did not answer after {rt.unit} started")
+            _swap_units(ctx, other, rt)
             _, live, _ = rt.agents()
             _, messages, _ = record.upkeep(ctx, self.ship, rt, doc, live or [], "ready")
             outcome = "repaired"
@@ -572,7 +577,7 @@ class Switch:
         _history(doc, {"at": started, "from": rt.kind, "to": rt.kind, "outcome": outcome,
                        "forced": self.force, "agents": 0, "message": message[:300]})
         self.save()
-        messages = [message[0].upper() + message[1:] + ".", *messages]
+        messages = [_sentence(message), *messages]
         if outcome == "repaired":
             return self.result(outcome, []), [f"runtime: {rt.kind}"], messages
         raise CtlError("switch-failed", message[:1000]).with_data(
