@@ -937,7 +937,7 @@ def switch_runtime(
     # The reboot check's rule, seen from here: every agent back, in its mode.
     after_doc = _require_status(_fetch(fleet, inventory, ship))
     now = after_doc["herdr"].get("runtime", "herdr")
-    want = target if outcome in ("switched", "already") else current
+    want = target if outcome in ("switched", "already", "repaired") else current
     after = agent_modes(after_doc)
     checks = [f"the Ship runs {now}, not {want}"] if now != want else []
     checks += [f"agent {n} is not running" for n in sorted(expected) if n not in after]
@@ -947,6 +947,8 @@ def switch_runtime(
     same = len(expected) - sum(1 for n in expected if after.get(n) != expected[n])
     summary = {
         "already": f"already on {target}",
+        "repaired": f"already on {target}, which was not running cleanly: started again; "
+                    f"{same}/{len(expected)} agents running in their modes",
         "switched": f"moved from {current} to {target}; {same}/{len(expected)} agents "
                     "running in their modes",
         "rolled-back": f"the switch to {target} failed and was rolled back to {current}; "

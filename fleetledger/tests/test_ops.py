@@ -280,7 +280,8 @@ class SimShip:
         if self.switch == "refused":
             return 1, json.dumps(ctl_result("runtime", ok=False, error={
                 "code": "agent-busy", "message": "not every agent is idle: main (working)"})), ""
-        outcome = "already" if frm == target else self.switch
+        outcome = self.switch if self.switch == "repaired" else (
+            "already" if frm == target else self.switch)
         if outcome == "switched":
             self.runtime = target
         if self.switch_drops:
@@ -289,7 +290,7 @@ class SimShip:
                 "runtime": self.runtime, "remote_control": "on",
                 "agents": [{"name": n, "mode": m, "was": "idle", "mode_now": m}
                            for n, m in self.agents.items()], "problems": []}
-        if outcome in ("switched", "already"):
+        if outcome in ("switched", "already", "repaired"):
             return 0, json.dumps(ctl_result("runtime", data=data, changed=[])), ""
         doc = ctl_result("runtime", ok=False, data=data, error={
             "code": "switch-failed", "message": f"the switch to {target} failed"})
@@ -1468,6 +1469,17 @@ def test_switch_runtime_reports_a_refusal(world):
     sim.runtime, sim.switch = "herdr", "refused"
     outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "core")
     assert not outcome.ok and outcome.summary.startswith("not switched: not every agent")
+
+
+def test_switch_runtime_reports_a_repair(world):
+    """Switching to the runtime the Ship names, after a switch that did not finish:
+    the Ship starts it again and resumes its agents."""
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.switch = "herdr", "repaired"
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "herdr")
+    assert outcome.ok, outcome
+    assert outcome.summary.startswith("already on herdr, which was not running cleanly")
+    assert outcome.data["runtime_after"] == "herdr"
 
 
 def test_switch_runtime_checks_from_here_too(world):

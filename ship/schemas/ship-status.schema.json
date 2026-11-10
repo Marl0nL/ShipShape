@@ -484,7 +484,7 @@
                 "from": { "enum": ["herdr", "core"] },
                 "to": { "enum": ["herdr", "core"] },
                 "outcome": {
-                  "enum": ["in-progress", "switched", "rolled-back", "rollback-failed", "interrupted"],
+                  "enum": ["in-progress", "switched", "rolled-back", "rollback-failed", "interrupted", "repaired"],
                   "description": "As agent-record.schema.json switches[].outcome; in-progress: running now (message is its step), or stopped part way when old (attention runtime-switch-unfinished)."
                 },
                 "forced": { "type": "boolean" },

@@ -95,9 +95,17 @@ def herdr(s: dict, a: list[str]) -> int:
             if ag["settle_in"] <= 0:
                 del ag["settle_in"]
                 ag["agent_status"] = "idle"
-        if settling:
+        leaving = [ag for ag in agents if "exit_in" in ag]
+        for ag in leaving:  # late_exit: claude takes this many polls to act on /exit
+            ag["exit_in"] -= 1
+            if ag["exit_in"] <= 0:
+                agents.remove(ag)
+                h.setdefault("exited", []).append(ag)
+                end_session(ag)
+        if settling or leaving:
             save(s)
-        shown = [{k: v for k, v in ag.items() if k != "settle_in"} for ag in agents]
+        shown = [{k: v for k, v in ag.items() if k not in ("settle_in", "exit_in")}
+                 for ag in agents]
         out({"id": "cli", "result": {"type": "agent_list", "agents": shown}})
         return 0
     if a[:2] == ["pane", "list"]:
@@ -213,7 +221,9 @@ def herdr(s: dict, a: list[str]) -> int:
             print(json.dumps({"error": {"code": code, "message": "x"}}), file=sys.stderr)
             return 1
         h.setdefault("prompts", []).append(a[2:4])
-        if ag.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
+        if ag.get("name") in h.get("late_exit", {}):
+            ag.setdefault("exit_in", h["late_exit"][ag["name"]])
+        elif ag.get("name") not in h.get("stubborn", []) + h.get("exit_on_ctrl_c", []):
             agents.remove(ag)  # claude exits; herdr clears the name with it
             h.setdefault("exited", []).append(ag)
             end_session(ag)

@@ -90,16 +90,25 @@ and the boot unit are as they were. Fix what it names (often: update Claude Code
 the Ship's tooling) and run the switch again.
 
 **`the rollback did not finish cleanly`** (attention `runtime-switch-failed`): the
-message says what is left. The usual case is an agent that would not exit on the new
-runtime: it is left running there, and is not started on the old one, so it never
-runs twice. Attach to it, exit it (`/exit`), and the next status refresh resumes it
-where ship.toml says; or reboot the Ship, which resumes every recorded agent on the
-runtime ship.toml names.
+message says what is left. Two cases:
+
+- **An agent is still on the new runtime** (it would not exit there, or its start
+  there had not come up yet). It is not started on the old runtime, so it never runs
+  twice, and the Ship keeps it out of the old runtime until the next boot. Attach to
+  it and exit it (`/exit`), then reboot the Ship: the boot starts only the runtime
+  ship.toml names and resumes every recorded agent on it, in its mode.
+- **The old runtime did not start again** (its unit failed). Fix what the message
+  names, then switch to the runtime ship.toml names:
+  `ship-fleet runtime ship-01 herdr` (if it was going back to herdr). That starts
+  it, puts the boot units right and resumes the agents waiting for it (outcome
+  `repaired`).
 
 **Attention `runtime-switch-unfinished`**: ship-ctl was stopped part way (the Ship
-lost power, say). Agents it had stopped resume by themselves at the next status
-refresh, on the runtime ship.toml names. Run the switch again, to either runtime, to
-finish it; it records the unfinished one as `interrupted`.
+lost power, say). Switch to the runtime ship.toml names (the attention message names
+it): that starts it if it is not running, puts the boot units right, and resumes the
+agents the switch had stopped, in their modes (outcome `repaired`); it records the
+unfinished switch as `interrupted`. Then, if you still want to move the Ship, run the
+switch again.
 
 ## 5. Rolling back on purpose
 

@@ -16,7 +16,8 @@ otherwise start a missing agent, stays out until the switch is over):
    waiting at a question or in a state the runtime cannot tell (unless forced), and
    the old runtime runs no other agent its stop would end (herdr: its server goes).
 2. **Snapshot** each agent (name, folder, session, mode) into the record, so an
-   interrupted switch can still tell what ran.
+   interrupted switch can still tell what ran. A recorded agent that is not running
+   because it was exited on purpose is let go first, as the refresh would.
 3. **Stop** each agent gracefully through the old runtime (record.py's restart
    sequence: Escape if needed, Ctrl+C, `/exit`), and pin its session's mode in
    the mode ledger (which also clears the `/exit`, so it counts as an agent to
@@ -39,9 +40,15 @@ otherwise start a missing agent, stays out until the switch is over):
    once, running its own session, in its mode (the mode ledger, which records the
    mode each session starts in); and, leaving herdr-core, none of them live there.
 8. **On any failure, roll back:** agents that started on the new runtime are
-   stopped gracefully (one that will not stop is left running where it is, and
-   never started a second time), ship.toml and the units go back, and every other
-   agent is relaunched and verified on the old runtime.
+   stopped gracefully (one that will not stop, or whose start there may still come
+   up, is left where it is, and never started a second time), ship.toml and the
+   units go back, and every other agent is relaunched and verified on the old
+   runtime (and, the core left running, not on it). An agent that did not exit when
+   asked and has exited since is resumed with them.
+
+A switch to the runtime ship.toml already names changes nothing, unless the last
+switch stopped part way or did not roll back cleanly, or that runtime is not
+running: then it puts the units right, starts it, and resumes the agents waiting.
 
 Each switch is recorded in the agent record (`switches`, the last few) and
 shown in the status document (`agent_record.last_switch`).
@@ -66,6 +73,7 @@ SERVER_WAIT_S = 60  # for the new runtime to answer once its unit started
 VERIFY_WAIT_S = 90  # for every agent to be back, in its session and mode
 HISTORY = 10  # switches kept in the record
 UNFINISHED_S = 3600  # a switch still in progress after this long was interrupted
+LATE_EXIT_S = 20  # in a rollback, for an agent that did not exit when asked
 
 
 class Failed(Exception):
@@ -114,6 +122,7 @@ class Switch:
         self.notes: list[str] = []
         self.stopped: list[str] = []  # stopped on the old runtime
         self.tried: list[str] = []  # a launch on the new runtime was attempted
+        self.unstopped: str | None = None  # asked to exit on the old runtime, did not
         self.toml_changed = False
         self.units_changed = False
         self.launched_at = ""  # when the last round of launches began
@@ -138,7 +147,8 @@ class Switch:
         if server != "running" or live is None:
             raise CtlError("herdr-unavailable", f"{self.source} is not answering "
                            f"({'; '.join(errors) or server}), so what runs is not known; "
-                           "nothing changed")
+                           f"nothing changed (ship-ctl runtime switch {self.source} starts "
+                           "it again)")
         doc = self.doc
         self.check_elsewhere()
         if record.sync(ctx, self.old, doc, live, read_ledger(ctx)):
@@ -191,12 +201,34 @@ class Switch:
         return found
 
     # --- 3. stop ----------------------------------------------------------------------
+    def let_go_exited(self) -> None:
+        """A recorded agent that is not running now, ran on the old runtime this boot
+        and was exited on purpose (or its pane closed) is let go, as the next refresh
+        would: lifting its place would otherwise make it one to resume on the new
+        runtime. One that crashed stays, and the new runtime resumes it."""
+        ctx, doc = self.ctx, self.doc
+        boot = record.boot_id(ctx)
+        gone = [n for n, e in doc["agents"].items() if n not in self.snap
+                and e["want"] == "running" and record.own_place(self.old, e)
+                and e["place"].get("boot_id") == boot]
+        if not gone:
+            return
+        sessions, places = record.ledger_sessions(ctx), self.old.places()
+        since, autostart = record.boot_started(ctx), {a["name"] for a in self.ship.autostart}
+        for name in gone:
+            why = record._stopped_on_purpose(doc["agents"][name], sessions, places, since)
+            if why:
+                record._stop(doc, name, autostart)
+                self.notes.append(f"{name} stopped ({why}); not moved")
+        self.save()
+
     def stop_all(self, found: dict[str, dict]) -> None:
         for name in self.snap:
             a = found[name]
             ok, notes = self.old.stop(a["place"], a["state"])
             self.notes += [f"{name}: {n}" for n in notes]
             if not ok:
+                self.unstopped = name
                 raise Failed(f"{name} did not exit when asked; it is still running on "
                              f"{self.source}")
             self.stopped.append(name)
@@ -328,11 +360,19 @@ class Switch:
         if live is None:
             # Whether they run there cannot be told: starting them on the old runtime
             # could start them twice, so they are left for a person to look at.
-            self.notes.append(f"{self.target} could not be listed ({'; '.join(errors) or server}"
-                              f"), so {', '.join(self.tried)} were not started on {self.source}")
+            if self.tried:
+                self.notes.append(f"{self.target} could not be listed ("
+                                  f"{'; '.join(errors) or server}), so "
+                                  f"{', '.join(self.tried)} were not started on {self.source}")
             return set(self.tried)
         stuck: set[str] = set()
         sessions = {s["session"]: n for n, s in self.snap.items()}
+        for name in sorted(self.new.pending(self.tried)):
+            # A start typed into its terminal that has not come up yet: it may still
+            # come up, so it is not started on the old runtime as well.
+            stuck.add(name)
+            self.notes.append(f"{name}'s start on {self.target} had been typed and had not "
+                              f"come up, so it was not started on {self.source}")
         for a in live:
             if a["kind"] != "claude":
                 continue
@@ -366,17 +406,52 @@ class Switch:
         except Exception as exc:  # noqa: BLE001 - whatever it was, say so and stop here
             self.notes.append(f"putting {self.source} back failed: {exc}")
             return "rollback-failed", [f"{self.source} was not put back: {exc}"]
+        # herdr-core keeps running when the rollback leaves it: none of them may be
+        # there (a launch that came up late, say), or it would run twice.
+        other = self.new if self.target == "core" else None
         names = [n for n in self.stopped if n not in stuck]
+        left = self.resume_old(names, other)
+        late = self.late_exit()
+        if late:
+            left += self.resume_old(late, other)
+        left += [f"{n} is still on {self.target}" for n in sorted(stuck)]
+        return ("rolled-back" if not left else "rollback-failed"), left
+
+    def resume_old(self, names: list[str], other: Runtime | None) -> list[str]:
         try:
             self.launch_all(self.old, self.ship, names)
         except Exception as exc:  # noqa: BLE001
             self.notes.append(str(exc))
-        left = self.verify(self.old, None, names)
-        left += [f"{n} is still on {self.target}" for n in sorted(stuck)]
-        return ("rolled-back" if not left else "rollback-failed"), left
+        return self.verify(self.old, other, names)
+
+    def late_exit(self) -> list[str]:
+        """The agent that did not exit when asked, if it has exited since (it was sent
+        `/exit`): that exit was the switch's, not a person's, so it is pinned (which
+        clears the exit) and resumed like the rest; else the next refresh would let it
+        go as one exited on purpose."""
+        name = self.unstopped
+        if name is None:
+            return []
+        running: list[set[str] | None] = [None]
+
+        def gone() -> bool:
+            running[0] = self.running_on(self.old)
+            return running[0] is not None and name not in running[0]
+        if not wait_until(self.ctx, LATE_EXIT_S, gone):
+            if running[0] is not None:
+                self.notes.append(f"{name} did not exit when asked, and runs on {self.source} "
+                                  "as before, in its own session and mode")
+            return []
+        self.unstopped = None
+        self.stopped.append(name)
+        self.pin(name)
+        self.save()
+        self.notes.append(f"{name} exited after all; it is resumed on {self.source}")
+        return [name]
 
     # --- the whole switch -----------------------------------------------------------------
     def forward(self, found: dict[str, dict]) -> None:
+        self.let_go_exited()
         self.stop_all(found)
         cleared = self.lift(self.old)
         self.save("switching")
@@ -406,7 +481,7 @@ class Switch:
                 self.save()
             if self.source == self.target:
                 self.check_elsewhere()
-                return self.result("already", []), [], [f"This Ship already runs {self.target}."]
+                return self.settle()
             _preflight(self.new)
             found = self.check()
             started = utc_now()
@@ -448,14 +523,69 @@ class Switch:
             return data, [f"runtime: {self.target}", *self.snap], messages
         raise CtlError("switch-failed", message[:1000]).with_data(data, [], messages)
 
+    def settle(self) -> tuple[dict, list[str], list[str]]:
+        """Already on the target. After a switch that stopped part way, or whose
+        rollback did not finish, the runtime ship.toml names may not be running or the
+        boot units may disagree: this puts the units right, starts the runtime and
+        resumes the agents waiting for it, so running the switch again finishes it."""
+        ctx, rt, doc = self.ctx, self.old, self.doc
+        last = (doc.get("switches") or [{}])[-1]
+        unsure = last.get("outcome") in ("interrupted", "rollback-failed")
+        if not unsure and rt.agents()[1] is not None:
+            return self.result("already", []), [], [f"This Ship already runs {self.target}."]
+        other = RUNTIMES[next(k for k in TARGETS if k != rt.kind)](ctx)
+        _, there, _ = other.agents()
+        sessions = {e["session"] for e in doc["agents"].values() if e["session"]}
+        # herdr's stop ends whatever it runs; a recorded agent on the core would run twice.
+        odd = [a for a in there or [] if other.kind == "herdr" or (
+            a["kind"] == "claude" and (a["name"] in doc["agents"] or a["session"] in sessions))]
+        if odd:
+            where = ", ".join(f"{a['name'] or a['place']} ({a['kind']})" for a in odd)
+            raise CtlError("invalid-input", f"{other.kind} still runs {where}; exit "
+                           f"{'it' if len(odd) == 1 else 'them'} there (or reboot the Ship), "
+                           "then run this again; nothing changed")
+        started = utc_now()
+        try:
+            apply.herdr_resume_off(ctx)
+            _systemctl(ctx, "--global", "disable", other.unit)
+            _systemctl(ctx, "--global", "enable", rt.unit)
+            if other.kind == "herdr":
+                _systemctl(ctx, "stop", other.unit, agent=True)
+            _systemctl(ctx, "start", rt.unit, agent=True)
+            if not wait_until(ctx, SERVER_WAIT_S, lambda: rt.agents()[1] is not None):
+                raise Failed(f"{rt.kind} did not answer after {rt.unit} started")
+            _, live, _ = rt.agents()
+            _, messages, _ = record.upkeep(ctx, self.ship, rt, doc, live or [], "ready")
+            outcome = "repaired"
+            message = f"{rt.kind} runs again, and its boot unit is on"
+        except Failed as exc:
+            outcome, messages = "rollback-failed", []
+            message = f"starting {rt.kind} again failed: {exc}"
+        _history(doc, {"at": started, "from": rt.kind, "to": rt.kind, "outcome": outcome,
+                       "forced": self.force, "agents": 0, "message": message[:300]})
+        self.save()
+        messages = [message[0].upper() + message[1:] + ".", *messages]
+        if outcome == "repaired":
+            return self.result(outcome, []), [f"runtime: {rt.kind}"], messages
+        raise CtlError("switch-failed", message[:1000]).with_data(
+            self.result(outcome, [message]), [], messages)
+
     def check_elsewhere(self) -> None:
         odd = sorted(n for n, e in self.doc["agents"].items()
                      if record.elsewhere(self.old, self.ctx, e))
-        if odd:
-            other = self.doc["agents"][odd[0]]["place"]["runtime"]
-            raise CtlError("invalid-input", f"ship.toml says {self.source}, but "
-                           f"{', '.join(odd)} ran under {other} this boot; put ship.toml's "
-                           f"runtime back to {other} (or reboot) before switching")
+        if not odd:
+            return
+        other = self.doc["agents"][odd[0]]["place"]["runtime"]
+        head = (f"ship.toml says {self.source}, but {', '.join(odd)} ran under {other} this "
+                "boot and may still run there; ")
+        last = (self.doc.get("switches") or [{}])[-1]
+        if last.get("outcome") == "rollback-failed":
+            # The rest of the agents run on ship.toml's runtime: only a boot, which
+            # starts that runtime alone, brings these back there without a double.
+            raise CtlError("invalid-input", head + f"reboot the Ship (the boot starts only "
+                           f"{self.source} and resumes every agent on it), then switch")
+        raise CtlError("invalid-input", head + f"put ship.toml's runtime back to {other} "
+                       "(or reboot) before switching")
 
     def result(self, outcome: str, left: list[str]) -> dict:
         ledger = read_ledger(self.ctx)
@@ -488,13 +618,15 @@ def attention(block: dict | None) -> list[tuple[str, str, str]]:
     if not sw:
         return []
     if sw["outcome"] == "rollback-failed":
-        return [("runtime-switch-failed", f"The switch from {sw['from']} to {sw['to']} failed "
-                 f"and was not rolled back cleanly: {sw['message']}", "runtime")]
+        what = (f"The switch from {sw['from']} to {sw['to']} failed and was not rolled back "
+                "cleanly" if sw["from"] != sw["to"] else f"{sw['to']} could not be put right")
+        return [("runtime-switch-failed", f"{what}: {sw['message']}", "runtime")]
     age = record._age_s(sw["at"])
     if sw["outcome"] == "in-progress" and age is not None and age > UNFINISHED_S:
         return [("runtime-switch-unfinished", f"A switch from {sw['from']} to {sw['to']} "
                  f"stopped part way ({sw['message']}). Run ship-ctl runtime switch "
-                 f"{sw['from']} or {sw['to']} again to finish it.", "runtime")]
+                 f"{block['runtime']} (the runtime ship.toml names) to put it right.",
+                 "runtime")]
     return []
 
 

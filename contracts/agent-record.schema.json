@@ -388,9 +388,10 @@
             "switched",
             "rolled-back",
             "rollback-failed",
-            "interrupted"
+            "interrupted",
+            "repaired"
           ],
-          "description": "switched: every agent runs on `to`, in its mode. rolled-back: it failed, and every agent runs on `from` again, in its mode. rollback-failed: it failed and the rollback did not finish cleanly (message says what is left; attention runtime-switch-failed). interrupted: ship-ctl stopped part way (found by the next switch)."
+          "description": "switched: every agent runs on `to`, in its mode. rolled-back: it failed, and every agent runs on `from` again, in its mode. rollback-failed: it failed and the rollback did not finish cleanly (message says what is left; attention runtime-switch-failed). interrupted: ship-ctl stopped part way (found by the next switch). repaired: a switch to the runtime ship.toml names found it stopped, or the last switch unfinished, and started it again (from and to are the same)."
         },
         "forced": {
           "type": "boolean"

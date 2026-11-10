@@ -279,22 +279,33 @@ ran, with its agents resumed there. `ship-fleet runtime SHIP core|herdr` runs it
 the steps for a person are in `docs/runbooks/switch-runtime.md`.
 
 It holds the agent record's lock from start to end, so the status refresh (which
-would start a missing agent) stays out, and it ignores SIGHUP, so a dropped SSH
-session does not stop it part way.
+would start a missing agent) stays out. It ignores SIGHUP and carries on when its
+stderr is gone, so a dropped SSH session does not stop it part way.
 
 1. **Refusals** (nothing is touched): the target does not answer
    (`hc --version` or `herdr --version`; `runtime-missing`), or, for core, Claude
    Code is older than 2.1.295 or its version cannot be read (`runtime-missing`);
-   the current runtime does not answer (`herdr-unavailable`); a running Claude is
+   the current runtime does not answer (`herdr-unavailable`; switching to the
+   current runtime starts it again, below); a running Claude is
    not in the agent record, or a recorded one has no known session or mode, runs in
    `bypassPermissions` where `allow_bypass` is now false, or its folder is gone
    (`agent-failed`); an agent is `working`, `blocked` or `unknown` (`agent-busy`,
    unless `--force`, which interrupts it with Escape as `agent restart` does);
    leaving herdr, herdr runs an agent of another kind, which stopping herdr would
    end (`invalid-input`); ship.toml names one runtime while recorded agents ran
-   under the other this boot (`invalid-input`: an unplanned edit; put it back or
-   reboot). Already on the target: `ok`, outcome `already`, nothing done.
-2. **Snapshot:** each running agent's name, folder, session (the runtime's word,
+   under the other this boot (`invalid-input`: an unplanned edit, put it back or
+   reboot; after a rollback that did not finish, reboot).
+   Already on the target: `ok`, outcome `already`, nothing done; unless the
+   last switch was `interrupted` or `rollback-failed`, or the runtime does not
+   answer: then the switch **repairs** it (outcome `repaired`): the other unit's boot
+   link goes and this one's is made, herdr stops (leaving it), the runtime starts,
+   and the status refresh's resume starts every agent waiting for it. It refuses
+   (`invalid-input`, nothing changed) while herdr still runs anything or the core
+   runs a recorded agent.
+2. **Snapshot:** a recorded agent not running now that was exited on purpose this
+   boot (or its pane closed) is let go first, as the status refresh would, so the
+   switch never brings it back; one that crashed is resumed on the new runtime.
+   Each running agent's name, folder, session (the runtime's word,
    else the record's) and mode (the mode ledger's, else the record's) go into the
    record (`switch`, `agent-record.schema.json`).
 3. **Stop** each agent gracefully through the current runtime, as `agent restart`
@@ -329,19 +340,24 @@ session does not stop it part way.
    stopped gracefully (one that will not stop, or that cannot be seen to stop, is
    left running where it is and is not started on the old runtime: never twice),
    ship.toml and the units go back, and every other agent is relaunched and
-   verified on the old runtime as in 6 and 7.
+   verified on the old runtime as in 6 and 7 (leaving herdr-core running: none of
+   them may be live on it). An agent that did not exit when asked in 3 and has
+   exited by the end of the rollback is pinned and resumed too (that exit was the
+   switch's); one still running is left as it was.
 
 Every switch is recorded (`switches`, the last 10: when, from, to, outcome, forced,
 how many agents, a message) and shown as the status document's
 `agent_record.last_switch`. Outcomes: `switched`, `rolled-back`, `rollback-failed`
 (attention `runtime-switch-failed`: what is left is in the message), `interrupted`
-(ship-ctl stopped part way; the next switch records it). A switch still in
-progress after an hour shows attention `runtime-switch-unfinished`; agents it had
-stopped have no place, so the status refresh resumes them on whichever runtime
-ship.toml names.
+(ship-ctl stopped part way; the next switch records it), `repaired` (a switch to
+the runtime ship.toml names started it again: `from` and `to` are the same). A
+switch still in progress after an hour shows attention `runtime-switch-unfinished`:
+agents it had stopped have no place, so the status refresh resumes them on the
+runtime ship.toml names once it runs; `ship-ctl runtime switch <that runtime>`
+makes sure it does.
 
-`data`: `{ "from", "to", "outcome": "switched" | "already" | "rolled-back" |
-"rollback-failed", "forced", "runtime": what runs the agents now,
+`data`: `{ "from", "to", "outcome": "switched" | "already" | "repaired" |
+"rolled-back" | "rollback-failed", "forced", "runtime": what runs the agents now,
 "remote_control": the Ship's setting, "agents": [{ "name", "mode" (its snapshot
 mode), "was" (its state before), "mode_now" (the mode ledger's now) }], "problems":
 [what is left, after a rollback] }`; `changed` is `runtime: <target>` and the agents

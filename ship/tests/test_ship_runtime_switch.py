@@ -524,3 +524,169 @@ def test_an_interrupted_switch_is_recorded_and_shown(herdr_ship):
     assert rc == 0, out
     assert [s["outcome"] for s in ship.record()["switches"]] == ["interrupted", "switched"]
     assert "interrupted while starting" in ship.record()["switches"][0]["message"]
+
+
+# --- found in review ------------------------------------------------------------------------
+def test_an_agent_exited_on_purpose_is_not_brought_back(herdr_ship):
+    """grinder was /exited and no refresh ran before the switch: the switch lets it go,
+    as the refresh would, rather than resuming it on the new runtime."""
+    ship = herdr_ship
+    expect = {"main": as_running(ship)["main"]}
+    ship.exit("grinder")
+    rc, doc, out = switch(ship, "core")
+    assert rc == 0, out
+    assert any(m.startswith("grinder stopped (it was exited") for m in doc["messages"])
+    intact(ship, "core", expect)
+    ship.ctl("refresh")
+    assert "grinder" not in core_agents(ship)
+    assert ship.record()["agents"]["grinder"]["want"] == "stopped"  # an [[autostart]] one
+    assert [c for c in hc_runs(ship) if "grinder" in c] == []
+
+
+def test_a_dropped_ssh_session_still_rolls_back(herdr_ship):
+    """The SSH session that ran the switch drops (no tty, so no SIGHUP: stderr becomes a
+    closed pipe): the failure's log line must not stop the rollback."""
+    import subprocess
+    import sys
+
+    ship = herdr_ship
+    expect = as_running(ship)
+    s = ship.scenario()
+    s.setdefault("hc", {})["fail_run"] = ["main"]
+    ship.set(hc=s["hc"])
+    proc = subprocess.Popen(
+        [sys.executable, "-I", str(ship.bundle / "bin/ship-ctl"), "runtime", "switch", "core",
+         "--json"], env=ship.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True)
+    proc.stderr.close()  # nobody reads it any more
+    out, _ = proc.communicate(timeout=60)
+    doc = json.loads(out)
+    assert doc["data"]["outcome"] == "rolled-back", out
+    intact(ship, "herdr", expect)
+    assert ship.record()["switches"][-1]["outcome"] == "rolled-back"
+
+
+def test_switching_again_after_a_failed_rollback_puts_it_right(herdr_ship):
+    """Neither unit would start: the switch failed and so did its rollback, leaving no
+    runtime running. Switching to the runtime ship.toml names starts it again and
+    resumes every agent there, each in its mode, once."""
+    ship = herdr_ship
+    expect = as_running(ship)
+    ship.set(unit_fails=["start ship-core.service", "start herdr.service"])
+    rc, doc, out = switch(ship, "core")
+    assert rc != 0 and doc["data"]["outcome"] == "rollback-failed", out
+    assert runtime_in_toml(ship) == "herdr" and herdr_agents(ship) == {}
+    assert ship.scenario()["herdr"]["server"] is False
+    assert not any(m.endswith("were not started on herdr") for m in doc["messages"])
+    assert "runtime-switch-failed" in {a["code"] for a in status(ship)["attention"]}
+    ship.set(unit_fails=[])
+    # Switching to core refuses (herdr, which runs the agents' record, is down) and
+    # says how to put it right.
+    rc, doc, _ = switch(ship, "core")
+    assert rc != 0 and "ship-ctl runtime switch herdr starts it again" in doc["error"]["message"]
+    rc, doc, out = switch(ship, "herdr")
+    assert rc == 0 and doc["data"]["outcome"] == "repaired", out
+    intact(ship, "herdr", expect)
+    assert hc_runs(ship) == []
+    last = status(ship)["agent_record"]["last_switch"]
+    assert (last["outcome"], last["from"], last["to"]) == ("repaired", "herdr", "herdr")
+    assert "runtime-switch-failed" not in {a["code"] for a in status(ship)["attention"]}
+    rc, doc, _ = switch(ship, "herdr")  # nothing left to put right
+    assert rc == 0 and doc["data"]["outcome"] == "already"
+
+
+def test_a_repair_that_fails_says_so(herdr_ship):
+    ship = herdr_ship
+    ship.set(unit_fails=["start ship-core.service", "start herdr.service"])
+    switch(ship, "core")
+    rc, doc, _ = switch(ship, "herdr")
+    assert rc != 0 and doc["error"]["code"] == "switch-failed"
+    assert doc["data"]["outcome"] == "rollback-failed"
+    attention = {a["code"]: a["message"] for a in status(ship)["attention"]}
+    assert attention["runtime-switch-failed"].startswith("herdr could not be put right")
+
+
+def test_a_repair_never_stops_herdr_under_an_agent(core_ship):
+    """ship.toml says core after an interrupted switch, but herdr runs something:
+    the repair refuses rather than stop herdr under it."""
+    ship = core_ship
+    record = ship.record()
+    record["switches"] = [{"at": "2026-01-01T00:00:00Z", "from": "herdr", "to": "core",
+                           "outcome": "interrupted", "forced": False, "agents": 2,
+                           "message": "interrupted while starting"}]
+    ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(record))
+    s = ship.scenario()
+    s["herdr"]["server"] = True
+    s["herdr"]["agents"] = [{"name": "cx", "agent": "codex", "agent_status": "idle",
+                             "pane_id": "w9:p1", "workspace_id": "w9"}]
+    ship.set(herdr=s["herdr"])
+    rc, doc, _ = switch(ship, "core")
+    assert rc != 0 and doc["error"]["code"] == "invalid-input"
+    assert "herdr still runs cx (codex)" in doc["error"]["message"]
+    assert "user_unit_calls" not in ship.scenario()
+
+
+def test_an_agent_that_exits_late_is_resumed_in_the_rollback(herdr_ship):
+    """main does not exit within the stop's wait, so the switch rolls back; it exits
+    a moment later. That exit was the switch's: main is resumed on herdr in its mode,
+    not let go by the next refresh as one exited on purpose."""
+    ship = herdr_ship
+    expect = as_running(ship)
+    s = ship.scenario()
+    s["herdr"]["late_exit"] = {"main": 4}
+    ship.set(herdr=s["herdr"])
+    rc, doc, out = switch(ship, "core")
+    assert rc != 0 and doc["data"]["outcome"] == "rolled-back", out
+    assert "main exited after all; it is resumed on herdr" in doc["messages"]
+    intact(ship, "herdr", expect)
+    ship.ctl("refresh")
+    intact(ship, "herdr", expect)
+    assert hc_runs(ship) == []
+
+
+def test_a_start_still_on_its_way_on_the_core_is_not_doubled(herdr_ship):
+    """grinder's start was typed into its kept core terminal and has not come up yet
+    when main's start fails: grinder may still come up there, so the rollback does
+    not start it on herdr too; it says so, and main goes back to herdr."""
+    ship = herdr_ship
+    expect = as_running(ship)
+    s = ship.scenario()
+    s["hc"] = {"server": True, "next": 2, "fail_run": ["main"], "slow_shell": ["grinder"],
+               "terminals": [{
+                   "address": "t1", "name": "grinder", "argv": ["bash"], "labels": {},
+                   "cwd": "/home/agent/work/grinder", "state": "live", "keep": True,
+                   "created_ms": 1, "status": None, "exit_code": None, "reason": None,
+                   "foreground": {"pid": 1, "name": "bash", "argv": ["bash"],
+                                  "cwd": "/home/agent/work/grinder"}}]}
+    ship.set(hc=s["hc"])
+    rc, doc, out = switch(ship, "core")
+    assert rc != 0 and doc["data"]["outcome"] == "rollback-failed", out
+    assert "grinder is still on core" in doc["data"]["problems"]
+    assert any("grinder's start on core had been typed" in m for m in doc["messages"])
+    assert "grinder" not in herdr_agents(ship)
+    assert herdr_agents(ship)["main"]["args"][-2:] == ["--resume", expect["main"][0]]
+    assert not ship.scenario()["hc"].get("forbidden")
+
+
+def test_refuses_while_another_ship_ctl_holds_the_record(herdr_ship):
+    import fcntl
+
+    ship = herdr_ship
+    before = {n: e["session"] for n, e in ship.record()["agents"].items()}
+    lock = next(ship.p("/var/lib/shipshape").glob("agents*.lock"))
+    with lock.open("a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        rc, doc, _ = switch(ship, "core")
+    assert rc != 0 and doc["error"]["code"] == "agent-busy"
+    untouched(ship, before)
+
+
+def test_refuses_an_agent_whose_folder_is_gone(herdr_ship):
+    ship = herdr_ship
+    before = {n: e["session"] for n, e in ship.record()["agents"].items()}
+    cwd = ship.record()["agents"]["grinder"]["cwd"]
+    ship.p(cwd).rename(ship.p(cwd + "-moved"))
+    rc, doc, _ = switch(ship, "core")
+    assert rc != 0 and doc["error"]["code"] == "agent-failed"
+    assert f"grinder: its folder {cwd} is not there" in doc["error"]["message"]
+    untouched(ship, before)

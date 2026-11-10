@@ -265,6 +265,12 @@ class Herdr:
                 notes.append(f"herdr workspace {ws} was not closed ({why})")
         return notes
 
+    def pending(self, names: list[str]) -> set[str]:
+        """Of these agents, those whose start was typed and has not come up yet:
+        none on herdr (`herdr agent start` returns once it runs)."""
+        del names
+        return set()
+
     def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
         """End the Claude agent in place, gracefully; (stopped, notes for the person).
 
@@ -710,6 +716,19 @@ class Core:
             if doc is None:
                 notes.append(f"herdr-core terminal {place} was not removed ({why})")
         return notes
+
+    def pending(self, names: list[str]) -> set[str]:
+        """Of these agents, those whose launch was typed into their terminal within
+        LAUNCH_GRACE_S and that is not running Claude yet: it may still come up."""
+        _, terms, _ = self.terminals()
+        out = set()
+        for t in terms or []:
+            v = self.view(t)
+            typed = v["launching"]
+            if (v["name"] in names and v["kind"] != "claude" and v["kind"] != "finished"
+                    and typed is not None and 0 <= time.time() - typed < LAUNCH_GRACE_S):
+                out.add(v["name"])
+        return out
 
     def stop(self, place: str, state: str) -> tuple[bool, list[str]]:
         """End the Claude agent in place, gracefully, as Herdr.stop does: Escape

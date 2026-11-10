@@ -60,7 +60,7 @@ RESUME_GRACE_S = 600  # after this much uptime, nothing waits for this boot's re
 DNS_PROBE = "api.anthropic.com"  # resumed sessions reconnect Remote Control at once
 LOG_TAG = "agent record"  # starts every line upkeep logs
 RUNTIME_KINDS = ("herdr", "core")
-SWITCH_OUTCOMES = ("switched", "rolled-back", "rollback-failed", "interrupted")
+SWITCH_OUTCOMES = ("switched", "rolled-back", "rollback-failed", "interrupted", "repaired")
 
 
 # --- the file -------------------------------------------------------------------
