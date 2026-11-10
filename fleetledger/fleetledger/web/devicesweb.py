@@ -61,7 +61,7 @@ def machine_of(device: Any, inv: Any) -> Any:
 
 
 def logins_on(device: Any, inv: Any, ship: Any) -> tuple[bool, bool]:
-    """From the machine a device runs on: may plain ssh / herdr --remote reach this Ship
+    """From the machine a device runs on: may plain ssh / herdr --remote / hc reach this Ship
     (as the agent, as you)? Its machine must be said and trusted, its Ships must
     include this one, and the Ship must have a host certificate."""
     from fleetledger import trustcmd

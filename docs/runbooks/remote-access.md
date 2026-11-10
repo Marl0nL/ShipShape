@@ -184,6 +184,21 @@ traffic through its servers (still end-to-end encrypted) instead.
    herdr --remote agent@ship-01.<your tailnet>.ts.net   # the overlay name
    ```
 
+   A herdr-core Ship (`runtime = "core"`) is not reached with the herdr TUI. With
+   the trust bundle installed, `hc` and the herdr desktop app use its SSH config
+   entry, overlay name included:
+
+   ```sh
+   hc machine add ship-01 --name ship-01   # once; the bundle's install.sh does it
+   hc attach ship-01/main                  # or hc, for the picker
+   ```
+
+   In the desktop app: Settings > Machines > Add machine, then pick the Ship. Its
+   telemetry is on by default and can be turned off in its settings. By hand,
+   without the bundle, add the Ship with `hc machine add agent@<ship overlay name>
+   --name ship-01`. See the trust runbook's
+   [herdr-core Ships](trust-machines.md#herdr-core-ships).
+
 ## 5. Check it (acceptance)
 
 `ship-fleet overlay check --probe` covers the tailnet side and the "a Ship
@@ -193,7 +208,8 @@ policy block looks like; a refused connection fails it, since only a packet the
 policy let through gets refused. By hand:
 
 - On a phone hotspot (not your LAN), `herdr --remote agent@<ship overlay name>`
-  attaches, and `ssh` to the Ship succeeds with no host-key prompt.
+  (`hc attach <ship>/<agent>` for a herdr-core Ship) attaches, and `ssh` to the
+  Ship succeeds with no host-key prompt.
 - Your router has no forwarded ports for any of this.
 - From a Ship, a connection to your laptop fails:
   `ship-fleet ssh ship-01 -- timeout 5 bash -c 'echo > /dev/tcp/<laptop overlay address>/22'`

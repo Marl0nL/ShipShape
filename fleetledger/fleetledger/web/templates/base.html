@@ -38,7 +38,7 @@
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="machine" value="{{ machine_due.name }}">
       {{ machine_due.name }}'s certificate {{ "lapsed" if machine_due.lapsed else "lapses" }} at
-      {{ machine_due.until[:10] }} {{ machine_due.until[11:16] }} UTC: ssh and herdr --remote from it
+      {{ machine_due.until[:10] }} {{ machine_due.until[11:16] }} UTC: ssh, herdr --remote and hc from it
       {{ "stopped" if machine_due.lapsed else "stop" }} then.
       <button type="submit" class="small" title="ship-fleet trust {{ machine_due.name }} --hostnames overlay">Renew and download its bundle</button>
       <span class="hint">(this note goes at the next page once it is renewed)</span>

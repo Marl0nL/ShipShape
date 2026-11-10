@@ -8,8 +8,10 @@
 {% if flash_at == "machines" %}{% for kind, text in placed %}<p class="flash {{ kind }}">{{ text }}</p>{% endfor %}{% endif %}
 {% for job in machine_jobs %}{% include "_job.html" %}{% endfor %}
 <p class="hint">Each machine you attach from gets short-lived certificates, for the Ships
-  and the logins you choose here: the agent's (to attach to it, <code>herdr --remote</code>)
-  and your own (sudo). A machine that should only attach to agents, a shared one say,
+  and the logins you choose here: the agent's (to attach to it: <code>herdr --remote</code>,
+  or <code>hc</code> and the herdr desktop app on a herdr-core Ship) and your own (sudo).
+  A machine's bundle adds herdr Ships to herdr's saved machines and herdr-core Ships to
+  hc's (when hc is installed there), and takes herdr-core Ships out of herdr's. A machine that should only attach to agents, a shared one say,
   needs only the agent's. Machines trusted before your login had certificates of its own
   keep both. A Ship not updated yet still lets any of the agent's certificates log in as
   you: update every Ship before relying on "the agent only".</p>
@@ -20,7 +22,7 @@
     {{ until(this_until) }}; FleetLedger renews it in its last day whenever it runs.</p>
   {% else %}
   <p>{{ it }} is not trusted yet: <code>ssh &lt;ship&gt;</code> and
-    <code>herdr --remote &lt;ship&gt;</code> need it (<code>ship-fleet ssh</code> works without).</p>
+    <code>herdr --remote &lt;ship&gt;</code> (or <code>hc</code>) need it (<code>ship-fleet ssh</code> works without).</p>
   {% endif %}
   {% if not this_device %}
   <form method="post" action="/settings/machines/renew-here" class="inline">
@@ -85,7 +87,7 @@
       {% endif %}
       <form method="post" action="/settings/machines/untrust" class="inline"
         data-confirm-title="Untrust {{ m.name }}?"
-        data-confirm="{{ m.name }}'s key goes into the revocation list on every Ship, so none lets it in. This cannot be undone: trust it again only under a new name, with a new key.{% if here %} This is this computer: ssh and herdr --remote stop working here (ship-fleet ssh still works).{% endif %}"
+        data-confirm="{{ m.name }}'s key goes into the revocation list on every Ship, so none lets it in. This cannot be undone: trust it again only under a new name, with a new key.{% if here %} This is this computer: ssh, herdr --remote and hc stop working here (ship-fleet ssh still works).{% endif %}"
         data-confirm-action="Untrust {{ m.name }}" data-confirm-danger>
         <input type="hidden" name="csrf" value="{{ csrf }}">
         <input type="hidden" name="machine" value="{{ m.name }}">

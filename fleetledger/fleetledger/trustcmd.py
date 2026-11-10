@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from fleetledger import ca, paths, status
+from fleetledger import attach, ca, paths, status
 from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, now_timestamp
@@ -318,7 +318,7 @@ def cmd_trust(args, app) -> int:
     bundle = ca.write_bundle(folder, ca=cfg, machine_name=name, cert=cert, ships=ships,
                              identity=args.identity, valid_before=until,
                              hostnames=_hostnames(app, ships, args.hostnames),
-                             user=bundle_user(inv, m))
+                             user=bundle_user(inv, m), core=core_ships(ships))
     app.say(f"Certified {name} for {', '.join(m.scope)} until {ca.stamp(until)}, to log in "
             f"as {ca.logins_said(m.logins)} ({len(ships)} Ship(s): "
             f"{', '.join(bundle.ships) or 'none yet'}).")
@@ -399,6 +399,12 @@ def set_logins(app, store, name: str, logins: list[str], say) -> None:
 def bundle_user(inv: Inventory, m: ca.Machine) -> str:
     """The login a machine's SSH config uses: the agent's when it may, else yours."""
     return "agent" if "agent" in m.logins else inv.owner
+
+
+def core_ships(ships) -> set[str]:
+    """The Ships that run herdr-core, by their last fetched status (none fetched:
+    herdr). install.sh gives these to hc and takes them out of herdr."""
+    return {s.name for s in ships if attach.cached_runtime(s.name) == attach.CORE}
 
 
 def _sign_machine(app, store, inv: Inventory, m: ca.Machine, *, hours=None):
@@ -569,7 +575,8 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
     ships = [s for s in inv.ships() if m.reaches(inv, s)]
     bundle = ca.write_bundle(ca.bundle_dir(m.name), ca=cfg, machine_name=m.name, cert=cert,
                              ships=ships, identity=here["identity"], valid_before=until,
-                             hostnames=_hostnames(app, ships), user=bundle_user(inv, m))
+                             hostnames=_hostnames(app, ships), user=bundle_user(inv, m),
+                             core=core_ships(ships))
     argv = ["sh", str(bundle.folder / "install.sh")]
     if not getattr(app, "herdr", True):
         argv.append("--no-herdr")
@@ -584,9 +591,10 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
         say(note)
     ready = [s.name for s in ships if has_cert(s)] if works else []
     if ready:
-        say(f"This computer ({m.name}) can attach: ssh {ready[0]}, herdr --remote "
-            f"{ready[0]} (certificate until {ca.stamp(until)}; FleetLedger renews it in its "
-            "last day whenever it runs: the web UI, or ship-fleet status).")
+        agents = attach.for_ship(ready[0], status.read_cache(ready[0]))
+        say(f"This computer ({m.name}) can attach: ssh {ready[0]}, {agents} (certificate "
+            f"until {ca.stamp(until)}; FleetLedger renews it in its last day whenever it "
+            "runs: the web UI, or ship-fleet status).")
     unsigned = [s.name for s in ships if not has_cert(s)]
     if unsigned:
         say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign`.")
