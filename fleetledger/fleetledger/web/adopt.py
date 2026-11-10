@@ -25,7 +25,14 @@ from starlette.routing import Route
 
 from fleetledger.errors import FleetError
 from fleetledger.overlay import HOST_RE
-from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, start_cli_job, ui_of
+from fleetledger.web.common import (
+    back,
+    session_of,
+    ship_form,
+    ship_of,
+    start_cli_job,
+    ui_of,
+)
 from fleetledger.web.forms import NAME_RE, form, one
 
 TAG_LIMIT = 8
@@ -180,12 +187,10 @@ async def adopt(request: Request) -> Response:
 async def repin_check(request: Request) -> Response:
     """Re-pin, step 1: the key its host presents now, beside the pinned one."""
     from fleetledger.seed import hostkey
-    from fleetledger.web.app import not_found, render
+    from fleetledger.web.app import render
 
     ui = ui_of(request)
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
+    name = ship_of(request)
     try:
         inv = await run_in_threadpool(ui.app.store_factory().load)
         ship = inv.ship(name)
@@ -204,14 +209,8 @@ async def repin_check(request: Request) -> Response:
 
 async def repin(request: Request) -> Response:
     """Re-pin, step 2: `ship-fleet adopt NAME --replace --fingerprint FP` as a job."""
-    from fleetledger.web.app import not_found
 
-    ui = ui_of(request)
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     fp = one(fields, "fingerprint")
     if not fp.startswith("SHA256:") or one(fields, "matches") != "yes":
         ui.flash(session, "bad", "Compare the fingerprint with the VM console first.")

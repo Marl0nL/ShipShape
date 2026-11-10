@@ -23,8 +23,8 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
-from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, ui_of
-from fleetledger.web.forms import form, one
+from fleetledger.web.common import back, session_of, ship_form, ui_of
+from fleetledger.web.forms import one
 
 REMEMBER = 3600  # seconds a destroyed Ship's address says so
 
@@ -67,13 +67,7 @@ def _start(request: Request, name: str, forget: bool) -> None:
 
 
 async def _post(request: Request, forget: bool) -> Response:
-    from fleetledger.web.app import not_found
-
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    ui = ui_of(request)
-    fields = await form(request)
+    ui, name, fields, _ = await ship_form(request)
     verb = "forgotten" if forget else "destroyed"
     if any(f.ship == name for f in ui.concierge.active()):
         ui.flash(session_of(request), "bad", f"Not {verb}: a sign-in is open on {name}. "

@@ -555,7 +555,7 @@ def test_unreachable_ship_is_shown_not_fatal(web):
     ("/ships/{}/power", {"power": "start"}),
 ])
 def test_actions_on_a_ship_the_poller_does_not_know_are_404(web, path, data):
-    """Every per-Ship action route checks the Ship exists (app._known_ship)."""
+    """Every per-Ship action route checks the Ship exists (common.ship_of)."""
     web.sign_in()
     for name in ("nope", "BAD!"):  # well-formed but unknown; not a Ship name at all
         response = web.post(path.format(name), data)
@@ -563,6 +563,40 @@ def test_actions_on_a_ship_the_poller_does_not_know_are_404(web, path, data):
         assert "No such Ship in the inventory." in response.text
     if path.endswith("/refresh") and "network" not in path:
         assert web.post(path.format("ship-01"), data).status_code == 303  # a known Ship works
+
+
+def _ship_post_routes(asgi):
+    """Every POST route under /ships/{name}/, from the app's own route table."""
+    while not hasattr(asgi, "routes"):  # under the gate and the vault guard
+        asgi = asgi.app
+    return sorted(r.path for r in asgi.routes
+                  if r.path.startswith("/ships/{name}/") and "POST" in (r.methods or ()))
+
+
+def test_every_per_ship_post_route_is_404_for_a_ship_the_poller_does_not_know(web):
+    """Not only the routes above: each POST /ships/{name}/... route checks the Ship
+    before it reads the form or starts anything (inbox upload answers in JSON)."""
+    web.sign_in()
+    paths = _ship_post_routes(web.client.app)
+    assert len(paths) >= 20 and "/ships/{name}/snapshots/take" in paths
+    wrong = []
+    for path in paths:
+        for name in ("nope", "BAD!"):
+            url = path.replace("{name}", name)
+            if path.endswith("/inbox/upload"):  # a file's bytes, not a form
+                if name == "BAD!":
+                    continue  # the gate takes bytes only on a Ship-name path (415 here)
+                response = web.client.post(url, content=b"hi", headers={
+                    **ORIGIN, "Content-Type": "application/octet-stream",
+                    "X-CSRF-Token": web.csrf, "X-File-Name": "a.txt"})
+                said = response.json().get("error", "") if response.status_code == 404 else ""
+            else:
+                response = web.post(url, {"confirm": "yes"})
+                said = response.text
+            if response.status_code != 404 or "No such Ship in the inventory." not in said:
+                wrong.append((path, name, response.status_code))
+    assert wrong == []
+    assert web.argvs == [] and web.app_ui.jobs.recent() == []  # nothing ran
 
 
 def _action_bar(page):
