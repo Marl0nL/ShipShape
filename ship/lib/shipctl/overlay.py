@@ -16,6 +16,7 @@ import secrets
 import shutil
 from pathlib import Path
 
+from . import sshtrust
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import read_json, remove, write_atomic
@@ -161,12 +162,11 @@ def apply_listen(ctx: Context, ship: ShipToml, dry_run: bool = False) -> tuple[b
             changed = write_atomic(path, listen_conf(addresses), 0o644, dry_run=dry_run)
     else:
         changed = remove(path, dry_run=dry_run)
-    if changed and not dry_run and not ctx.paths.sandbox:
-        check = ctx.runner.run(["sshd", "-t"], timeout=15)
-        if not check.ok:
+    if changed and not dry_run:
+        if sshtrust.check_sshd(ctx) is not None:
             remove(path)
             raise CtlError("internal", "sshd rejected the listen policy; it was removed")
-        ctx.runner.run(["systemctl", "try-reload-or-restart", "ssh"], timeout=30)
+        sshtrust.reload_sshd(ctx)
     return changed, messages
 
 
