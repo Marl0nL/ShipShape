@@ -19,8 +19,9 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import PERMISSION_MODES, overlay, signincheck, signins
+from . import PERMISSION_MODES, overlay, signincheck, signins, toolkits
 from .context import Context, utc_now
+from .errors import CtlError
 from .fsutil import read_json, write_atomic
 from .net import status_section as net_section
 from .runner import NOT_FOUND_RC, TIMEOUT_RC, Result
@@ -446,8 +447,12 @@ def requested_tools(ctx: Context, ship: ShipToml) -> tuple[list[str], list[str]]
     errors: list[str] = []
     for profile in ship.profiles:
         try:
-            with (ctx.paths.profiles / f"{profile}.toml").open("rb") as fh:
-                tools = tomllib.load(fh).get("tools", [])
+            path, _ = toolkits.profile_path(ctx.paths, ship, profile)
+            with path.open("rb") as fh:
+                tools = toolkits.profile_tools(ctx.paths, ship, profile, tomllib.load(fh))
+        except CtlError as exc:
+            errors.append(f"profile {profile}: {exc.message}")
+            continue
         except (OSError, tomllib.TOMLDecodeError):
             errors.append(f"profile {profile}: not in this tooling bundle")
             continue
@@ -672,6 +677,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
     errors += e
     tools, e = tool_states(ctx, ship)
     errors += e
+    kits = toolkits.status_section(ctx, ship)
     c = ship.claude
     doc: dict = {
         "schema": SCHEMA,
@@ -697,6 +703,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         },
         "auth": auth,
         "tools": tools,
+        "toolkits": kits,
         "overlay": overlay_doc,
         "net": net,
         "ssh": ssh,

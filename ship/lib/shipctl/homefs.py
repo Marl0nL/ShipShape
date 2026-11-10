@@ -241,6 +241,25 @@ class HomeFS:
         finally:
             os.close(dfd)
 
+    def remove(self, rel: str) -> bool:
+        """Delete ~/rel (a file, a symlink itself, or a whole folder), reached without
+        following a symlink on the way. Returns True if something was there."""
+        dfd, name = self._parent(rel, create=False, dir_mode=0o755)
+        if dfd is None:
+            return False
+        try:
+            try:
+                st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            if stat.S_ISDIR(st.st_mode):
+                shutil.rmtree(name, dir_fd=dfd)  # walks by descriptor: never follows a link
+            else:
+                os.unlink(name, dir_fd=dfd)
+            return True
+        finally:
+            os.close(dfd)
+
     def sync_dir(self, src: Path, rel: str) -> bool:
         """Make ~/rel an exact copy of the trusted folder `src` (files 0644, folders 0755).
 

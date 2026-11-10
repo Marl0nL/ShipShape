@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -292,6 +293,19 @@ def claude(s: dict, a: list[str]) -> int:
         c.setdefault("mcp", []).append(a[4])
         save(s)
         return 0
+    if a[:2] == ["mcp", "remove"]:
+        name = a[-1]
+        if name not in c.get("mcp", []):
+            return 1
+        c["mcp"].remove(name)
+        save(s)
+        return 0
+    if a[:2] == ["plugin", "uninstall"]:
+        if a[2] not in c.get("plugins", []):
+            return 1
+        c["plugins"].remove(a[2])
+        save(s)
+        return 0
     if a[:2] == ["plugin", "list"]:
         out("\n".join(c.get("plugins", [])))
         return 0
@@ -364,6 +378,18 @@ def git(s: dict, a: list[str]) -> int:
 
 
 def npm(s: dict, a: list[str]) -> int:
+    if a[:2] == ["uninstall", "-g"]:
+        prefix = Path(a[a.index("--prefix") + 1])
+        root = Path(os.environ.get("SHIPSHAPE_ROOT", "/"))
+        if not str(prefix).startswith(str(root)):
+            prefix = root / str(prefix).lstrip("/")
+        names = [x for x in a[2:] if not x.startswith("-") and x != a[a.index("--prefix") + 1]]
+        for name in names:
+            shutil.rmtree(prefix / "lib/node_modules" / name, ignore_errors=True)
+            (prefix / "bin" / name.split("/")[-1]).unlink(missing_ok=True)
+        s.setdefault("npm", {}).setdefault("uninstalls", []).append(names)
+        save(s)
+        return 0
     if a[:2] != ["install", "-g"]:
         return 2
     prefix = Path(a[a.index("--prefix") + 1])
@@ -392,8 +418,12 @@ def npm(s: dict, a: list[str]) -> int:
 
 def dpkg_query(s: dict, a: list[str]) -> int:
     pkg = a[-1]
-    if pkg in s.setdefault("apt", {}).get("installed", []):
+    apt = s.setdefault("apt", {})
+    if pkg in apt.get("installed", []):
         out("install ok installed")
+        return 0
+    if pkg in apt.get("not_installed", []):  # known to dpkg (removed, say), not installed
+        out("unknown ok not-installed")
         return 0
     return 1
 

@@ -22,6 +22,11 @@
       "description": "Pinned version. For npm, must equal versions.toml [npm] when listed there."
     },
     "run_as": { "enum": ["agent", "root"], "default": "agent" },
+    "uninstall": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A command run as run_as when the tool is removed with its toolkit (ship-ctl toolkit remove), for what its install left that ship-ctl cannot undo by itself (a script's files)."
+    },
     "apt": {
       "type": "array",
       "items": { "type": "string" },

@@ -23,7 +23,7 @@ Exit codes:
 | Code | Meaning | `error.code` |
 |---|---|---|
 | 0 | Success | (null) |
-| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `herdr-unavailable`, `agent-busy`, `agent-failed`, `invalid-input`, `overlay-failed`, `overlay-not-joined`, `internal` |
+| 1 | The command ran and failed | `provision-failed`, `tool-failed`, `invalid-bundle`, `bundle-checksum`, `invalid-toolkit`, `toolkit-rollback`, `herdr-unavailable`, `agent-busy`, `agent-failed`, `invalid-input`, `overlay-failed`, `overlay-not-joined`, `internal` |
 | 2 | Bad arguments | `usage` |
 | 3 | Not running as root | `not-root` |
 | 4 | `ship.toml` (or the replacement given) fails the schema | `invalid-ship-toml` |
@@ -67,6 +67,7 @@ How fields are worked out:
 (`last_switch`, see `runtime switch`). Session ids are not reported. Optional in the schema: Ships with older tooling leave it out. |
 | `claude` | `claude --version` as `agent`, plus the values in `ship.toml`. |
 | `tools` | The last recipe run for each id in `ship.toml` `[tools]` (and its profiles). |
+| `toolkits` | Each toolkit in `ship.toml` `[toolkits]`: id, version, release, and `state` (`ok`, or `missing` when its release folder is not there or not root's). Optional in the schema: Ships with older tooling leave it out. |
 | `host` | `/proc`, the root filesystem, `/var/run/reboot-required`; `updates_pending` from the last apt check (null if unknown); `tmp`: whether `/tmp` is a tmpfs or on the disk, now and from the next boot (the mount table, and `tmp.mount`'s mask). |
 | `net` | The `ship-netwatch` summary over the last 24 hours (see `ship-ctl net` below): totals from vnstat, `new_destinations` = destinations whose `first_seen` is inside the window, newest first, at most 50. `null` when the collector is not installed. |
 | `ssh` | `/etc/ssh/ssh_host_ed25519_key-cert.pub` (read with `ssh-keygen -L`), the user CA keys, the agent principals file and the revocation list that `ssh-trust` installed (see below). |
@@ -134,7 +135,9 @@ atomically, then runs `apply`.
   change) unless the Ship has joined the overlay and knows its overlay addresses.
 - `--file -` reads a complete replacement `ship.toml` on stdin. Its `ship.name`
   and `ship.id` must match the current file. Use it for anything else (autostart
-  entries, tools, profile options).
+  entries, tools, profile options). It keeps the current `[toolkits]` (the toolkit
+  allow-list), and refuses one that differs (`usage`): only `toolkit apply|remove`
+  change it.
 - Exit 4 and no change if the result would be invalid.
 
 ### `ship-ctl autostart [--json]`
@@ -584,6 +587,26 @@ the next reboot brings them back in their modes.
   that is not a failure.
 - `add ID...` / `remove ID...`: edit `[tools].install`, then `run`. `remove`
   stops managing the tool; it does not uninstall it in phase 1.
+- An id may be `<toolkit>/<id>`, a recipe of a toolkit in `[toolkits]`; `available`
+  lists those too. `add` refuses one whose toolkit is not on the Ship.
+
+### `ship-ctl toolkit apply --archive PATH [--allow-root] [--force] | remove ID | list [--json]`
+
+Your own toolkits, as FleetLedger sends them: `toolkit.md`, "On a Ship", says what
+each does. In short:
+
+- `apply` checks the archive (size, `.sha256` sidecar, safe paths, `toolkit.json`,
+  the content hash, its recipes, profiles and sign-in files), refuses a lower version
+  without `--force` (`toolkit-rollback`), unpacks it root-owned into
+  `/opt/shipshape/toolkits/<id>/<version>-<hash12>/`, switches its `current` link,
+  records the release in `[toolkits]` (and `--allow-root` in
+  `/var/lib/shipshape/toolkits.json`), then installs its tools ship.toml asks for.
+  A bad archive is `invalid-toolkit`; nothing changes. A tool that fails is
+  `tool-failed`, with the toolkit applied. `data.toolkit`: `id`, `version`,
+  `release`, `previous`, `allow_root`.
+- `remove ID` uninstalls its tools (`tools.md`), drops them, its profiles and its
+  `[toolkits]` entry from ship.toml, and deletes its folder. Unknown: `usage`.
+- `list`: `data.toolkits`.
 
 ### `ship-ctl grow-root [--json]`
 
@@ -774,7 +797,7 @@ Needs no root. `data`:
   "tooling": "0.1.0",
   "commit": "0123456789ab",
   "contracts": { "ship-status": 1, "ship-toml": 1, "ship-ctl-result": 1, "bundle": 1, "seed": 1, "runtime": 1,
-                 "ssh-trust": 1, "net-summary": 1, "inbox": 1, "signin": 1 }
+                 "ssh-trust": 1, "net-summary": 1, "inbox": 1, "signin": 1, "toolkit": 1 }
 }
 ```
 
@@ -784,4 +807,5 @@ message) any major version it does not know. A Ship without `ssh-trust` or
 visibility for it until it is updated. A Ship without `inbox` predates the file
 inbox: `ship-fleet put` says to update it first. A Ship without `signin` predates
 `ship-ctl signin check` and sign-in files in its bundle: FleetLedger checks a
-sign-in there with the file's own `[[check]]` commands.
+sign-in there with the file's own `[[check]]` commands. A Ship without `toolkit`
+predates toolkits: FleetLedger sends it none and says to update it first.

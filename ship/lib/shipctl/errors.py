@@ -9,6 +9,8 @@ EXIT_CODES = {
     "invalid-ship-toml": 4,
     "invalid-bundle": 1,
     "bundle-checksum": 1,
+    "invalid-toolkit": 1,
+    "toolkit-rollback": 1,
     "provision-failed": 1,
     "tool-failed": 1,
     "herdr-unavailable": 1,

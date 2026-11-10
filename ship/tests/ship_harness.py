@@ -316,6 +316,11 @@ class Ship:
 
 @pytest.fixture
 def ship(tmp_path: Path) -> Ship:
+    return build_ship(tmp_path)
+
+
+def build_ship(tmp_path: Path, toml: str = BASIC_TOML) -> Ship:
+    """A sandbox Ship in tmp_path (FleetLedger's tests drive one too: test_toolkitpush.py)."""
     root = tmp_path / "root"
     bundle = make_bundle(tmp_path / "bundle")
     fake_dir = tmp_path / "fake"
@@ -340,7 +345,7 @@ def ship(tmp_path: Path) -> Ship:
             }
         )
     )
-    (root / "etc/shipshape/ship.toml").write_text(BASIC_TOML)
+    (root / "etc/shipshape/ship.toml").write_text(toml)
     for zone in ZONES:
         zone_file = root / "usr/share/zoneinfo" / zone
         zone_file.parent.mkdir(parents=True, exist_ok=True)

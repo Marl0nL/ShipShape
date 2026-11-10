@@ -15,6 +15,7 @@ CONTRACTS = {
     "net-summary": 1,
     "inbox": 1,
     "signin": 1,
+    "toolkit": 1,
 }
 
 PERMISSION_MODES = ("default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions")

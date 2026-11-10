@@ -45,7 +45,7 @@ def make_seed(
     The caller pins the returned public half in ships.toml; the private half
     exists only inside the ISO.
     """
-    catalogue = Catalogue.from_repo(repo)
+    catalogue = Catalogue.from_repo(repo, inventory)  # with your toolkits
     doc = shiptoml.build(inventory, ship, catalogue, options, repo.contracts)
     ship_toml = shiptoml.render(doc)
 

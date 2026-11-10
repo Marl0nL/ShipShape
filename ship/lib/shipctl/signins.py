@@ -176,9 +176,19 @@ def _status(table: dict) -> Status:
     )
 
 
-def build(folder: Path, schema_path: Path) -> Registry:
+def build(folders: Path | list[Path] | tuple[Path, ...], schema_path: Path) -> Registry:
+    """The registry from one folder of sign-in files, or several (the bundle's, then
+    each toolkit's): an id in two of them stops it."""
     validator = schema.load(schema_path)
-    docs = {p.stem: read(p, validator) for p in sorted(folder.glob("*.toml"))}
+    folders = [folders] if isinstance(folders, Path) else list(folders)
+    docs: dict[str, dict] = {}
+    where: dict[str, Path] = {}
+    for folder in folders:
+        for p in sorted(folder.glob("*.toml")):
+            if p.stem in docs:
+                raise _fail(p, f"sign-in {p.stem} is also in {where[p.stem].parent}")
+            docs[p.stem] = read(p, validator)
+            where[p.stem] = p
     checks: dict[str, SignIn] = {}
     flows: dict[str, Flow] = {}
     for fid, doc in docs.items():
@@ -189,12 +199,12 @@ def build(folder: Path, schema_path: Path) -> Registry:
             try:
                 st = _status(doc["status"])
             except CtlError as exc:
-                raise _fail(folder / f"{fid}.toml", f"status: {exc.message}") from None
+                raise _fail(where[fid], f"status: {exc.message}") from None
             checks[key] = SignIn(key, doc["status"].get("label", doc["label"]), st, fid)
     for flow in flows.values():
         unchecked = [k for k in flow.keys if k not in checks]
         if unchecked:
-            raise _fail(folder / f"{flow.id}.toml", f"no sign-in file checks {unchecked[0]} "
+            raise _fail(where[flow.id], f"no sign-in file checks {unchecked[0]} "
                         f"(a [status] in {unchecked[0].replace('_', '-')}.toml)")
     own = sorted((doc["signin"]["order"], fid) for fid, doc in docs.items()
                  if "order" in doc.get("signin", {}))
@@ -203,7 +213,7 @@ def build(folder: Path, schema_path: Path) -> Registry:
     for _, fid in own:
         for key in flows[fid].keys:
             if key in seen:
-                raise _fail(folder / f"{fid}.toml", f"status key {key} is already "
+                raise _fail(where[fid], f"status key {key} is already "
                                                     f"{seen[key]}'s")
             seen[key] = fid
             ordered.append(checks[key])
@@ -211,10 +221,26 @@ def build(folder: Path, schema_path: Path) -> Registry:
 
 
 @cache
-def _cached(folder: Path, schema_path: Path) -> Registry:
-    return build(folder, schema_path)
+def _cached(folders: tuple[Path, ...], schema_path: Path) -> Registry:
+    """The bundle's sign-ins (folders[0]) and every toolkit's that loads with them: a
+    toolkit whose files do not (a later bundle took one of its ids, say) is left out,
+    never the bundle's own."""
+    try:
+        return build(folders, schema_path)
+    except CtlError:
+        kept = [folders[0]]
+        for folder in folders[1:]:
+            try:
+                build([*kept, folder], schema_path)
+            except CtlError:
+                continue
+            kept.append(folder)
+        return build(kept, schema_path)
 
 
 def registry(paths) -> Registry:
-    """The registry from this ship-ctl's bundle (paths: a Paths)."""
-    return _cached(paths.signins, paths.schema("signin"))
+    """The registry from this ship-ctl's bundle and the toolkits in ship.toml [toolkits]
+    (paths: a Paths)."""
+    from .toolkits import signin_folders
+
+    return _cached((paths.signins, *signin_folders(paths)), paths.schema("signin"))

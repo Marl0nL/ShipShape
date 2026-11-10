@@ -95,6 +95,7 @@ MEMBER = re.compile(r"^(manifest\.json|secrets\.json|config/ships\.toml|"
                     r"data/[^\x00]{1,1000}|images/[^/\x00]{1,200})$")
 # What may sit in the receiving computer's data dir (data/<top>/...).
 DATA_TOPS = ("audit.log", "status", "history.sqlite3", "attempts.json", "net", "ca", "trust")
+TOOLKIT_ARCHIVES = "toolkit-archives"  # toolkitpack.CACHE: packed toolkits, rebuilt
 BACKUP_LAST = "backup-last.json"  # the last ship-fleet backup's result (backup.py)
 # The remote web UI's paired browsers and pairing links (web/devices.py): they stay.
 WEB_FILES = ("web/devices.json", "web/pairings.json", "web/.lock")
@@ -454,6 +455,9 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
                        "(--with-images moves the inventory's images)")
         elif top == "inbox-spool":
             plan.leave(f, "a file half-way to a Ship's inbox")
+        elif top == TOOLKIT_ARCHIVES:
+            plan.leave(f, "a packed toolkit archive: rebuilt from the toolkit's folder when "
+                       "it is next sent")
         elif rel == BACKUP_LAST:
             plan.leave(f, "this computer's last backup result (ship-fleet backup)")
         elif rel in WEB_FILES:

@@ -1,0 +1,18 @@
+# A Ship with one of your toolkits: ship-ctl toolkit apply wrote [toolkits] (the
+# allow-list); its tools and profiles are named <toolkit>/<id> (contracts/toolkit.md).
+schema = 1
+
+[ship]
+name = "ship-01"
+id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+tags = ["work"]
+
+[tools]
+install = ["gh-axi", "mykit/example-cli"]
+profiles = ["mykit/dev"]
+
+[profile_options."mykit/dev"]
+workspace = "https://example.com/workspace.git"
+
+[toolkits]
+mykit = "1.4.0-5f0c8b1d2a3e"

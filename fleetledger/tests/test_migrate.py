@@ -383,6 +383,8 @@ def make_fleet(a: Computer, monkeypatch) -> None:
     db.close()
     (data / "inbox-spool").mkdir()
     (data / "inbox-spool" / "half-sent").write_bytes(b"x")
+    (data / "toolkit-archives").mkdir()  # a packed toolkit (toolkitpack.py)
+    (data / "toolkit-archives" / "examplekit.tar.gz").write_bytes(b"packed")
     (data / "images" / "base").mkdir(parents=True)
     (data / "images" / "base" / "noble.img").write_bytes(b"ubuntu")
     (a.root / "config" / "proxmox-setup-progress.json").write_text("{}\n")
@@ -629,6 +631,7 @@ def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
                       ("web/pairings.json", "pair each device again"),
                       ("web/.lock", "bound to this computer's address"),
                       ("inbox-spool/half-sent", "half-way to a Ship"),
+                      ("toolkit-archives/examplekit.tar.gz", "rebuilt from the toolkit's folder"),
                       ("images/base/noble.img", "Ubuntu's cloud image"),
                       ("shipshape_ed25519", "stay on your machines")):
         line = next((x for x in stays.splitlines() if path in x), "")

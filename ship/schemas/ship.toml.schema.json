@@ -187,6 +187,12 @@
         }
       }
     },
+    "toolkits": {
+      "type": "object",
+      "description": "The toolkit allow-list: each toolkit on this Ship and its release (<version>-<first 12 of its content hash>). Written only by `ship-ctl toolkit apply|remove`, root-owned; ship-ctl runs nothing from a toolkit not listed here (contracts/toolkit.md).",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+      "additionalProperties": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?-[0-9a-f]{12}$" }
+    },
     "profile_options": {
       "type": "object",
       "description": "Per-profile option values, e.g. a repo URL. Keys are profile ids; values are string maps.",

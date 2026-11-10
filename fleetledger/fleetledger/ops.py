@@ -475,20 +475,25 @@ UPLOAD_SCRIPT = (
 REMOVE_SCRIPT = 'rm -f -- "$1/$2" "$1/$2.sha256"'
 
 
-def upload_bundle(fleet: Fleet, inventory: Inventory, ship: Ship,
-                  bundle: bundle_mod.Bundle) -> str:
-    """Copy the bundle and its .sha256 into fleet's incoming folder; returns the path.
+def upload(fleet: Fleet, inventory: Inventory, ship: Ship, name: str, data: bytes,
+           sha256: str, what: str = "the bundle") -> str:
+    """Copy a file and its .sha256 into fleet's incoming folder; returns the path.
 
-    ship-ctl converge checks the bundle against the .sha256 before unpacking it.
+    ship-ctl converge and ship-ctl toolkit apply check it against the .sha256 first.
     """
-    name = f"bundle-{bundle.sha256[:16]}.tar.gz"
     result = fleet.ssh(inventory).run(
-        ship, ["bash", "-c", UPLOAD_SCRIPT, "upload", INCOMING, name, bundle.sha256],
-        input=bundle.data, timeout=300,
+        ship, ["bash", "-c", UPLOAD_SCRIPT, "upload", INCOMING, name, sha256],
+        input=data, timeout=600,
     )
     if result.returncode != 0:
-        raise FleetError(f"{ship.name}: uploading the bundle failed: {_last_line(result.stderr)}")
+        raise FleetError(f"{ship.name}: uploading {what} failed: {_last_line(result.stderr)}")
     return f"{INCOMING}/{name}"
+
+
+def upload_bundle(fleet: Fleet, inventory: Inventory, ship: Ship,
+                  bundle: bundle_mod.Bundle) -> str:
+    return upload(fleet, inventory, ship, f"bundle-{bundle.sha256[:16]}.tar.gz", bundle.data,
+                  bundle.sha256)
 
 
 def _remove_upload(fleet: Fleet, inventory: Inventory, ship: Ship, path: str) -> None:
@@ -695,18 +700,45 @@ def update(
     times: RebootTimes | None = None,
     bundle: bundle_mod.Bundle | None = None,
 ) -> list[Outcome]:
-    """Update every Ship to the tooling bundle packed from this checkout."""
+    """Update every Ship to the tooling bundle packed from this checkout, then send it
+    the toolkits it may have (toolkitpush.py)."""
+    from fleetledger import toolkitpush, toolkits
+    from fleetledger.catalogue import Catalogue
+
     _check_reboot_policy(reboot_policy)
-    bundle = bundle or bundle_mod.pack(fleet.repo_factory())
+    repo = fleet.repo_factory()
+    bundle = bundle or bundle_mod.pack(repo)
     if bundle.manifest["dirty"] and on_event:
         on_event("*", f"note: packing {bundle.release} from a checkout with uncommitted "
                       "changes under ship/ (marked dirty)")
-    return for_each(
-        fleet, ships,
-        lambda s, ev: update_one(fleet, s, bundle, ev, reboot_policy=reboot_policy,
-                                 wait=wait, force=force, times=times),
-        on_event,
-    )
+    inv = fleet.inventory
+    catalogue = Catalogue.from_repo(repo, inv) if toolkits.configured(inv) else None
+    archives = toolkitpush.Archives(repo.contracts)
+
+    def one(ship: Ship, event: Event) -> Outcome:
+        outcome = update_one(fleet, ship, bundle, event, reboot_policy=reboot_policy,
+                             wait=wait, force=force, times=times)
+        if catalogue is None or not outcome.ok:
+            return outcome
+        if outcome.data.get("rebooted") and not wait:  # going down now: not the moment
+            outcome.details.append("Toolkits were not sent: it is rebooting. They go with "
+                                   "the next update, or ship-fleet toolkit push once it is "
+                                   "back.")
+            return outcome
+        try:
+            sent, lines, _ = toolkitpush.send_allowed(fleet, fleet.inventory, ship, catalogue,
+                                                      archives)
+        except FleetError as exc:
+            sent, lines = False, [f"Toolkits not sent: {exc.message}"]
+        if lines:
+            event(ship.name, "toolkits: " + ("sent" if sent else "not all sent"))
+        outcome.details.extend(lines)
+        if not sent:
+            outcome.ok = False
+            outcome.summary += "; toolkits not all sent"
+        return outcome
+
+    return for_each(fleet, ships, one, on_event)
 
 
 # --- settings, tags, tools, logs ----------------------------------------------
@@ -1015,7 +1047,10 @@ def change_tools(
     ids: Sequence[str],
     on_event: Event | None = None,
 ) -> list[Outcome]:
-    """Add or remove catalogue tools on Ships (ship-ctl tools add|remove)."""
+    """Add or remove catalogue tools on Ships (ship-ctl tools add|remove). A toolkit
+    tool is added only on a Ship that may have its toolkit (only_tags), which is sent
+    to it first."""
+    from fleetledger import toolkitpush
     from fleetledger.catalogue import Catalogue
     from fleetledger.seed.shiptoml import tools_for
 
@@ -1023,13 +1058,24 @@ def change_tools(
         raise FleetError(f"Unknown tools action '{action}'.")
     if not ids:
         raise FleetError("Which tools? Give at least one catalogue id.")
-    catalogue = Catalogue.from_repo(fleet.repo_factory(), fleet.inventory)
+    repo = fleet.repo_factory()
+    catalogue = Catalogue.from_repo(repo, fleet.inventory)
     ids = catalogue.resolve_tools(ids)
-    catalogue.check_sendable(ids)
+    kits = sorted({k for k in map(catalogue.toolkit_of, ids) if k is not None})
+    archives = toolkitpush.Archives(repo.contracts)
 
     def one(ship: Ship, event: Event) -> Outcome:
         inv = fleet.inventory
-        result = ShipCtl(fleet.ssh(inv), ship).tools(action, ids)
+        ctl = ShipCtl(fleet.ssh(inv), ship)
+        sent: list[str] = []
+        if action == "add" and kits:
+            catalogue.check_allowed(inv.effective_tags(ship), ids, ship_name=ship.name)
+            _, sent, missing = toolkitpush.send_allowed(fleet, inv, ship, catalogue, archives,
+                                                        only=kits, ctl=ctl)
+            if missing:
+                raise FleetError(f"{ship.name}: tools not added, as toolkit "
+                                 f"{', '.join(missing)} is not on it: {' '.join(sent)}")
+        result = ctl.tools(action, ids)
         current = tools_for(inv, inv.ship(ship.name), catalogue)
         if action == "add":
             updated = list(dict.fromkeys([*current, *ids]))
@@ -1039,7 +1085,7 @@ def change_tools(
             ed.set_field(ship.name, "tools", updated)
         summary = f"tools {', '.join(updated) or '(none)'}"
         event(ship.name, summary)
-        return Outcome(ship.name, True, summary, list(result.messages), {"tools": updated})
+        return Outcome(ship.name, True, summary, [*sent, *result.messages], {"tools": updated})
 
     return for_each(fleet, ships, one, on_event)
 
