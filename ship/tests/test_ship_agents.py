@@ -202,6 +202,11 @@ def test_ctrl_c_twice_is_the_fallback_when_exit_is_ignored(running):
     assert rc == 0, doc
     pane = agent(ship, "main")["pane_id"]
     assert [pane, "ctrl+c", "ctrl+c"] in ship.scenario()["herdr"]["keys"]
+    # Ctrl+C before /exit goes to the agent; the fallback goes to its pane, which
+    # takes keys even when herdr no longer sees an agent there.
+    calls = ship.calls("herdr")
+    assert ["herdr", "agent", "send-keys", pane, "ctrl+c"] in calls
+    assert ["herdr", "pane", "send-keys", pane, "ctrl+c", "ctrl+c"] in calls
 
 
 def test_unknown_names_and_bad_arguments(running):

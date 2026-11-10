@@ -105,7 +105,7 @@ def _preflight(rt: Runtime) -> None:
         binary = "/usr/local/bin/hc" if rt.kind == "core" else "/usr/local/bin/herdr"
         raise CtlError("runtime-missing", f"{rt.kind} is not installed on this Ship ({binary} "
                        "does not answer); update the Ship's tooling first; nothing changed")
-    why = rt.claude_floor(strict=True) if rt.kind == "core" else ""
+    why = rt.claude_floor(strict=True)
     if why:
         raise CtlError("runtime-missing", f"{why}; nothing changed")
 
