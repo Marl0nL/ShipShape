@@ -196,6 +196,10 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         return dataclasses.replace(
             _operation("reboot", ship, "Reboot", f"ship-fleet reboot {ship}", runtime),
             hint="Agents keep running; to switch now:")
+    if code == "tmp-reboot-pending":  # not urgent: the tmpfs /tmp works until then
+        return dataclasses.replace(
+            _operation("reboot", ship, "Reboot", f"ship-fleet reboot {ship}", runtime),
+            hint="/tmp moves to the disk at the next reboot; to move it now:")
     if code == "behind-tooling":
         return _operation("update", ship, "Update", f"ship-fleet update {ship}", runtime)
     if code == "not-on-overlay":

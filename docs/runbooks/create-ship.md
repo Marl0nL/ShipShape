@@ -127,6 +127,12 @@ herdr --remote ship-01            # attach herdr, once this computer is trusted
                                   # (setup does it); else agent@ship-01.local
 ```
 
+`/tmp` is a folder on the Ship's disk, not in memory. A Ship made from an image
+baked with this (see [images.md](images.md#rebuild)) has it so from its first boot.
+One made with `--image stock`, or from an image baked before it, starts with
+systemd's in-memory `/tmp` and shows `tmp-reboot-pending` until its first reboot
+(`ship-fleet reboot ship-01`, before you start heavy work on it).
+
 ## A Ship FleetLedger did not create
 
 `ship-fleet scan` lists Ships announcing themselves on your LAN. To take one into

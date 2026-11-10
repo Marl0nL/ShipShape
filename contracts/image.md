@@ -17,6 +17,8 @@ In the image:
 - every `versions.toml` `[apt.*]` repository with its pinned keyring, and the
   packages of the core repositories (gh, google-cloud-cli, Node.js);
 - herdr and uv, checked against their pinned sha256;
+- `/tmp` on the disk: `tmp.mount` masked and `/etc/tmpfiles.d/tmp.conf`
+  (`ship-runtime.md`, Paths), so a Ship from the image never has a tmpfs `/tmp`;
 - the apt packages of the catalogue recipes marked `bake = true` that the bake
   was asked for (for example Google Chrome for `chrome-devtools-axi`);
 - `/etc/shipshape/image.json`: the manifest, without its own `sha256`.

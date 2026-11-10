@@ -2,7 +2,8 @@
 
 A baked image is Ubuntu's verified cloud image with the slow, shared part of
 provisioning already done (Ubuntu packages, the gh, gcloud, Node.js and Chrome
-apt repositories and packages, herdr, herdr-core, uv). A Ship made from it skips those steps
+apt repositories and packages, herdr, herdr-core, uv, and `/tmp` on the disk rather than
+in memory). A Ship made from it skips those steps
 at first boot, so it reaches `needs-sign-in` in minutes instead of about ten.
 Everything per-Ship still comes from its own seed: users, host key, settings,
 tooling, Claude Code, npm tools. The image holds no keys and no secrets
@@ -83,8 +84,9 @@ reaches `needs-sign-in` and signs in, destroy it, then `image use <id>`.
 
 ## Rebuild
 
-One command, whenever `versions.toml` or `ship-provision` changes, or to pick up
-Ubuntu's latest packages:
+One command, whenever `versions.toml` or `ship-provision` changes (an image baked
+before the disk-backed `/tmp` gives new Ships an in-memory `/tmp` until their first
+reboot), or to pick up Ubuntu's latest packages:
 
 ```sh
 ship-fleet image build && ship-fleet image publish <new id> && ship-fleet image use <new id>

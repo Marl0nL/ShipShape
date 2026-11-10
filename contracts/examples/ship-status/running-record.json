@@ -32,7 +32,8 @@
     "disk_total_gb": 38.6,
     "disk_used_pct": 22.0,
     "reboot_required": false,
-    "updates_pending": 3
+    "updates_pending": 3,
+    "tmp": { "fs": "disk", "next_boot": "disk" }
   },
   "provision": {
     "cloud_init": "done",

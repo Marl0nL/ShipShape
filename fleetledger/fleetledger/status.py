@@ -45,6 +45,12 @@ def runtime_of(doc: dict[str, Any] | None) -> str:
     return ((doc or {}).get("herdr") or {}).get("runtime") or "herdr"
 
 
+def tmp_pending(doc: dict[str, Any] | None) -> bool:
+    """True when /tmp is still a tmpfs and the next reboot puts it on the disk.
+    Tooling that predates the disk-backed /tmp leaves host.tmp out."""
+    return ((doc or {}).get("host") or {}).get("tmp") == {"fs": "tmpfs", "next_boot": "disk"}
+
+
 def waiting_reason(agent: dict[str, Any]) -> str | None:
     """What a blocked agent waits for, e.g. "approval: npm test", or None. Only
     herdr-core agents say (blocked_kind, message); herdr's never do."""

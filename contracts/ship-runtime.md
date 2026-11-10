@@ -77,6 +77,7 @@ exactly as in phase 1.
 | `/run/shipshape/status.json` | root, 0644 | Status cache: the same document as `ship-ctl status --json`, rewritten at least every 60 seconds. |
 | `/var/log/shipshape/provision.log` | root, 0640 | Output of first boot and every converge (also in the journal). |
 | `/etc/claude-code/managed-settings.json` | root, 0644 | Claude Code managed settings, written only by `ship-ctl apply`. |
+| `/tmp` | root, 1777 | A folder on the root disk, not a tmpfs: `/etc/systemd/system/tmp.mount` is a link to `/dev/null` (masked). It keeps its files across reboots; systemd-tmpfiles' daily clean-up removes what nothing used for 10 days (`/etc/tmpfiles.d/tmp.conf`). A Ship whose converge has just masked it keeps the old tmpfs until its next reboot (attention `tmp-reboot-pending`, status `host.tmp`). |
 
 Agent home (`/home/agent`), owned by `agent`:
 

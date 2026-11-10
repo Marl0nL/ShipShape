@@ -49,6 +49,32 @@ def _fail(what: str, result: Result) -> str:
 
 
 # --- host --------------------------------------------------------------------
+TMP_MASK = "/etc/systemd/system/tmp.mount"  # ship-provision's mask (step_disk_tmp)
+
+
+def tmp_state(ctx: Context) -> dict:
+    """What /tmp is now and from the next boot: "tmpfs" (in memory) or "disk".
+
+    fs comes from this process's mount table (the last mount on /tmp wins; none
+    means a plain folder of /); next_boot is "disk" once tmp.mount is masked.
+    """
+    fs = "unknown"
+    try:
+        found = ""
+        for line in (ctx.paths.proc / "self/mounts").read_text().splitlines():
+            parts = line.split()
+            if len(parts) > 2 and parts[1] == "/tmp":
+                found = parts[2]
+        fs = "tmpfs" if found == "tmpfs" else "disk"
+    except OSError:
+        pass
+    try:
+        masked = os.readlink(ctx.paths.p(TMP_MASK)) == "/dev/null"
+    except OSError:
+        masked = False
+    return {"fs": fs, "next_boot": "disk" if masked else "tmpfs"}
+
+
 def probe_host(ctx: Context) -> tuple[dict, list[str]]:
     errors: list[str] = []
     proc = ctx.paths.proc
@@ -62,6 +88,7 @@ def probe_host(ctx: Context) -> tuple[dict, list[str]]:
         "disk_used_pct": 0.0,
         "reboot_required": ctx.paths.p("/var/run/reboot-required").exists(),
         "updates_pending": None,
+        "tmp": tmp_state(ctx),
     }
     try:
         host["uptime_s"] = int(float((proc / "uptime").read_text().split()[0]))
@@ -509,6 +536,13 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
         add(code, message)
     if doc["host"]["reboot_required"]:
         add("reboot-required", "A reboot is needed to finish updates.")
+    if doc["host"].get("tmp") == {"fs": "tmpfs", "next_boot": "disk"}:
+        add(
+            "tmp-reboot-pending",
+            "/tmp is still in memory (tmpfs), where it can run out of room for new "
+            "files; the next reboot puts it on the disk.",
+            "/tmp",
+        )
     if herdr_pending:
         add(
             "herdr-restart-pending",

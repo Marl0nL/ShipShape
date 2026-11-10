@@ -88,6 +88,7 @@ SEVERITY = {
     "reboot-required": "medium",
     "herdr-restart-pending": "medium",
     "core-restart-pending": "low",  # agents unaffected; the next reboot switches it
+    "tmp-reboot-pending": "low",  # /tmp moves to the disk at the next reboot
     "host-cert-expiring": "medium",
     "host-cert-missing": "medium",
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
@@ -599,6 +600,8 @@ def update_one(
             details.append("herdr-core was updated; its agents keep running on the old core, "
                            f"and the new one takes over at the next reboot (ship-fleet reboot "
                            f"{ship.name}).")
+        if has_attention(before, "tmp-reboot-pending"):
+            details.append(tmp_note(ship.name))
         return Outcome(ship.name, True, f"already on {release}", details, data)
 
     backwards = rolls_back(fleet.repo_factory(), before, bundle, ship.name)
@@ -653,9 +656,19 @@ def update_one(
                 "herdr-core was updated; its agents keep running on the old core, and the "
                 f"new one takes over at the next reboot (ship-fleet reboot {ship.name})."
             )
+        if has_attention(after, "tmp-reboot-pending"):
+            outcome.details.append(tmp_note(ship.name))
         return outcome
     return _reboot_after(fleet, ship, on_event, outcome, wait, times, before=before,
                          host=after_view.host)
+
+
+def tmp_note(name: str) -> str:
+    """The update's note while /tmp waits for its reboot (attention tmp-reboot-pending).
+    Like a new herdr-core, auto never reboots for it: the tmpfs /tmp keeps working
+    until then, and a reboot now would interrupt every agent."""
+    return ("/tmp moves from memory (tmpfs) to the disk at the next reboot; until then it "
+            f"is the old tmpfs (ship-fleet reboot {name}).")
 
 
 def _reboot_after(fleet, ship, on_event, outcome, wait, times, before=None, host=None):

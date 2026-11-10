@@ -673,3 +673,94 @@ def test_herdr_core_pin_is_in_versions():
         "4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424")
     assert all(a["url"].startswith("https://releases.herdr.dev/core/0.1.19/")
                and a["url"].endswith(".tar.gz") for a in pin["assets"].values())
+
+
+# --- /tmp on the disk ---------------------------------------------------------------
+TMP_MASK = "etc/systemd/system/tmp.mount"
+TMPFILES = "etc/tmpfiles.d/tmp.conf"
+
+
+def _recorders(tmp_path: Path) -> tuple[dict, Path]:
+    """A bin folder whose mount, umount and systemctl record every call (systemctl
+    then runs the real one, which --root needs to enable units offline)."""
+    bin_dir, log = tmp_path / "fakebin", tmp_path / "calls.log"
+    bin_dir.mkdir()
+    real = shutil.which("systemctl")
+    for name in ("mount", "umount", "systemctl"):
+        then = f'exec {real} "$@"' if name == "systemctl" and real else "exit 0"
+        (bin_dir / name).write_text(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n{then}\n')
+        (bin_dir / name).chmod(0o755)
+    return {"PATH": f"{bin_dir}:/usr/bin:/bin"}, log
+
+
+def _calls(log: Path) -> list[str]:
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def test_a_new_ship_gets_a_disk_tmp_with_age_cleanup(tmp_path):
+    """First boot masks tmp.mount (so /tmp is a folder on the root disk) and owns the
+    tmpfiles rule that keeps it 1777 and cleans what nothing used for 10 days."""
+    root = tmp_path / "root"
+    root.mkdir()
+    env, log = _recorders(tmp_path)
+    r = provision("--first-boot", "--root", str(root), env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.readlink(root / TMP_MASK) == "/dev/null"
+    assert f"changed: /{TMP_MASK} -> /dev/null" in r.stdout
+    rule = (root / TMPFILES).read_text()
+    assert (root / TMPFILES).read_bytes() == (FILES / "tmpfiles/tmp.conf").read_bytes()
+    assert mode(root / TMPFILES) == "0o644"
+    lines = [ln.split() for ln in rule.splitlines() if ln and not ln.startswith("#")]
+    assert ["q", "/tmp", "1777", "root", "root", "10d"] in lines
+    assert ["q", "/var/tmp", "1777", "root", "root", "30d"] in lines  # it replaces systemd's
+    assert not any(c.startswith(("mount", "umount")) for c in _calls(log))
+    assert not any("tmp.mount" in c for c in _calls(log))
+    again = provision("--first-boot", "--root", str(root), env=env)
+    assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
+
+
+def test_an_existing_ships_update_moves_tmp_to_disk_at_the_next_reboot(tmp_path):
+    """A Ship provisioned before this change, /tmp a live tmpfs: its next converge masks
+    tmp.mount once, says the reboot applies it, and never unmounts or stops anything."""
+    root = tmp_path / "root"
+    root.mkdir()
+    assert provision("--converge", "--root", str(root)).returncode == 0
+    (root / TMP_MASK).unlink()  # as an older release left it
+    (root / TMPFILES).unlink()
+    (root / "proc/self").mkdir(parents=True)
+    (root / "proc/self/mounts").write_text(
+        "/dev/sda1 / ext4 rw,relatime 0 0\n"
+        "tmpfs /tmp tmpfs rw,nosuid,nodev,nr_inodes=1048576,inode64 0 0\n")
+    env, log = _recorders(tmp_path)
+    r = provision("--converge", "--root", str(root), env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert os.readlink(root / TMP_MASK) == "/dev/null"
+    assert (root / TMPFILES).exists()
+    assert r.stdout.count("changed:") == 2, r.stdout
+    assert "/tmp stays in memory (tmpfs) until the next reboot, which puts it on the disk" \
+        in r.stdout
+    assert not any(c.startswith(("mount", "umount")) for c in _calls(log))
+    assert not any("tmp.mount" in c for c in _calls(log))
+    again = provision("--converge", "--root", str(root), env=env)
+    assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
+    assert "tmpfs" not in again.stdout  # said once, when it changed
+
+
+def test_tmp_mask_replaces_a_unit_file_and_dry_run_only_reports(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    assert provision("--converge", "--root", str(root)).returncode == 0
+    (root / TMP_MASK).unlink()
+    (root / TMP_MASK).write_text("[Mount]\nWhat=tmpfs\nWhere=/tmp\nType=tmpfs\n")
+    dry = provision("--converge", "--dry-run", "--root", str(root))
+    assert f"would change: /{TMP_MASK} -> /dev/null" in dry.stdout
+    assert not (root / TMP_MASK).is_symlink()
+    provision("--converge", "--root", str(root))
+    assert os.readlink(root / TMP_MASK) == "/dev/null"
+
+
+def test_the_tmpfiles_rule_is_what_systemd_ships():
+    """Ours replaces systemd's tmp.conf, so it must keep both of its lines."""
+    lines = [ln for ln in (FILES / "tmpfiles/tmp.conf").read_text().splitlines()
+             if ln and not ln.startswith("#")]
+    assert lines == ["q /tmp 1777 root root 10d", "q /var/tmp 1777 root root 30d"]

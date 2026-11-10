@@ -92,6 +92,8 @@ class SimShip:
         self.runtime = "herdr"  # ship.toml runtime: herdr or core (herdr-core)
         self.core_changes = False  # does the next converge replace herdr-core?
         self.core_pending = False
+        self.tmp_changes = False  # does the next converge mask tmp.mount (/tmp to disk)?
+        self.tmp_pending = False
         self.converge_error = None
         self.report_commit = None  # lie about the bundle after converge
         self.accounts = {}  # service -> account reported in auth
@@ -126,6 +128,7 @@ class SimShip:
         self.down_until = None
         self.herdr_pending = False
         self.core_pending = False
+        self.tmp_pending = False
         self.impostor = bool(self.after_reboot_id or self.after_reboot_host_key)
         if self.after_reboot is not None:
             self.agents = dict(self.after_reboot)
@@ -178,6 +181,10 @@ class SimShip:
             doc["attention"].append({"code": "core-restart-pending",
                                      "message": "herdr-core was updated.",
                                      "subject": "herdr-core"})
+        if self.tmp_pending:
+            doc["host"]["tmp"] = {"fs": "tmpfs", "next_boot": "disk"}
+            doc["attention"].append({"code": "tmp-reboot-pending",
+                                     "message": "/tmp is still in memory.", "subject": "/tmp"})
         doc["state"] = "running" if agents else "ready"
         return doc
 
@@ -276,6 +283,8 @@ class SimShip:
             self.herdr_pending = True
         if self.core_changes:
             self.core_pending = True
+        if self.tmp_changes:
+            self.tmp_pending = True
         return 0, json.dumps(ctl_result("converge", data={
             "from": old, "to": f"{self.tooling}-{manifest['commit'][:12]}"})), ""
 
@@ -790,6 +799,32 @@ def test_update_up_to_date_ship_with_only_the_core_pending_does_not_reboot(world
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
     assert outcome.ok and outcome.summary.startswith("already on") and sim.reboots == []
     assert any("herdr-core was updated" in d for d in outcome.details)
+
+
+def test_update_says_a_reboot_puts_tmp_on_the_disk_and_does_not_reboot(world):
+    """An existing Ship's converge masks tmp.mount: auto does not reboot for it, and the
+    result says the next reboot applies the disk-backed /tmp; always reboots and clears it."""
+    sim = world.sims["ship-01"]
+    sim.tmp_changes = True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok, outcome
+    assert sim.reboots == [] and outcome.data["rebooted"] is False
+    assert ops.tmp_note("ship-01") in outcome.details
+    assert "ship-fleet reboot ship-01" in ops.tmp_note("ship-01")
+    sim.bundle_commit, sim.tooling = OLD_COMMIT, "0.1.0"
+    [again] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                         reboot_policy="always")
+    assert again.ok and len(sim.reboots) == 1 and not sim.tmp_pending
+    assert ops.tmp_note("ship-01") not in again.details
+
+
+def test_update_up_to_date_ship_still_waiting_for_its_disk_tmp_says_so(world):
+    sim = world.sims["ship-01"]
+    sim.tmp_pending = True
+    sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and outcome.summary.startswith("already on") and sim.reboots == []
+    assert ops.tmp_note("ship-01") in outcome.details
 
 
 def test_update_converge_failure_is_reported_and_upload_removed(world):

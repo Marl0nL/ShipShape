@@ -466,6 +466,21 @@ def test_ship_page_lists_recorded_agents_that_are_not_running(web):
     assert "2 Claude agents running" in page  # a recorded one not running is not counted
 
 
+def test_ship_page_shows_a_tmp_waiting_for_its_reboot(web):
+    doc = copy.deepcopy(RUNNING)
+    doc["host"]["tmp"] = {"fs": "tmpfs", "next_boot": "disk"}
+    web.ship.status_override["ship-01"] = doc
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/ships/ship-01").text
+    assert "<dt>/tmp</dt><dd>in memory (tmpfs)" in page
+    assert "on the disk after a reboot" in page
+    doc["host"]["tmp"] = {"fs": "disk", "next_boot": "disk"}
+    web.fleet.poll()
+    page = web.client.get("/ships/ship-01").text
+    assert "<dt>/tmp</dt><dd>on the disk</dd>" in page
+
+
 def test_ship_text_is_escaped(web):
     doc = copy.deepcopy(RUNNING)
     doc["attention"] = [{"code": "agent-waiting", "subject": "x",

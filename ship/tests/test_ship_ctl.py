@@ -157,6 +157,45 @@ def test_status_reports_failed_units_and_reboot(ship):
     assert ("reboot-required", None) in codes
 
 
+def _tmp_mounted(ship, fstype: str | None) -> None:
+    lines = ["/dev/sda1 / ext4 rw,relatime 0 0"]
+    if fstype:
+        lines.append(f"{fstype} /tmp {fstype} rw,nosuid,nodev 0 0")
+    ship.p("/proc/self").mkdir(parents=True, exist_ok=True)
+    ship.p("/proc/self/mounts").write_text("\n".join(lines) + "\n")
+
+
+def _mask_tmp(ship) -> None:
+    mask = ship.p("/etc/systemd/system/tmp.mount")
+    mask.parent.mkdir(parents=True, exist_ok=True)
+    mask.symlink_to("/dev/null")
+
+
+def test_status_tmp_waits_for_its_reboot(ship):
+    """tmp.mount masked by a converge, /tmp still the live tmpfs: tmp-reboot-pending
+    until the reboot, after which /tmp is a plain folder of / and the item is gone."""
+    _tmp_mounted(ship, "tmpfs")
+    _, doc, _ = ship.ctl("status", "--json")
+    assert doc["host"]["tmp"] == {"fs": "tmpfs", "next_boot": "tmpfs"}  # not converged yet
+    assert "tmp-reboot-pending" not in [a["code"] for a in doc["attention"]]
+    _mask_tmp(ship)
+    _, doc, _ = ship.ctl("status", "--json")
+    assert_valid("ship-status", doc)
+    assert doc["host"]["tmp"] == {"fs": "tmpfs", "next_boot": "disk"}
+    [item] = [a for a in doc["attention"] if a["code"] == "tmp-reboot-pending"]
+    assert item["subject"] == "/tmp" and "next reboot" in item["message"]
+    _tmp_mounted(ship, None)  # rebooted: no mount on /tmp
+    _, doc, _ = ship.ctl("status", "--json")
+    assert doc["host"]["tmp"] == {"fs": "disk", "next_boot": "disk"}
+    assert "tmp-reboot-pending" not in [a["code"] for a in doc["attention"]]
+
+
+def test_status_tmp_unknown_without_a_mount_table(ship):
+    _, doc, _ = ship.ctl("status", "--json")
+    assert doc["host"]["tmp"]["fs"] == "unknown"
+    assert "tmp-reboot-pending" not in [a["code"] for a in doc["attention"]]
+
+
 def test_status_write_cache(ship):
     rc, doc, _ = ship.ctl("status", "--json", "--write", "/run/shipshape/status.json")
     assert rc == 0

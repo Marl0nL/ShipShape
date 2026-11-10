@@ -35,9 +35,15 @@ def test_bake_does_only_the_shared_system_layer(tmp_path):
     sources = sorted(p.name for p in (tmp_path / "etc/apt/sources.list.d").iterdir())
     assert "shipshape-google-chrome.sources" in sources
     # Nothing per-Ship: no users' files, no ShipShape files, no units, no settings.
-    for absent in ("home", "opt/shipshape", "etc/ssh", "etc/systemd", "usr/local/bin/ship-ctl",
+    for absent in ("home", "opt/shipshape", "etc/ssh", "usr/local/bin/ship-ctl",
                    "etc/claude-code", "etc/profile.d/shipshape.sh"):
         assert not (tmp_path / absent).exists(), absent
+    # The one unit change every Ship shares: tmp.mount masked, so a Ship made from the
+    # image has /tmp on the disk from its first boot.
+    units = sorted(str(p.relative_to(tmp_path)) for p in (tmp_path / "etc/systemd").rglob("*"))
+    assert units == ["etc/systemd/system", "etc/systemd/system/tmp.mount"]
+    assert os.readlink(tmp_path / "etc/systemd/system/tmp.mount") == "/dev/null"
+    assert (tmp_path / "etc/tmpfiles.d/tmp.conf").exists()
     # And no provisioning record: first boot must not look done before it ran.
     assert not (tmp_path / "var/lib/shipshape/provision.json").exists()
     assert "systemctl start qemu-guest-agent" not in r.stdout
