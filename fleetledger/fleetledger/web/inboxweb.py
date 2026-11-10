@@ -36,8 +36,8 @@ from starlette.routing import Route
 
 from fleetledger import inbox, paths
 from fleetledger.errors import FleetError
-from fleetledger.web.common import NO_SUCH_SHIP, back, known_ship, session_of, ui_of
-from fleetledger.web.forms import form, one
+from fleetledger.web.common import back, known_ship, session_of, ship_form, ui_of
+from fleetledger.web.forms import one
 from fleetledger.web.security import MAX_UPLOAD
 
 SPOOL_TTL = 3600  # seconds an upload waits to be sent
@@ -247,14 +247,8 @@ def start_send(ui: Any, name: str, items: list[Spooled], tell: bool) -> Any:
 
 async def send(request: Request) -> Response:
     """The spooled files, sent to the Ship as a job (the drop zone posts this form)."""
-    from fleetledger.web.app import not_found
 
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    ui = ui_of(request)
-    session = session_of(request)
-    fields = await form(request)
+    ui, name, fields, session = await ship_form(request)
     ids = [i for i in fields.get("file", []) if i]
     where = f"/ships/{name}/inbox"
     if len(ids) > inbox.MAX_FILES:
@@ -275,14 +269,9 @@ async def remove(request: Request) -> Response:
     """Remove one file from the inbox (ship-fleet inbox rm), after the confirm dialog."""
     from fleetledger.ops import Fleet
     from fleetledger.web.actions import Outcome
-    from fleetledger.web.app import _flash_outcome, not_found
+    from fleetledger.web.app import _flash_outcome
 
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    ui = ui_of(request)
-    session = session_of(request)
-    fields = await form(request)
+    ui, name, fields, session = await ship_form(request)
     where = f"/ships/{name}/inbox"
     values = fields.get("name", [])
     target = values[0] if len(values) == 1 else ""  # exactly as listed: never stripped

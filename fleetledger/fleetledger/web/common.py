@@ -9,7 +9,7 @@ pulls in the rest of the UI.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import urlencode
 
 from starlette.requests import Request
@@ -18,7 +18,7 @@ from starlette.websockets import WebSocket
 
 from fleetledger.errors import FleetError
 from fleetledger.web import jobs
-from fleetledger.web.forms import NAME_RE
+from fleetledger.web.forms import NAME_RE, form
 from fleetledger.web.security import Session
 
 if TYPE_CHECKING:
@@ -58,6 +58,35 @@ def known_ship(request: Request) -> str | None:
     """The {name} in the path, if it is a Ship the poller knows."""
     name = ship_name(request)
     return name if name and name in ui_of(request).fleet.snapshot.by_name else None
+
+
+class NoSuchShip(Exception):
+    """The {name} in the path is not a Ship the poller knows. app.py turns it into the
+    "No such Ship" 404 page."""
+
+
+def ship_of(request: Request) -> str:
+    """The Ship named in the path; NoSuchShip (a 404) unless the poller knows it."""
+    name = known_ship(request)
+    if name is None:
+        raise NoSuchShip(request.path_params.get("name", ""))
+    return name
+
+
+class ShipPost(NamedTuple):
+    """What a POST /ships/{name}/... handler starts with."""
+
+    ui: UI
+    name: str
+    fields: dict[str, list[str]]
+    session: Session
+
+
+async def ship_form(request: Request) -> ShipPost:
+    """For a POST /ships/{name}/... handler: the Ship (checked before the form is read;
+    NoSuchShip if the poller does not know it), the posted form and the session."""
+    name = ship_of(request)
+    return ShipPost(ui_of(request), name, await form(request), session_of(request))
 
 
 def start_cli_job(request: Request, kind: str, ships: list[str], argv: list[str], title: str,

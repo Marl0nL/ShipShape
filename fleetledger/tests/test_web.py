@@ -555,7 +555,7 @@ def test_unreachable_ship_is_shown_not_fatal(web):
     ("/ships/{}/power", {"power": "start"}),
 ])
 def test_actions_on_a_ship_the_poller_does_not_know_are_404(web, path, data):
-    """Every per-Ship action route checks the Ship exists (app._known_ship)."""
+    """Every per-Ship action route checks the Ship exists (common.ship_of)."""
     web.sign_in()
     for name in ("nope", "BAD!"):  # well-formed but unknown; not a Ship name at all
         response = web.post(path.format(name), data)

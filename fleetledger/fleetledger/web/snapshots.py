@@ -25,14 +25,13 @@ from fleetledger.drivers.base import NotSupported, check_snapshot_name
 from fleetledger.errors import FleetError
 from fleetledger.lifecycle import SNAPSHOT_WARNING
 from fleetledger.web.common import (
-    NO_SUCH_SHIP,
     back,
     flash,
-    known_ship,
+    ship_form,
     start_cli_job,
     ui_of,
 )
-from fleetledger.web.forms import form, one
+from fleetledger.web.forms import one
 
 NOTE_MAX = 200
 
@@ -68,12 +67,7 @@ def _snapshot_name(value: str) -> str | None:
 
 
 async def take(request: Request) -> Response:
-    from fleetledger.web.app import not_found
-
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    _, name, fields, _ = await ship_form(request)
     snap, note = one(fields, "snapshot"), one(fields, "note")[:NOTE_MAX]
     if snap and _snapshot_name(snap) is None:
         flash(request, "bad",
@@ -87,12 +81,7 @@ async def take(request: Request) -> Response:
 
 
 async def rollback(request: Request) -> Response:
-    from fleetledger.web.app import not_found
-
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    _, name, fields, _ = await ship_form(request)
     snap = _snapshot_name(one(fields, "snapshot"))
     if snap is None:
         flash(request, "bad", "Choose a snapshot to roll back to.")
@@ -109,12 +98,7 @@ async def rollback(request: Request) -> Response:
 
 
 async def delete(request: Request) -> Response:
-    from fleetledger.web.app import not_found
-
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    _, name, fields, _ = await ship_form(request)
     snap = _snapshot_name(one(fields, "snapshot"))
     if snap is None:
         flash(request, "bad", "Choose a snapshot to delete.")

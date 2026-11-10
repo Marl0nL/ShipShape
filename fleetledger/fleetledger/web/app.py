@@ -66,11 +66,14 @@ from fleetledger.web import (
 from fleetledger.web.common import (
     NO_SUCH_SHIP,
     NOT_FROM_A_DEVICE,
+    NoSuchShip,
     back,
     flash,
     known_ship,
     session_of,
+    ship_form,
     ship_name,
+    ship_of,
     start_cli_job,
     ui_of,
 )
@@ -282,6 +285,11 @@ def partial(request: Request, template: str, **context: Any) -> Response:
 
 def not_found(request: Request, what: str) -> Response:
     return render(request, "message.html", status_code=404, title="Not found", text=what)
+
+
+async def _no_such_ship(request: Request, exc: Exception) -> Response:
+    """A per-Ship route for a Ship the poller does not know (common.ship_of)."""
+    return not_found(request, NO_SUCH_SHIP)
 
 
 # --- fleet -------------------------------------------------------------------------
@@ -549,13 +557,9 @@ async def ship_page(request: Request) -> Response:
 
 
 async def ship_refresh(request: Request) -> Response:
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    ui, name, fields, session = await ship_form(request)
     await run_in_threadpool(ui.fleet.poll, [name])
-    ui.flash(session_of(request), "ok", f"Checked {name}.")
+    ui.flash(session, "ok", f"Checked {name}.")
     if one(fields, "from") == "signin":
         return _signin_back(fields)
     return back("/" if one(fields, "from") == "fleet" else f"/ships/{name}")
@@ -620,12 +624,7 @@ async def ship_tools(request: Request) -> Response:
 
 async def ship_agents(request: Request) -> Response:
     """Add an autostart agent to a Ship (or stop starting one)."""
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     try:
         if one(fields, "do") == "remove":
             pair = ops.parse_autostart_change("autostart.remove", one(fields, "agent"))
@@ -648,12 +647,7 @@ async def ship_agent_restart(request: Request) -> Response:
     """Restart running agents in place, in a new mode (ship-fleet agent restart), as a
     job, after its confirm dialog: one agent from the Overview's agent list, or the
     agents not in the mode they would start in, from the Settings tab."""
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     where = f"/ships/{name}" + ("/settings" if one(fields, "from") == "settings" else "")
     if one(fields, "confirm") != "yes":
         ui.flash(session, "bad", "Tick the box to confirm.")
@@ -674,12 +668,7 @@ async def ship_agent_restart(request: Request) -> Response:
 
 async def ship_signins(request: Request) -> Response:
     """Choose the sign-ins a Ship uses; the ones turned off are signed out there."""
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     said: list[str] = []
     try:
         wanted = signins.check(fields.get("signin", []))
@@ -696,12 +685,7 @@ async def ship_github_scopes(request: Request) -> Response:
     """Choose the extra GitHub scopes a Ship's GitHub sign-in asks for (ghscopes). The
     sign-in on the Ship is not touched: if its token's scopes now differ, the page
     offers to sign in again with these scopes."""
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     where = f"/ships/{name}/settings#github-scopes"
     try:
         wanted = ghscopes.check(fields.get("scope", []))
@@ -731,12 +715,7 @@ async def ship_size(request: Request) -> Response:
     """Resize a Ship (cores, memory, a disk that only grows), optionally restarting it."""
     from fleetledger import lifecycle
 
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     try:
         size = setup.size_from_form(fields)
         current = ui.app.store_factory().load()
@@ -784,13 +763,8 @@ async def attach_here(request: Request) -> Response:
 
 
 async def ship_tags(request: Request) -> Response:
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    ui, name, fields, session = await ship_form(request)
     wanted = [t for t in re.split(r"[\s,]+", one(fields, "tags")) if t]
-    session = session_of(request)
     bad = [t for t in wanted if not TAG_RE.match(t)]
     if bad:
         ui.flash(session, "bad", "Tags use a-z, 0-9 and -, up to 31 characters.")
@@ -802,13 +776,8 @@ async def ship_tags(request: Request) -> Response:
 
 
 async def ship_logout(request: Request) -> Response:
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    ui, name, fields, session = await ship_form(request)
     service = one(fields, "service")
-    session = session_of(request)
     done = _signin_back(fields) if one(fields, "from") == "signin" else back(f"/ships/{name}")
     if service not in SERVICES or one(fields, "confirm") != "yes":
         ui.flash(session, "bad", "Choose a service and tick the box to confirm.")
@@ -822,12 +791,7 @@ async def ship_logout(request: Request) -> Response:
 async def ship_power(request: Request) -> Response:
     """Start or stop the Ship's VM (ship-fleet start|stop), as a job. Stop only
     after its confirm dialog."""
-    ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
-    session = session_of(request)
+    ui, name, fields, session = await ship_form(request)
     verb = one(fields, "power")
     if verb not in actions.POWER:
         ui.flash(session, "bad", "Unknown power action.")
@@ -971,9 +935,7 @@ async def discard_attempt(request: Request) -> Response:
 async def finish_enrolling(request: Request) -> Response:
     """A Ship in the inventory but not enrolled: `ship-fleet status N --wait` as a job."""
     ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
+    name = ship_of(request)
     try:
         ship = ui.app.store_factory().load().ship(name)
         if ship.enrolled is not None:
@@ -1026,9 +988,7 @@ async def job_card(request: Request) -> Response:
 
 async def ship_network_refresh(request: Request) -> Response:
     ui = ui_of(request)
-    name = _known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
+    name = ship_of(request)
     session = session_of(request)
     try:
         problems = await run_in_threadpool(network.refresh, ui.app, [name])
@@ -1440,7 +1400,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         *vaultweb.routes(),
         Mount("/static", app=StaticFiles(directory=str(HERE / "static")), name="static"),
     ]
-    web = Starlette(routes=routes)
+    web = Starlette(routes=routes, exception_handlers={NoSuchShip: _no_such_ship})
     web.state.ui = UI(app=app, gate=gate, fleet=fleet, concierge=concierge_,
                       jobs=jobs or Jobs(app, on_finished=lambda ships: fleet.poll(ships)),
                       env=make_env(),

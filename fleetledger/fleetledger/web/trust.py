@@ -40,12 +40,11 @@ from starlette.routing import Route
 
 from fleetledger.errors import FleetError
 from fleetledger.web.common import (
-    NO_SUCH_SHIP,
     NOT_FROM_A_DEVICE,
     back,
     flash,
-    known_ship,
     session_of,
+    ship_form,
     start_cli_job,
     ui_of,
 )
@@ -196,12 +195,8 @@ async def renew_all(request: Request) -> Response:
 async def renew_ship(request: Request) -> Response:
     """One Ship's certificates (`ca sign SHIP`): from its row under Certificates, its
     More menu, and its certificate alerts."""
-    from fleetledger.web.app import not_found
 
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    _, name, fields, _ = await ship_form(request)
     if _inventory(request) is not None:
         _start(request, "certs", [name], ["ca", "sign", name], f"Renew {name}'s certificate")
     where = one(fields, "from")

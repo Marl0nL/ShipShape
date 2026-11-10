@@ -24,7 +24,13 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from fleetledger.errors import FleetError
-from fleetledger.web.common import NO_SUCH_SHIP, back, flash, known_ship, start_cli_job, ui_of
+from fleetledger.web.common import (
+    back,
+    flash,
+    ship_form,
+    start_cli_job,
+    ui_of,
+)
 from fleetledger.web.forms import form, one
 
 POLICY_BYTES = 60 * 1024  # the pasted policy, form-encoded
@@ -52,14 +58,8 @@ def tab_context(inv: Any, ship: Any, doc: dict | None) -> dict[str, Any]:
 
 # --- leave ------------------------------------------------------------------------------
 async def leave(request: Request) -> Response:
-    from fleetledger.web.app import not_found
-
-    name = known_ship(request)
-    if name is None:
-        return not_found(request, NO_SUCH_SHIP)
-    fields = await form(request)
+    ui, name, fields, _ = await ship_form(request)
     where = f"/ships/{name}/access" if one(fields, "from") == "access" else f"/ships/{name}"
-    ui = ui_of(request)
     if one(fields, "confirm") != "yes":
         flash(request, "bad", "Tick the box to confirm.")
         return back(where)
