@@ -34,9 +34,9 @@ def no_real_keyring(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fast_keys(monkeypatch):
-    """Managed keys made with 1 bcrypt round instead of 16, and no pause when a
-    pexpect-driven ssh-keygen or ssh-add closes: the same steps, much faster (as
-    test_vault.py's `fast` lowers the vault's scrypt cost)."""
+    """Managed keys made with 1 bcrypt round instead of ssh-keygen's default, and no
+    pause when a pexpect-driven ssh-keygen or ssh-add closes: the same steps, much
+    faster (as test_vault.py's `fast` lowers the vault's scrypt cost)."""
     from fleetledger import keys
 
     monkeypatch.setattr(keys, "KDF_ROUNDS", 1)

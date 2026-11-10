@@ -407,7 +407,21 @@ def kdf_rounds(path) -> int:
 
 def test_managed_keys_use_ssh_keygens_default_rounds_and_tests_lower_them(
         home, ring, tmp_path, monkeypatch):
-    assert DEFAULT_KDF_ROUNDS == 16  # what a real FleetLedger uses
+    # A real FleetLedger leaves the rounds to ssh-keygen, whatever its version uses.
+    assert DEFAULT_KDF_ROUNDS is None
+    monkeypatch.setattr(keys, "KDF_ROUNDS", None)
+    plain = tmp_path / "plain"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "x", "-f", str(plain)],
+                   check=True)  # (a test fixture: not a secret)
+    made = tmp_path / "ssh" / "default"
+    keys.make(made, "default", "keyring")
+    assert kdf_rounds(made) == kdf_rounds(plain)
+    adopted = tmp_path / "ssh" / "adopted"
+    _key_with(adopted, "theirs-passphrase")
+    keys.adopt(adopted, "theirs-passphrase", "keyring")
+    assert kdf_rounds(adopted) == kdf_rounds(plain)
+
+    # Tests lower them (conftest's fast_keys): ssh-keygen is given them with -a.
     monkeypatch.setattr(keys, "KDF_ROUNDS", 3)
     key = tmp_path / "ssh" / "admin"
     keys.make(key, "admin", "keyring")
