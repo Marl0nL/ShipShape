@@ -242,11 +242,29 @@ class Switch:
             raise Failed(f"{to.kind} did not answer after {to.unit} started")
 
     # --- 6. relaunch --------------------------------------------------------------------
+    def running_on(self, rt: Runtime) -> set[str] | None:
+        """The snapshot agents rt runs Claude for now (by name or session), or None
+        when rt cannot be listed."""
+        _, live, _ = rt.agents()
+        if live is None:
+            return None
+        sessions = {s["session"]: n for n, s in self.snap.items()}
+        return {a["name"] if a["name"] in self.snap else sessions.get(a["session"] or "")
+                for a in live if a["kind"] == "claude"} - {None}
+
     def launch_all(self, rt: Runtime, ship: ShipToml, names: list[str]) -> None:
         self.launched_at = utc_now()
+        running = self.running_on(rt)
+        if running is None:
+            raise Failed(f"{rt.kind} could not be listed, so nothing was started there")
         places = rt.places()
         for name in names:
             s = self.snap[name]
+            if name in running:
+                # It runs there already (never started twice): the check below sees
+                # whether it is its own session, in its mode.
+                self.notes.append(f"{name} was already running on {rt.kind}; not started again")
+                continue
             self.tried.append(name)
             ok, why = record.relaunch(self.ctx, ship, rt, self.doc, name, places,
                                       same_place=False, mode=s["mode"], keep_tries=False)
@@ -328,11 +346,9 @@ class Switch:
                 stuck.add(name)
                 self.notes.append(f"{name} did not exit on {self.target}; it is left running "
                                   f"there, and was not started on {self.source}")
-        _, again, _ = self.new.agents()
-        still = {a["name"] if a["name"] in self.snap else sessions.get(a["session"] or "")
-                 for a in again or [] if a["kind"] == "claude"} - {None}
-        if again is None or still - stuck:
-            missing = set(self.tried) if again is None else still - stuck
+        still = self.running_on(self.new)
+        if still is None or still - stuck:
+            missing = set(self.tried) if still is None else still - stuck
             self.notes.append(f"{', '.join(sorted(missing))} could not be seen to stop on "
                               f"{self.target}, so they were not started on {self.source}")
             stuck |= missing
@@ -342,7 +358,7 @@ class Switch:
         """Back to the old runtime; (outcome, problems left)."""
         stuck: set[str] = set()
         try:
-            if self.tried:
+            if self.tried or self.units_changed:
                 stuck = self._off_the_new()
                 self.lift(self.new, keep=stuck)
             if self.units_changed or self.toml_changed:

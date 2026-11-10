@@ -431,6 +431,31 @@ def test_an_agent_back_in_another_mode_rolls_back(herdr_ship):
     assert core_agents(ship) == {}
 
 
+def test_an_agent_already_on_the_target_is_never_started_twice(herdr_ship):
+    """The core already runs main's session (left from an earlier try): the switch
+    does not start it a second time; this start is not one it can vouch for, so it
+    rolls back, stopping that one too, and main runs once, on herdr."""
+    ship = herdr_ship
+    expect = as_running(ship)
+    session = expect["main"][0]
+    s = ship.scenario()
+    s["hc"] = {"server": True, "next": 2, "terminals": [{
+        "address": "t1", "name": "main", "argv": [LAUNCHER, "--resume", session],
+        "labels": {"shipshape.session": session}, "cwd": "/home/agent/work/main",
+        "state": "live", "keep": True, "created_ms": 1, "status": {
+            "app": "claude-code", "state": "idle"}, "exit_code": None, "reason": None,
+        "foreground": {"pid": 1, "name": "claude", "argv": ["claude", "--resume", session],
+                       "cwd": "/home/agent/work/main"},
+        "claude_args": ["--resume", session], "session": session}]}
+    ship.set(hc=s["hc"])
+    rc, doc, out = switch(ship, "core")
+    assert rc != 0 and doc["data"]["outcome"] == "rolled-back", out
+    assert "main was already running on core; not started again" in doc["messages"]
+    assert [c for c in hc_runs(ship) if "main" in c] == []
+    intact(ship, "herdr", expect)
+    assert core_agents(ship) == {}
+
+
 def test_an_agent_that_will_not_stop_rolls_back_before_anything_changes(herdr_ship):
     """grinder stops first, then main will not: grinder goes back into its own pane,
     main is never touched again, and nothing else changed."""
