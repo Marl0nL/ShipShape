@@ -32,7 +32,7 @@ from typing import BinaryIO
 from .context import Context
 from .errors import CtlError
 from .homefs import UnsafePath
-from .notice import record, send_to_cores
+from .notice import broadcast, journal
 from .shiptoml import ShipToml
 
 INBOX = "inbox"  # ~/inbox
@@ -269,7 +269,7 @@ def put(ctx: Context, raw_name: str, size: int, stream: BinaryIO) -> tuple[dict,
         note += f" {name} was taken, so it is {stored}."
     elif stored != raw_name:
         note += " (Its name was cleaned up.)"
-    record(ctx, f"{stored} ({size} bytes)", "inbox")
+    journal(ctx, f"{stored} ({size} bytes)", "inbox")
     return data, [path], [note]
 
 
@@ -318,7 +318,7 @@ def remove(ctx: Context, names: list[str]) -> tuple[dict, list, list]:
     messages = []
     if data["removed"]:
         messages.append("Removed " + ", ".join(data["removed"]) + ".")
-        record(ctx, "removed " + ", ".join(data["removed"]), "inbox")
+        journal(ctx, "removed " + ", ".join(data["removed"]), "inbox")
     if data["missing"]:
         messages.append("Not in the inbox (moved already?): " + ", ".join(data["missing"]) + ".")
     if data["refused"]:
@@ -340,11 +340,6 @@ def notify(ctx: Context, ship: ShipToml, count: int) -> tuple[dict, list[str]]:
     if count < 1 or count > 1000:
         raise CtlError("usage", "--count must be between 1 and 1000")
     data: dict = {"count": count, "sent": [], "skipped": []}
-    note = send_to_cores(ctx, ship, notice_text(count), data)
-    if note:
-        record(ctx, note, "inbox-notify")
-        return data, [note]
-    messages = [f"Inbox notice sent to: {', '.join(data['sent']) or 'none'}."]
-    messages += [f"{s['name']}: not sent ({s['reason']})." for s in data["skipped"]]
-    record(ctx, f"{count} file(s): " + " ".join(messages), "inbox-notify")
+    note, messages = broadcast(ctx, ship, notice_text(count), data, "Inbox")
+    journal(ctx, note or f"{count} file(s): " + " ".join(messages), "inbox-notify")
     return data, messages
