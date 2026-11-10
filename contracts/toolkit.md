@@ -82,7 +82,10 @@ UI say so, and the catalogue and other toolkits work as before.
 - Every file under `files/` is listed in `toolkit.toml` `[files]` with its SHA-256,
   and matches it.
 - npm versions (`version`, `also_npm`) are one exact version: no ranges or tags.
-- No apt repositories: `apt` entries and apt packages are plain package names.
+- No apt repositories: `apt` entries and apt packages are plain package names, and
+  never end in `-` (`apt-get install name-` removes that package).
+- A `skill-dir` tool may not take the name of one of the Ship's own skills
+  (`ship/skills/`).
 - `default = true` and `bake = true` are refused: a toolkit tool lands only where you
   add it, and baked images hold catalogue tools only.
 - `run_as = "root"` is refused unless ships.toml says `allow_root = true` for it.
@@ -181,8 +184,9 @@ it) is a real folder owned by root and writable by root alone. So:
   on this Ship", and its sign-ins are not the Ship's;
 - `run_as = "root"` recipes run only if that very release was applied with
   `--allow-root`;
-- a toolkit recipe whose own id is a catalogue recipe's, or whose `apt` entries are
-  not plain package names, is refused, as FleetLedger refuses them;
+- a toolkit recipe whose own id is a catalogue recipe's, a skill folder named like
+  one of the Ship's own skills, or `apt` entries that are not plain package names, is
+  refused, as FleetLedger refuses them;
 - two toolkits' skill folders of one name: the first keeps `~/.claude/skills/<id>`;
 - a recipe's `apt` packages are installed as root even without `allow_root` (as for
   catalogue recipes: packages from the repositories the Ship already has, whose

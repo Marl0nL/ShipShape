@@ -116,6 +116,9 @@ def _toolkit_rules(ctx: Context, ship: ShipToml, recipe: Recipe) -> None:
     rid, kit = recipe.rid, recipe.kit
     if (ctx.paths.recipes / f"{recipe.id}.toml").exists():
         raise CtlError("tool-failed", f"{rid}: {recipe.id} is also a catalogue tool")
+    if recipe.kind == "skill-dir" and (ctx.paths.bundle / "skills" / recipe.id).exists():
+        raise CtlError("tool-failed", f"{rid}: ~/.claude/skills/{recipe.id} is the Ship's "
+                                      "own skill")
     if recipe.run_as == "root":
         release = toolkits.allowed(ship).get(kit, "")
         if not toolkits.root_allowed(ctx.paths, kit, release):
@@ -123,7 +126,7 @@ def _toolkit_rules(ctx: Context, ship: ShipToml, recipe: Recipe) -> None:
                                           "sent with allow_root (ships.toml [toolkit."
                                           f"{kit}] allow_root = true, then push it again)")
     apt = [*recipe.apt, *([recipe.package] if recipe.kind == "apt" else [])]
-    bad = [a for a in apt if not toolkits.APT_PACKAGE.match(a)]
+    bad = [a for a in apt if not toolkits.APT_PACKAGE.fullmatch(a)]
     if bad:
         raise CtlError("tool-failed", f"{rid}: apt {bad[0]!r} is not a package name")
 

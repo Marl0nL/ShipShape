@@ -85,6 +85,10 @@ class Catalogue:
         raw_profiles = _load_dir(profiles_dir, "profile", contracts)
         self.recipes = {rid: _recipe(rid, d) for rid, d in raw_recipes.items()}
         self.profiles = {pid: _profile(pid, d) for pid, d in raw_profiles.items()}
+        # The Ship's own skills (ship/skills/<name>): no toolkit skill may take a name.
+        skills = tools_dir.parent / "skills"
+        self.skill_names = {p.name for p in skills.iterdir() if p.is_dir()} \
+            if skills.is_dir() else set()
         self.toolkits: dict[str, Any] = {}  # id -> toolkits.Toolkit, loaded
         self.broken: dict[str, str] = {}  # id -> why it did not load
         # Every sign-in known: FleetLedger's own, then each loaded toolkit's.

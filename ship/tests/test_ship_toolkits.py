@@ -531,3 +531,60 @@ def test_remove_leaves_what_a_kept_tool_shares(kits):
     rc, doc, out = ship.ctl("toolkit", "remove", "clashkit", "--json")
     assert rc == 0, out
     assert skill.read_text() == first  # still examplekit's
+
+
+def _handmade(kits, name: str, recipe: str, version: str = "1.0.0", own: str = "odd") -> Path:
+    """A toolkit FleetLedger would refuse, packed as if it had been bypassed."""
+    root = kits.src / name
+    (root / "tools").mkdir(parents=True)
+    (root / "toolkit.toml").write_text(
+        f'schema = 1\nid = "{name}"\nversion = "{version}"\ndescription = "x"\n')
+    (root / f"tools/{own}.toml").write_text(recipe)
+    (root / "skills/mine").mkdir(parents=True)
+    (root / "skills/mine/SKILL.md").write_text("---\nname: mine\n---\nNot the Ship's.\n")
+    kit = SimpleNamespace(id=name, version=version, root=root, files={})
+    archive = kits.out / f"{name}.tar.gz"
+    archive.write_bytes(toolkitpack.pack(kit, created_at=CREATED).data)
+    return archive
+
+
+def test_an_apt_entry_that_would_remove_a_package_never_reaches_apt(kits):
+    ship = kits.ship
+    archive = _handmade(kits, "advkit", 'schema = 1\nid = "odd"\ndescription = "x"\n'
+                        'kind = "skill-dir"\nskill_dir = "skills/mine"\n'
+                        'apt = ["example-firewall-"]\ncheck = "true"\n')
+    assert apply(ship, archive)[0] == 0
+    rc, doc, out = ship.ctl("tools", "add", "advkit/odd", "--json")
+    assert rc == 1 and "apt 'example-firewall-' is not a package name" in out
+    assert not [c for c in ship.calls("apt-get") if "example-firewall-" in c]
+
+
+def test_a_toolkit_skill_may_not_replace_the_ship_s_own(kits):
+    ship = kits.ship
+    (ship.bundle / "skills/ship").mkdir(parents=True)
+    (ship.bundle / "skills/ship/SKILL.md").write_text("The Ship.\n")
+    archive = _handmade(kits, "advkit", 'schema = 1\nid = "ship"\ndescription = "x"\n'
+                        'kind = "skill-dir"\nskill_dir = "skills/mine"\ncheck = "true"\n',
+                        own="ship")
+    assert apply(ship, archive)[0] == 0
+    rc, doc, out = ship.ctl("tools", "add", "advkit/ship", "--json")
+    assert rc == 1 and "~/.claude/skills/ship is the Ship's own skill" in out
+    assert not ship.p("/home/agent/.claude/skills/ship").exists()
+
+
+@pytest.mark.parametrize(("field", "value"), [("version", "1.0.0-" + "a" * 300),
+                                              ("id", "advkit\n")])
+def test_a_manifest_field_out_of_shape_is_refused_cleanly(kits, field, value):
+    ship = kits.ship
+    archive = _handmade(kits, "advkit", 'schema = 1\nid = "odd"\ndescription = "x"\n'
+                        'kind = "skill-dir"\nskill_dir = "skills/mine"\ncheck = "true"\n')
+
+    def bend(name, data):
+        if name == "toolkit.json":
+            doc = json.loads(data)
+            doc[field] = value
+            return name, json.dumps(doc).encode()
+        if name == "toolkit.toml" and field == "version":
+            return name, data.replace(b'"1.0.0"', f'"{value}"'.encode())
+        return name, data
+    _refused(ship, _repack(archive, kits.out / "bent.tar.gz", bend), "toolkit.json")

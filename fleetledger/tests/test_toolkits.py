@@ -169,6 +169,10 @@ def _apt_deb_file(kit):
         'package = "./files/example.deb"\ncheck = "true"\n')
 
 
+def _apt_removal(kit):  # apt-get install name- removes the package, as root
+    edit(kit / "tools" / "example-lint.toml", 'check =', 'apt = ["example-firewall-"]\ncheck =')
+
+
 def _default(kit):
     edit(kit / "tools" / "example-cli.toml", 'check =', 'default = true\ncheck =')
 
@@ -266,6 +270,7 @@ RULES = [
     (_also_npm_tag, "'helper@latest' is not pinned"),
     (_apt_repository, "cannot add apt repositories"),
     (_apt_deb_file, "cannot add apt repositories"),
+    (_apt_removal, "a trailing - would remove the package"),
     (_default, "default = true is not allowed"),
     (_bake, "bake = true is not allowed"),
     (_root, "runs as root; allowed only with allow_root = true"),
@@ -294,6 +299,16 @@ def test_each_rule_refuses_the_toolkit(kit, fake_repo, breaks, said):
     breaks(kit)
     found = problems(kit, base=base)
     assert any(said in p for p in found), found
+
+
+def test_a_toolkit_skill_may_not_take_the_ship_s_own_skill_name(kit, fake_repo):
+    (fake_repo.root / "ship" / "skills" / "ship").mkdir(parents=True)
+    (fake_repo.root / "ship" / "skills" / "ship" / "SKILL.md").write_text("The Ship.\n")
+    (kit / "tools" / "ship.toml").write_text(
+        'schema = 1\nid = "ship"\ndescription = "x"\nkind = "skill-dir"\n'
+        'skill_dir = "skills/example-docs"\ncheck = "true"\n')
+    found = problems(kit, base=Catalogue.from_repo(fake_repo))
+    assert any("~/.claude/skills/ship is the Ship's own skill" in p for p in found), found
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")

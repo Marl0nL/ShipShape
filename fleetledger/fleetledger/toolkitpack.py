@@ -22,7 +22,6 @@ import gzip
 import hashlib
 import io
 import json
-import os
 import stat
 import tarfile
 from dataclasses import dataclass
@@ -188,7 +187,3 @@ def archive(kit: Any, contracts: Path | None = None) -> Archive:
         paths.write_private(kept, packed.data)
     return packed
 
-
-def drop_cached(kit_id: str) -> None:
-    with contextlib.suppress(OSError):
-        os.unlink(cache_dir() / f"{kit_id}.tar.gz")

@@ -36,8 +36,9 @@ ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 # An exact version: npm installs exactly this, never a range or a tag such as latest.
 EXACT_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$")
-# A Debian package name: no repository line, URL, PPA or .deb file.
-APT_PACKAGE = re.compile(r"^[a-z0-9][a-z0-9+.-]+$")
+# A Debian package name, whole: no .deb file, path, repository or version. Never a
+# trailing "-", which apt-get install reads as "remove this package".
+APT_PACKAGE = re.compile(r"[a-z0-9][a-z0-9+.-]*[a-z0-9+]")
 SKIPPED = {".git"}  # a checkout's own git folder is not part of the toolkit
 
 
@@ -175,9 +176,13 @@ def sha256(path: Path) -> str:
 
 
 def _check_recipe(rid: str, doc: Mapping[str, Any], root: Path, allow_root: bool,
-                  known_needs: set[str], base_tools: Iterable[str]) -> list[str]:
+                  known_needs: set[str], base_tools: Iterable[str],
+                  base_skills: Iterable[str] = ()) -> list[str]:
     where = f"tools/{rid}.toml"
     problems: list[str] = []
+    if doc.get("kind") == "skill-dir" and rid in base_skills:
+        problems.append(f"{where}: ~/.claude/skills/{rid} is the Ship's own skill; give "
+                        "yours another id")
     if rid in base_tools:
         problems.append(f"{where}: '{rid}' is also a catalogue tool; give yours another id")
     if doc.get("default", False):
@@ -200,9 +205,10 @@ def _check_recipe(rid: str, doc: Mapping[str, Any], root: Path, allow_root: bool
     if kind == "apt":
         apt.append(doc["package"])
     for package in apt:
-        if not APT_PACKAGE.match(package):
+        if not APT_PACKAGE.fullmatch(package):
             problems.append(f"{where}: apt '{package}' is not a package name (a toolkit "
-                            "cannot add apt repositories or install .deb files)")
+                            "cannot add apt repositories or install .deb files, and a "
+                            "trailing - would remove the package)")
     if kind == "script":
         target = _inside(root, root / "tools", doc["script"])
         if target is None:
@@ -365,7 +371,8 @@ def load(root: Path | str, *, expect_id: str | None = None, allow_root: bool = F
             into[doc["id"]] = doc
     known_needs = {*(signins or registry).service_keys, *own_services}
     for rid, doc in recipes.items():
-        problems += _check_recipe(rid, doc, root, allow_root, known_needs, base_tools)
+        problems += _check_recipe(rid, doc, root, allow_root, known_needs, base_tools,
+                                  getattr(base, "skill_names", ()))
     for pid, doc in profiles.items():
         problems += _check_profile(kit_id, pid, doc, root, recipes, base_tools, base_profiles)
 

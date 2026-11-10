@@ -31,7 +31,7 @@ from pathlib import Path, PurePosixPath
 from . import schema, shiptoml
 from .context import Context, utc_now
 from .errors import CtlError
-from .fsutil import ensure_dir, read_json, write_atomic
+from .fsutil import ensure_dir, read_json_dict, write_json
 from .paths import Paths
 
 MANIFEST = "toolkit.json"
@@ -43,9 +43,11 @@ KEEP_RELEASES = 3
 ID = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?"
 RELEASE = re.compile(rf"^({VERSION})-([0-9a-f]{{12}})$")
-# A Debian package name: what a toolkit recipe's apt entries must be (no .deb file,
-# path or repository), checked again here in case FleetLedger was bypassed.
-APT_PACKAGE = re.compile(r"^[a-z0-9][a-z0-9+.-]+$")
+# What a toolkit recipe's apt entries must be, checked again here in case FleetLedger
+# was bypassed (fleetledger/toolkits.py has the same rule).
+# A Debian package name, whole: no .deb file, path, repository or version. Never a
+# trailing "-", which apt-get install reads as "remove this package".
+APT_PACKAGE = re.compile(r"[a-z0-9][a-z0-9+.-]*[a-z0-9+]")
 _BAD_NAME = re.compile(r"[\x00-\x1f\x7f\\]")
 
 
@@ -69,8 +71,7 @@ def version_of(release: str) -> str:
 
 
 def _record(paths: Paths) -> dict:
-    doc = read_json(record_path(paths), {})
-    return doc if isinstance(doc, dict) else {}
+    return read_json_dict(record_path(paths))
 
 
 def root_allowed(paths: Paths, kit: str, release: str) -> bool:
@@ -261,7 +262,8 @@ def _extract(path: Path, dest: Path) -> None:
             if (name.is_absolute() or not name.parts or ".." in name.parts
                     or _BAD_NAME.search(m.name)):
                 raise CtlError("invalid-toolkit", f"unsafe path in the archive: {m.name[:200]!r}")
-            if m.type not in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE):
+            if m.type not in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE) \
+                    or m.sparse is not None:
                 raise CtlError("invalid-toolkit", "links and devices are not allowed: "
                                                   f"{m.name[:200]!r}")
             key = name.as_posix()
@@ -314,6 +316,8 @@ def _manifest(ctx: Context, root: Path) -> dict:
             toml = tomllib.load(fh)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise CtlError("invalid-toolkit", "no readable toolkit.toml in the archive") from exc
+    if not ID.fullmatch(doc["id"]) or not re.fullmatch(VERSION, doc["version"]):
+        raise CtlError("invalid-toolkit", f"{MANIFEST}: id or version is not one")
     if toml.get("id") != doc["id"] or toml.get("version") != doc["version"]:
         raise CtlError("invalid-toolkit", f"{MANIFEST} says {doc['id']} {doc['version']}, "
                                           "toolkit.toml does not")
@@ -402,7 +406,7 @@ def _write_record(paths: Paths, kit: str, entry: dict | None) -> None:
         doc.pop(kit, None)
     else:
         doc[kit] = entry
-    write_atomic(record_path(paths), json.dumps(doc, indent=2, sort_keys=True) + "\n", 0o644)
+    write_json(record_path(paths), doc, 0o644, indent=2)
 
 
 def own_items(paths: Paths, ship: shiptoml.ShipToml, kit: str) -> tuple[list[str], list[str]]:
@@ -462,16 +466,25 @@ def apply(ctx: Context, ship: shiptoml.ShipToml, archive: str, *, force: bool = 
         raise
 
     folder = top / kit
-    ensure_dir(folder, 0o755)
-    if not ctx.paths.sandbox:
-        os.chown(folder, 0, 0)
-    os.chmod(folder, 0o755)
     dest = folder / release
     aside = None
-    if dest.exists() or dest.is_symlink():
-        aside = folder / f".old-{release}-{secrets.token_hex(4)}"
-        os.rename(dest, aside)
-    os.rename(tmp, dest)
+    new_folder = not folder.exists()
+    try:
+        ensure_dir(folder, 0o755)
+        if not ctx.paths.sandbox:
+            os.chown(folder, 0, 0)
+        os.chmod(folder, 0o755)
+        if dest.exists() or dest.is_symlink():
+            aside = folder / f".old-{release}-{secrets.token_hex(4)}"
+            os.rename(dest, aside)
+        os.rename(tmp, dest)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if aside is not None and not dest.exists():
+            os.rename(aside, dest)
+        if new_folder:
+            shutil.rmtree(folder, ignore_errors=True)
+        raise
     previous = os.readlink(folder / "current") if (folder / "current").is_symlink() else None
     old_record = _record(ctx.paths).get(kit)
     try:
@@ -549,8 +562,7 @@ def remove(ctx: Context, ship: shiptoml.ShipToml, kit: str) -> tuple[dict, list[
     messages: list[str] = []
     changed: list[str] = []
     tools, profiles = own_items(ctx.paths, ship, kit)
-    recorded = read_json(ctx.paths.state / "tools.json", {})
-    recorded = recorded if isinstance(recorded, dict) else {}
+    recorded = read_json_dict(ctx.paths.state / "tools.json")
     tools += [t for t in recorded if split(t)[0] == kit and t not in tools]
     uninstalled: list[str] = []
     if listed:
