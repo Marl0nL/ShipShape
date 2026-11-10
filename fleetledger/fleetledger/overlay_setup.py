@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from fleetledger import overlay, paths, prompts
+from fleetledger import overlay, paths, prompts, secretplaces
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 from fleetledger.overlay import hujson, secret_store
@@ -279,10 +279,7 @@ def connect_oauth(app, store, *, client_id: str, secret: str, reused: bool, stor
     # path honours FLEETLEDGER_CONFIG_DIR and XDG_CONFIG_HOME).
     secret_path = paths.config_dir() / SECRET_FILE
     api_cfg: dict[str, Any] = {"tailnet": "-", "oauth_client_id": client_id}
-    if store_kind == "keyring":
-        api_cfg.update(secret_store="keyring", keyring_item=item)
-    else:
-        api_cfg.update(secret_store="file", oauth_secret_file=paths.tilde(secret_path))
+    secretplaces.OAUTH.set(api_cfg, store_kind, item=item, file=secret_path)
     api_cfg.update(key_expiry_s=600, remove_devices=remove, manage_policy=manage)
 
     notes: list[str] = []

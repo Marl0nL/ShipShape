@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fleetledger import paths
+from fleetledger import paths, secretplaces
 from fleetledger.drivers import proxmox_api
 from fleetledger.errors import FleetError
 from fleetledger.overlay import secret_store
@@ -374,28 +374,22 @@ def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused:
     if store_kind == "keyring":
         if not reused:
             secret_store.store_in_keyring(item, secret, proxmox_api.TOKEN_SWITCH_HINT)
-        config.update(token_store="keyring", keyring_item=item)
-        config.pop("token_file", None)
+        secretplaces.PROXMOX.set(config, "keyring", item=item)
         if from_file is not None:
             from_file.unlink(missing_ok=True)
         return f"{secret_store.keyring_label()} ({secret_store.SERVICE} / {item})"
     path = secret_path or paths.config_dir() / SECRET_FILE
     if not reused:
         secret_store.write_file(path, secret, "the Proxmox token")
-    config["token_file"] = paths.tilde(path)
-    config.pop("token_store", None)
-    config.pop("keyring_item", None)
+    secretplaces.PROXMOX.set(config, "file", file=path)
     return f"{path} (0600)"
 
 
 def _secret_location(config: Mapping[str, Any]) -> tuple[str, str] | None:
-    if not config.get("token_id"):
-        return None
-    if config.get("token_store", "file") == "keyring":
-        return ("keyring", str(config.get("keyring_item", "")))
-    if config.get("token_file"):
-        return ("file", str(paths.expand(config["token_file"])))
-    return None
+    found = secretplaces.PROXMOX.location(config)
+    if found is None or found[0] == "keyring":
+        return found
+    return ("file", str(paths.expand(found[1])))
 
 
 def _forget_old_copy(app, saved: Mapping[str, Any], config: Mapping[str, Any]) -> None:
