@@ -245,12 +245,14 @@ start_guest_agent() {
 }
 
 # The primary keys in a keyring file, one fingerprint per line.
+# gpg's output is taken first and its home removed before parsing, so a failing gpg
+# (an empty or bad ring) does not leave the home behind; it then yields no keys.
 primary_keys() {
-  local home
+  local home out
   home=$(mktemp -d)
-  GNUPGHOME=$home gpg --batch --show-keys --with-colons "$1" 2>/dev/null |
-    awk -F: '$1 == "pub" { p = 1; next } $1 == "fpr" && p { print $10; p = 0 }'
+  out=$(GNUPGHOME=$home gpg --batch --show-keys --with-colons "$1" 2>/dev/null) || out=""
   rm -rf "$home"
+  awk -F: '$1 == "pub" { p = 1; next } $1 == "fpr" && p { print $10; p = 0 }' <<<"$out"
 }
 
 # keyring_ok FILE ALLOWED: every primary key is pinned, and there is at least one.
@@ -291,7 +293,10 @@ step_apt_repos() {
       else
         cp "$tmp/key" "$tmp/key.gpg"
       fi
-      keyring_ok "$tmp/key.gpg" "$fprs" || die "apt repo $id: signing key is not the pinned key"
+      if ! keyring_ok "$tmp/key.gpg" "$fprs"; then
+        rm -rf "$tmp"
+        die "apt repo $id: signing key is not the pinned key"
+      fi
       put_file "$tmp/key.gpg" "$keyring" 0644
       rm -rf "$tmp"
       APT_STALE=1
