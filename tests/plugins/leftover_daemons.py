@@ -11,8 +11,10 @@ A run ended by SIGTERM (a timeout, an agent's tool limit) would skip the end of 
 session, so the plugin turns SIGTERM into an interrupt, as Ctrl-C is: pytest then
 still finishes the session. A run killed outright (SIGKILL) still leaks, so at the
 start of a session the plugin also stops the agents earlier runs left: this user's
-gpg-agents whose home is in a `pytest-N` folder of this user's pytest root that no
-live pytest holds (its `.lock` names a process that has gone, or is gone itself).
+gpg-agents whose home is in a `pytest-N` folder of this user's pytest root whose
+`.lock` names a process that has gone. A folder with no lock counts as live: pytest
+writes none when it keeps no folders, and removes it at session finish, while the
+run is still going.
 
 Loaded with `-p` from pytest.ini rather than from a conftest.py: both test folders
 already have a conftest module, and a third would add to that name clash.
@@ -119,14 +121,13 @@ NUMBERED = re.compile(r"pytest-\d+")
 
 
 def held_by_live_run(folder: Path) -> bool:
-    """Whether a live pytest holds this `pytest-N` folder. pytest writes its pid to
-    `.lock` when it makes the folder and removes the lock when it exits. When in
-    doubt (a lock that cannot be read, a pid that cannot be signalled) the folder
-    counts as held."""
+    """Whether a live pytest may hold this `pytest-N` folder. pytest writes its pid
+    to `.lock` when it makes the folder, unless it keeps no folders, and removes the
+    lock at session finish. Only a lock naming a process that has gone means the
+    run is over: anything else (no lock, one that cannot be read, a pid that cannot
+    be signalled) counts as held."""
     try:
         text = (folder / ".lock").read_text()
-    except FileNotFoundError:
-        return False
     except OSError:
         return True
     try:
@@ -144,11 +145,29 @@ def held_by_live_run(folder: Path) -> bool:
     return True
 
 
+def _pid_depth(pid: int | str) -> int | None:
+    """How many pid namespaces deep a process is, from /proc/<pid>/status (gpg-agent
+    is not dumpable, so its /proc/<pid>/ns cannot be read)."""
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("NSpid:"):
+                return len(line.split()) - 1
+    except OSError:
+        pass
+    return None
+
+
 def stale_agents(root: Path) -> dict[int, Path]:
     """This user's gpg-agents whose home is inside a `pytest-N` folder of root that
-    no live pytest holds: {pid: homedir}."""
+    no live pytest holds: {pid: homedir}. Agents in another pid namespace (a
+    sandboxed run) are left alone: the pid in their run's lock means nothing here.
+    /proc shows only our namespace and those below it, so one deeper than ours is
+    another."""
     stale = {}
+    ours = _pid_depth("self")
     for pid, home in agents_under(root).items():
+        if ours is None or _pid_depth(pid) != ours:
+            continue
         top = home.relative_to(root).parts[:1]
         if top and NUMBERED.fullmatch(top[0]) and not held_by_live_run(root / top[0]):
             stale[pid] = home

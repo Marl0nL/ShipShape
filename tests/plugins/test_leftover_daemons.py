@@ -129,7 +129,8 @@ def test_the_next_run_stops_agents_an_earlier_run_left(tmp_path):
     killed = root / "pytest-3"
     start_agent(killed / "test_a0" / "gnupg")
     (killed / ".lock").write_text(str(dead_pid()))
-    # Gone after pytest removed its lock (as at a normal exit).
+    # No lock (a run that keeps no folders, or one past its session finish): may be
+    # live, left alone.
     unlocked = root / "pytest-4"
     start_agent(unlocked / "gnupg0")
     # A run still going (this one): left alone.
@@ -148,10 +149,11 @@ def test_the_next_run_stops_agents_an_earlier_run_left(tmp_path):
         r = subprocess.run(argv, env=env, cwd=tmp_path / "project",
                            capture_output=True, text=True, timeout=120)
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "stopped 2 gpg-agent(s) earlier runs left" in r.stdout
+        assert "stopped 1 gpg-agent(s) earlier runs left" in r.stdout
 
         assert set(leftover_daemons.agents_under(tmp_path.resolve()).values()) == {
-            (live / "gnupg0").resolve(), (other / "gnupg").resolve(), outside.resolve()}
+            (unlocked / "gnupg0").resolve(), (live / "gnupg0").resolve(),
+            (other / "gnupg").resolve(), outside.resolve()}
     finally:
         leftover_daemons.stop_agents(tmp_path)
 
@@ -159,7 +161,7 @@ def test_the_next_run_stops_agents_an_earlier_run_left(tmp_path):
 def test_a_live_runs_folder_is_held(tmp_path):
     folder = tmp_path / "pytest-1"
     folder.mkdir()
-    assert not leftover_daemons.held_by_live_run(folder)
+    assert leftover_daemons.held_by_live_run(folder)  # no lock: may be live
     (folder / ".lock").write_text(str(os.getpid()))
     assert leftover_daemons.held_by_live_run(folder)
     (folder / ".lock").write_text(str(dead_pid()))
