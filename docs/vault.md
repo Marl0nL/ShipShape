@@ -212,7 +212,9 @@ here goes into it.
    have it.
 
 On a new computer with no fleet yet (the appliance, before `ship-fleet migrate`), the
-vault starts empty. `migrate receive` then stores each secret straight into it.
+vault starts empty. `migrate receive` then stores each secret straight into it: it
+takes a computer whose only FleetLedger files are an empty vault and the audit log's
+record of making it, and refuses one whose vault already holds a secret, or is locked.
 
 While the vault is on, a secret never goes to a `0600` file: setup, overlay setup and
 `migrate --store file` refuse, and a secret setup finds in a `0600` file (one you put

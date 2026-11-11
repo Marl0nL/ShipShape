@@ -18,10 +18,12 @@ again.
 - send: the same stream to a pipe, for running the move from the new computer
   (`ssh old '~/.local/bin/ship-fleet migrate send' | ship-fleet migrate receive`, where that
   computer's keyring is unlocked). Never to a terminal or a file.
-- receive: on the new computer. Refuses unless it has no FleetLedger yet and its
-  checkout is at the same commit; checks every file against the stream's manifest
-  before writing any; stores each secret in this computer's own store under names it
-  works out itself (a passphrase's keyring item depends on the key's full path);
+- receive: on the new computer. Refuses unless it has no FleetLedger yet (what its
+  setup leaves before the move does not count: a service install, an empty unlocked
+  vault, and an audit log of only those) and its checkout is at the same commit;
+  checks every file against the stream's manifest before writing any; stores each
+  secret in this computer's own store under names it works out itself (a
+  passphrase's keyring item depends on the key's full path);
   rewrites only the key paths and secret stores in ships.toml (and checks nothing
   else in it changed); keeps the fleet on standby; then verify.
 - verify: every key opens, doctor's checks, the Proxmox token through its pin, the
@@ -76,6 +78,11 @@ MAX_SECRETS = 64 * 1024
 MAX_SECRET = 512
 CHUNK = 1024 * 1024
 STAGING = ".migrate-"  # the receiving side's own folder in the data dir, while it works
+# The audit entries a FleetLedger with nothing in it yet writes: the appliance seed's
+# service install, and the vault made before the move (and unlocked after a reboot).
+# An audit log of only these is no FleetLedger to receive refuses; any other entry is.
+SETUP_ACTIONS = frozenset({"service-install", "vault-init", "vault-unlock", "vault-lock"})
+MAX_SETUP_LOG = 256 * 1024
 
 HALF_MADE = "not enrolled yet"  # a Ship's check, when it was being made as the fleet left
 
@@ -844,24 +851,69 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
 # --- receive (the new computer) ------------------------------------------------------------
 
 
+def setup_only_log(path: Path) -> bool:
+    """The audit log holds only SETUP_ACTIONS entries, each about no Ship: what the
+    appliance's seed and a vault init before the move leave. Anything else in it (an
+    entry of any other kind, a line that is not one) is a FleetLedger that was used."""
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_SETUP_LOG:
+            return False
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return False
+    for line in filter(str.strip, lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            return False
+        if not isinstance(entry, dict) or entry.get("ship") != "-" \
+                or entry.get("action") not in SETUP_ACTIONS:
+            return False
+    return True
+
+
 def existing_state(store) -> list[Path]:
     """FleetLedger files already on this computer (locks, the marker a wiped copy
-    leaves and an earlier receive's leftover folder do not count): receive never
-    writes over a FleetLedger."""
+    leaves, an earlier receive's leftover folder and an audit log of setup alone do
+    not count): receive never writes over a FleetLedger."""
     found = []
-    # This computer's own vault is its keyring, not a FleetLedger: receive stores into it.
+    # This computer's own vault is its keyring, not a FleetLedger: receive stores into it
+    # (receive refuses one that holds secrets already: used_vault).
     markers = {store.path.with_name(handover.STANDBY), store.path.with_name(handover.RETIRED),
                vault.vault_path()}
+    log = paths.audit_log_path()
     for base in (paths.config_dir(), paths.data_dir(), store.path.parent):
         for f in _files(base):
             rel = f.relative_to(base).as_posix()
             if rel == "ships.toml.lock" or rel.startswith(STAGING) or f in markers:
+                continue
+            if f == log and setup_only_log(f):
                 continue
             if f not in found:
                 found.append(f)
     if store.exists() and store.path not in found:
         found.append(store.path)
     return found
+
+
+def used_vault() -> FleetError | None:
+    """The refusal for this computer's vault, if it is on and is not empty (another
+    fleet's secrets, or the vault of a FleetLedger moved aside) or is locked (it cannot
+    be seen to be empty, nor take the secrets)."""
+    if vault.state() == "off":
+        return None
+    if vault.state() == "locked":
+        return FleetError("FleetLedger's vault here is locked, so receive cannot see that it "
+                          "is empty, nor store the fleet's secrets in it. Nothing was written.",
+                          hint=vault.UNLOCK_HINT)
+    held = vault.backend().count()
+    if not held:
+        return None
+    return FleetError(f"FleetLedger's vault here already holds {held} secret(s), so this "
+                      "computer has had a FleetLedger; migrate never writes over one. Nothing "
+                      "was written.", hint="If that FleetLedger is not needed, move "
+                      f"{paths.tilde(vault.vault_path())} aside (with anything else of it), "
+                      "then ship-fleet vault init again.")
 
 
 def choose_store(store_kind: str | None) -> str:
@@ -1012,9 +1064,11 @@ def placement(manifest: dict[str, Any], store) -> dict[str, Path]:
     return out
 
 
-def clashes(manifest: dict[str, Any], where: dict[str, Path]) -> tuple[list[str], set[str]]:
+def clashes(manifest: dict[str, Any], where: dict[str, Path],
+            merged: frozenset[Path] = frozenset()) -> tuple[list[str], set[str]]:
     """Members whose place here is taken by a different file (refused), and members
-    already here byte for byte (a key you copied before: left as it is)."""
+    already here byte for byte (a key you copied before: left as it is). merged: places
+    whose file here is kept beside the one that comes (a setup-only audit log)."""
     sha = {f["member"]: f["sha256"] for f in manifest["files"]}
     refused, same = [], set()
     by_target: dict[Path, str] = {}
@@ -1022,6 +1076,8 @@ def clashes(manifest: dict[str, Any], where: dict[str, Path]) -> tuple[list[str]
         other = by_target.setdefault(target, member)
         if other != member and sha.get(other) != sha.get(member):
             refused.append(f"{paths.tilde(target)} would receive two different files")
+        if target in merged:
+            continue
         if target.exists() or target.is_symlink():
             if target.is_file() and not target.is_symlink() and \
                     _sha256_file(target)[0] == sha.get(member):
@@ -1248,10 +1304,13 @@ def _store_secret(kind: str, where: str, value: str, store_kind: str,
 
 def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
              text: str, to_store: list[tuple[str, str, str]], store_kind: str,
-             store, standby: handover.Marker) -> list[Path]:
+             store, standby: handover.Marker, kept: dict[Path, bytes] | None = None
+             ) -> list[Path]:
     """Put everything in place: the standby marker before ships.toml (so the copy is
     never active by accident), ships.toml last. Anything going wrong takes back what
-    this receive wrote, so the computer is left as it was."""
+    this receive wrote, so the computer is left as it was. kept: files here whose bytes
+    go after the incoming file's (clashes' merged)."""
+    kept = kept or {}
     undo: list[Callable[[], None]] = []
     written: list[Path] = []
     placed: set[Path] = set()
@@ -1262,6 +1321,13 @@ def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
             if member == "config/ships.toml" or member in same:
                 continue
             target = where[member]
+            if target in kept:  # this computer's own setup entries, after the fleet's
+                came = path.read_bytes()
+                paths.write_private(target, came + (b"" if came.endswith(b"\n") or not came
+                                                    else b"\n") + kept[target])
+                undo.append(lambda t=target: paths.write_private(t, kept[t]))
+                written.append(target)
+                continue
             if target.exists() or target.is_symlink():
                 if target in placed:
                     continue  # the same file again (two key roles sharing one key)
@@ -1327,6 +1393,8 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
                          "writes over one. Nothing was written.",
                          hint="Move those files aside first (or point FLEETLEDGER_CONFIG_DIR and "
                          "FLEETLEDGER_DATA_DIR at empty folders).")
+    if here is None and (refusal := used_vault()) is not None:
+        raise refusal  # a wiped copy's vault keeps only your own key's passphrase: fine
     kind = choose_store(store_kind)
     with inuse.exclusive(store):
         for old in paths.data_dir().glob(STAGING + "*"):
@@ -1357,7 +1425,9 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
             handover.wipe(store, handover.wipe_plan(store)[0])
             handover.clear(store, "standby")
         where = placement(manifest, store)
-        refused, same = clashes(manifest, where)
+        log = paths.audit_log_path()
+        kept = {log: log.read_bytes()} if setup_only_log(log) else {}
+        refused, same = clashes(manifest, where, frozenset(kept))
         if refused:
             raise FleetError("Not writing over files already here: " + "; ".join(refused) + ".",
                              hint="These belong to something else (another fleet?): move them "
@@ -1377,7 +1447,7 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
             del secrets
             standby = handover.Marker("standby", handover.now(), src.get("host"),
                                       manifest["epoch"] + 1)
-            _install(staged, where, same, new_text, to_store, kind, store, standby)
+            _install(staged, where, same, new_text, to_store, kind, store, standby, kept)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     inv = store.load()

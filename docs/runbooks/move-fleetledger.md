@@ -50,9 +50,19 @@ On the **new** computer:
    another commit: `ship-fleet update` packs `ship/` from the checkout, so an older
    one would roll Ships back.
 2. Have no FleetLedger there yet. `receive` never writes over one: it refuses if
-   `~/.config/fleetledger` or `~/.local/share/fleetledger` holds anything, except a
-   copy on standby from an earlier move (replaced: it never acted), or the marker a
-   wiped copy leaves, and this computer's vault (see "Wipe the old copy").
+   `~/.config/fleetledger` or `~/.local/share/fleetledger` holds anything (an
+   inventory, keys, history, the audit log of a FleetLedger that was used), except:
+   - a copy on standby from an earlier move (replaced: it never acted);
+   - the marker a wiped copy leaves, and this computer's vault, which the wipe
+     keeps (see "Wipe the old copy");
+   - what setting it up leaves before the move: the service unit
+     (`ship-fleet service install`, as the appliance's seed does) and an empty vault
+     (`ship-fleet vault init`), with an audit log that records only those, and the
+     vault's unlocks and locks. That audit log is kept, after the one that comes.
+
+   Otherwise, a vault that already holds a secret is refused (it is another
+   FleetLedger's), and so is a locked one (it cannot be seen to be empty): unlock it
+   first.
 3. Let it reach the Ships the way the old computer does: the same LAN (with
    `libnss-mdns` for `.local` names), or the overlay network for Ships with
    `ssh_listen=overlay` (the tailnet policy must let it reach `tag:ship:22`).
@@ -264,7 +274,13 @@ same vault.
   stream then breaks off, the new computer is left empty. Nothing is lost (this
   copy is still the active one): push again.
 - **"already has a FleetLedger"**: that computer has one. Move its files aside (or
-  point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders).
+  point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders). A
+  service install and a vault init there before the move do not count (see "Before
+  you start"); anything else in its audit log does.
+- **"vault here already holds"**: the new computer's vault has another FleetLedger's
+  secrets. Move `vault.json` aside with the rest of that FleetLedger, then
+  `ship-fleet vault init` again. **"vault here is locked"**: unlock it
+  (`ship-fleet unlock`), then run the move again.
 - **"Not writing over files already here"**: a key of that name is already in the
   new computer's `~/.ssh` and is a different key. Rename or move it, then run the
   move again. The same key copied there before is fine.

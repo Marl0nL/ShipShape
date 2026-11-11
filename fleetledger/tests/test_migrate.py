@@ -849,6 +849,154 @@ def test_receive_never_writes_over_a_fleetledger(computers, monkeypatch):
     assert not b.store.path.exists() and not (b.home / ".ssh").exists()
 
 
+PASSPHRASE = "correct horse battery staple"
+
+
+def seeded_appliance(b: Computer, monkeypatch) -> list[dict]:
+    """B as FleetLedger's own VM is before the move (docs/runbooks/fleetledger-vm.md): the
+    seed's `service install --no-start`, then `vault init`. Returns its audit log."""
+    from fleetledger.concierge import audit
+    from test_service import FakeSystem
+
+    b.use(monkeypatch)
+    ship_fleet = b.home / ".local" / "bin" / "ship-fleet"
+    ship_fleet.parent.mkdir(parents=True)
+    ship_fleet.write_text("#!/bin/sh\n")
+    ship_fleet.chmod(0o755)
+    b.app.system = FakeSystem()
+    code, out, err = b.run("service", "install", "--port", "8765", "--no-start",
+                           "--ship-fleet", str(ship_fleet))
+    assert code == 0, out + err
+    b.app.ask_secret = lambda prompt: PASSPHRASE
+    code, out, err = b.run("vault", "init")
+    assert code == 0, out + err
+    del b.app.ask_secret
+    return audit.read()
+
+
+@pytest.mark.parametrize("rebooted", [False, True])
+def test_receive_takes_a_freshly_seeded_appliance(computers, monkeypatch, vaults, rebooted):
+    """The appliance's seed and the vault init before the move each write the audit log
+    (and so do a reboot's lock and the unlock after it): that alone is no FleetLedger, so
+    the documented procedure goes through, and the log keeps both what came and what
+    happened here."""
+    from fleetledger.concierge import audit
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    here = seeded_appliance(b, monkeypatch)
+    assert [e["action"] for e in here] == ["service-install", "vault-init"]
+    if rebooted:
+        b.app.ask_secret = lambda prompt: PASSPHRASE
+        assert b.run("vault", "lock")[0] == 0 and b.run("unlock")[0] == 0
+        del b.app.ask_secret
+        here = audit.read()
+        assert [e["action"] for e in here][2:] == ["vault-lock", "vault-unlock"]
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    assert b.ring.sets == []  # every secret went into the vault
+    assert vaults.backend().item_names("fleetledger")
+    log = paths.audit_log_path().read_text()
+    assert log.startswith((a.root / "data" / "audit.log").read_text())
+    assert [json.loads(line) for line in log.splitlines()[-len(here):]] == here
+    assert stat.S_IMODE(paths.audit_log_path().stat().st_mode) == 0o600
+
+
+def test_receive_takes_back_the_appliances_own_audit_log_on_a_failure(computers, monkeypatch,
+                                                                     vaults):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    before = paths.audit_log_path().read_bytes()
+
+    def broken(*args, **kw):
+        raise FleetError("the store broke")
+
+    monkeypatch.setattr(migrate, "_store_secret", broken)
+    with pytest.raises(FleetError, match="the store broke"):
+        receive(b, monkeypatch, stream)
+    assert paths.audit_log_path().read_bytes() == before
+    assert not b.store.path.exists()
+
+
+def _add_inventory(b):
+    b.store.path.write_text('[fleet]\nadmin_key = "~/.ssh/other_fleet_ed25519"\n')
+
+
+def _add_ship(b):
+    b.store.path.write_text(
+        '[fleet]\nadmin_key = "~/.ssh/other_fleet_ed25519"\n\n[ships.ship-09]\n'
+        'id = "8a1b2c3d-0000-4000-8000-000000000009"\nnames = ["ship-09.local"]\n')
+
+
+def _add_key(b):
+    (b.root / "config" / "agent-keys").mkdir()
+    keygen(b.root / "config" / "agent-keys" / "other", "other")
+
+
+def _add_ship_entry(b):
+    from fleetledger.concierge import audit
+
+    audit.record("ship-09", "create", "proxmox", "ok")
+
+
+def _add_setting_entry(b):
+    from fleetledger.concierge import audit
+
+    audit.record("-", "ui-link", "web", "ok")  # a paired browser: this FleetLedger was used
+
+
+def _add_other_log_line(b):
+    with paths.audit_log_path().open("a") as fh:
+        fh.write("2026-01-01T00:00:00Z ship-09 claude ok you@example.com\n")
+
+
+def _add_history(b):
+    (b.root / "data" / "history.sqlite3").write_bytes(b"SQLite format 3\x00")
+
+
+def _add_vault_secret(b):
+    from fleetledger import vault
+
+    vault.backend().set_password("fleetledger", "proxmox-token:other@pve!x", "a secret")
+
+
+@pytest.mark.parametrize("add, says", [
+    (_add_inventory, "already has a FleetLedger"),
+    (_add_ship, "already has a FleetLedger"),
+    (_add_key, "already has a FleetLedger"),
+    (_add_ship_entry, "already has a FleetLedger"),
+    (_add_setting_entry, "already has a FleetLedger"),
+    (_add_other_log_line, "already has a FleetLedger"),
+    (_add_history, "already has a FleetLedger"),
+    (_add_vault_secret, "vault here already holds 1 secret"),
+])
+def test_receive_still_refuses_an_appliance_that_holds_real_state(computers, monkeypatch,
+                                                                 vaults, add, says):
+    """Seeded, then anything a FleetLedger in use keeps: refused, and nothing written."""
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    add(b)
+    before = b.files()
+    with pytest.raises(FleetError, match=says):
+        receive(b, monkeypatch, stream)
+    assert b.files() == before
+    assert not (b.home / ".ssh").exists()
+
+
+def test_receive_refuses_an_appliance_whose_vault_is_locked(computers, monkeypatch, vaults):
+    """Locked, the vault cannot be seen to be empty (nor take the secrets): refused."""
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    vaults.lock()
+    before = b.files()
+    with pytest.raises(FleetError, match="vault here is locked"):
+        receive(b, monkeypatch, stream)
+    assert b.files() == before
+
+
 def test_receive_wants_the_same_commit(computers, monkeypatch, tmp_path):
     a, b, world = computers
     stream = send_bytes(a, monkeypatch)
