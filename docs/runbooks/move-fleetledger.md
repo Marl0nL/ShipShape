@@ -52,7 +52,7 @@ On the **new** computer:
 2. Have no FleetLedger there yet. `receive` never writes over one: it refuses if
    `~/.config/fleetledger` or `~/.local/share/fleetledger` holds anything, except a
    copy on standby from an earlier move (replaced: it never acted), or the marker a
-   wiped copy leaves (see "Wipe the old copy").
+   wiped copy leaves, and this computer's vault (see "Wipe the old copy").
 3. Let it reach the Ships the way the old computer does: the same LAN (with
    `libnss-mdns` for `.local` names), or the overlay network for Ships with
    `ssh_listen=overlay` (the tailnet policy must let it reach `tag:ship:22`).
@@ -208,16 +208,21 @@ active copy is never wiped. It deletes:
 
 It keeps, and says so: keys you look after yourself (delete them yourself unless
 something else uses them), and your own key that FleetLedger made, with its
-passphrase, because the old computer still attaches to Ships with it. It also keeps
-FleetLedger's vault (`vault.json`), if this computer has one: the vault is this
-computer's keyring, not the copy's, so the wipe takes the fleet's secrets out of it
-(any copy of them too) and leaves the vault and anything else in it.
-An old copy of a fleet secret left in the OS keyring (a `vault init` cut short) goes
-too. `ship-fleet vault status` shows what the vault still holds; `ship-fleet vault off`
-deletes it once you no longer need it, but while it holds your own key's passphrase,
-that would delete the passphrase too. With the vault locked, the wipe deletes nothing
-until you unlock it. A wipe cut short (a file it could not delete) keeps `ships.toml`
-until last, so running it again finishes it. Afterwards only `~/.config/fleetledger/retired.json` stays (no
+passphrase, because the old computer still attaches to Ships with it.
+
+It also keeps FleetLedger's vault (`vault.json`), if this computer has one: the
+vault is this computer's keyring, not the copy's. The wipe takes the fleet's secrets
+out of it and leaves the vault and anything else in it. A copy of a fleet secret
+left by a `vault init` cut short (in the vault while `ships.toml` reads a file, or
+still in the OS keyring) goes too when it holds the very same secret; one that
+differs, or a keyring it cannot check, is listed under what it keeps.
+`ship-fleet vault status` shows what the vault still holds; `ship-fleet vault off`
+deletes it once you no longer need it, but while it holds your own key's passphrase
+that would delete the passphrase too. With the vault locked, the wipe deletes
+nothing until you unlock it.
+
+A wipe cut short (a file it could not delete) deletes `ships.toml` last, so running
+it again finishes it. Afterwards only `~/.config/fleetledger/retired.json` stays (no
 secrets), with the vault if there is one, so that an older copy of the fleet is
 refused here. A copy on standby can be wiped at once, and receiving a fleet onto a
 copy on standby wipes it the same way first, so the new fleet's secrets go into the

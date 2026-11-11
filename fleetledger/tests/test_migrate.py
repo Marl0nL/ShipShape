@@ -1597,22 +1597,39 @@ def test_a_vault_it_cannot_read_stops_the_wipe_saying_why(computers, monkeypatch
     assert a.files() == before
 
 
-def test_a_wipe_takes_an_old_copy_in_the_os_keyring_too(computers, monkeypatch, vaults):
+def test_a_wipe_takes_an_old_copy_in_the_os_keyring_only_when_it_is_the_same(
+        computers, monkeypatch, vaults):
     """The vault is on, but the OS keyring still holds a copy of a fleet secret (a vault
-    init cut short): it goes as well. Your own key's passphrase stays wherever it is."""
+    init cut short): it goes as well. One under the same name holding something else
+    (another FleetLedger's, say) stays, and so does your own key's passphrase."""
     a, b, world = computers
     _retired_with_vault(a, b, monkeypatch, vaults, own_key=True)
     own = a.home / ".ssh" / "shipshape_ed25519"
-    item = secret_store.proxmox_item("fleet@pve!ledger")
-    a.ring.set_password("fleetledger", item, "11111111-2222-3333-4444-555555555555")
+    token_item = secret_store.proxmox_item("fleet@pve!ledger")
+    oauth_item = secret_store.oauth_item("k123EXAMPLE")
+    a.ring.set_password("fleetledger", token_item, "11111111-2222-3333-4444-555555555555")
+    a.ring.set_password("fleetledger", oauth_item, "another fleetledger's")
     a.ring.set_password("fleetledger", keys.item(own), "your own")
     a.ring.set_password("another-app", "token", "not the fleet's")
     code, out, err = a.run("migrate", "wipe", "--now", "--yes")
     assert code == 0, out + err
-    assert "an old copy in your OS keyring" in out
-    assert a.ring.items == {("fleetledger", keys.item(own)): "your own",
+    assert "the Proxmox token (an old copy in your OS keyring)" in out
+    assert f"OS keyring item {oauth_item}" in out and "left as it is" in out
+    assert a.ring.items == {("fleetledger", oauth_item): "another fleetledger's",
+                            ("fleetledger", keys.item(own)): "your own",
                             ("another-app", "token"): "not the fleet's"}
     assert vaults.backend().item_names("fleetledger") == [keys.item(own)]
+
+
+def test_an_os_keyring_it_cannot_check_is_said_not_skipped(computers, monkeypatch, vaults):
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults)
+    locked = fake_backend(locked=True)
+    monkeypatch.setattr(secret_store, "os_backend", lambda: (locked, "locked"))
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    assert "could not be checked for an old copy of the Proxmox token" in out
+    assert vaults.backend().item_names("fleetledger") == []
 
 
 def test_a_wipe_never_takes_your_own_keys_passphrase_by_another_name(computers, monkeypatch,
@@ -1624,25 +1641,41 @@ def test_a_wipe_never_takes_your_own_keys_passphrase_by_another_name(computers, 
         ed.doc["drivers"]["proxmox"]["keyring_item"] = keys.item(own)
     gone, kept = handover.wipe_plan(a.store)
     assert keys.item(own) not in {g.where for g in gone if g.keyring}
+    # Nor its passphrase file, named as another secret's file.
+    from fleetledger import secretplaces
+
+    passfile = keys.passphrase_file(own)
+    paths.private_dir(passfile.parent)
+    paths.write_private(passfile, b"your own\n")
+    with a.store.edit() as ed:
+        secretplaces.OAUTH.set(ed.doc["overlay"]["api"], "file", file=passfile)
+    gone, kept = handover.wipe_plan(a.store)
+    assert passfile.resolve() not in {Path(g.where).resolve() for g in gone if not g.keyring}
 
 
-def test_a_wipe_takes_a_copy_left_in_the_vault_too(computers, monkeypatch, vaults):
+@pytest.mark.parametrize("same", [True, False])
+def test_a_wipe_takes_a_copy_left_in_the_vault_when_it_is_the_same(computers, monkeypatch,
+                                                                   vaults, same):
     """ships.toml reads the Proxmox token from a file, but the vault holds a copy too (a
-    vault init cut short): both go, as the copy's own."""
+    vault init cut short): both go, as the copy's own. A vault item of that name holding
+    something else is not shown to be the copy's: it stays."""
     from fleetledger import secretplaces
 
     a, b, world = computers
     _retired_with_vault(a, b, monkeypatch, vaults)
     item = secret_store.proxmox_item("fleet@pve!ledger")
     token = a.root / "config" / "proxmox-token"
-    paths.write_private(token, b"11111111-2222-3333-4444-555555555555\n")
+    value = "11111111-2222-3333-4444-555555555555" if same else \
+        "22222222-3333-4444-5555-666666666666"
+    paths.write_private(token, (value + "\n").encode())
     with a.store.edit() as ed:
         secretplaces.PROXMOX.set(ed.doc["drivers"]["proxmox"], "file", file=token)
     assert vaults.backend().get_password("fleetledger", item)
     code, out, err = a.run("migrate", "wipe", "--now", "--yes")
     assert code == 0, out + err
     assert "the Proxmox token" in out and not token.exists()
-    assert vaults.backend().item_names("fleetledger") == []
+    assert vaults.backend().item_names("fleetledger") == ([] if same else [item])
+    assert same or "not what ships.toml reads" in out
     assert vaults.backend().get_password("another-app", "token") == "not the fleet's"
 
 

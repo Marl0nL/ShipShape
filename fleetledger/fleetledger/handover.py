@@ -277,30 +277,56 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
         from fleetledger import vaultcmd
         from fleetledger.overlay import secret_store
 
+        def in_vault(item: str) -> str | None:  # FleetError: locked or unreadable
+            value = vault.backend().get_password(secret_store.SERVICE, item)
+            return value.strip() if value is not None else None
+
         items = {g.where for g in gone if g.keyring}
-        labels = {}
+        os_ring, _why = secret_store.os_backend()
         for placed in vaultcmd.named(inv):
             key = placed.secret.key
             if key is not None and key.resolve() not in role_paths:
                 continue  # your own key's passphrase: it stays, with the key
-            item = placed.secret.item
-            if item:
-                labels[item] = placed.secret.label
-            if item and item not in items:
-                items.add(item)
-                gone.append(Gone(f"{placed.secret.label} (a copy in the vault)", item,
-                                 keyring=True))
-        # An old copy left in the OS keyring (a vault init cut short) goes too.
-        os_ring, _why = secret_store.os_backend()
-        for item, label in labels.items():
+            item, label = placed.secret.item, placed.secret.label
+            if not item:
+                continue
+            try:  # the copy's secret, where ships.toml reads it: to tell its copies by
+                value = in_vault(item) if placed.store == "keyring" else \
+                    secret_store.read_file(str(placed.file), label)
+            except FleetError:
+                value = None
+            if placed.store != "keyring" and item not in items:
+                # A copy in the vault while ships.toml reads a file (a vault init cut
+                # short): it goes when it holds the same secret.
+                try:
+                    copy, readable = in_vault(item), True
+                except FleetError:
+                    copy, readable = None, False
+                if not readable or (copy is not None and copy == value):
+                    items.add(item)  # unreadable: listed, and the wipe stops on the vault
+                    gone.append(Gone(f"{label} (a copy in the vault)", item, keyring=True))
+                elif copy is not None:
+                    kept.append((f"vault item {item}", f"{label}: not what ships.toml reads, "
+                                 "so it may not be this copy's; left as it is"))
+            if os_ring is None:
+                continue
+            # An old copy in the OS keyring (a vault init cut short) goes too, but only
+            # one holding the very secret: another FleetLedger may use that name.
             try:
-                there = os_ring is not None and os_ring.get_password(secret_store.SERVICE,
-                                                                     item) is not None
-            except Exception:  # noqa: BLE001 - a locked OS keyring: nothing to tell
-                there = False
-            if there:
+                there = os_ring.get_password(secret_store.SERVICE, item)
+            except Exception:  # noqa: BLE001 - a locked OS keyring: its kind only
+                kept.append((f"OS keyring item {item}", f"could not be checked for an old "
+                             f"copy of {label} (locked?): look, and delete it if it is one"))
+                continue
+            if there is None:
+                continue
+            if value is not None and there.strip() == value:
                 gone.append(Gone(f"{label} (an old copy in your OS keyring)", item,
                                  keyring=True, os_keyring=True))
+            else:
+                kept.append((f"OS keyring item {item}", f"{label}: not the fleet's secret (or "
+                             "that could not be read), so it may not be this copy's; left "
+                             "as it is"))
         if staying and kind == "keyring":
             why = ("FleetLedger's vault: it still holds your own key's passphrase (the "
                    "fleet's secrets are deleted from it). Keep it while you use that key: "
@@ -331,7 +357,8 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
             gone.append(Gone("FleetLedger's own file", str(f)))
     # A keyring item of your own key's never goes, whatever ships.toml says of others.
     own = {keys.item(p) for p in managed if p.resolve() not in role_paths}
-    gone = [g for g in gone if not (g.keyring and g.where in own)]
+    gone = [g for g in gone if not (g.keyring and g.where in own)
+            and not (not g.keyring and Path(g.where).resolve() in staying)]
     return gone, kept
 
 
