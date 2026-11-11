@@ -213,6 +213,24 @@ def test_keyring_must_hold_only_pinned_keys(tmp_path):
     assert not ok(fprs)  # no key at all
 
 
+@pytest.mark.skipif(shutil.which("gpg") is None, reason="needs gpg")
+def test_keyring_check_removes_its_gnupg_home(tmp_path):
+    """A failing gpg (empty or bad ring) must not leave its temporary home behind."""
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    script = f'source "{PROVISION}"; keyring_ok "$1" "$2"'
+    for name, data in (("empty", b""), ("bad", b"not a keyring\n" * 4)):
+        ring = tmp_path / f"{name}.gpg"
+        ring.write_bytes(data)
+        r = subprocess.run(
+            ["bash", "-c", script, "x", str(ring), "0" * 40],
+            env={**os.environ, "TMPDIR": str(tmp)},
+            capture_output=True,
+        )
+        assert r.returncode != 0, name
+        assert list(tmp.iterdir()) == [], name
+
+
 # --- installed files ---------------------------------------------------------------------
 def unit(path: Path) -> configparser.ConfigParser:
     cp = configparser.ConfigParser(strict=False, interpolation=None)
