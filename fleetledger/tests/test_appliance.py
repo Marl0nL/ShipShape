@@ -544,3 +544,54 @@ def test_self_update_goes_back_when_the_install_fails(store, home, fetchable, tm
     assert "back at" in out.getvalue()
     assert git(fetchable.root, "rev-parse", "HEAD") == first
     assert git(fetchable.root, "symbolic-ref", "--short", "HEAD") == "main"
+
+
+# --- ship-fleet on the PATH ssh gives a command ------------------------------------------------
+
+
+def _seed_doc():
+    return yaml.safe_load(appliance.user_data(
+        "fleetledger", type("K", (), {"private": "x", "public": "ssh-ed25519 AAAA k"})(),
+        ["ssh-ed25519 AAAA you"], ORIGIN, "0" * 40, 8765))
+
+
+def test_the_seed_puts_a_root_owned_ship_fleet_on_the_non_login_path():
+    # A plain ssh command gets sshd's PATH (/usr/local/bin among it, ~/.local/bin not):
+    # the runbook's `ssh fleetledger@<vm> ship-fleet ...` must work as written.
+    files = {f["path"]: f for f in _seed_doc()["write_files"]}
+    wrapper = files["/usr/local/bin/ship-fleet"]
+    assert wrapper["owner"] == "root:root" and wrapper["permissions"] == "0755"
+    assert wrapper["content"] == appliance.WRAPPER == appliance.WRAPPER_FILE.read_text()
+    assert appliance.USER == "fleetledger"
+    assert "exec /home/fleetledger/.local/bin/ship-fleet \"$@\"" in appliance.WRAPPER
+
+
+def _run_wrapper(tmp_path, user, *args):
+    """The wrapper, run as user (a fake id), with fleetledger's home in tmp_path."""
+    home = tmp_path / "home" / "fleetledger"
+    pipx = home / ".local" / "bin"
+    pipx.mkdir(parents=True, exist_ok=True)
+    (pipx / "ship-fleet").write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {tmp_path}/ran\n')
+    (pipx / "ship-fleet").chmod(0o755)
+    bin_ = tmp_path / "bin"
+    bin_.mkdir(exist_ok=True)
+    (bin_ / "id").write_text(f'#!/bin/sh\n[ "$1" = -un ] && echo {user}\n')
+    (bin_ / "id").chmod(0o755)
+    wrapper = bin_ / "ship-fleet"
+    wrapper.write_text(appliance.WRAPPER.replace("/home/fleetledger", str(home)))
+    wrapper.chmod(0o755)
+    # sshd's PATH for a command: no ~/.local/bin.
+    return subprocess.run(["ship-fleet", *args], env={"PATH": f"{bin_}:/usr/bin:/bin"},
+                          capture_output=True, text=True, timeout=30)
+
+
+def test_the_wrapper_runs_fleetledgers_own_install(tmp_path):
+    proc = _run_wrapper(tmp_path, "fleetledger", "vault", "init", "a b")
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / "ran").read_text().splitlines() == ["vault", "init", "a b"]
+
+
+def test_the_wrapper_refuses_anyone_else(tmp_path):
+    proc = _run_wrapper(tmp_path, "vmadmin", "unlock")
+    assert proc.returncode == 126 and "fleetledger user's" in proc.stderr
+    assert not (tmp_path / "ran").exists()

@@ -78,8 +78,8 @@ class RemoteProcess:
     def wait(self):
         if self._reader is not None:
             self._reader.join(timeout=60)
-        # sh -lc 'exec ship-fleet migrate ...'
-        argv = shlex.split(shlex.split(self.argv[-1])[2])[2:]
+        # sh -lc 'PATH="$PATH:$HOME/.local/bin"; exec ship-fleet migrate ...'
+        argv = shlex.split(shlex.split(self.argv[-1])[2].split("exec ship-fleet ", 1)[1])
         self.remote.calls.append(argv)
         there = self.remote.there
         code = self.remote.fail.get(argv[1])

@@ -151,8 +151,12 @@ still the active one. Push again (without it) to move for real.
 From the new computer, where your keyring is unlocked, the move is a pipe:
 
 ```sh
-ssh you@old-computer ship-fleet migrate send | ship-fleet migrate receive
+ssh you@old-computer '~/.local/bin/ship-fleet migrate send' | ship-fleet migrate receive
 ```
+
+The full path is pipx's (`fleetledger/install.sh`): a command run through ssh gets no
+login shell, so `~/.local/bin` is not on its PATH. On FleetLedger's own VM a plain
+`ship-fleet` works too ([fleetledger-vm.md](fleetledger-vm.md)).
 
 That leaves the new copy on standby and the old one active. Hand over in the same
 order push does: first, on the old computer, `ship-fleet migrate retire --to
@@ -244,5 +248,8 @@ of the fleet is refused here. A copy on standby can be wiped at once.
   new computer's `~/.ssh` and is a different key. Rename or move it, then run the
   move again. The same key copied there before is fine.
 - **"ssh could not log in"**: log in once with plain `ssh you@new-computer`, check
-  its host key, then try again. Use `-o Port=2222` (repeatable) for ssh options,
-  and `--ship-fleet ~/.local/bin/ship-fleet` if `ship-fleet` is not on its PATH.
+  its host key, then try again. Use `-o Port=2222` (repeatable) for ssh options.
+- **"has no ship-fleet on PATH, nor in ~/.local/bin"**: push runs `ship-fleet` from
+  the new computer's PATH (in a login shell), else pipx's `~/.local/bin/ship-fleet`.
+  Install FleetLedger there (`fleetledger/install.sh`), or say where it is:
+  `--ship-fleet /path/to/ship-fleet`.

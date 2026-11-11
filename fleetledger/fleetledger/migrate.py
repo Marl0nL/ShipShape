@@ -16,7 +16,7 @@ again.
   receive` on HOST (its host key must already be known: StrictHostKeyChecking=yes),
   then hand over (handover.py): this copy retires, then HOST activates.
 - send: the same stream to a pipe, for running the move from the new computer
-  (`ssh old ship-fleet migrate send | ship-fleet migrate receive`, where that
+  (`ssh old '~/.local/bin/ship-fleet migrate send' | ship-fleet migrate receive`, where that
   computer's keyring is unlocked). Never to a terminal or a file.
 - receive: on the new computer. Refuses unless it has no FleetLedger yet and its
   checkout is at the same commit; checks every file against the stream's manifest
@@ -682,14 +682,23 @@ SSH_OPTIONS = ("StrictHostKeyChecking=yes", "ForwardAgent=no", "ForwardX11=no",
                "ClearAllForwardings=yes", "PermitLocalCommand=no", "RequestTTY=no")
 
 
+# Where install.sh's pipx puts ship-fleet. ssh runs a command with no login shell, and
+# even sh -l only has it on PATH if a profile adds it (Ubuntu's ~/.profile does; a home
+# without one, or another system's, may not).
+PIPX_BIN = "$HOME/.local/bin"
+
+
 def remote_command(ship_fleet: str, argv: Sequence[str]) -> str:
-    """What runs on the new computer: ship-fleet with argv, in a login shell (so pipx's
-    ~/.local/bin is on PATH)."""
-    if ship_fleet.startswith("~/"):
-        program = '"$HOME"/' + shlex.quote(ship_fleet[2:])
+    """What runs on the new computer: ship-fleet with argv, in a login shell. The default
+    is ship-fleet on that PATH, else pipx's ~/.local/bin/ship-fleet; a path given is run
+    as it is."""
+    if ship_fleet == "ship-fleet":
+        program = f'PATH="$PATH:{PIPX_BIN}"; exec ship-fleet'
+    elif ship_fleet.startswith("~/"):
+        program = 'exec "$HOME"/' + shlex.quote(ship_fleet[2:])
     else:
-        program = shlex.quote(ship_fleet)
-    return shlex.join(["sh", "-lc", "exec " + program + " " + shlex.join(argv)])
+        program = "exec " + shlex.quote(ship_fleet)
+    return shlex.join(["sh", "-lc", program + " " + shlex.join(argv)])
 
 
 def ssh_argv(host: str, remote: str, options: Iterable[str] = ()) -> list[str]:
@@ -748,9 +757,9 @@ def _session(app, host: str, argv: list[str],
                          hint=f"Log in once with plain ssh {host} and compare its host key's "
                          "fingerprint first.")
     if code == 127:
-        raise FleetError(f"{host} has no ship-fleet on PATH.",
-                         hint="Install FleetLedger there (fleetledger/install.sh), or name it: "
-                         "--ship-fleet ~/.local/bin/ship-fleet.")
+        raise FleetError(f"{host} has no ship-fleet on PATH, nor in ~/.local/bin.",
+                         hint="Install FleetLedger there (fleetledger/install.sh), or say "
+                         "where it is: --ship-fleet /path/to/ship-fleet.")
     return code, cut_short
 
 
@@ -1606,7 +1615,8 @@ def add_parsers(sub, add) -> None:
             "files for a rollback) and the new one takes over with the next epoch.\n\n"
             "  ship-fleet migrate check                 what would move, and what stops it\n"
             "  ship-fleet migrate push you@new-computer move it there over SSH, then hand over\n"
-            "  ssh old-computer ship-fleet migrate send | ship-fleet migrate receive\n"
+            "  ssh old-computer '~/.local/bin/ship-fleet migrate send' | "
+            "ship-fleet migrate receive\n"
             "                                           the same, run on the new computer\n"
             "  ship-fleet migrate verify                on the new computer: check it works\n"
             "  ship-fleet migrate retire, activate      hand over by hand: old, then new\n"
@@ -1626,7 +1636,8 @@ def add_parsers(sub, add) -> None:
     p.add_argument("-o", "--ssh-option", action="append", default=[], metavar="OPTION",
                    help="push: an ssh -o option, e.g. Port=2222 (repeatable)")
     p.add_argument("--ship-fleet", default="ship-fleet", metavar="PATH",
-                   help="push: ship-fleet on the new computer (default: found on its PATH)")
+                   help="push: ship-fleet on the new computer (default: on its PATH, "
+                   "else ~/.local/bin)")
     p.add_argument("--no-cutover", action="store_true",
                    help="push: leave the new copy on standby; this one stays the active one")
     p.add_argument("--to", metavar="HOST",
@@ -1675,8 +1686,9 @@ def cmd_migrate(args, app) -> int:
         if source is None:
             if app.stdin_isatty():
                 raise FleetError("receive reads the fleet from its input: run it at the end of "
-                                 "a pipe (ssh OLD ship-fleet migrate send | ship-fleet migrate "
-                                 "receive), or use migrate push from the old computer.")
+                                 "a pipe (ssh OLD '~/.local/bin/ship-fleet migrate send' | "
+                                 "ship-fleet migrate receive), or use migrate push from the old "
+                                 "computer.")
             source = sys.stdin.buffer
         return receive(app, source, store_kind=args.store, pushed=args.pushed)
     if action == "verify":

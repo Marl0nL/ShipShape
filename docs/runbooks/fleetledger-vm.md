@@ -40,6 +40,11 @@ There are no passwords and root logins are off. The seed:
 - clones this ShipShape checkout at **this very commit** (migrate needs both
   computers on the same commit) and installs it;
 - installs the service unit, without starting it;
+- puts `ship-fleet` on the PATH a plain ssh command gets, so `ssh fleetledger@<vm>
+  ship-fleet ...` works as written (ssh runs a command with no login shell, and pipx's
+  `~/.local/bin` is only on a login shell's PATH): `/usr/local/bin/ship-fleet`,
+  root-owned, runs the `fleetledger` user's own install and refuses anyone else, so
+  `vmadmin` never runs code that `fleetledger` can change;
 - turns lingering on, so the service starts at boot;
 - lets a reboot wait for running jobs (up to 25 minutes, inside the 30 systemd gives a
   reboot before forcing it; [fleetledger-service.md](fleetledger-service.md));
@@ -297,6 +302,16 @@ next Ship tooling, so roll it out when you choose, with `ship-fleet update`
 
 System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is needed
 (then unlock).
+
+**A VM seeded before `/usr/local/bin/ship-fleet` came in** answers `ship-fleet: command
+not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Once it has
+self-updated past that, add the file as `vmadmin` (read it first: it is short):
+
+```sh
+sudo install -o root -g root -m 0755 \
+  /home/fleetledger/ShipShape/fleetledger/fleetledger/seed/appliance-ship-fleet.sh \
+  /usr/local/bin/ship-fleet
+```
 
 **Testing unmerged ShipShape changes:**
 - keep a separate dev fleet (its own inventory and test Ships) on your desktop; or
