@@ -7,6 +7,13 @@ gnupg home under the run's base temp folder, stops its agent and removes its soc
 folder. Only this run's base temp folder is touched, so test runs going on at the
 same time on the same machine are left alone.
 
+A run ended by SIGTERM (a timeout, an agent's tool limit) would skip the end of the
+session, so the plugin turns SIGTERM into an interrupt, as Ctrl-C is: pytest then
+still finishes the session. A run killed outright (SIGKILL) still leaks, so at the
+start of a session the plugin also stops the agents earlier runs left: this user's
+gpg-agents whose home is in a `pytest-N` folder of this user's pytest root that no
+live pytest holds (its `.lock` names a process that has gone, or is gone itself).
+
 Loaded with `-p` from pytest.ini rather than from a conftest.py: both test folders
 already have a conftest module, and a third would add to that name clash.
 """
@@ -14,8 +21,12 @@ already have a conftest module, and a third would add to that name clash.
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import signal
 import subprocess
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -50,6 +61,11 @@ def agents_under(root: Path) -> dict[int, Path]:
         if not argv or os.path.basename(argv[0]) != b"gpg-agent":
             continue
         try:
+            if entry.stat().st_uid != os.getuid():
+                continue
+        except OSError:
+            continue
+        try:
             home = Path(os.fsdecode(argv[argv.index(b"--homedir") + 1]))
         except (ValueError, IndexError):
             continue
@@ -80,6 +96,136 @@ def stop_agents(root: Path, wait: float = 10.0) -> dict[int, Path]:
     for home in homes:
         _gpgconf(home, "--remove-socketdir")
     return agents_under(root)
+
+
+def temp_root(config) -> Path | None:
+    """This user's pytest root, the folder pytest makes its numbered `pytest-N` base
+    temp folders in (computed as pytest does, without making one). None with
+    --basetemp, where there is no such root."""
+    if config.getoption("basetemp", None):
+        return None
+    from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+    temproot = Path(from_env or tempfile.gettempdir()).resolve()
+    try:
+        import getpass
+
+        user = getpass.getuser()
+    except (ImportError, OSError, KeyError):
+        user = "unknown"
+    return temproot / f"pytest-of-{user}"
+
+
+NUMBERED = re.compile(r"pytest-\d+")
+
+
+def held_by_live_run(folder: Path) -> bool:
+    """Whether a live pytest holds this `pytest-N` folder. pytest writes its pid to
+    `.lock` when it makes the folder and removes the lock when it exits. When in
+    doubt (a lock that cannot be read, a pid that cannot be signalled) the folder
+    counts as held."""
+    try:
+        text = (folder / ".lock").read_text()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        pid = int(text.strip())
+    except ValueError:
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def stale_agents(root: Path) -> dict[int, Path]:
+    """This user's gpg-agents whose home is inside a `pytest-N` folder of root that
+    no live pytest holds: {pid: homedir}."""
+    stale = {}
+    for pid, home in agents_under(root).items():
+        top = home.relative_to(root).parts[:1]
+        if top and NUMBERED.fullmatch(top[0]) and not held_by_live_run(root / top[0]):
+            stale[pid] = home
+    return stale
+
+
+def stop_stale_agents(root: Path, wait: float = 10.0) -> tuple[dict[int, Path], dict[int, Path]]:
+    """Stop the agents earlier runs left under root (see stale_agents) and remove
+    their socket folders. Their homes may be half deleted by pytest's own cleanup, so
+    each agent is sent SIGTERM (it then shuts down as `gpgconf --kill` asks it to).
+    Returns ({pid: home} stopped, {pid: home} still running)."""
+    if root.is_symlink() or not root.is_dir() or root.stat().st_uid != os.getuid():
+        return {}, {}
+    root = root.resolve()
+    stale = stale_agents(root)
+    if not stale:
+        return {}, {}
+    for pid, home in stale.items():
+        # Only if it is still the same agent (pids are reused).
+        if agents_under(home).get(pid) == home:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+    deadline = time.monotonic() + wait
+    live = dict(stale)
+    while live and time.monotonic() < deadline:
+        time.sleep(0.05)
+        live = {pid: home for pid, home in live.items() if Path(f"/proc/{pid}").exists()}
+    if shutil.which("gpgconf") is not None:
+        for home in set(stale.values()):
+            _gpgconf(home, "--remove-socketdir")
+    left = {pid: home for pid, home in agents_under(root).items() if pid in stale}
+    return {pid: home for pid, home in stale.items() if pid not in left}, left
+
+
+def _interrupt_on_sigterm(signum, frame):
+    # A second SIGTERM ends the run at once; the next run's start stops what it leaks.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    raise KeyboardInterrupt("SIGTERM")
+
+
+_previous_sigterm = None
+
+
+def pytest_configure(config):
+    global _previous_sigterm
+    # Only where nobody else handles SIGTERM, and only the main thread may set it.
+    if threading.current_thread() is not threading.main_thread():
+        return
+    if signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL:
+        return
+    _previous_sigterm = signal.signal(signal.SIGTERM, _interrupt_on_sigterm)
+
+
+def pytest_unconfigure(config):
+    global _previous_sigterm
+    if _previous_sigterm is not None:
+        if signal.getsignal(signal.SIGTERM) is _interrupt_on_sigterm:
+            signal.signal(signal.SIGTERM, _previous_sigterm)
+        _previous_sigterm = None
+
+
+def pytest_sessionstart(session):
+    root = temp_root(session.config)
+    if root is None:
+        return
+    stopped, left = stop_stale_agents(root)
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is None:
+        return
+    if stopped:
+        reporter.write_line(
+            f"leftover_daemons: stopped {len(stopped)} gpg-agent(s) earlier runs left", yellow=True)
+    for pid, home in sorted(left.items()):
+        reporter.write_line(
+            f"leftover_daemons: could not stop pid {pid}, --homedir {home}", red=True)
 
 
 # tryfirst: before pytest's own sessionfinish, which may delete the base temp folder.

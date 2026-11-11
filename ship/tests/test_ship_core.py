@@ -838,3 +838,17 @@ def test_a_failed_fresh_start_of_a_stopped_agent_on_core_keeps_its_session(core)
     assert after["session"] == sid
     assert after == before
     never_killed(ship)
+
+
+@pytest.fixture(scope="module")
+def pane_env():
+    """A pane's settings, set before any test's own fixtures run."""
+    mp = pytest.MonkeyPatch()
+    for key in ("HERDR_SOCKET_PATH", "HERDR_SESSION", "HC_TERMINAL_ID", "SHIPSHAPE_ROOT"):
+        mp.setenv(key, "/run/example-pane")
+    yield
+    mp.undo()
+
+
+def test_no_ship_test_sees_the_panes_herdr_settings(pane_env):
+    assert [k for k in os.environ if k.startswith(("HERDR_", "HC_", "SHIPSHAPE_"))] == []
