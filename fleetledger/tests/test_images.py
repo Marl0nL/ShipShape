@@ -37,11 +37,16 @@ HOMES: list[Path] = []
 
 @pytest.fixture(autouse=True)
 def stop_gpg_agents():
-    """Key generation starts a gpg-agent per throwaway home; stop them afterwards."""
+    """Key generation starts a gpg-agent per throwaway home; stop them afterwards.
+
+    This runs after tmp_path is deleted, and any gpgconf call makes the home's socket
+    folder under /run/user again, so remove that folder too."""
     yield
     while HOMES:
-        subprocess.run(["gpgconf", "--homedir", str(HOMES.pop()), "--kill", "all"],
-                       capture_output=True, check=False)
+        home = str(HOMES.pop())
+        for args in (["--kill", "all"], ["--remove-socketdir"]):
+            subprocess.run(["gpgconf", "--homedir", home, *args],
+                           capture_output=True, check=False)
 
 
 def make_key(home: Path, name: str) -> tuple[str, bytes]:

@@ -4,8 +4,9 @@ Generating a key in a throwaway gnupg home starts a gpg-agent for that home. The
 agent outlives the test, keeps the temp folder busy and leaves a socket folder under
 /run/user/$UID/gnupg behind. At the end of the session this plugin finds every
 gnupg home under the run's base temp folder, stops its agent and removes its socket
-folder. Only this run's base temp folder is touched, so test runs going on at the
-same time on the same machine are left alone.
+folder. It does the same for each test's tmp_path before pytest deletes it. Only
+this run's base temp folder is touched, so test runs going on at the same time on
+the same machine are left alone.
 
 A run ended by SIGTERM (a timeout, an agent's tool limit) would skip the end of the
 session, so the plugin turns SIGTERM into an interrupt, as Ctrl-C is: pytest then
@@ -245,6 +246,33 @@ def pytest_sessionstart(session):
     for pid, home in sorted(left.items()):
         reporter.write_line(
             f"leftover_daemons: could not stop pid {pid}, --homedir {home}", red=True)
+
+
+# pytest.ini keeps only failed tests' temp folders, so a passing test's tmp_path is
+# deleted at its teardown, before the sweep below could find it. A gpg-agent whose home
+# is deleted exits by itself but leaves its socket folder behind, so stop the agents
+# in that folder first.
+TMP_PATH = pytest.StashKey[Path]()
+
+
+# Noted when the fixture is made, so a setup error later in the test's fixtures (which
+# leaves item.funcargs unfilled) or a getfixturevalue("tmp_path") is still covered.
+@pytest.hookimpl(wrapper=True)
+def pytest_fixture_setup(fixturedef, request):
+    value = yield
+    if fixturedef.argname == "tmp_path":
+        request.node.stash[TMP_PATH] = value
+    return value
+
+
+# tryfirst: before the fixture teardowns that delete the folder.
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_teardown(item):
+    path = item.stash.get(TMP_PATH, None)
+    if path is None or shutil.which("gpgconf") is None:
+        return
+    if gnupg_homes(path):  # cheaper than scanning /proc after every test
+        stop_agents(path)
 
 
 # tryfirst: before pytest's own sessionfinish, which may delete the base temp folder.
