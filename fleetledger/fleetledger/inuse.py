@@ -18,6 +18,7 @@ that name.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 import stat
@@ -75,24 +76,27 @@ def exclusive(store):
 
 def old_file(path: Path) -> str | None:
     """What OLD_FILE at path is: "left" for an empty file no process holds a lock on
-    (an older version's leftover, safe to ignore), "held" when one does (an older
-    ship-fleet still running), or None for anything else, which is not that leftover:
-    a file with something in it, a link, not a file, or one that cannot be checked.
-    Reads only; the test lock it takes goes as soon as it is taken."""
+    (an older version's leftover, safe to ignore), "held" when one does, flock or a
+    POSIX record lock (an older ship-fleet still running), or None for anything else,
+    which is not that leftover: a file with something in it, a link, not a file, or
+    one that cannot be checked. Writes nothing; the test locks it takes go as soon as
+    they are taken (it is opened for writing only because a POSIX write lock needs
+    that, and only a write lock is refused by every other lock)."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError:
         return None
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_size != 0:
             return None
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return "held"
-        except OSError:
-            return None
+        for take in (fcntl.flock, fcntl.lockf):
+            try:
+                take(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in (errno.EAGAIN, errno.EACCES):
+                    return "held"
+                return None
         return "left"
     finally:
         os.close(fd)

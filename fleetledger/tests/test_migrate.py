@@ -32,6 +32,7 @@ import socket
 import sqlite3
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -724,6 +725,17 @@ def test_an_empty_in_use_lock_beside_a_running_ship_fleet_still_stops_the_move(
         assert "an older ship-fleet is running and holds it" in out.split("Stops the move:")[1]
         with pytest.raises(FleetError, match="Not moving"):
             send_bytes(a, monkeypatch)
+    holder = subprocess.Popen(  # one that took a POSIX record lock instead, in its own process
+        [sys.executable, "-c", "import fcntl, sys\nfh = open(sys.argv[1], 'r+')\n"
+         "fcntl.lockf(fh, fcntl.LOCK_EX)\nprint('held', flush=True)\nsys.stdin.read()",
+         str(left)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        code, out, err = a.run("migrate", "check")
+        assert code == 1
+        assert "an older ship-fleet is running and holds it" in out.split("Stops the move:")[1]
+    finally:
+        holder.communicate("")
     assert left.exists()  # a held lock is never taken for a leftover, nor removed
     assert a.run("migrate", "check")[0] == 0  # once it has stopped
 
