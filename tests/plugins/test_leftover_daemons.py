@@ -181,6 +181,8 @@ INNER = '''
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def start_agent(tmp_path, name):
     home = tmp_path / "gnupg"
@@ -200,12 +202,23 @@ def test_passes(tmp_path):
 def test_fails(tmp_path):
     start_agent(tmp_path, "fails")
     assert False
+
+
+@pytest.fixture
+def broken(tmp_path):
+    start_agent(tmp_path, "setup-error")
+    raise RuntimeError("setup fails after starting an agent")
+
+
+def test_setup_error(broken):
+    pass
 '''
 
 
 def test_a_run_keeps_only_failed_tests_folders_and_leaves_no_socket_folders(tmp_path):
     """With the repo's pytest.ini, a passing test's tmp_path is deleted at its teardown
-    and a failing test's is kept; neither leaves its agent or socket folder."""
+    and a failing test's is kept; none leaves its agent or socket folder, not even
+    one whose fixture fails after starting an agent."""
     repo = Path(__file__).resolve().parents[2]
     out, basetemp = tmp_path / "out", tmp_path / "basetemp"
     out.mkdir()
@@ -216,12 +229,12 @@ def test_a_run_keeps_only_failed_tests_folders_and_leaves_no_socket_folders(tmp_
                         "--rootdir", str(repo), "--basetemp", str(basetemp),
                         "-p", "no:cacheprovider", "-q", str(inner)],
                        capture_output=True, text=True, cwd=repo, timeout=120)
-    assert "1 failed, 1 passed" in r.stdout, r.stdout + r.stderr
+    assert "1 failed, 1 passed, 1 error" in r.stdout, r.stdout + r.stderr
 
     assert [p.name for p in basetemp.iterdir() if not p.is_symlink()] == ["test_fails0"]
     assert (basetemp / "test_fails0" / "gnupg").is_dir()
     assert leftover_daemons.agents_under(basetemp.resolve()) == {}
-    for name in ("passes", "fails"):
+    for name in ("passes", "fails", "setup-error"):
         socketdir = Path((out / name).read_text())
         if not socketdir.is_relative_to(basetemp):  # gpg keeps sockets in /run/user when it can
             assert not socketdir.exists(), name

@@ -251,10 +251,24 @@ def pytest_sessionstart(session):
 # pytest.ini keeps only failed tests' temp folders, so a passing test's tmp_path is
 # deleted at its teardown, before the sweep below could find it. A gpg-agent whose home
 # is deleted exits by itself but leaves its socket folder behind, so stop the agents
-# in that folder first. tryfirst: before the fixture teardowns that delete it.
+# in that folder first.
+TMP_PATH = pytest.StashKey[Path]()
+
+
+# Noted when the fixture is made, so a setup error later in the test's fixtures (which
+# leaves item.funcargs unfilled) or a getfixturevalue("tmp_path") is still covered.
+@pytest.hookimpl(wrapper=True)
+def pytest_fixture_setup(fixturedef, request):
+    value = yield
+    if fixturedef.argname == "tmp_path":
+        request.node.stash[TMP_PATH] = value
+    return value
+
+
+# tryfirst: before the fixture teardowns that delete the folder.
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_teardown(item):
-    path = getattr(item, "funcargs", {}).get("tmp_path")
+    path = item.stash.get(TMP_PATH, None)
     if path is None or shutil.which("gpgconf") is None:
         return
     if gnupg_homes(path):  # cheaper than scanning /proc after every test
