@@ -161,9 +161,10 @@ first; `ship-fleet ui link --local` gives the sign-in link
 ([runbooks/fleetledger-service.md](runbooks/fleetledger-service.md)).
 
 From your laptop or phone: `ship-fleet ui remote https://NAME --port 8765 --login
-you@example.com`, after `tailscale serve --bg 127.0.0.1:8765`; then pair each device
-once with `ship-fleet ui link --name laptop` (over ssh is fine) or Settings ▸ Devices ▸
-Pair a device (a QR code for a phone). Paired devices stay signed in across restarts;
+you@example.com`, after `tailscale serve --bg 127.0.0.1:8765` (with Serve enabled for
+the tailnet first; while it is off, that command prints an enable link and waits); then
+pair each device once with `ship-fleet ui link --name laptop` (over ssh is fine) or
+Settings ▸ Devices ▸ Pair a device (a QR code for a phone). Paired devices stay signed in across restarts;
 `ship-fleet ui devices` lists them and `ship-fleet ui revoke NAME` signs one out. Read
 the risks first: [runbooks/remote-ui.md](runbooks/remote-ui.md).
 

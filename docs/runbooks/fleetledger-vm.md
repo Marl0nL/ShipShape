@@ -195,6 +195,10 @@ systemctl --user start fleetledger
 ship-fleet ui link --name laptop      # pair the laptop; --qr for the phone
 ```
 
+Serve must be enabled for your tailnet first: if `tailscale serve --bg` prints a link
+and waits, open the link and enable Serve, and it carries on by itself
+([remote-ui.md](remote-ui.md), step 1.4).
+
 From now on the VM runs FleetLedger, always on. The desktop is an ordinary trusted
 machine: renew its certificate from the web UI (Download bundle) like the laptop's.
 After two weeks, once you are happy: `ship-fleet migrate wipe` on the desktop.

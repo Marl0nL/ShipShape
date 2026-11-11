@@ -71,6 +71,23 @@ In the Tailscale admin console:
    "hosts": {"fleetledger-ui": "<the desktop's address, from tailscale ip -4>"},
    "tests": [{"src": "tag:ship", "deny": ["fleetledger-ui:443"]}]
    ```
+4. **Serve on for the tailnet.** Serve is a tailnet feature, and it must be enabled
+   before step 2. While it is off, `tailscale serve --bg` neither serves nor returns:
+   it prints an enable link and waits, like this (your link names your tailnet and
+   machine):
+
+   ```text
+   Serve is not enabled on your tailnet.
+   To enable, visit:
+
+            https://example.com/f/serve?node=example-node
+   ```
+
+   Open the link, signed in to Tailscale as a tailnet admin, and enable Serve; the
+   waiting command then carries on by itself. Ctrl-C stops it without serving
+   anything. `ship-fleet ui remote` only reads Serve's status, so it cannot see this
+   setting: until Serve is served, it refuses with *Tailscale Serve is not serving
+   https://… here* and points at this step.
 
 ## 2. Serve it (once; it survives restarts)
 
@@ -81,6 +98,7 @@ tailscale serve --bg 127.0.0.1:8765
 tailscale serve status        # https://fleetledger.<tailnet>.ts.net (tailnet only) -> 127.0.0.1:8765
 ```
 
+If it prints a link and waits instead, Serve is off for your tailnet: see step 1.4.
 On Linux, changing Serve needs root or Tailscale's operator: run
 `sudo tailscale set --operator=$USER` once, or put `sudo` in front. Serve only that:
 FleetLedger must have the name to itself, because anything else served at the same
@@ -268,7 +286,7 @@ revoke --all` forgets them.
 | Tailscale is not running here | `tailscale up`, or `ship-fleet ui --local` |
 | … is not this computer's Tailscale name | use the name it says (`Self.DNSName` in `tailscale status --json`) |
 | Tailscale has no HTTPS certificate for … | turn on HTTPS certificates (admin console ▸ DNS) |
-| Tailscale Serve is not serving … | `tailscale serve --bg 127.0.0.1:8765` |
+| Tailscale Serve is not serving … | `tailscale serve --bg 127.0.0.1:8765`; if that prints a link and waits, enable Serve for the tailnet (step 1.4) |
 | Funnel is on for … | `tailscale serve reset`, then serve it again on the tailnet only |
 | … somewhere besides this UI | give FleetLedger the name to itself: `tailscale serve reset`, then serve it again |
 | Tailscale Serve also serves … on port … | the same: FleetLedger needs every port of the name, since your browser sends its cookie to all of them |

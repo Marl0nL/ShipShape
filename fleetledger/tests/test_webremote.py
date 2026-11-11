@@ -424,6 +424,24 @@ def test_the_serve_check_looks_at_every_config_for_funnel_and_other_ports():
     check(tcp)
 
 
+def test_not_served_points_at_enabling_serve_for_the_tailnet_first():
+    """With Serve off for the tailnet, `tailscale serve --bg` prints an enable link and
+    waits instead of serving. The refusal says so and points at the runbook step, so
+    a wait there is not a mystery; the check itself still only reads."""
+    fake = FakeTailscale()
+    fake.serve = {}
+    with pytest.raises(FleetError, match="not serving") as exc:
+        check(fake)
+    hint = exc.value.hint
+    assert f"tailscale serve --bg 127.0.0.1:{PORT}" in hint
+    assert "enabled for your tailnet" in hint and "link" in hint
+    assert remote.SERVE_ENABLE_STEP in hint
+    assert fake.calls == [["status", "--json"], ["serve", "status", "--json"]]
+    # The step it names is in the runbook.
+    runbook = (Path(__file__).resolve().parents[2] / remote.RUNBOOK).read_text()
+    assert remote.SERVE_ENABLE_STEP.split(", ", 1)[1] in runbook
+
+
 def test_the_serve_check_refuses_another_https_port_or_funnel_in_the_foreground():
     with pytest.raises(FleetError, match="not serving"):
         check(FakeTailscale(), f"{REMOTE}:8443")
