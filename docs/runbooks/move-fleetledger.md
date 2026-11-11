@@ -57,8 +57,10 @@ On the **new** computer:
      keeps (see "Wipe the old copy");
    - what setting it up leaves before the move: the service unit
      (`ship-fleet service install`, as the appliance's seed does) and an empty vault
-     (`ship-fleet vault init`), with an audit log that records only those, and the
-     vault's unlocks and locks. That audit log is kept, after the one that comes.
+     (`ship-fleet vault init`), with an audit log that records only setting up: those
+     two, a service restart, a `self-update` (to the old computer's commit, say), and
+     the vault's unlocks, locks and new passphrase or recovery code. That audit log
+     is kept, after the one that comes.
 
    Otherwise, a vault that already holds a secret is refused (it is another
    FleetLedger's), and so is a locked one (it cannot be seen to be empty): unlock it
@@ -277,7 +279,8 @@ same vault.
 - **"already has a FleetLedger"**: that computer has one. Move its files aside (or
   point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders). A
   service install and a vault init there before the move do not count (see "Before
-  you start"); anything else in its audit log does.
+  you start"); anything else in its audit log does, and the hint names the first
+  such entry.
 - **"vault here already holds"**: the new computer's vault has another FleetLedger's
   secrets. Move `vault.json` aside with the rest of that FleetLedger, then
   `ship-fleet vault init` again. **"vault here is locked"**: unlock it

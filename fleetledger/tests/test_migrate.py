@@ -914,21 +914,83 @@ def test_the_appliances_own_audit_log_stays_when_the_fleet_brings_none(computers
     assert paths.audit_log_path().read_bytes() == before
 
 
+@pytest.mark.parametrize("where", [(migrate, "_store_secret"), (handover, "write")])
 def test_receive_takes_back_the_appliances_own_audit_log_on_a_failure(computers, monkeypatch,
-                                                                     vaults):
+                                                                     vaults, where):
+    """A failure before the log is merged, and one after it: the log is as it was."""
     a, b, world = computers
     stream = send_bytes(a, monkeypatch)
     seeded_appliance(b, monkeypatch)
     before = paths.audit_log_path().read_bytes()
 
     def broken(*args, **kw):
-        raise FleetError("the store broke")
+        raise FleetError("it broke")
 
-    monkeypatch.setattr(migrate, "_store_secret", broken)
-    with pytest.raises(FleetError, match="the store broke"):
+    monkeypatch.setattr(*where, broken)
+    with pytest.raises(FleetError, match="it broke"):
         receive(b, monkeypatch, stream)
     assert paths.audit_log_path().read_bytes() == before
+    assert stat.S_IMODE(paths.audit_log_path().stat().st_mode) == 0o600
     assert not b.store.path.exists()
+    assert vaults.backend().count() == 0
+
+
+def test_receive_takes_the_other_setup_steps_too(computers, monkeypatch, vaults):
+    """A restart, a self-update to the old computer's commit, a new vault passphrase or
+    recovery code: setting up, holding no fleet state."""
+    from fleetledger.concierge import audit
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    audit.record("-", "service-restart", "service", "ok")
+    audit.record("-", "self-update", "fleetledger", "0123456789ab..0123456789ab")
+    audit.record("-", "vault-passphrase", "vault", "ok")
+    audit.record("-", "vault-recovery", "vault", "ok")
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+
+
+def test_a_refusal_for_the_audit_log_alone_says_which_entry(computers, monkeypatch, vaults):
+    from fleetledger.concierge import audit
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    audit.record("ship-09", "create", "proxmox", "ok")
+    with pytest.raises(FleetError, match="already has a FleetLedger") as refused:
+        receive(b, monkeypatch, stream)
+    assert "create on ship-09" in refused.value.hint and "not the vault" in refused.value.hint
+
+
+@pytest.mark.parametrize("add, says", [
+    ("secret", "vault here already holds 1 secret"),
+    ("inventory", "already has a FleetLedger"),
+])
+def test_state_written_just_before_the_lock_is_still_refused(computers, monkeypatch, vaults,
+                                                             add, says):
+    """Another ship-fleet that writes between receive's first look and its lock: the
+    look is made again under the lock, so nothing is written over or mixed in."""
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    real = inuse.exclusive
+
+    def late_writer(store):
+        if add == "secret":
+            vaults.backend().set_password("fleetledger", "proxmox-token:other@pve!x", "s")
+        else:
+            _add_inventory(b)
+        return real(store)
+
+    monkeypatch.setattr(inuse, "exclusive", late_writer)
+    with pytest.raises(FleetError, match=says):
+        receive(b, monkeypatch, stream)
+    assert vaults.backend().count() == (1 if add == "secret" else 0)  # none of the fleet's
+    assert b.store.path.exists() == (add == "inventory")
+    if add == "inventory":
+        assert "other_fleet" in b.store.path.read_text()  # as it was written, not ours
+    assert not (b.home / ".ssh").exists()
 
 
 def _add_inventory(b):
