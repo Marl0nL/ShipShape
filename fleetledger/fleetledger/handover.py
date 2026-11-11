@@ -218,6 +218,7 @@ class Gone:
     what: str
     where: str  # a path, or a keyring item
     keyring: bool = False
+    os_keyring: bool = False  # the OS keyring's item even while the vault is on (an old copy)
 
 
 def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
@@ -274,20 +275,36 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
         # leave it. Those include a copy of a secret ships.toml still reads from a file
         # (a vault init cut short), so none of the fleet's secrets stays behind in it.
         from fleetledger import vaultcmd
+        from fleetledger.overlay import secret_store
 
         items = {g.where for g in gone if g.keyring}
+        labels = {}
         for placed in vaultcmd.named(inv):
             key = placed.secret.key
             if key is not None and key.resolve() not in role_paths:
                 continue  # your own key's passphrase: it stays, with the key
-            if placed.secret.item and placed.secret.item not in items:
-                items.add(placed.secret.item)
-                gone.append(Gone(f"{placed.secret.label} (a copy in the vault)",
-                                 placed.secret.item, keyring=True))
+            item = placed.secret.item
+            if item:
+                labels[item] = placed.secret.label
+            if item and item not in items:
+                items.add(item)
+                gone.append(Gone(f"{placed.secret.label} (a copy in the vault)", item,
+                                 keyring=True))
+        # An old copy left in the OS keyring (a vault init cut short) goes too.
+        os_ring, _why = secret_store.os_backend()
+        for item, label in labels.items():
+            try:
+                there = os_ring is not None and os_ring.get_password(secret_store.SERVICE,
+                                                                     item) is not None
+            except Exception:  # noqa: BLE001 - a locked OS keyring: nothing to tell
+                there = False
+            if there:
+                gone.append(Gone(f"{label} (an old copy in your OS keyring)", item,
+                                 keyring=True, os_keyring=True))
         if staying and kind == "keyring":
             why = ("FleetLedger's vault: it still holds your own key's passphrase (the "
-                   "fleet's secrets are deleted from it); ship-fleet vault off moves that "
-                   "out, then delete it")
+                   "fleet's secrets are deleted from it). Keep it while you use that key: "
+                   "ship-fleet vault off here would delete that passphrase with it")
         else:
             why = ("FleetLedger's vault, this computer's keyring: the fleet's secrets are "
                    "deleted from it, and the vault stays with anything else in it "
@@ -312,31 +329,64 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
             if _in_toolkit(f, kits) is not None:
                 continue  # a toolkit folder of yours (kept, above)
             gone.append(Gone("FleetLedger's own file", str(f)))
+    # A keyring item of your own key's never goes, whatever ships.toml says of others.
+    own = {keys.item(p) for p in managed if p.resolve() not in role_paths}
+    gone = [g for g in gone if not (g.keyring and g.where in own)]
     return gone, kept
 
 
 def wipe(store, gone: list[Gone]) -> None:
-    """Delete what wipe_plan listed: keyring items first (a locked keyring stops it
-    before any file goes), then the files, then emptied folders."""
+    """Delete what wipe_plan listed: keyring items first (a locked keyring or vault
+    stops it before any file goes), then the files, ships.toml last (so a wipe cut
+    short can run again), then emptied folders."""
     from fleetledger.overlay import secret_store
 
-    if any(g.keyring for g in gone):
+    ring = [g for g in gone if g.keyring and not g.os_keyring]
+    if ring and vault.is_on():
+        try:  # what the vault holds, read once: locked or unreadable stops it here
+            held = set(vault.backend().item_names(secret_store.SERVICE))
+        except FleetError as exc:
+            raise FleetError(f"{exc.message} Nothing was deleted.", hint=exc.hint) from None
+        for g in ring:
+            if g.where in held:
+                secret_store.delete_from_keyring(g.where)
+    elif ring:
         usable, why = secret_store.keyring_usable()
         if not usable:
             raise FleetError(f"Cannot reach the keyring ({why}); nothing was deleted.",
-                             hint=vault.UNLOCK_HINT if vault.is_on() else
-                             "Unlock it (log in to your desktop session), then try again.")
-    for g in gone:
-        if g.keyring and secret_store.existing_in_keyring(g.where) is not None:
-            secret_store.delete_from_keyring(g.where)
+                             hint="Unlock it (log in to your desktop session), then try again.")
+        for g in ring:
+            if secret_store.existing_in_keyring(g.where) is not None:
+                secret_store.delete_from_keyring(g.where)
+    os_items = [g for g in gone if g.os_keyring]
+    if os_items:
+        os_ring, why = secret_store.os_backend()
+        for g in os_items:
+            try:
+                if os_ring is not None and os_ring.get_password(secret_store.SERVICE,
+                                                                g.where) is not None:
+                    os_ring.delete_password(secret_store.SERVICE, g.where)
+            except Exception as exc:  # noqa: BLE001 - its kind only: never a secret
+                raise FleetError(f"Could not remove {g.where} from your OS keyring "
+                                 f"({type(exc).__name__}); no file was deleted yet.",
+                                 hint="Unlock it (log in to your desktop session), then run "
+                                 "the wipe again.") from None
     from fleetledger.migrate import _in_toolkit, _toolkit_dirs
 
     try:  # read before ships.toml goes: its toolkit folders stay whole, empty ones too
         kits = _toolkit_dirs(store.load())
     except FleetError:
         kits = {}
-    for g in dict.fromkeys(g.where for g in gone if not g.keyring):
-        Path(g).unlink(missing_ok=True)
+    files = list(dict.fromkeys(g.where for g in gone if not g.keyring))
+    files.sort(key=lambda f: Path(f) == store.path)  # ships.toml last
+    for f in files:
+        try:
+            Path(f).unlink(missing_ok=True)
+        except OSError as exc:
+            raise FleetError(f"Could not delete {paths.tilde(Path(f))} ({exc.strerror}); "
+                             "the wipe stopped there.",
+                             hint="Fix that, then run ship-fleet migrate wipe again: it "
+                             "finishes what is left.") from None
     if not vault.is_on():
         vault.lock()  # its unlocked key has nothing left to open
     for base in (paths.config_dir(), paths.data_dir()):
