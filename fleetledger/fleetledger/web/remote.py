@@ -47,6 +47,11 @@ MAX_LOGINS = 20
 RUNBOOK = "docs/runbooks/remote-ui.md"
 # Where the runbook says Serve must be on for the tailnet before `tailscale serve --bg`.
 SERVE_ENABLE_STEP = f"{RUNBOOK}, Serve on for the tailnet"
+# While it is off, `tailscale serve --bg` prints an enable link and waits instead of
+# serving. The check (read only) cannot see that, so its refusals that may follow it say so.
+SERVE_OFF = ("Serve must be enabled for your tailnet first: if tailscale serve --bg prints "
+             "a link and waits, open the link, enable Serve, and it carries on by itself "
+             f"({SERVE_ENABLE_STEP}).")
 
 Run = Callable[[list[str]], str]  # tailscale arguments -> its stdout
 
@@ -259,20 +264,15 @@ def check_serve(remote: Remote, run: Run) -> None:
     if remote.hostname not in (status.get("CertDomains") or []):
         raise FleetError(f"Tailscale has no HTTPS certificate for {remote.hostname}.",
                          hint="Turn on HTTPS certificates for your tailnet (admin console, "
-                              "DNS), then try again.")
+                              f"DNS), then try again. {SERVE_OFF}")
     serve = _json(run, ["serve", "status", "--json"])
     configs = [serve, *[c for c in (serve.get("Foreground") or {}).values()
                         if isinstance(c, dict)]]
     found = [c for c in configs if remote.hostport in (c.get("Web") or {})]
     fix = f"Run: {serve_command(remote)}"
     if not found:
-        # With Serve off for the tailnet, that command prints an enable link and waits
-        # rather than serving: say so, since this check (read only) cannot see it.
         raise FleetError(f"Tailscale Serve is not serving {remote.origin} here.",
-                         hint=f"{fix}. Serve must be enabled for your tailnet first: if "
-                              "that command prints a link and waits, open the link, enable "
-                              "Serve, and it carries on by itself "
-                              f"({SERVE_ENABLE_STEP}).")
+                         hint=f"{fix}. {SERVE_OFF}")
     # Funnel on any port of the name, in any config (Tailscale funnels a port if the
     # background config or any foreground one allows it).
     funnels = sorted({key for c in configs for key, on in (_dict(c, "AllowFunnel")).items()

@@ -437,6 +437,12 @@ def test_not_served_points_at_enabling_serve_for_the_tailnet_first():
     assert "enabled for your tailnet" in hint and "link" in hint
     assert remote.SERVE_ENABLE_STEP in hint
     assert fake.calls == [["status", "--json"], ["serve", "status", "--json"]]
+    # Serve off for the tailnet may show up as no HTTPS certificate instead.
+    nocert = FakeTailscale()
+    nocert.status.update(CertDomains=[])
+    with pytest.raises(FleetError, match="no HTTPS certificate") as exc:
+        check(nocert)
+    assert "link" in exc.value.hint and remote.SERVE_ENABLE_STEP in exc.value.hint
     # The step it names is in the runbook.
     runbook = (Path(__file__).resolve().parents[2] / remote.RUNBOOK).read_text()
     assert remote.SERVE_ENABLE_STEP.split(", ", 1)[1] in runbook
