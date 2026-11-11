@@ -10,7 +10,9 @@ the agent's home and a fake `/proc`, plus `fakes/fake.py` installed as every
 command ship-ctl runs (`herdr`, `claude`, `gh`, `gcloud`, `apt-get`, `npm`, ...).
 A test sets the fakes' behaviour with `ship.set(...)` and reads what they were
 asked to do with `ship.calls(...)`. Every JSON document is checked against the
-contract schemas with `jsonschema`.
+contract schemas with `jsonschema`. Every test also runs without the
+`HERDR_*`, `HC_*` and `SHIPSHAPE_*` settings of the pane pytest was started in
+(`clean_env`), so a sandbox command never reaches a real herdr session.
 
 The fake herdr keeps panes as well as agents, refuses to start an agent in a pane
 that is missing or busy, and runs the real mode-ledger hook for each launch

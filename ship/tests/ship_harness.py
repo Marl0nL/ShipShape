@@ -396,8 +396,11 @@ def assert_valid(name: str, doc: dict) -> None:
 
 @pytest.fixture
 def clean_env(monkeypatch):
+    """Drop the herdr, herdr-core and ShipShape settings of the pane pytest runs in
+    (HERDR_SOCKET_PATH, HC_TERMINAL_ID, ...), so sandbox commands never see a real
+    session. Every ship test uses it (ship/tests/conftest.py)."""
     for key in list(os.environ):
-        if key.startswith(("HERDR_", "SHIPSHAPE_")):
+        if key.startswith(("HERDR_", "HC_", "SHIPSHAPE_")):
             monkeypatch.delenv(key, raising=False)
 
 
