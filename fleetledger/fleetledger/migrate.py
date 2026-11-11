@@ -31,7 +31,8 @@ again.
   a retired copy after its two weeks (handover.py).
 
 Until the hand-over nothing on the old computer changes, and nothing is written to
-a file at rest on the way. What never moves: this-computer.json (a fact about that computer), locks,
+a file at rest on the way. What never moves: this-computer.json (a fact about that computer), locks
+(an older version's empty in-use.lock included: inuse.OLD_FILE),
 known_hosts (rebuilt from ships.toml), runtime sockets, a part-finished Proxmox setup,
 the inbox upload spool, Ubuntu's cloud image cache and, unless --with-images, baked
 image files. A key of your own that FleetLedger made stays on your machines: only
@@ -423,6 +424,13 @@ def _plan_config(plan: Plan, moving: set[Path], managed_names: set[str]) -> None
             plan.leave(f, "not one of your keys for Ships (fleet.agent_keys)")
         elif rel in ("proxmox-token", "tailscale-oauth"):
             plan.leave(f, "a secret file ships.toml does not use")
+        elif rel == inuse.OLD_FILE and (old := inuse.old_file(f)) is not None:
+            if old == "held":
+                plan.skip(paths.tilde(f), "an older ship-fleet is running and holds it (its "
+                           "in-use lock): stop it first, then check again")
+            else:
+                plan.leave(f, "an empty in-use lock an older ship-fleet left: the lock is now "
+                           "on the folder itself, so nothing uses it (delete it when you like)")
         elif _temp(f.name):
             plan.leave(f, "a leftover of a write that was cut short")
         else:

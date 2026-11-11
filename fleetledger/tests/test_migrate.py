@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import fcntl
 import hashlib
 import io
 import json
@@ -652,6 +653,79 @@ def test_a_file_fleetledger_does_not_know_stops_the_move(computers, monkeypatch,
     assert code == 1 and "Stops the move" in out and "does not know this file" in out
     with pytest.raises(FleetError, match="Not moving"):
         send_bytes(a, monkeypatch)
+
+
+# An older ship-fleet left an empty in-use.lock beside ships.toml; the in-use lock is now
+# a flock on the folder itself (inuse.py), so nothing uses that file any more.
+
+
+def test_an_empty_in_use_lock_an_older_version_left_stays_and_the_move_goes_ahead(
+        computers, monkeypatch):
+    a, b, world = computers
+    left = a.root / "config" / "in-use.lock"
+    left.touch()
+    code, out, err = a.run("migrate", "check")
+    assert code == 0, out + err
+    assert "Ready to move" in out
+    line = next(x for x in out.split("Stays here:")[1].splitlines() if "in-use.lock" in x)
+    assert "an empty in-use lock an older ship-fleet left" in line
+    assert "nothing uses it" in line
+    assert left.exists() and left.stat().st_size == 0  # check stays read-only
+    stream = send_bytes(a, monkeypatch)
+    with tarfile.open(fileobj=io.BytesIO(stream), mode="r|") as tar:
+        assert not any("in-use.lock" in m.name for m in tar)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+
+
+@pytest.mark.parametrize("where, content", [
+    ("config/in-use.lock", b"4242\n"),  # not empty: not the leftover, whatever it holds
+    ("config/old/in-use.lock", b""),  # not where the older version put it
+    ("data/in-use.lock", b""),
+    ("config/in-use.lock.old", b""),  # not its name
+])
+def test_anything_else_like_the_old_in_use_lock_is_still_a_file_it_does_not_know(
+        computers, monkeypatch, where, content):
+    a, b, world = computers
+    path = a.root / where
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    code, out, err = a.run("migrate", "check")
+    assert code == 1 and "Stops the move" in out
+    assert "does not know this file" in out.split("Stops the move:")[1]
+    assert "older ship-fleet" not in out
+    with pytest.raises(FleetError, match="Not moving"):
+        send_bytes(a, monkeypatch)
+
+
+def test_an_old_in_use_lock_that_is_a_link_is_still_a_file_it_does_not_know(
+        computers, monkeypatch):
+    a, b, world = computers
+    target = a.root / "empty"
+    target.touch()
+    (a.root / "config" / "in-use.lock").symlink_to(target)
+    code, out, err = a.run("migrate", "check")
+    assert code == 1 and "does not know this file" in out and "older ship-fleet" not in out
+
+
+def test_an_empty_in_use_lock_beside_a_running_ship_fleet_still_stops_the_move(
+        computers, monkeypatch):
+    a, b, world = computers
+    left = a.root / "config" / "in-use.lock"
+    left.touch()
+    with inuse.using(a.store):  # the web UI, say: FleetLedger is in use
+        code, out, err = a.run("migrate", "check")
+        assert code == 1 and "Another ship-fleet is running on this computer" in out
+        with pytest.raises(FleetError, match="Another ship-fleet"):
+            send_bytes(a, monkeypatch)
+    with left.open("rb") as fh:  # an older ship-fleet still running, holding its lock
+        fcntl.flock(fh, fcntl.LOCK_SH)
+        code, out, err = a.run("migrate", "check")
+        assert code == 1 and "Stops the move" in out
+        assert "an older ship-fleet is running and holds it" in out.split("Stops the move:")[1]
+        with pytest.raises(FleetError, match="Not moving"):
+            send_bytes(a, monkeypatch)
+    assert left.exists()  # a held lock is never taken for a leftover, nor removed
+    assert a.run("migrate", "check")[0] == 0  # once it has stopped
 
 
 def test_a_ship_not_enrolled_yet_or_a_seed_stops_the_move(computers, monkeypatch):
