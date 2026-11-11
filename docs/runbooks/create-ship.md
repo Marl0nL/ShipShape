@@ -143,7 +143,7 @@ first.
 | | Plan for | Three workers |
 |---|---|---|
 | CPU | 2 cores (3 for comfort) per worker that runs the full check suite at the same time, plus 2 for the supervisor, the Claude processes and the Ship itself | 8 cores, 11 for comfort |
-| Memory | 3 GB per worker, plus 4 GB | 16 GB |
+| Memory | 3 GB per worker, plus 4 GB | 13 GB, so 16 GB |
 | Disk | 40 GB, plus 5 GB per worker running at once | 60–80 GB |
 
 - **CPU.** A full suite keeps cores busy for its whole run. On 6 cores, run at
