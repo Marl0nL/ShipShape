@@ -39,7 +39,9 @@ can reach from anywhere. Each step links to the runbook with the details.
    a few minutes rather than ten.
 4. **A Ship.** The setup page's first Ship, or `ship-fleet new ship-01 --tag work`;
    then sign it in (**Sign it in** on the page, or `ship-fleet login ship-01 all`;
-   [runbooks/sign-in.md](../runbooks/sign-in.md)).
+   [runbooks/sign-in.md](../runbooks/sign-in.md)). The default size suits one
+   agent; for a supervising agent and its workers, size the Ship up first
+   ([how much](../runbooks/create-ship.md#size-it-for-a-supervisor-and-its-workers)).
 5. **Your other machines (optional).** `ship-fleet trust laptop`
    ([runbooks/trust-machines.md](../runbooks/trust-machines.md)) gives a machine a
    short-lived certificate to attach to Ships with herdr.

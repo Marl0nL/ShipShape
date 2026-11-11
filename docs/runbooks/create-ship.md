@@ -84,7 +84,7 @@ Useful options (`ship-fleet new --help` lists them all):
 | `--no-overlay` | with `[overlay]` set up, do not join it after enrolling (it joins by default) |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
-| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults); later `ship-fleet resize SHIP --cores 8 --restart` (cores and memory apply at a restart through the hypervisor; a disk only grows, at once, with the Ship's filesystem: ship-ctl grow-root) |
+| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults; for a supervisor and its workers, see [below](#size-it-for-a-supervisor-and-its-workers)); later `ship-fleet resize SHIP --cores 8 --restart` (cores and memory apply at a restart through the hypervisor; a disk only grows, at once, with the Ship's filesystem: ship-ctl grow-root) |
 | `--agent-sudo` | give the agent user sudo (off by default) |
 | `--on proxmox` | where to create it (the same as `--driver`; default `defaults.driver`) |
 | `--image <id>` | the base image (default: the pinned one, see [images.md](images.md)); `stock` for the plain cloud image |
@@ -132,6 +132,41 @@ baked with this (see [images.md](images.md#rebuild)) has it so from its first bo
 One made with `--image stock`, or from an image baked before it, starts with
 systemd's in-memory `/tmp` and shows `tmp-reboot-pending` until its first reboot
 (`ship-fleet reboot ship-01`, before you start heavy work on it).
+
+## Size it for a supervisor and its workers
+
+The defaults (4 cores, 8 GB of memory, a 40 GB disk) suit a Ship with one agent;
+keep them for those. A Ship where a supervising agent runs several workers at
+once, each in its own worktree with its own test runs, needs more. CPU runs out
+first.
+
+| | Plan for | Three workers |
+|---|---|---|
+| CPU | 2 cores (3 for comfort) per worker that runs the full check suite at the same time, plus 2 for the supervisor, the Claude processes and the Ship itself | 8 cores, 11 for comfort |
+| Memory | 3 GB per worker, plus 4 GB | 16 GB |
+| Disk | 40 GB, plus 5 GB per worker running at once | 60–80 GB |
+
+- **CPU.** A full suite keeps cores busy for its whole run. On 6 cores, run at
+  most two full suites at once: with three running, one suite took over half an
+  hour. Agents should run the full check in the background, never under a
+  10-minute foreground tool limit, and prefer targeted tests while they work.
+- **Memory** is rarely the limit: each Claude process takes about 1 GB, and the
+  rest is room for test runs.
+- **Disk.** A worktree is small, but a task's temporary files can reach a few GB
+  and hundreds of thousands of files in a day. They sit on the root disk, which
+  is also the Ship's pool of inodes (a smaller disk has fewer). The Ship clears
+  only what nothing used for 10 days in `/tmp` and 30 days in `/var/tmp`, so
+  delete each task's temporary folder when the task ends.
+
+```sh
+ship-fleet new ship-02 --tag personal --cores 8 --memory-mb 16384 --disk-gb 80
+ship-fleet resize ship-01 --cores 8 --memory-mb 16384 --restart
+ship-fleet resize ship-01 --disk-gb 80
+```
+
+`resize` changes cores and memory at the next restart through the hypervisor;
+`--restart` does that now, which stops the Ship's agents, so resize while they are
+idle. A disk only grows, at once, with no restart.
 
 ## A Ship FleetLedger did not create
 
