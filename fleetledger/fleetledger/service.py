@@ -98,8 +98,10 @@ def _last(text: str) -> str:
 
 
 def ship_fleet_path(given: str | None = None) -> str:
-    """The ship-fleet command the unit runs, as an absolute path."""
-    candidates = [given] if given else [shutil.which("ship-fleet"), _argv0()]
+    """The ship-fleet command the unit runs, as an absolute path: the one given, else the
+    one running (through FleetLedger VM's /usr/local/bin/ship-fleet, that is pipx's own
+    install, not the wrapper), else the one on PATH."""
+    candidates = [given] if given else [_argv0(), shutil.which("ship-fleet")]
     for found in candidates:
         if found:
             path = Path(found).expanduser()

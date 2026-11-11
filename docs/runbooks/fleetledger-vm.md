@@ -305,12 +305,13 @@ System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is nee
 
 **A VM seeded before `/usr/local/bin/ship-fleet` came in** answers `ship-fleet: command
 not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Once it has
-self-updated past that, add the file as `vmadmin` (read it first: it is short):
+self-updated past that, add the file as `vmadmin` (`fleetledger`'s home is not readable
+by `vmadmin`, hence `sudo`; read the file first, it is short):
 
 ```sh
-sudo install -o root -g root -m 0755 \
-  /home/fleetledger/ShipShape/fleetledger/fleetledger/seed/appliance-ship-fleet.sh \
-  /usr/local/bin/ship-fleet
+f=/home/fleetledger/ShipShape/fleetledger/fleetledger/seed/appliance-ship-fleet.sh
+sudo cat "$f"
+sudo install -o root -g root -m 0755 "$f" /usr/local/bin/ship-fleet
 ```
 
 **Testing unmerged ShipShape changes:**

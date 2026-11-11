@@ -582,3 +582,20 @@ def test_two_homes_with_long_runtime_folders_get_their_own_control_socket(monkey
     b = control.socket_path()
     assert a != b and a.parent == b.parent and len(str(a)) <= 100
     assert a.name.endswith("-ui.sock")
+
+
+def test_the_unit_runs_the_ship_fleet_running_not_a_wrapper_on_path(tmp_path, monkeypatch):
+    # On FleetLedger's VM a plain ssh command finds /usr/local/bin/ship-fleet first, which
+    # execs pipx's ~/.local/bin/ship-fleet: the unit names that one, and its folder.
+    def command(folder):
+        folder.mkdir(parents=True)
+        (folder / "ship-fleet").write_text("#!/bin/sh\n")
+        (folder / "ship-fleet").chmod(0o755)
+        return folder / "ship-fleet"
+
+    wrapper, pipx = command(tmp_path / "usr-local-bin"), command(tmp_path / "pipx-bin")
+    monkeypatch.setattr(service.shutil, "which", lambda name: str(wrapper))
+    monkeypatch.setattr(service.sys, "argv", [str(pipx), "service", "install"])
+    assert service.ship_fleet_path() == str(pipx)
+    monkeypatch.setattr(service.sys, "argv", ["pytest"])
+    assert service.ship_fleet_path() == str(wrapper)
