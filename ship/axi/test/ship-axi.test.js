@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -13,8 +13,15 @@ const EXAMPLES = join(HERE, "../../../contracts/examples/ship-status");
 const running = JSON.parse(readFileSync(join(EXAMPLES, "running.json"), "utf-8"));
 const runningCore = JSON.parse(readFileSync(join(EXAMPLES, "running-core.json"), "utf-8"));
 
-function run(args, env = {}) {
-  const home = mkdtempSync(join(tmpdir(), "ship-axi-"));
+// A temp folder that is removed when the test ends.
+function tempDir(t) {
+  const dir = mkdtempSync(join(tmpdir(), "ship-axi-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function run(t, args, env = {}) {
+  const home = tempDir(t);
   return spawnSync(process.execPath, [BIN, ...args], {
     encoding: "utf-8",
     env: { PATH: process.env.PATH, HOME: home, ...env },
@@ -50,8 +57,8 @@ test("outside herdr there is no 'you' and every agent is listed", () => {
   assert.equal(view.agents.length, 2);
 });
 
-test("missing, foreign and stale status files", () => {
-  const dir = mkdtempSync(join(tmpdir(), "ship-axi-"));
+test("missing, foreign and stale status files", (t) => {
+  const dir = tempDir(t);
   assert.equal(readStatus(join(dir, "nope.json")).doc, null);
   const foreign = join(dir, "foreign.json");
   writeFileSync(foreign, JSON.stringify({ schema: "other/1" }));
@@ -63,8 +70,8 @@ test("missing, foreign and stale status files", () => {
   assert.match(readStatus(stale).note, /minutes old/);
 });
 
-test("cli: home view from SHIPSHAPE_STATUS", () => {
-  const r = run([], {
+test("cli: home view from SHIPSHAPE_STATUS", (t) => {
+  const r = run(t, [], {
     SHIPSHAPE_STATUS: join(EXAMPLES, "needs-sign-in.json"),
     HERDR_PANE_ID: "w9:p9",
   });
@@ -74,20 +81,20 @@ test("cli: home view from SHIPSHAPE_STATUS", () => {
   assert.match(r.stdout, /Claude Code is not signed in/);
 });
 
-test("cli: rules, version, and reserved commands", () => {
-  assert.match(run(["rules"]).stdout, /Do not sign any service out/);
-  assert.equal(run(["--version"]).stdout.trim(), "0.1.0");
+test("cli: rules, version, and reserved commands", (t) => {
+  assert.match(run(t, ["rules"]).stdout, /Do not sign any service out/);
+  assert.equal(run(t, ["--version"]).stdout.trim(), "0.1.0");
   for (const cmd of ["request", "message"]) {
-    const r = run([cmd, "hello"]);
+    const r = run(t, [cmd, "hello"]);
     assert.notEqual(r.status, 0);
     assert.match(r.stdout, /not available yet/);
   }
   // Not published to npm: `update` must never install anything.
-  assert.match(run(["update"]).stdout, /updates with the Ship's tooling/);
+  assert.match(run(t, ["update"]).stdout, /updates with the Ship's tooling/);
 });
 
-test("cli: setup hooks adds a SessionStart hook for Claude Code", () => {
-  const home = mkdtempSync(join(tmpdir(), "ship-axi-"));
+test("cli: setup hooks adds a SessionStart hook for Claude Code", (t) => {
+  const home = tempDir(t);
   const r = spawnSync(process.execPath, [BIN, "setup", "hooks"], {
     encoding: "utf-8",
     env: { PATH: process.env.PATH, HOME: home },
@@ -129,13 +136,13 @@ test("rules follow the runtime: herdr-core agents never stop the core or kill te
   assert.match(core.logs, /provision\|herdr\|core\|resume/);
 });
 
-test("cli: rules on a herdr-core Ship", () => {
-  const r = run(["rules"], { SHIPSHAPE_STATUS: join(EXAMPLES, "running-core.json") });
+test("cli: rules on a herdr-core Ship", (t) => {
+  const r = run(t, ["rules"], { SHIPSHAPE_STATUS: join(EXAMPLES, "running-core.json") });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /hc server stop/);
   // No status yet (early in a boot): a herdr-core terminal still gets the core rules.
-  const early = run(["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json", HC_TERMINAL_ID: "t3" });
+  const early = run(t, ["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json", HC_TERMINAL_ID: "t3" });
   assert.equal(early.status, 0, early.stderr);
   assert.match(early.stdout, /hc server stop/);
-  assert.doesNotMatch(run(["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json" }).stdout, /hc kill/);
+  assert.doesNotMatch(run(t, ["rules"], { SHIPSHAPE_STATUS: "/nonexistent/status.json" }).stdout, /hc kill/);
 });

@@ -175,3 +175,53 @@ def test_the_pytest_root_is_where_pytest_makes_its_folders(request, tmp_path_fac
     if root is None:
         pytest.skip("--basetemp: no pytest root")
     assert root == tmp_path_factory.getbasetemp().parent
+
+
+INNER = '''
+import subprocess
+from pathlib import Path
+
+
+def start_agent(tmp_path, name):
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    subprocess.run(["gpg", "--batch", "--homedir", str(home), "--passphrase", "",
+                    "--quick-gen-key", "Test <test@example.com>", "ed25519", "sign", "never"],
+                   check=True, capture_output=True)
+    socketdir = subprocess.run(["gpgconf", "--homedir", str(home), "--list-dirs", "socketdir"],
+                               check=True, capture_output=True, text=True).stdout.strip()
+    (Path(OUT) / name).write_text(socketdir)
+
+
+def test_passes(tmp_path):
+    start_agent(tmp_path, "passes")
+
+
+def test_fails(tmp_path):
+    start_agent(tmp_path, "fails")
+    assert False
+'''
+
+
+def test_a_run_keeps_only_failed_tests_folders_and_leaves_no_socket_folders(tmp_path):
+    """With the repo's pytest.ini, a passing test's tmp_path is deleted at its teardown
+    and a failing test's is kept; neither leaves its agent or socket folder."""
+    repo = Path(__file__).resolve().parents[2]
+    out, basetemp = tmp_path / "out", tmp_path / "basetemp"
+    out.mkdir()
+    inner = tmp_path / "inner" / "test_inner.py"
+    inner.parent.mkdir()
+    inner.write_text(f"OUT = {str(out)!r}\n" + INNER)
+    r = subprocess.run([sys.executable, "-m", "pytest", "-c", str(repo / "pytest.ini"),
+                        "--rootdir", str(repo), "--basetemp", str(basetemp),
+                        "-p", "no:cacheprovider", "-q", str(inner)],
+                       capture_output=True, text=True, cwd=repo, timeout=120)
+    assert "1 failed, 1 passed" in r.stdout, r.stdout + r.stderr
+
+    assert [p.name for p in basetemp.iterdir() if not p.is_symlink()] == ["test_fails0"]
+    assert (basetemp / "test_fails0" / "gnupg").is_dir()
+    assert leftover_daemons.agents_under(basetemp.resolve()) == {}
+    for name in ("passes", "fails"):
+        socketdir = Path((out / name).read_text())
+        if not socketdir.is_relative_to(basetemp):  # gpg keeps sockets in /run/user when it can
+            assert not socketdir.exists(), name
