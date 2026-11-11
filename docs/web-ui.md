@@ -39,10 +39,12 @@ one choice:
   standby), `ship-fleet ui` and `setup` refuse to start and say where the fleet is.
   A UI already running checks again at every request and before every Ship poll:
   if its copy goes on standby or is retired under it (a marker written by hand,
-  say), every page and action answers with that same line, the poller reaches no
-  Ship, no job starts and an open sign-in terminal closes. The UI holds FleetLedger's
-  in-use lock while it runs, even on a computer with no FleetLedger yet (it makes
-  the folder), so `ship-fleet migrate` there waits for it to stop.
+  say), every page and action answers with that same line (an open page reloads to
+  it), the poller reaches no Ship, no job or queued sign-in starts, the sign-ins
+  under way are cancelled and an open sign-in terminal closes. A job already
+  running finishes. It stays so until the UI is restarted. The UI holds
+  FleetLedger's in-use lock while it runs, even on a computer with no FleetLedger
+  yet (it makes the folder), so `ship-fleet migrate` there refuses while it runs.
 
 Anything already on this computer is offered rather than asked again: a Proxmox
 token secret already in the keyring or in `~/.config/fleetledger/proxmox-token`

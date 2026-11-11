@@ -494,7 +494,7 @@ def test_a_web_ui_started_before_a_receive_never_acts_on_the_copy_on_standby(
 def test_the_web_ui_holds_the_in_use_lock_even_where_there_is_no_fleetledger_yet(
         computers, monkeypatch):
     """ship-fleet ui on a computer with no FleetLedger folder takes the in-use lock
-    anyway (making the folder), so a receive there waits for it to stop rather than
+    anyway (making the folder), so a receive there refuses while it runs rather than
     landing a copy under a UI that holds no lock."""
     a, b, world = computers
     stream = send_bytes(a, monkeypatch)
@@ -508,3 +508,22 @@ def test_the_web_ui_holds_the_in_use_lock_even_where_there_is_no_fleetledger_yet
         shutil.rmtree(b.store.path.parent, ignore_errors=True)
         with cli._in_use(cli.build_parser().parse_args(verb), b.app):
             assert not b.store.path.parent.exists(), verb
+
+
+def test_a_command_checks_the_markers_again_once_it_holds_the_lock(store, monkeypatch):
+    """A receive that ends between a command's first check and its taking the lock
+    leaves a marker the command must still see."""
+    from contextlib import contextmanager
+
+    real = cli._in_use
+
+    @contextmanager
+    def late(args, app):
+        handover.write(store, handover.Marker("standby", handover.now(), "old.example", 1))
+        with real(args, app):
+            yield
+
+    monkeypatch.setattr(cli, "_in_use", late)
+    out, err = io.StringIO(), io.StringIO()
+    app = cli.App(out=out, err=err, store_factory=lambda: store)
+    assert cli.main(["ls", "--offline"], app) == 1 and "on standby" in err.getvalue()

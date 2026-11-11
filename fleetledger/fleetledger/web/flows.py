@@ -441,6 +441,11 @@ class Concierge:
         flow.set(state=STARTING)
         base_spawner = self.app.spawner or engine.spawn
         try:
+            from fleetledger.web import copyguard
+
+            why = copyguard.refusal(self.app)  # queued while the copy could still act
+            if why is not None:
+                raise why
             inv = self.app.store_factory().load()
             ship = inv.ship(flow.ship)
             ssh = self.app.ssh_factory(inv)

@@ -765,7 +765,7 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     handler = getattr(commands, name, None)
     for module in EXTRA_COMMAND_MODULES:
         handler = handler or getattr(importlib.import_module(module), name, None)
-    try:
+    def handed_over() -> None:
         try:
             _handed_over(args, app)
         except FleetError as exc:
@@ -774,8 +774,12 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
                 # systemd should not start it again and again (service.REFUSED).
                 exc.exit_code = 2
             raise
+
+    try:
+        handed_over()
         _vault_locked(args, app)
         with _in_use(args, app):
+            handed_over()  # again under the lock: a migrate may have ended in between
             return handler(args, app) or 0
     except FleetError as exc:
         app.note(f"ship-fleet: {exc.message}")

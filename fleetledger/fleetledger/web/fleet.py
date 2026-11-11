@@ -193,7 +193,7 @@ class Fleet:
                 polled_at = self.snapshot.polled_at or self.wall()
             self._publish(Snapshot(inv, views, polled_at))
             self._record(fresh)
-        if names is None:
+        if names is None and _may_not_act(self.app) is None:  # a long poll: ask again
             self._renew_this_computer()
 
     def _record(self, views: list[status.ShipView]) -> None:
