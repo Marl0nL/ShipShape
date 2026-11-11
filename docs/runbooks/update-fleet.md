@@ -5,8 +5,13 @@ recipe or profile change, or new Ship tooling. Ships are updated in place,
 never re-imaged; agents keep their conversations and modes.
 
 What updates itself, so you never roll it out: Claude Code (its own updater, on
-each Ship's channel), gh and gcloud (their apt repos, through unattended-upgrades)
-and Ubuntu security fixes.
+each Ship's channel) and Ubuntu security fixes (unattended-upgrades).
+
+gh and gcloud do **not** update themselves. Unattended-upgrades on a Ship only
+takes Ubuntu's own security fixes; it is not set up for the GitHub CLI or Google
+Cloud apt repos, and `ship-fleet update` only installs apt packages that are
+missing. A Ship keeps the gh and gcloud it was provisioned with until you
+[update them by hand](#gh-and-gcloud).
 
 ## 1. Change the checkout
 
@@ -247,6 +252,17 @@ claude --dangerously-skip-permissions --continue    # bypassPermissions (allow_b
 one folder, use `--resume <session id>` instead. The Ship records the mode from
 the launch flags, so a reboot keeps it.
 
+## gh and gcloud
+
+No ShipShape command upgrades them. Upgrade them on each Ship from an owner
+shell (you have sudo there):
+
+```sh
+ship-fleet ssh ship-01 --as owner
+sudo apt-get update
+sudo apt-get install --only-upgrade gh google-cloud-cli
+```
+
 ## A new Ubuntu image
 
 ```sh
@@ -261,4 +277,5 @@ new Ships use the image: rebuild the Proxmox template from it
 ([proxmox-setup.md](proxmox-setup.md#2-the-template-vm), checking the download
 against the new `sha256`), and if you use a baked image, bake a new one
 ([images.md](images.md#rebuild)). Existing Ships are never
-re-imaged; unattended-upgrades keeps them current.
+re-imaged; unattended-upgrades keeps their Ubuntu packages current (but not gh
+or gcloud, [above](#gh-and-gcloud)).
