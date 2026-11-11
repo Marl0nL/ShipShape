@@ -15,6 +15,7 @@ import subprocess
 
 import pytest
 import yaml
+from fl_harness import REPO_ROOT
 from fleetledger.drivers.proxmox import NotOurs, ProxmoxDriver
 from fleetledger.drivers.proxmox_api import ProxmoxError
 from fleetledger.errors import ConfigError, FleetError
@@ -578,7 +579,9 @@ def _run_wrapper(tmp_path, user, *args):
     (bin_ / "id").write_text(f'#!/bin/sh\n[ "$1" = -un ] && echo {user}\n')
     (bin_ / "id").chmod(0o755)
     wrapper = bin_ / "ship-fleet"
-    wrapper.write_text(appliance.WRAPPER.replace("/home/fleetledger", str(home)))
+    assert appliance.WRAPPER.count("/usr/bin/id -un") == 1  # never an id found on PATH
+    wrapper.write_text(appliance.WRAPPER.replace("/home/fleetledger", str(home))
+                       .replace("/usr/bin/id", str(bin_ / "id")))
     wrapper.chmod(0o755)
     # sshd's PATH for a command: no ~/.local/bin.
     return subprocess.run(["ship-fleet", *args], env={"PATH": f"{bin_}:/usr/bin:/bin"},
@@ -595,3 +598,15 @@ def test_the_wrapper_refuses_anyone_else(tmp_path):
     proc = _run_wrapper(tmp_path, "vmadmin", "unlock")
     assert proc.returncode == 126 and "fleetledger user's" in proc.stderr
     assert not (tmp_path / "ran").exists()
+
+
+def test_the_runbook_installs_the_same_wrapper_without_reading_fleetledgers_files():
+    # For a VM seeded before the wrapper: root must never copy it from fleetledger's
+    # checkout (fleetledger could swap it between review and copy), so the runbook
+    # carries the exact bytes.
+    text = (REPO_ROOT / "docs" / "runbooks" / "fleetledger-vm.md").read_text()
+    start = "sudo tee /usr/local/bin/ship-fleet >/dev/null <<'EOF'\n"
+    block = text.split(start, 1)[1].split("\nEOF\n", 1)[0] + "\n"
+    assert block == appliance.WRAPPER
+    assert "sudo chmod 0755 /usr/local/bin/ship-fleet" in text
+    assert "/home/fleetledger/ShipShape/fleetledger/fleetledger/seed" not in text

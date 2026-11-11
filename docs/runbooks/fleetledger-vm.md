@@ -304,14 +304,27 @@ System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is nee
 (then unlock).
 
 **A VM seeded before `/usr/local/bin/ship-fleet` came in** answers `ship-fleet: command
-not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Once it has
-self-updated past that, add the file as `vmadmin` (`fleetledger`'s home is not readable
-by `vmadmin`, hence `sudo`; read the file first, it is short):
+not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Add the file as
+`vmadmin`, from this page (the seed writes the same bytes). Never install it from the
+VM's own checkout: that is `fleetledger`'s, so it could change the file between your
+reading it and root copying it.
 
 ```sh
-f=/home/fleetledger/ShipShape/fleetledger/fleetledger/seed/appliance-ship-fleet.sh
-sudo cat "$f"
-sudo install -o root -g root -m 0755 "$f" /usr/local/bin/ship-fleet
+sudo tee /usr/local/bin/ship-fleet >/dev/null <<'EOF'
+#!/bin/sh
+# /usr/local/bin/ship-fleet on FleetLedger's own VM (docs/runbooks/fleetledger-vm.md).
+#
+# pipx installs ship-fleet in ~/.local/bin, which only a login shell puts on PATH, so a
+# plain `ssh fleetledger@<vm> ship-fleet ...` would not find it. This root-owned file is
+# on the PATH ssh gives a command, and runs the fleetledger user's own install. Anyone
+# else is refused: vmadmin, who has sudo, never runs code the fleetledger user can change.
+if [ "$(/usr/bin/id -un)" != fleetledger ]; then
+  echo "ship-fleet: on this VM, FleetLedger is the fleetledger user's: ssh fleetledger@<this VM> ship-fleet ..." >&2
+  exit 126
+fi
+exec /home/fleetledger/.local/bin/ship-fleet "$@"
+EOF
+sudo chmod 0755 /usr/local/bin/ship-fleet
 ```
 
 **Testing unmerged ShipShape changes:**

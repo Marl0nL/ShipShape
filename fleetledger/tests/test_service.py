@@ -599,3 +599,18 @@ def test_the_unit_runs_the_ship_fleet_running_not_a_wrapper_on_path(tmp_path, mo
     assert service.ship_fleet_path() == str(pipx)
     monkeypatch.setattr(service.sys, "argv", ["pytest"])
     assert service.ship_fleet_path() == str(wrapper)
+
+
+def test_the_unit_keeps_pipxs_bin_folder_not_the_venv_behind_its_link(tmp_path, monkeypatch):
+    venv = tmp_path / "pipx" / "venvs" / "fleetledger" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "ship-fleet").write_text("#!/bin/sh\n")
+    (venv / "ship-fleet").chmod(0o755)
+    local_bin = tmp_path / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    (local_bin / "ship-fleet").symlink_to(venv / "ship-fleet")
+    monkeypatch.setattr(service.shutil, "which", lambda name: None)
+    monkeypatch.setattr(service.sys, "argv", [str(local_bin / "ship-fleet"), "service"])
+    found = service.ship_fleet_path()
+    assert found == str(local_bin / "ship-fleet")
+    assert f"Environment=PATH={local_bin}:" in service.render_unit(found, 8765, 30.0, [])

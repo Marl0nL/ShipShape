@@ -118,7 +118,9 @@ def ship_fleet_path(given: str | None = None) -> str:
 
 def _argv0() -> str | None:
     name = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else ""
-    return str(Path(sys.argv[0]).resolve()) if name == "ship-fleet" else None
+    # Not resolved: pipx's ~/.local/bin/ship-fleet is a link into its venv, and the unit
+    # names (and puts on its PATH) the folder you run it from, not the venv's.
+    return os.path.abspath(sys.argv[0]) if name == "ship-fleet" else None
 
 
 def carried_environment(env: dict[str, str] | None = None) -> list[tuple[str, str]]:
