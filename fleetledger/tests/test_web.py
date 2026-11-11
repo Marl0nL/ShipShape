@@ -321,6 +321,49 @@ def test_websocket_needs_origin_cookie_and_csrf(web):
         assert exc.value.code == 1008
 
 
+def test_a_copy_that_goes_on_standby_under_a_running_ui_stops_acting_there(web):
+    """The copy can change under a running UI (a marker written by hand, say): every
+    request then refuses with the CLI's line, the poller reaches no Ship, an open
+    terminal socket closes at its next message, and the active copy is served again
+    the moment the marker goes."""
+    from fleetledger import handover
+
+    web.sign_in()
+    url = f"ws://127.0.0.1:{PORT}/flows/1-00000000/ws"
+    hello = json.dumps({"csrf": web.csrf})
+    assert web.client.get("/").status_code == 200
+    with web.client.websocket_connect(url, headers=ORIGIN) as ws:  # open before the change
+        handover.write(web.store, handover.Marker("standby", handover.now(), "old.example", 2))
+        ws.send_text(hello)
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+        assert exc.value.code == 1008
+    calls = len(web.ship.calls)
+    web.fleet.poll()
+    assert len(web.ship.calls) == calls and "on standby" in web.fleet.snapshot.error
+    page = web.client.get("/")
+    assert page.status_code == 409 and "on standby" in page.text and "old.example" in page.text
+    assert "hx-" not in page.text  # nothing on it polls
+    partial = web.client.get("/partials/fleet", headers={"HX-Request": "true"})
+    assert partial.status_code == 409 and partial.text.startswith("This FleetLedger is on standby")
+    assert web.post("/ships/ship-01/refresh").status_code == 409
+    assert web.client.get("/static/app.css").status_code == 200
+    with pytest.raises(WebSocketDisconnect):  # a new socket: refused at its handshake
+        with web.client.websocket_connect(url, headers=ORIGIN) as ws:
+            ws.send_text(hello)
+            ws.receive_text()
+    assert len(web.ship.calls) == calls
+
+    (web.store.path.parent / "standby.json").write_text("{not json")  # damaged: no either
+    assert web.client.get("/").status_code == 409
+    assert "cannot be read" in web.post("/ships/ship-01/refresh").text
+
+    handover.clear(web.store, "standby")  # the active copy again: served as ever
+    assert web.client.get("/").status_code == 200
+    assert web.post("/ships/ship-01/refresh").status_code == 303
+    assert len(web.ship.calls) > calls and web.fleet.snapshot.error is None
+
+
 # --- the server ---------------------------------------------------------------------
 
 

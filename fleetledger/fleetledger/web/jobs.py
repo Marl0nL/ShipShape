@@ -258,6 +258,11 @@ class Jobs:
         """Start run(job) in the background. Refused if one of the Ships is busy, or a
         running job holds one of locks (a resource that is not a Ship, such as an
         image): the check and the insert are one critical section."""
+        from fleetledger.web import copyguard
+
+        why = copyguard.refusal(self.app)  # on standby or retired: nothing starts
+        if why is not None:
+            raise why
         with self._lock:
             if self._stopping:
                 raise FleetError("FleetLedger is stopping; try again once it is back.")

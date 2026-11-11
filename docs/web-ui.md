@@ -37,6 +37,12 @@ one choice:
   migrate` instead ([move-fleetledger.md](runbooks/move-fleetledger.md)). On a
   copy that handed its fleet on (retired) or has not taken it over yet (on
   standby), `ship-fleet ui` and `setup` refuse to start and say where the fleet is.
+  A UI already running checks again at every request and before every Ship poll:
+  if its copy goes on standby or is retired under it (a marker written by hand,
+  say), every page and action answers with that same line, the poller reaches no
+  Ship, no job starts and an open sign-in terminal closes. The UI holds FleetLedger's
+  in-use lock while it runs, even on a computer with no FleetLedger yet (it makes
+  the folder), so `ship-fleet migrate` there waits for it to stop.
 
 Anything already on this computer is offered rather than asked again: a Proxmox
 token secret already in the keyring or in `~/.config/fleetledger/proxmox-token`
@@ -476,6 +482,7 @@ headers, cookie, Origin and socket, the address, the setting and the Serve check
 `test_webdevices.py` (who may sign in there: the login allow-list, pairing, devices
 across restarts, lapses, revoking, fresh pairings for danger actions, Settings ▸
 Devices and `ship-fleet ui link/devices/revoke`, on a fake clock), `test_webhere.py` ("this browser's machine": attach commands for a paired device's machine, the FleetLedger computer's own setup refused from a device, Download bundle with the test CA, the certificate-due banner, `ui devices --machine`, `trust --hostnames overlay`),
+`test_handover.py` (a UI running on a computer when a copy lands there on standby),
 `test_websetup.py` (the setup page, with real OpenSSH keys, a fake keyring, a
 fake Proxmox and a fake Tailscale), `test_webfleetactions.py` (the Every Ship page: selection, the counts in the
 dialogs, each action's operation and per-Ship results), `test_weboverlay.py` (the Access tab, Leave, the

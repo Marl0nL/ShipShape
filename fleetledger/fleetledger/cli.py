@@ -676,7 +676,9 @@ def _hoist_tag_option(argv: list[str]) -> list[str]:
 def _in_use(args, app):
     """Every command but migrate holds FleetLedger's in-use lock (shared) while it runs,
     so ship-fleet migrate never copies the fleet in the middle of a change. Where there
-    is no FleetLedger folder yet there is nothing to copy, and no lock."""
+    is no FleetLedger folder yet there is nothing to copy, and no lock: except for the
+    web UI, which makes the folder to hold it. It runs for days, and a fleet can appear
+    under it (its setup page, or a receive), so a move must wait for it as ever."""
     from contextlib import nullcontext
 
     from fleetledger import inuse
@@ -685,9 +687,10 @@ def _in_use(args, app):
         return nullcontext()  # it takes the lock exclusively itself
     store = app.store_factory()
     path = getattr(store, "path", None)
-    if path is None or not path.parent.is_dir():
+    serves_ui = args.command == "ui" and getattr(args, "ui_command", None) is None
+    if path is None or not (path.parent.is_dir() or serves_ui):
         return nullcontext()
-    return inuse.using(store)
+    return inuse.using(store)  # makes the folder where there is none
 
 
 def _handed_over(args, app) -> None:
