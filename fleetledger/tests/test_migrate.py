@@ -902,6 +902,18 @@ def test_receive_takes_a_freshly_seeded_appliance(computers, monkeypatch, vaults
     assert stat.S_IMODE(paths.audit_log_path().stat().st_mode) == 0o600
 
 
+def test_the_appliances_own_audit_log_stays_when_the_fleet_brings_none(computers,
+                                                                     monkeypatch, vaults):
+    a, b, world = computers
+    (a.root / "data" / "audit.log").unlink()
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    before = paths.audit_log_path().read_bytes()
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    assert paths.audit_log_path().read_bytes() == before
+
+
 def test_receive_takes_back_the_appliances_own_audit_log_on_a_failure(computers, monkeypatch,
                                                                      vaults):
     a, b, world = computers

@@ -257,7 +257,8 @@ same vault.
   it wrote, keyring items included. One killed outright while writing (a power
   cut) cannot: if the next run says "already has a FleetLedger", move
   `~/.config/fleetledger` and `~/.local/share/fleetledger` aside there and run it
-  again.
+  again. With the vault on there (the appliance), `ship-fleet vault init` again
+  before the run: moving the folders aside moves the vault too.
 - **Nothing else starts on the old computer during a push**, the web UI included,
   until the new computer has checked every Ship; a large fleet takes a while.
 - **"This FleetLedger was retired"** or **"is on standby"**: this copy does not act
