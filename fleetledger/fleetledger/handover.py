@@ -20,7 +20,8 @@ computer already handed on (an old backup, a forgotten copy).
 Rollback within the window: `migrate retire` on the new copy, `migrate unretire` on
 the old one. After about two weeks, `migrate wipe` deletes a retired copy's keys,
 secrets and state; only its marker stays (no secrets), so an older fleet is still
-refused here.
+refused here. This computer's vault, if it has one, stays too, with the copy's
+secrets taken out of it: it is the computer's keyring, not the copy's.
 
 The markers sit beside ships.toml (standby.json, retired.json): facts about this
 copy, never moved with the fleet.
@@ -220,8 +221,12 @@ class Gone:
 
 
 def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
-    """What migrate wipe deletes, and what it keeps and why. Reads only."""
-    from fleetledger import ca, keys
+    """What migrate wipe deletes, and what it keeps and why. Reads only.
+
+    Only what this copy's ships.toml shows to be its own: its keys, its secrets (by the
+    items and files it names) and its state. Never this computer's vault (its keyring,
+    which a later receive stores into), nor anything in it the copy does not name."""
+    from fleetledger import ca, keys, secretplaces
     from fleetledger.migrate import _files
 
     inv = store.load()
@@ -253,23 +258,41 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
             kept.append((paths.tilde(path), "your own key, made by FleetLedger: this computer "
                          "still attaches to Ships with it (its passphrase stays too)"))
             staying.add(keys.passphrase_file(path).resolve())
-    proxmox = inv.driver_config("proxmox") or {}
-    api = (inv.overlay or {}).get("api") or {}
-    for label, table, store_key, item_key, file_key in (
-            ("the Proxmox token", proxmox, "token_store", "keyring_item", "token_file"),
-            ("the overlay's OAuth secret", api, "secret_store", "keyring_item",
-             "oauth_secret_file")):
-        if table.get(store_key) == "keyring":
-            gone.append(Gone(label, str(table[item_key]), keyring=True))
-        elif table.get(file_key) and paths.expand(table[file_key]).exists():
-            gone.append(Gone(label, str(paths.expand(table[file_key]))))
+    for place in secretplaces.PLACES:
+        found = place.location(place.table(inv.doc) or {})
+        if found is None:
+            continue
+        store_kind, where = found
+        if store_kind == "keyring":
+            if where:
+                gone.append(Gone(place.label, where, keyring=True))
+        elif paths.expand(where).exists():
+            gone.append(Gone(place.label, str(paths.expand(where))))
     listed = {Path(g.where).resolve() for g in gone if not g.keyring}
-    if staying and kind == "keyring" and vault.is_on():
-        # The vault keeps your own key's passphrase: only the fleet's items leave it.
-        staying.add(vault.vault_path().resolve())
-        kept.append((paths.tilde(vault.vault_path()), "FleetLedger's vault: it still holds "
-                     "your own key's passphrase (the fleet's secrets are deleted from it); "
-                     "ship-fleet vault off moves that out, then delete it"))
+    if vault.is_on():
+        # The vault is this computer's keyring, not the copy's: only the fleet's items
+        # leave it. Those include a copy of a secret ships.toml still reads from a file
+        # (a vault init cut short), so none of the fleet's secrets stays behind in it.
+        from fleetledger import vaultcmd
+
+        items = {g.where for g in gone if g.keyring}
+        for placed in vaultcmd.named(inv):
+            key = placed.secret.key
+            if key is not None and key.resolve() not in role_paths:
+                continue  # your own key's passphrase: it stays, with the key
+            if placed.secret.item and placed.secret.item not in items:
+                items.add(placed.secret.item)
+                gone.append(Gone(f"{placed.secret.label} (a copy in the vault)",
+                                 placed.secret.item, keyring=True))
+        if staying and kind == "keyring":
+            why = ("FleetLedger's vault: it still holds your own key's passphrase (the "
+                   "fleet's secrets are deleted from it); ship-fleet vault off moves that "
+                   "out, then delete it")
+        else:
+            why = ("FleetLedger's vault, this computer's keyring: the fleet's secrets are "
+                   "deleted from it, and the vault stays with anything else in it "
+                   "(ship-fleet vault status); ship-fleet vault off deletes it")
+        kept.append((paths.tilde(vault.vault_path()), why))
     from fleetledger.migrate import _in_toolkit, _toolkit_dirs
 
     kits = _toolkit_dirs(inv)
@@ -282,12 +305,13 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
         for f in _files(base):
             if f.name in (STANDBY, RETIRED) and f.parent == store.path.parent:
                 continue
+            if f == vault.vault_path() or f.resolve() == vault.vault_path().resolve():
+                continue  # this computer's vault: never deleted (kept, above)
             if f.resolve() in staying or f.resolve() in listed:
                 continue
             if _in_toolkit(f, kits) is not None:
                 continue  # a toolkit folder of yours (kept, above)
-            gone.append(Gone("the vault (every secret in it)" if f == vault.vault_path()
-                             else "FleetLedger's own file", str(f)))
+            gone.append(Gone("FleetLedger's own file", str(f)))
     return gone, kept
 
 
@@ -300,7 +324,8 @@ def wipe(store, gone: list[Gone]) -> None:
         usable, why = secret_store.keyring_usable()
         if not usable:
             raise FleetError(f"Cannot reach the keyring ({why}); nothing was deleted.",
-                             hint="Unlock it (log in to your desktop session), then try again.")
+                             hint=vault.UNLOCK_HINT if vault.is_on() else
+                             "Unlock it (log in to your desktop session), then try again.")
     for g in gone:
         if g.keyring and secret_store.existing_in_keyring(g.where) is not None:
             secret_store.delete_from_keyring(g.where)

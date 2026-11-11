@@ -208,9 +208,17 @@ active copy is never wiped. It deletes:
 
 It keeps, and says so: keys you look after yourself (delete them yourself unless
 something else uses them), and your own key that FleetLedger made, with its
-passphrase, because the old computer still attaches to Ships with it. Afterwards
-only `~/.config/fleetledger/retired.json` stays (no secrets), so that an older copy
-of the fleet is refused here. A copy on standby can be wiped at once.
+passphrase, because the old computer still attaches to Ships with it. It also keeps
+FleetLedger's vault (`vault.json`), if this computer has one: the vault is this
+computer's keyring, not the copy's, so the wipe takes the fleet's secrets out of it
+(any copy of them too) and leaves the vault and anything else in it.
+`ship-fleet vault status` shows what it still holds; `ship-fleet vault off` deletes it
+once you no longer need it. With the vault locked, the wipe deletes nothing until
+you unlock it. Afterwards only `~/.config/fleetledger/retired.json` stays (no
+secrets), with the vault if there is one, so that an older copy of the fleet is
+refused here. A copy on standby can be wiped at once, and receiving a fleet onto a
+copy on standby wipes it the same way first, so the new fleet's secrets go into the
+same vault.
 
 ## Afterwards
 
