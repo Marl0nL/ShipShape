@@ -60,7 +60,7 @@ ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
 LEDGER = "/home/agent/.local/state/shipshape/modes.json"
 LAUNCHER = "/opt/shipshape/bin/agent-launch"
-RUNTIME_LINE = re.compile(r'^runtime = "[^"]*"\n', re.M)
+RUNTIME_LINE = re.compile(r"^[ \t]*runtime[ \t]*=.*\n", re.M)  # ship.toml's top-level key
 
 BASIC_TOML = """\
 schema = 1
@@ -127,12 +127,14 @@ class Ship:
     fake_dir: Path
     env: dict
     # What write_toml gives a ship.toml that names no runtime: "core" (the default),
-    # "herdr" (use_herdr), or None (nothing: the product's own default).
+    # "herdr" (use_herdr), or None (nothing: the product's own default, herdr). It is
+    # the harness's own note: a `ship-ctl runtime switch` in a test does not change it.
     runtime: str | None = "core"
 
     @property
     def on_core(self) -> bool:
-        return self.runtime != "herdr"
+        """The agent helpers read and change the fake hc (else the fake herdr)."""
+        return self.runtime == "core"
 
     # --- scenario -----------------------------------------------------------------
     def scenario(self) -> dict:
@@ -146,7 +148,8 @@ class Ship:
     def prompts(self) -> list[list[str]]:
         """What was typed into agents, in order. herdr: [target, text] as ship-ctl named
         it (a name, or a pane for /exit). core: [terminal name, text] for each hc send
-        that was not a launch typed into a shell."""
+        that was not a launch typed into a shell (the address, once its terminal has
+        been removed)."""
         if not self.on_core:
             return self.scenario()["herdr"].get("prompts", [])
         hc = self.scenario().get("hc", {})
@@ -169,7 +172,8 @@ class Ship:
 
     # --- what happens to agents -----------------------------------------------------
     def agent(self, name: str) -> dict:
-        """herdr: the named agent as herdr lists it. core: its live terminal."""
+        """herdr: the named agent as herdr lists it. core: its live terminal, else its
+        last one (which may have finished: check its state)."""
         if self.on_core:
             return self.terminal(name)
         return next(a for a in self.scenario()["herdr"]["agents"] if a.get("name") == name)

@@ -30,4 +30,5 @@ policy; `test_ship_core.py` the core runtime itself.
 fake herdr (panes as well as agents; it refuses to start an agent in a pane that
 is missing or busy). Only `test_ship_herdr_legacy.py` (what only classic herdr
 does, including moving a Ship from older tooling onto the record) and
-`test_ship_runtime_switch.py` (which needs both runtimes) use it.
+`test_ship_runtime_switch.py` (which needs both runtimes) use it, and the cases
+in `test_ship_core.py` that move a Ship from herdr to core.

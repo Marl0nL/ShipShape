@@ -348,6 +348,8 @@ def old_ship(ship):
     record. Running: main (auto) and grinder (bypassPermissions) from autostart, a
     hand-started helper in bypassPermissions, and one in auto whose name herdr lost
     after an earlier resume (autostart's record still knew its pane)."""
+    ship.runtime = None  # tooling from then wrote no runtime to ship.toml
+    ship.write_toml(RUNTIME_LINE.sub("", ship.p("/etc/shipshape/ship.toml").read_text()))
     cfg = ship.p("/home/agent/.config/herdr/config.toml")
     cfg.parent.mkdir(parents=True)
     cfg.write_text("onboarding = false\n\n[session]\nresume_agents_on_restore = true\n")
@@ -694,3 +696,343 @@ def test_an_old_herdr_server_is_still_herdr_restart_pending_not_core(ship, tmp_p
     fake_process(ship, 4400, ["/usr/local/bin/herdr", "server"], old)
     found = codes(ship.status())
     assert "herdr-restart-pending" in found and "core-restart-pending" not in found
+
+
+# --- agent restart on herdr (test_ship_agents.py has the core versions) ----------
+def test_restart_continues_the_conversation_in_the_new_default_mode(agents_running):
+    ship = agents_running
+    rc, doc, _ = ship.ctl("set", "claude.default_mode=bypassPermissions", "--json")
+    assert rc == 0, doc
+    pane = agents_agent(ship, "main")["pane_id"]
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 0, doc
+    assert_valid("ship-ctl-result", doc)
+    assert doc["changed"] == ["main"]
+    assert doc["data"]["restarted"] == [{
+        "name": "main", "mode": "bypassPermissions", "previous_mode": "auto",
+        "conversation": "continued", "was": "idle"}]
+    assert "main restarted in bypassPermissions, continuing its conversation." in doc["messages"]
+    # The same pane and name, the same session, with the mode flag in front.
+    main = agents_agent(ship, "main")
+    assert main["pane_id"] == pane
+    assert main["args"] == ["--dangerously-skip-permissions", "--resume", "sess-main"]
+    # It was asked to exit, after a Ctrl+C that clears a half-typed line.
+    h = ship.scenario()["herdr"]
+    assert [pane, "ctrl+c"] in h["keys"] and [pane, "/exit"] in h["prompts"]
+    assert not any(k[1:] == ["esc"] for k in h["keys"])  # idle: nothing interrupted
+    # The ledger, the status document and the agent record all say the new mode...
+    assert agents_ledger(ship)["sess-main"] == "bypassPermissions"
+    assert agents_status_modes(ship) == {"main": "bypassPermissions",
+                                         "grinder": "bypassPermissions"}
+    assert ship.record()["agents"]["main"]["mode"] == "bypassPermissions"
+    # No new workspace, and grinder was not touched.
+    assert len(h["workspaces"]) == 2
+    assert agents_agent(ship, "grinder")["args"][0] == "--dangerously-skip-permissions"
+    # ...so the next boot resumes it in that mode.
+    ship.reboot()
+    ship.ctl("refresh")
+    assert agents_agent(ship, "main")["args"] == ["--dangerously-skip-permissions",
+                                           "--resume", "sess-main"]
+    assert agents_agent(ship, "main")["pane_id"] == pane
+
+
+def test_exit_waits_until_escape_has_dismissed_the_question(agents_running):
+    # herdr reads the screen, so it sees the question gone a poll or two after Escape,
+    # and refuses a prompt to an agent it still sees waiting.
+    ship = agents_running
+    ship.env["SHIPCTL_TEST_WAIT_S"] = "5"
+    s = ship.scenario()
+    s["herdr"]["slow_esc"] = ["main"]
+    (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
+    ship.set_state("main", "blocked")
+    pane = agents_agent(ship, "main")["pane_id"]
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 0, doc
+    h = ship.scenario()["herdr"]
+    assert [pane, "/exit"] in h["prompts"]  # the graceful way, not the fallback
+    assert [pane, "ctrl+c", "ctrl+c"] not in h["keys"]
+    assert any("its open question was dismissed" in m for m in doc["messages"])
+
+
+def test_an_agent_in_an_unknown_state_counts_as_busy(agents_running):
+    ship = agents_running
+    ship.set_state("main", "unknown")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 1 and doc["error"]["code"] == "agent-busy"
+    assert doc["data"]["skipped"][0]["reason"] == (
+        "it is in a state herdr cannot tell; not interrupted")
+    assert not ship.scenario()["herdr"].get("keys")
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--force", "--json")
+    assert rc == 0, doc
+    assert any("herdr could not tell its state" in m for m in doc["messages"])
+
+
+def test_an_agent_that_stops_but_does_not_start_again_says_how_to_start_it(agents_running):
+    ship = agents_running
+    s = ship.scenario()
+    s["herdr"]["fail_start"] = ["main"]
+    (ship.fake_dir / "scenario.json").write_text(json.dumps(s))
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--mode", "plan", "--json")
+    assert rc == 1
+    assert_valid("ship-ctl-result", doc)
+    assert doc["error"]["code"] == "agent-failed"
+    assert doc["data"]["skipped"] == [{"name": "main", "reason": (
+        "stopped, but did not start again: agent_not_ready")}]
+    assert any(m.endswith("Start it in its pane with: claude --permission-mode plan "
+                          "--resume sess-main") for m in doc["messages"])
+    starts = [c for c in ship.calls("herdr") if c[1:3] == ["agent", "start"]]
+    assert len(starts) == 4  # two autostart launches, then a try and one retry
+
+
+
+# --- notify-signin on herdr (test_ship_notice.py has the core versions) ---------
+def test_an_agent_at_a_permission_prompt_is_not_typed_into(ship):
+    """Text and Enter could answer the permission dialog."""
+    notice_start_core_agents(ship)
+    s = ship.scenario()
+    for a in s["herdr"]["agents"]:
+        if a["name"] == "main":
+            a["agent_status"] = "blocked"
+    ship.set(herdr=s["herdr"])
+    rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
+    assert doc["data"]["sent"] == ["grinder"]
+    assert doc["data"]["skipped"] == [{"name": "main", "reason": "waiting-for-permission"}]
+    assert [p[0] for p in ship.prompts()] == ["grinder"]
+
+
+def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
+    """`unknown`, as just after an agent was started again."""
+    notice_start_core_agents(ship)
+    s = ship.scenario()
+    for a in s["herdr"]["agents"]:
+        if a["name"] == "grinder":
+            a["agent_status"] = "unknown"
+    ship.set(herdr=s["herdr"])
+    rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
+    assert doc["data"]["sent"] == ["main"]
+    assert doc["data"]["skipped"] == [{"name": "grinder", "reason": "not-ready"}]
+    assert [p[0] for p in ship.prompts()] == ["main"]
+
+
+def test_the_line_is_typed_as_the_agent_user_and_logged_as_root(ship):
+    """herdr's socket and the agents belong to agent; the journal record is root's."""
+    notice_start_core_agents(ship)
+    ship.ctl("notify-signin", "github", "--json")
+    agent_home = str(ship.p("/home/agent"))
+    typed = [home for argv, home in ship.homes("herdr") if argv[1:3] == ["agent", "prompt"]]
+    assert typed and all(home == agent_home for home in typed)
+    logged = [home for _, home in ship.homes("logger")]
+    assert logged and all(home != agent_home for home in logged)
+
+
+def test_a_failed_send_is_reported(ship):
+    notice_start_core_agents(ship)
+    s = ship.scenario()
+    s["herdr"]["fail_prompt"] = ["grinder"]
+    ship.set(herdr=s["herdr"])
+    rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
+    assert rc == 0
+    assert doc["data"]["sent"] == ["main"]
+    assert doc["data"]["skipped"] == [{"name": "grinder", "reason": "send-failed"}]
+
+
+
+# --- the wake-up on herdr (test_ship_wake.py has the core versions) -------------
+WAKE_STATE = "/var/lib/shipshape/wake.json"
+WAKE_LINE = ("Your Ship rebooted 10 minutes ago. Make sure you've resumed any background "
+             "processes or work that you should be doing, and review whether subagents or "
+             "crews may have been interrupted by the reboot too.")
+
+
+def wake_turn_on(ship, *pairs: str) -> dict:
+    rc, doc, out = ship.ctl("set", "wake.after_boot=true", *pairs, "--json")
+    assert rc == 0, out
+    return doc
+
+
+def wake_uptime(ship, seconds: float) -> None:
+    ship.p("/proc/uptime").write_text(f"{seconds} 1.0\n")
+
+
+def wake_run(ship) -> dict:
+    rc, doc, out = ship.ctl("wake", "--json")
+    assert rc == 0, out
+    assert_valid("ship-ctl-result", doc)
+    assert doc["command"] == "wake"
+    return doc["data"]
+
+
+def wake_logged(ship) -> list[str]:
+    return [e["message"] for e in ship.scenario().get("logged", [])
+            if e["message"].startswith("wake: ")]
+
+
+@pytest.fixture
+def wake_booted(ship):
+    """main and grinder started by the first refresh of the boot (which records the
+    boot's resume), autostart's first prompts forgotten, 10 minutes into the boot."""
+    ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    rc, _, out = ship.ctl("refresh")
+    assert rc == 0, out
+    s = ship.scenario()
+    assert {a["name"] for a in s["herdr"]["agents"]} == {"main", "grinder"}
+    s["herdr"]["prompts"] = []
+    ship.set(herdr=s["herdr"])
+    wake_uptime(ship, 605)
+    return ship
+
+
+def test_on_sends_once_to_the_primary(wake_booted):
+    ship = wake_booted
+    wake_turn_on(ship)
+    data = wake_run(ship)
+    assert data == {"outcome": "sent", "agent": "main", "tries": 1, "reason": None}
+    assert ship.prompts() == [["main", WAKE_LINE]]
+    assert wake_logged(ship) == ["wake: sent to the primary agent main."]
+    assert ship.json(WAKE_STATE)["outcome"] == "sent"
+
+
+def test_a_blocked_primary_is_retried_then_given_up(wake_booted):
+    """Text and Enter could answer its permission prompt: never typed into."""
+    ship = wake_booted
+    wake_turn_on(ship)
+    ship.set_state("main", "blocked")
+    data = wake_run(ship)
+    assert data == {"outcome": "gave-up", "agent": "main", "tries": 6,
+                    "reason": "waiting-for-permission"}
+    assert ship.prompts() == []
+    assert wake_logged(ship) == ["wake: not sent to the primary agent main after 6 tries "
+                                "(waiting-for-permission); gave up."]
+    ship.set_state("main", "idle")
+    assert wake_run(ship)["outcome"] == "already-done"  # given up for this boot
+    assert ship.prompts() == []
+
+
+def test_an_agent_in_an_unknown_state_or_not_running_is_not_typed_into(wake_booted):
+    ship = wake_booted
+    wake_turn_on(ship)
+    ship.set_state("main", "unknown")
+    assert wake_run(ship)["reason"] == "not-ready"
+    ship.reboot(uptime=40)
+    ship.ctl("refresh")
+    ship.crash("main")
+    s = ship.scenario()
+    s["herdr"]["fail_start"] = ["main"]  # it is not back by the time the wake runs
+    ship.set(herdr=s["herdr"])
+    wake_uptime(ship, 605)
+    data = wake_run(ship)
+    assert data["outcome"] == "gave-up"
+    assert data["reason"] == "not-running"
+    assert ship.prompts() == []
+
+
+
+# --- the agent record on herdr (test_ship_record.py has the core versions) -------
+def herdr_recorded(ship) -> dict[str, dict]:
+    return {a["name"]: a for a in ship.status()["agent_record"]["agents"]}
+
+
+def test_after_a_reboot_the_refresh_resumes_every_agent_in_its_folder_and_mode(herdr_started):
+    ship = herdr_started
+    panes = {a["name"]: a["pane_id"] for a in ship.scenario()["herdr"]["agents"]}
+    ship.reboot()
+    assert herdr_recorded(ship)["main"]["state"] == "starting"
+    rc, _, out = ship.ctl("refresh")
+    assert rc == 0, out
+    assert herdr_args(ship) == {
+        "main": ["--permission-mode", "auto", "--resume", "sess-main"],
+        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder"],
+    }
+    # In the panes herdr restored, under their names: no new workspace, no first prompt.
+    assert {a["name"]: a["pane_id"] for a in ship.scenario()["herdr"]["agents"]} == panes
+    assert len(ship.scenario()["herdr"]["workspaces"]) == 2
+    assert [p for p in ship.scenario()["herdr"]["prompts"]] == [
+        ["main", "Get oriented."], ["grinder", "Get oriented and ready to work."]]  # boot 1
+    doc = ship.status()
+    assert {a["name"]: a["mode"] for a in doc["herdr"]["agents"]} == {
+        "main": "auto", "grinder": "bypassPermissions"}
+    assert doc["herdr"]["last_resume"]["method"] == "api-fallback"
+    assert doc["herdr"]["last_resume"]["resumed"] == 2
+    assert doc["agent_record"]["resume"]["method"] == "ship-ctl"
+    assert {a["state"] for a in doc["agent_record"]["agents"]} == {"running"}
+    assert "agent record: main started again, continuing its session." in out
+    assert_valid("agent-record", ship.record())
+
+
+def test_an_agent_that_crashed_is_started_again_in_its_pane(herdr_started):
+    ship = herdr_started
+    ship.crash("grinder")
+    assert herdr_recorded(ship)["grinder"]["state"] == "starting"
+    ship.ctl("refresh")
+    grinder = ship.agent("grinder")
+    assert grinder["args"] == ["--dangerously-skip-permissions", "--resume", "sess-grinder"]
+    assert grinder["pane_id"] == "w2:p1"
+    assert herdr_recorded(ship)["grinder"]["state"] == "running"
+
+
+def test_after_three_failed_tries_it_is_left_alone_with_attention(herdr_started):
+    ship = herdr_started
+    ship.crash("grinder")  # within 10 minutes of its start: the first failed try
+    s = ship.scenario()
+    s["herdr"]["fail_start"] = ["grinder"]
+    ship.set(herdr=s["herdr"])
+    for _ in range(4):
+        ship.ctl("refresh")
+    # Its first start, then two failed starts (each tried twice), then it is let be.
+    assert len([c for c in herdr_starts(ship) if c[3] == "grinder"]) == 1 + 2 * 2
+    doc = ship.status()
+    grinder = next(a for a in doc["agent_record"]["agents"] if a["name"] == "grinder")
+    assert grinder["state"] == "failed" and grinder["relaunch_failures"] == 3
+    assert grinder["last_error"] == "agent_not_ready"
+    item = next(a for a in doc["attention"] if a["code"] == "agent-relaunch-failed")
+    assert item["subject"] == "grinder" and "ship-ctl agent forget grinder" in item["message"]
+    # Restarting it by hand starts it again, and the attention goes.
+    s = ship.scenario()
+    s["herdr"]["fail_start"] = []
+    ship.set(herdr=s["herdr"])
+    rc, doc, _ = ship.ctl("agent", "restart", "grinder", "--mode", "dontAsk", "--json")
+    assert rc == 0, doc
+    assert doc["data"]["restarted"][0]["was"] == "failed"
+    assert doc["data"]["restarted"][0]["previous_mode"] == "bypassPermissions"
+    assert ship.agent("grinder")["args"] == ["--permission-mode", "dontAsk",
+                                             "--resume", "sess-grinder"]
+    assert ship.record()["agents"]["grinder"]["mode"] == "dontAsk"
+    assert "agent-relaunch-failed" not in {a["code"] for a in ship.status()["attention"]}
+
+
+def test_a_lost_conversation_counts_as_a_failed_start(herdr_started):
+    ship = herdr_started
+    s = ship.scenario()
+    s["herdr"]["lost_sessions"] = ["sess-main"]  # claude --resume: No conversation found
+    ship.set(herdr=s["herdr"])
+    ship.reboot()
+    ship.ctl("refresh")
+    assert "main" not in herdr_args(ship) and "grinder" in herdr_args(ship)
+    assert ship.status()["herdr"]["last_resume"] == {
+        "at": ship.record()["resume"]["at"], "method": "api-fallback", "resumed": 1,
+        "failed": 1}
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
+    assert rc == 0, doc
+    assert ship.agent("main")["args"] == ["--permission-mode", "auto", "--name", "ship-01-main"]
+    assert ["main", "Get oriented."] in ship.scenario()["herdr"]["prompts"]
+
+
+def test_a_closed_pane_is_a_stopped_agent(herdr_started):
+    ship = herdr_started
+    s = ship.scenario()
+    s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a["name"] != "main"]
+    s["herdr"]["panes"] = [p for p in s["herdr"]["panes"] if p["pane_id"] != "w1:p1"]
+    ship.set(herdr=s["herdr"])  # someone closed main's pane: SIGHUP, reason "other"
+    ship.ctl("refresh")
+    assert "main" not in herdr_args(ship)
+    assert ship.record()["agents"]["main"]["want"] == "stopped"
+
+
+def test_forget_refuses_while_herdr_does_not_answer(herdr_started):
+    """Nothing tells whether the agent runs: it stays recorded."""
+    ship = herdr_started
+    ship.set(herdr={**ship.scenario()["herdr"], "server": False})
+    rc, doc, _ = ship.ctl("agent", "forget", "main", "--json")
+    assert rc == 1 and doc["error"]["code"] == "herdr-unavailable"
+    assert "main" in ship.record()["agents"]
+
