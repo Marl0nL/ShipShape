@@ -690,6 +690,57 @@ def test_an_old_herdr_server_is_still_herdr_restart_pending_not_core(ship, tmp_p
     assert "herdr-restart-pending" in codes and "core-restart-pending" not in codes
 
 
+# A herdr server another tool runs on a herdr-core Ship: a named session (a supervising
+# agent's crew), or a default one a laptop's saved herdr entry started over ssh.
+OTHER_HERDR_SERVERS = {
+    "named-session": ["/usr/local/bin/herdr", "server", "--session", "crew"],
+    "default": ["herdr", "server"],
+}
+
+
+def _old_herdr_server(ship, tmp_path, argv) -> None:
+    """herdr was replaced (a converge with a new pin) under a running `herdr server`."""
+    herdr = ship.p("/usr/local/bin/herdr")
+    herdr.parent.mkdir(parents=True, exist_ok=True)
+    herdr.write_text("new herdr")
+    old = tmp_path / "old-herdr"
+    old.write_text("old herdr")
+    _fake_process(ship, 4500, argv, old)
+
+
+@pytest.mark.parametrize("server", OTHER_HERDR_SERVERS)
+def test_a_core_ship_never_reports_a_herdr_restart_pending(core, tmp_path, server):
+    """herdr is not a core Ship's runtime: no running herdr server, on any version,
+    makes status say a restart is pending (FleetLedger's update reboots on it)."""
+    ship = core
+    _old_herdr_server(ship, tmp_path, OTHER_HERDR_SERVERS[server])
+    doc = ship.status()
+    assert_valid("ship-status", doc)
+    assert doc["herdr"]["runtime"] == "core"
+    assert "herdr-restart-pending" not in _codes(doc)
+
+
+def test_a_core_ships_own_restart_pending_is_unchanged_beside_an_old_herdr(core, tmp_path):
+    ship = core
+    _old_herdr_server(ship, tmp_path, OTHER_HERDR_SERVERS["named-session"])
+    _install_core(ship)
+    old_core = tmp_path / "old-core"
+    old_core.write_text("old herdr-core")
+    _fake_process(ship, 4501, ["/usr/local/bin/herdr-core", "serve"], old_core)
+    codes = _codes(ship.status())
+    assert "core-restart-pending" in codes and "herdr-restart-pending" not in codes
+
+
+@pytest.mark.parametrize("server", OTHER_HERDR_SERVERS)
+def test_a_herdr_ship_still_reports_any_old_herdr_server(ship, tmp_path, server):
+    """A classic herdr Ship keeps today's rule: any agent-user herdr server on an old
+    binary means a reboot is needed for the new herdr."""
+    _old_herdr_server(ship, tmp_path, OTHER_HERDR_SERVERS[server])
+    doc = ship.status()
+    assert doc["herdr"]["runtime"] == "herdr"
+    assert "herdr-restart-pending" in _codes(doc)
+
+
 def test_logs_core_reads_the_boot_unit_and_the_cores_own_logs(core):
     ship = core
     ship.set(journal=["2026-01-01T00:00:00+0000 hc[9]: core started"])

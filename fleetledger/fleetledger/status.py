@@ -45,6 +45,22 @@ def runtime_of(doc: dict[str, Any] | None) -> str:
     return ((doc or {}).get("herdr") or {}).get("runtime") or "herdr"
 
 
+def herdr_restart_pending(doc: dict[str, Any] | None) -> bool:
+    """True when the Ship reports herdr-restart-pending and herdr runs its agents: a new
+    herdr takes over only after a reboot. A herdr-core Ship's tooling from before
+    that rule reports it for any herdr server, another tool's included; herdr is
+    not that Ship's runtime, so it never calls for a reboot there."""
+    return runtime_of(doc) != "core" and any(
+        item["code"] == "herdr-restart-pending" for item in (doc or {}).get("attention", []))
+
+
+def ship_attention(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """The Ship's own attention items, less a herdr-restart-pending that is not about
+    its runtime (herdr_restart_pending)."""
+    return [item for item in doc["attention"] if item["code"] != "herdr-restart-pending"
+            or herdr_restart_pending(doc)]
+
+
 def tmp_pending(doc: dict[str, Any] | None) -> bool:
     """True when /tmp is still a tmpfs and the next reboot puts it on the disk.
     Tooling that predates the disk-backed /tmp leaves host.tmp out."""
@@ -185,7 +201,7 @@ def cached_view(inventory: Inventory, ship: Ship, missing: str) -> ShipView:
     if doc is None:
         view.problem, view.message = "unknown", missing
         return view
-    attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, None)
+    attention = ship_attention(doc) + fleet_attention(inventory, ship, doc, None)
     view.attention = signins.filter_attention(ship, attention, doc.get("tools"))
     view.auth_since = read_since(ship.name)
     return view
@@ -237,7 +253,7 @@ def fetch(
         )
         return view
     view.status = doc
-    view.attention = list(doc["attention"]) + fleet_attention(inventory, ship, doc, tooling)
+    view.attention = ship_attention(doc) + fleet_attention(inventory, ship, doc, tooling)
     view.attention += ca.attention(ca.config(inventory), ship, doc, ca.cached_krl(inventory))
     view.attention = signins.filter_attention(ship, view.attention, doc.get("tools"))
     try:

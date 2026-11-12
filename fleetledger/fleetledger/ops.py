@@ -578,9 +578,11 @@ def update_one(
 ) -> Outcome:
     """Bring one Ship to this checkout's tooling, then reboot it if the policy says so.
 
-    reboot_policy: auto reboots only when the converge replaced herdr (the running
-    server keeps the old binary until a reboot); always and never do what they say.
-    A replaced herdr-core (core-restart-pending) never reboots under auto: see below.
+    reboot_policy: auto reboots only when the converge replaced herdr on a Ship whose
+    agents herdr runs (the running server keeps the old binary until a reboot);
+    always and never do what they say. A herdr-core Ship never reboots under auto:
+    not for a new herdr-core (core-restart-pending, see below), and not for a new
+    herdr, which is not its runtime (status.herdr_restart_pending).
     Never rolls a Ship back to an older ShipShape commit (rolls_back) unless force:
     an older checkout, on another computer say, must not undo a newer roll-out.
     """
@@ -600,7 +602,7 @@ def update_one(
     if up_to_date(before, bundle) and not force:
         on_event(ship.name, f"already on {release}")
         details = []
-        if has_attention(before, "herdr-restart-pending") and reboot_policy != "never":
+        if status_mod.herdr_restart_pending(before) and reboot_policy != "never":
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
         if has_attention(before, "core-restart-pending"):  # never a reboot for it under auto
@@ -639,7 +641,7 @@ def update_one(
         return Outcome(ship.name, False,
                        f"converge finished but the Ship reports bundle "
                        f"{after['ship'].get('bundle_commit')}, not {release}", details, data)
-    pending = has_attention(after, "herdr-restart-pending")
+    pending = status_mod.herdr_restart_pending(after)  # never on a herdr-core Ship
     # Reboot policy for herdr-core: auto does not reboot for it. The old core keeps
     # serving every agent until it restarts, and its holders keep their terminals
     # across a core restart, so nothing is lost by waiting: the next reboot (an OS

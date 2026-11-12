@@ -825,6 +825,32 @@ def test_update_with_always_reboots_a_core_ship_and_clears_the_pending_core(worl
     assert "2/2 agents resumed in their modes" in outcome.summary
 
 
+def test_update_never_reboots_a_core_ship_because_herdr_changed(world):
+    """herdr is not a herdr-core Ship's runtime: a herdr-restart-pending it reports
+    (tooling from before that rule, for another tool's herdr server) never makes auto
+    reboot it, nor says herdr switches at the next reboot. always still reboots."""
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.herdr_changes = "core", True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok, outcome
+    assert sim.herdr_pending  # the Ship did report it
+    assert sim.reboots == [] and outcome.data["rebooted"] is False
+    assert not any("herdr was updated" in d for d in outcome.details)
+    sim.bundle_commit, sim.tooling = OLD_COMMIT, "0.1.0"
+    [again] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle(),
+                         reboot_policy="always")
+    assert again.ok and len(sim.reboots) == 1
+
+
+def test_update_up_to_date_core_ship_with_herdr_pending_does_not_reboot(world):
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.herdr_pending = "core", True
+    sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and outcome.summary.startswith("already on")
+    assert sim.converged == [] and sim.reboots == []
+
+
 def test_update_up_to_date_ship_with_only_the_core_pending_does_not_reboot(world):
     sim = world.sims["ship-01"]
     sim.runtime, sim.core_pending = "core", True
@@ -1278,6 +1304,16 @@ def test_cli_attention_table_json_and_watch(app, world):
     # First round prints both items; the second prints nothing new.
     assert len(printed) == 2
     assert any("unreachable" in line or "Cannot reach" in line for line in printed)
+
+
+def test_cli_attention_leaves_out_herdr_restart_pending_on_a_core_ship(app, world):
+    """herdr is not a herdr-core Ship's runtime: a herdr-restart-pending its older
+    tooling reports is not shown, so nothing points at a reboot for it."""
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.herdr_pending, sim.core_pending = "core", True, True
+    code, out, _ = app.run("attention", "--json", "--tag", "work")
+    assert code == 0
+    assert [i["code"] for i in json.loads(out)] == ["core-restart-pending"]
 
 
 def test_cli_attention_nothing(app, world):

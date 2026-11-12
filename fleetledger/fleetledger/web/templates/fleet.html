@@ -28,7 +28,7 @@
         <form method="post" action="/operations" class="inline"
           {% if op == "update" %}
           data-confirm-title="Update {{ every }}?"
-          data-confirm="FleetLedger copies this checkout's tooling to {{ n }} Ship{{ "s" if n != 1 }} and converges each one; agents keep running. A Ship whose herdr changed reboots, and its agents resume in their modes. Progress shows on this page."
+          data-confirm="FleetLedger copies this checkout's tooling to {{ n }} Ship{{ "s" if n != 1 }} and converges each one; agents keep running. A herdr Ship whose herdr changed reboots, and its agents resume in their modes; a herdr-core Ship is not rebooted. Progress shows on this page."
           data-confirm-action="Update {{ n }} Ship{{ "s" if n != 1 }}"
           {% else %}
           data-confirm-title="Reboot {{ every }}?"

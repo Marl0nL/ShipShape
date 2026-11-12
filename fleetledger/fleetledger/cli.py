@@ -384,8 +384,9 @@ def build_parser() -> argparse.ArgumentParser:
              "script, settings and catalogue tools run again, so pin changes (herdr,\n"
              "npm tools, uv) and recipe changes roll out. Agents keep running.\n\n"
              "A new herdr binary takes over only after a reboot. --reboot auto (the\n"
-             "default) reboots exactly the Ships whose herdr changed, then checks every\n"
-             "agent came back in its permission mode.\n\n"
+             "default) reboots exactly the herdr Ships whose herdr changed, then checks\n"
+             "every agent came back in its permission mode. It never reboots a\n"
+             "herdr-core Ship, for a new herdr or a new herdr-core.\n\n"
              "It never rolls a Ship back: a Ship on a newer commit than this checkout's\n"
              "(or one this checkout does not have) is left as it is unless --force.\n\n"
              "  ship-fleet update ship-01\n  ship-fleet update --tag work\n"
@@ -393,7 +394,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("names", nargs="*", metavar="SHIP|all")
     p.add_argument("--tag", help="every Ship with this tag")
     p.add_argument("--reboot", choices=("auto", "always", "never"), default="auto",
-                   help="when to reboot after converging (default auto: only if herdr changed)")
+                   help="when to reboot after converging (default auto: only a herdr Ship "
+                        "whose herdr changed)")
     p.add_argument("--no-wait", action="store_true",
                    help="do not wait for rebooted Ships to come back")
     p.add_argument("--force", action="store_true",
