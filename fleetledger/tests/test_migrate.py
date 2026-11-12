@@ -1529,6 +1529,95 @@ def test_a_fleet_made_here_while_receive_waited_for_its_lock_is_left_alone(compu
     assert b.store.path.read_text() == "# another fleet\n"
 
 
+@pytest.mark.parametrize("then", ["receive", "wipe"])
+def test_a_receive_cut_short_on_a_seeded_appliance_keeps_its_setup_entries(
+        computers, monkeypatch, vaults, then):
+    from fleetledger import vault
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    own = paths.audit_log_path().read_bytes()  # the seed's and the vault init's entries
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    with pytest.MonkeyPatch.context() as mp:  # stopped storing secrets, killed in rollback
+        mp.setattr(migrate, "_store_secret", lambda *a, **kw: (_ for _ in ()).throw(
+            KeyboardInterrupt()))
+        mp.setattr(migrate, "_take_back", lambda undo: (_ for _ in ()).throw(
+            KeyboardInterrupt()))
+        with pytest.raises(KeyboardInterrupt):
+            receive(b, monkeypatch, stream)
+    assert handover.marker(b.store).receiving and b.store.path.exists()
+    if then == "receive":
+        assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+        assert paths.audit_log_path().read_bytes().endswith(own)  # the fleet's, then its own
+    else:
+        code, out, err = b.run("migrate", "wipe", "--yes")
+        assert code == 0, out + err
+        assert paths.audit_log_path().read_bytes() == own and vault.vault_path().exists()
+        assert not b.store.path.exists() and handover.marker(b.store) is None
+
+
+def test_activate_stopped_between_its_markers_is_still_on_standby_and_runs_again(
+        computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    _wiped(b)
+    real = handover.clear
+
+    def stop_at_retired(store, role):
+        if role == "retired":
+            raise KeyboardInterrupt  # receive stopped at its very end
+        real(store, role)
+
+    monkeypatch.setattr(handover, "clear", stop_at_retired)
+    with pytest.raises(KeyboardInterrupt):
+        receive(b, monkeypatch, stream, store_kind="file")
+
+    def stop_at_standby(store, role):
+        real(store, role)
+        if role == "retired":
+            raise KeyboardInterrupt  # activate stopped between its two markers
+
+    monkeypatch.setattr(handover, "clear", stop_at_standby)
+    with pytest.raises(KeyboardInterrupt):
+        handover.activate(b.store)
+    monkeypatch.setattr(handover, "clear", real)
+    assert handover.marker(b.store).role == "standby"
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0, out + err
+    assert handover.marker(b.store) is None
+
+
+def test_a_rollback_that_cannot_take_back_a_secret_keeps_the_inventory_naming_it(
+        computers, monkeypatch, vaults):
+    from fleetledger.overlay import secret_store
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    with pytest.MonkeyPatch.context() as mp:
+        real = handover.write
+
+        def fails_at_the_end(store, m):
+            if not m.receiving:
+                raise FleetError("the disk filled up")
+            real(store, m)
+
+        mp.setattr(handover, "write", fails_at_the_end)
+        mp.setattr(secret_store, "delete_from_keyring", lambda item: (_ for _ in ()).throw(
+            FleetError("the vault went away")))
+        with pytest.raises(FleetError, match="the disk filled up"):
+            receive(b, monkeypatch, stream)
+    assert handover.marker(b.store).receiving and b.store.path.exists()
+    assert vaults.backend().item_names("fleetledger")  # the secrets it could not take back
+    code, out, err = b.run("migrate", "wipe", "--yes")
+    assert code == 0, out + err
+    assert not vaults.backend().item_names("fleetledger")  # named by the inventory: gone
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+
+
 def test_a_receive_that_another_one_overtook_writes_nothing(computers, monkeypatch):
     a, b, world = computers
     stream = send_bytes(a, monkeypatch)

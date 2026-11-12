@@ -227,8 +227,10 @@ def activate(store) -> int:
         raise banner(m)
     with store.edit() as ed:
         ed.doc["fleet"]["epoch"] = m.epoch
+    # A wiped copy's marker (left if its receive stopped at the very end) goes first:
+    # stopped between the two, this copy is still on standby and activates again.
+    clear(store, "retired")
     clear(store, "standby")
-    clear(store, "retired")  # a wiped copy's marker, left if its receive stopped at the end
     return m.epoch
 
 

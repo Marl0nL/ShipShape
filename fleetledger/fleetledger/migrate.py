@@ -1408,26 +1408,35 @@ def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
 
 
 def _take_back(undo: list[Callable[[], None]]) -> bool:
-    """Run a receive's undo steps, newest first; True when every one of them worked."""
-    clean = True
+    """Run a receive's undo steps, newest first, up to the first that fails; True when
+    every one of them worked. Stopping there keeps ships.toml (undone last), so what is
+    left still has an inventory naming it, for a re-run or migrate wipe to delete."""
     for step in reversed(undo):
         try:
             step()
-        except Exception:  # noqa: BLE001 - undo as much as possible
-            clean = False
-    return clean
+        except Exception:  # noqa: BLE001 - the rest stays, under the receiving marker
+            return False
+    return True
 
 
-def _standby_files(store) -> list[handover.Gone]:
-    """What wiping the copy on standby here deletes (migrate wipe, or receive replacing
-    it). A receive cut short before its inventory was in place (or a wipe or rollback
-    cut short after it went) leaves no inventory to say what it wrote, only files in
-    FleetLedger's own folders (receive writes keys and secrets after the inventory, and
-    deletes them before it): those, as receive counts them (not the vault, nor an audit
-    log of setup alone)."""
-    if store.exists():
-        return handover.wipe_plan(store)[0]
-    return [handover.Gone("FleetLedger's own file", str(f)) for f in existing_state(store)]
+def _standby_files(store) -> tuple[list[handover.Gone], list[tuple[str, str]]]:
+    """What wiping the copy on standby here deletes and keeps (migrate wipe, or receive
+    replacing it): wipe_plan's, but an audit log of this computer's setup alone stays
+    (receive merges it again). A receive cut short before its inventory was in place (or
+    a wipe or rollback cut short after it went) leaves no inventory to say what it wrote,
+    only files in FleetLedger's own folders (receive writes keys and secrets after the
+    inventory, and its rollback stops before the inventory at a failed step): those, as
+    receive counts them (not the vault, nor an audit log of setup alone)."""
+    if not store.exists():
+        return [handover.Gone("FleetLedger's own file", str(f))
+                for f in existing_state(store)], []
+    gone, kept = handover.wipe_plan(store)
+    log = paths.audit_log_path()
+    if setup_only_log(log):
+        gone = [g for g in gone if g.keyring or Path(g.where) != log]
+        kept.append((paths.tilde(log), "this computer's own setup entries, not the copy's: "
+                     "a receive keeps them"))
+    return gone, kept
 
 
 def receive(app, source: BinaryIO, *, store_kind: str | None = None,
@@ -1486,7 +1495,7 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
         _check_commit(app, manifest)
         src = manifest["source"]
         if replacing:  # a wipe that would refuse at once leaves the copy here as it is
-            old_files = _standby_files(store)
+            old_files = _standby_files(store)[0]
             handover.wipe_can_start(old_files)
         # Standby before anything else, durably, and marked receiving until every file is
         # in place: wherever this stops (a power cut included), the copy never acts, and
@@ -1531,9 +1540,10 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
         except BaseException:
             try:  # the marker may say whole already (stopped just after): not while undoing
                 handover.write(store, standby)
-            except Exception:  # noqa: BLE001 - then it says whole, and the files still are
-                pass
-            if _take_back(undo) and old_gone and not store.exists():
+                marked = True
+            except Exception:  # noqa: BLE001 - then nothing is undone: the files all stay
+                marked = False
+            if marked and _take_back(undo) and old_gone and not store.exists():
                 handover.clear(store, "standby")  # nothing of this receive is left
             raise
         handover.clear(store, "retired")  # a wiped copy's marker: this one is newer
@@ -1990,10 +2000,8 @@ def _wipe(args, app) -> int:
                              f"rollback ({left} more day(s)).",
                              hint=f"Check the fleet works from {m.other or 'its new computer'}, "
                              "then wipe it now with --now.")
-        if m.role == "standby" and not store.exists():  # a receive cut short: no inventory
-            gone, kept = _standby_files(store), []
-        else:
-            gone, kept = handover.wipe_plan(store)
+        gone, kept = _standby_files(store) if m.role == "standby" else \
+            handover.wipe_plan(store)
         app.say("Deletes:")
         app.say(table([[g.what, ("keyring item " if g.keyring else "") + (
             g.where if g.keyring else paths.tilde(g.where))] for g in gone], ["WHAT", "WHERE"]))
