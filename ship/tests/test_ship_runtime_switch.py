@@ -153,6 +153,42 @@ def test_refuses_when_core_cannot_run_the_agents(herdr_ship, setup, code, why):
     untouched(ship, before)
 
 
+@pytest.mark.parametrize("last", [
+    {"switch": {"from": "herdr", "to": "core", "started_at": "2026-01-01T00:00:00Z",
+                "forced": False, "step": "switching", "agents": {}}},
+    {"switches": [{"at": "2026-01-01T00:00:00Z", "from": "herdr", "to": "core",
+                   "outcome": "rollback-failed", "forced": False, "agents": 2,
+                   "message": "herdr was not put back: x"}]},
+])
+def test_the_way_back_of_an_unfinished_switch_from_herdr_is_not_refused(core_ship, last):
+    """A switch from herdr that did not finish (interrupted, or a rollback that failed
+    before ship.toml went back) leaves ship.toml on core: switching to herdr finishes
+    the way back, deprecated or not."""
+    ship = core_ship
+    expect = as_running(ship)
+    record = {**ship.record(), **last}
+    ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(record))
+    rc, doc, out = switch(ship, "herdr")
+    assert rc == 0 and doc["data"]["outcome"] == "switched", out
+    intact(ship, "herdr", expect)
+
+
+def test_a_switch_to_herdr_after_other_unfinished_switches_is_still_refused(core_ship):
+    """Only the way back of a switch that left herdr: not a core repair that failed, and
+    not once the Ship has been put right on core."""
+    ship = core_ship
+    for entry in ({"from": "core", "to": "core", "outcome": "rollback-failed"},
+                  {"from": "herdr", "to": "core", "outcome": "repaired"},
+                  {"from": "herdr", "to": "core", "outcome": "switched"}):
+        record = {**ship.record(), "switches": [
+            {"at": "2026-01-01T00:00:00Z", "forced": False, "agents": 2, "message": "m",
+             **entry}]}
+        ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(record))
+        rc, doc, _ = switch(ship, "herdr")
+        assert rc != 0 and "one-way" in doc["error"]["message"], entry
+        assert runtime_in_toml(ship) == "core"
+
+
 @pytest.mark.parametrize("extra", [(), ("--force",)])
 @pytest.mark.parametrize("installed", [True, False])
 def test_a_switch_back_to_herdr_is_refused_and_changes_nothing(core_ship, extra, installed):
@@ -557,7 +593,9 @@ def test_switching_again_after_a_failed_rollback_puts_it_right(herdr_ship):
     assert runtime_in_toml(ship) == "herdr" and herdr_agents(ship) == {}
     assert ship.scenario()["herdr"]["server"] is False
     assert not any(m.endswith("were not started on herdr") for m in doc["messages"])
-    assert "runtime-switch-failed" in {a["code"] for a in ship.status()["attention"]}
+    codes = [a["code"] for a in ship.status()["attention"]]
+    assert "runtime-switch-failed" in codes
+    assert codes[-1] == "runtime-deprecated"  # after the urgent one, not before it
     ship.set(unit_fails=[])
     # Switching to core refuses (herdr, which runs the agents' record, is down) and
     # says how to put it right.

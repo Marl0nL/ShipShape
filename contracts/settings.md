@@ -191,7 +191,8 @@ runtime SHIP core`; `ship-ctl.md`), which stops the agents first, resumes them o
 herdr-core in their modes, and rolls back to herdr on any failure;
 `docs/runbooks/switch-runtime.md` has the steps. The switch is one-way: a switch
 from herdr-core to herdr is refused, changing nothing (on a Ship still on herdr,
-`switch herdr` only puts that runtime right after a switch that stopped part way).
+`switch herdr` only puts that runtime right after a switch that stopped part way;
+and after a switch from herdr that did not finish, it finishes the way back).
 
 ## Permission modes across reboots
 

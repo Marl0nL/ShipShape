@@ -355,9 +355,9 @@ def build_parser() -> argparse.ArgumentParser:
              "be idle (or done) first, unless --force. One Ship at a time; see\n"
              "docs/runbooks/switch-runtime.md.\n\n"
              "Classic herdr is deprecated and the next release removes it, so the switch\n"
-             "is one-way: moving a herdr-core Ship to herdr is refused. On a Ship still on\n"
-             "herdr, `herdr` only puts that runtime right after a switch that stopped part\n"
-             "way.\n\n"
+             "is one-way: moving a herdr-core Ship to herdr is refused. `herdr` only puts\n"
+             "a Ship still on herdr right, or finishes the way back of a switch from herdr\n"
+             "that did not finish.\n\n"
              "  ship-fleet runtime ship-01 core     move to herdr-core")
     p.add_argument("ship", metavar="SHIP")
     p.add_argument("target", choices=("core", "herdr"))

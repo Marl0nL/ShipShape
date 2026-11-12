@@ -602,7 +602,7 @@ def update_one(
 
     if up_to_date(before, bundle) and not force:
         on_event(ship.name, f"already on {release}")
-        details = []
+        details = deprecated_notes(before)
         if status_mod.herdr_restart_pending(before) and reboot_policy != "never":
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
@@ -612,7 +612,6 @@ def update_one(
                            f"{ship.name}).")
         if has_attention(before, "tmp-reboot-pending"):
             details.append(tmp_note(ship.name))
-        details += deprecated_notes(before)
         return Outcome(ship.name, True, f"already on {release}", details, data)
 
     backwards = rolls_back(fleet.repo_factory(), before, bundle, ship.name)
@@ -938,7 +937,8 @@ def restart_agents(
 
 RUNTIMES = ("herdr", "core")
 # Runtimes a Ship may no longer be moved onto (ship-ctl's switch.DEPRECATED): classic
-# herdr goes in the next release. A Ship already on it may still be put right.
+# herdr goes in the next release. A Ship already on it may still be put right, and
+# one whose switch away from it did not finish may still go back.
 DEPRECATED_RUNTIMES = ("herdr",)
 RUNTIME_SWITCH_TIMEOUT = 600  # per agent: stop it, start it on the other runtime, check it
 
@@ -963,7 +963,10 @@ def switch_runtime(
     view = _fetch(fleet, inventory, ship)
     before = _require_status(view)
     current = before["herdr"].get("runtime", "herdr")
-    if target in DEPRECATED_RUNTIMES and current != target:
+    last = (before.get("agent_record") or {}).get("last_switch") or {}
+    finishing = last.get("from") == target and last.get("outcome") in (
+        "interrupted", "rollback-failed", "in-progress")  # the way back of an unfinished one
+    if target in DEPRECATED_RUNTIMES and current != target and not finishing:
         # Asked here as well as on the Ship: older tooling there still switches back.
         on_event(ship.name, f"not switched: classic {target} is deprecated")
         return Outcome(ship.name, False,

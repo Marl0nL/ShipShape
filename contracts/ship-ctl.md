@@ -294,6 +294,9 @@ anything else (`invalid-input`, nothing changed, the record not even read).
 `ship-fleet runtime SHIP herdr` refuses it too, before asking the Ship. On a Ship
 whose ship.toml names herdr, `switch herdr` still does what "Already on the target"
 below says, and the rollback of a failed switch to core still goes back to herdr.
+One more exception: when the last switch from herdr did not finish (it is still in
+the record, `interrupted`, or `rollback-failed` before ship.toml went back), `switch
+herdr` is allowed, to finish that way back.
 
 It holds the agent record's lock from start to end, so the status refresh (which
 would start a missing agent) stays out. It ignores SIGHUP and carries on when its

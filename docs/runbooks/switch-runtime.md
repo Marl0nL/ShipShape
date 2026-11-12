@@ -127,6 +127,10 @@ ship-01: not switched: classic herdr is deprecated and the next ShipShape releas
 
 If something does not work on herdr-core, report it rather than moving back.
 
+The one exception is a switch from herdr that did not finish: ship-ctl was stopped part
+way, or its rollback failed before ship.toml went back to herdr. Then
+`ship-fleet runtime ship-01 herdr` is allowed, and finishes the way back.
+
 ## Do not
 
 - Edit ship.toml's `runtime` by hand on a live Ship. The Ship then starts no agent

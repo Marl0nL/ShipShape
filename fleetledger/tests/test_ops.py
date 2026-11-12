@@ -121,6 +121,7 @@ class SimShip:
         self.switch = "switched"  # how `ship-ctl runtime switch` ends, or "refused"
         self.switch_drops = None  # an agent missing after the switch, though the Ship said ok
         self.deprecated = False  # tooling that says classic herdr goes (runtime-deprecated)
+        self.last_switch = None  # agent_record.last_switch (needs recorded)
 
     # --- state ------------------------------------------------------------
     def up(self):
@@ -175,6 +176,8 @@ class SimShip:
                                *((n, m, "running" if resumed else "starting")
                                  for n, m in self.agents.items()),
                                *((n, m, "starting") for n, m in self.relaunching.items())]]}
+        if self.recorded and self.last_switch:
+            doc["agent_record"]["last_switch"] = dict(self.last_switch)
         for service, account in self.accounts.items():
             doc["auth"][service]["account"] = account
         doc["attention"] = []
@@ -1490,6 +1493,33 @@ def test_update_repeats_that_classic_herdr_is_deprecated(world):
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
     assert outcome.summary.startswith("already on")
     assert DEPRECATED.format(ship="ship-01") in outcome.details
+
+
+def test_update_with_herdr_pending_still_says_classic_herdr_is_deprecated(world):
+    """Up to date, rebooting for a new herdr: the note is still there."""
+    sim = world.sims["ship-01"]
+    sim.deprecated, sim.herdr_pending = True, True
+    sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert len(sim.reboots) == 1
+    assert DEPRECATED.format(ship="ship-01") in outcome.details
+
+
+def test_switch_runtime_lets_an_unfinished_switch_from_herdr_go_back(world):
+    """ship.toml says core, but the switch from herdr did not finish: going back to
+    herdr is the way back, not a move onto a deprecated runtime."""
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.recorded = "core", True
+    sim.last_switch = {"at": "2026-01-01T00:00:00Z", "from": "herdr", "to": "core",
+                       "outcome": "rollback-failed", "forced": False, "agents": 2,
+                       "message": "herdr was not put back"}
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "herdr")
+    assert [c for c in sim.calls if c[3:4] == ["runtime"]]
+    assert outcome.data.get("outcome") != "refused"
+    sim.last_switch = {**sim.last_switch, "outcome": "repaired"}
+    sim.runtime = "core"
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "herdr")
+    assert outcome.data == {"outcome": "refused", "from": "core", "to": "herdr"}
 
 
 def test_update_of_a_core_ship_says_nothing_about_herdr_going(world):

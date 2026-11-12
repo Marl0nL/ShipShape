@@ -571,8 +571,6 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             "herdr was updated; the running server is the old version until the next reboot.",
             "herdr",
         )
-    if doc["herdr"].get("runtime") == "herdr":
-        add("runtime-deprecated", deprecated_message(doc["ship"]["name"]), "runtime")
     if core_pending:
         add(
             "core-restart-pending",
@@ -748,6 +746,9 @@ def build(ctx: Context, ship: ShipToml) -> dict:
                          for code, message, who in [*record.attention(doc["agent_record"]),
                                                     *switch.attention(doc["agent_record"]),
                                                     *repo_attention(ctx, ship)]]
+    if herdr["runtime"] == "herdr":  # last: a summary showing one item shows the urgent one
+        doc["attention"].append({"code": "runtime-deprecated", "subject": "runtime",
+                                 "message": deprecated_message(ship.name)})
     elapsed = time.monotonic() - started
     if elapsed > 12:
         errors.append(f"status took {elapsed:.0f}s")

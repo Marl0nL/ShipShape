@@ -48,8 +48,10 @@ otherwise start a missing agent, stays out until the switch is over):
 
 Classic herdr is deprecated (the next release removes it), so the switch is one-way:
 a switch to herdr from herdr-core is refused, changing nothing. The rollback of a
-failed switch to herdr-core still goes back to herdr, and a Ship already on herdr can
-still be put right with a switch to herdr (below).
+failed switch to herdr-core still goes back to herdr, a Ship already on herdr can
+still be put right with a switch to herdr (below), and so can one whose switch from
+herdr did not finish (interrupted, or a rollback that failed before ship.toml went
+back): the switch to herdr then finishes the way back.
 
 A switch to the runtime ship.toml already names changes nothing, unless the last
 switch stopped part way or did not roll back cleanly, or that runtime is not
@@ -85,6 +87,17 @@ LATE_EXIT_S = 20  # in a rollback, for an agent that did not exit when asked
 # release: a Ship already on it can still be put right (settle), and a failed switch
 # away from it still rolls back to it (Switch.rollback never comes through switch()).
 DEPRECATED = ("herdr",)
+
+
+def unfinished_from(doc: dict) -> str | None:
+    """The runtime a switch that did not finish was leaving (one still in the record,
+    interrupted, or whose rollback failed before ship.toml went back), else None. A
+    switch back to it finishes that way back, so it is not refused as deprecated."""
+    if doc.get("switch"):
+        return doc["switch"].get("from")
+    last = (doc.get("switches") or [{}])[-1]
+    return last.get("from") if last.get("outcome") in ("interrupted", "rollback-failed") \
+        else None
 
 
 def refused_message(target: str) -> str:
@@ -634,7 +647,8 @@ def switch(ctx: Context, ship: ShipToml, target: str, *, force: bool = False
     rolled back (switch-failed, with what happened attached)."""
     if target not in TARGETS:
         raise CtlError("usage", f"switch to one of: {', '.join(TARGETS)}")
-    if target in DEPRECATED and ship.runtime != target:
+    if (target in DEPRECATED and ship.runtime != target
+            and unfinished_from(record.load(ctx)) != target):
         raise CtlError("invalid-input", refused_message(target))
     # The switch must finish even if the SSH session that started it drops: a half
     # switch is what the rollback exists to avoid.
