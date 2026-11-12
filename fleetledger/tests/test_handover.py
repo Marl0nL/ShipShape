@@ -435,3 +435,95 @@ def test_every_command_but_the_allowed_ones_is_refused_when_handed_over(store, h
             handover.gate(command, store)
     assert json.loads((home / "config" / "retired.json").read_text())["schema"] == \
         handover.SCHEMA
+
+
+# --- a web UI already running when a copy lands on standby ----------------------------------
+
+
+def _web_ui(c: Computer):
+    """The web app as ship-fleet ui builds it (web/server.py), on computer c, signed in."""
+    import re
+
+    from fleetledger.web import app as webapp
+    from fleetledger.web.fleet import Fleet
+    from fleetledger.web.jobs import Jobs
+    from fleetledger.web.security import Gate
+    from starlette.testclient import TestClient
+
+    gate = Gate(8765)
+    fleet = Fleet(c.app, interval=30)
+    jobs = Jobs(c.app, on_finished=lambda ships: fleet.poll(ships))
+    asgi = webapp.create_app(c.app, gate, fleet=fleet, jobs=jobs)
+    client = TestClient(asgi, base_url="http://127.0.0.1:8765", follow_redirects=False)
+    assert client.get(f"/login?token={gate.new_token()}").status_code == 200
+    page = client.get("/setup")
+    assert page.status_code == 200  # no FleetLedger here yet: the setup page
+    csrf = re.search(r'name="csrf-token" content="([^"]+)"', page.text).group(1)
+    return client, csrf, fleet, jobs
+
+
+def test_a_web_ui_started_before_a_receive_never_acts_on_the_copy_on_standby(
+        computers, monkeypatch):
+    """The UI was started on the new computer before it had any FleetLedger. Once a
+    receive lands a copy on standby there, it polls no Ship and serves no page or
+    action: it says the copy is on standby, as the CLI does."""
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    client, csrf, fleet, jobs = _web_ui(b)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED
+    assert role(b).role == "standby"
+    before = len(world.calls)
+
+    fleet.poll()  # the background poller's turn
+    fleet.poll(["ship-01"])  # a job or sign-in finishing re-checks its Ship
+    assert world.calls[before:] == []  # no Ship was reached
+    assert fleet._may_poll() is False
+    for path in ("/", "/ships/ship-01", "/partials/fleet", "/settings", "/network"):
+        page = client.get(path)
+        assert page.status_code == 409 and "on standby" in page.text, path
+    refresh = client.post("/ships/ship-01/refresh", data={"csrf": csrf},
+                          headers={"Origin": "http://127.0.0.1:8765"})
+    assert refresh.status_code == 409 and "on standby" in refresh.text
+    with pytest.raises(FleetError, match="on standby"):
+        jobs.start("update", ["ship-01"], lambda job: world.calls.append(("job", job)))
+    assert len(world.calls) == before  # no Ship was reached
+    assert fleet.snapshot.error and "on standby" in fleet.snapshot.error
+
+
+def test_the_web_ui_holds_the_in_use_lock_even_where_there_is_no_fleetledger_yet(
+        computers, monkeypatch):
+    """ship-fleet ui on a computer with no FleetLedger folder takes the in-use lock
+    anyway (making the folder), so a receive there refuses while it runs rather than
+    landing a copy under a UI that holds no lock."""
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    assert not b.store.path.parent.exists()
+    with cli._in_use(cli.build_parser().parse_args(["ui"]), b.app):
+        with pytest.raises(FleetError, match="Another ship-fleet is running"):
+            receive(b, monkeypatch, stream)
+    assert not b.store.path.exists() and role(b) is None
+    for verb in (["ui", "link", "--local"], ["doctor"]):  # neither makes the folder
+        shutil.rmtree(b.store.path.parent, ignore_errors=True)
+        with cli._in_use(cli.build_parser().parse_args(verb), b.app):
+            assert not b.store.path.parent.exists(), verb
+
+
+def test_a_command_checks_the_markers_again_once_it_holds_the_lock(store, monkeypatch):
+    """A receive that ends between a command's first check and its taking the lock
+    leaves a marker the command must still see."""
+    from contextlib import contextmanager
+
+    real = cli._in_use
+
+    @contextmanager
+    def late(args, app):
+        handover.write(store, handover.Marker("standby", handover.now(), "old.example", 1))
+        with real(args, app):
+            yield
+
+    monkeypatch.setattr(cli, "_in_use", late)
+    out, err = io.StringIO(), io.StringIO()
+    app = cli.App(out=out, err=err, store_factory=lambda: store)
+    assert cli.main(["ls", "--offline"], app) == 1 and "on standby" in err.getvalue()

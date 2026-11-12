@@ -676,7 +676,9 @@ def _hoist_tag_option(argv: list[str]) -> list[str]:
 def _in_use(args, app):
     """Every command but migrate holds FleetLedger's in-use lock (shared) while it runs,
     so ship-fleet migrate never copies the fleet in the middle of a change. Where there
-    is no FleetLedger folder yet there is nothing to copy, and no lock."""
+    is no FleetLedger folder yet there is nothing to copy, and no lock: except for the
+    web UI, which makes the folder to hold it. It runs for days, and a fleet can appear
+    under it (its setup page, or a receive), so a move must wait for it as ever."""
     from contextlib import nullcontext
 
     from fleetledger import inuse
@@ -685,9 +687,10 @@ def _in_use(args, app):
         return nullcontext()  # it takes the lock exclusively itself
     store = app.store_factory()
     path = getattr(store, "path", None)
-    if path is None or not path.parent.is_dir():
+    serves_ui = args.command == "ui" and getattr(args, "ui_command", None) is None
+    if path is None or not (path.parent.is_dir() or serves_ui):
         return nullcontext()
-    return inuse.using(store)
+    return inuse.using(store)  # makes the folder where there is none
 
 
 def _handed_over(args, app) -> None:
@@ -762,7 +765,7 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     handler = getattr(commands, name, None)
     for module in EXTRA_COMMAND_MODULES:
         handler = handler or getattr(importlib.import_module(module), name, None)
-    try:
+    def handed_over() -> None:
         try:
             _handed_over(args, app)
         except FleetError as exc:
@@ -771,8 +774,12 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
                 # systemd should not start it again and again (service.REFUSED).
                 exc.exit_code = 2
             raise
+
+    try:
+        handed_over()
         _vault_locked(args, app)
         with _in_use(args, app):
+            handed_over()  # again under the lock: a migrate may have ended in between
             return handler(args, app) or 0
     except FleetError as exc:
         app.note(f"ship-fleet: {exc.message}")

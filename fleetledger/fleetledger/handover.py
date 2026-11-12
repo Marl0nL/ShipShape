@@ -154,13 +154,21 @@ def banner(m: Marker) -> FleetError:
         "here. After two weeks, ship-fleet migrate wipe deletes this copy's keys and secrets.")
 
 
+def refusal(store) -> FleetError | None:
+    """Why this copy may not act on the fleet (its marker's banner), or None: it may.
+    Any marker at all says no, one that cannot be read included. The CLI's gate and the
+    web UI (every request and every Ship poll, web/copyguard.py) both ask here."""
+    m = marker(store)
+    return None if m is None else banner(m)
+
+
 def gate(command: str, store) -> None:
     """Refuse every command but ALLOWED on a copy on standby or retired."""
     if command in ALLOWED:
         return
-    m = marker(store)
-    if m is not None:
-        raise banner(m)
+    why = refusal(store)
+    if why is not None:
+        raise why
 
 
 def confirm(app, question: str, word: str, yes: bool) -> None:

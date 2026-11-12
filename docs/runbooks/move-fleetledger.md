@@ -72,6 +72,10 @@ On the **new** computer:
    with plain `ssh you@new-computer` (compare the fingerprint). `push` connects
    with `StrictHostKeyChecking=yes`, so a host key it does not already know stops
    it.
+5. Stop any `ship-fleet ui` there (the service too: `systemctl --user stop
+   fleetledger`, as on a FleetLedger VM that rebooted since its seed). The web UI
+   holds FleetLedger's in-use lock even before there is a FleetLedger, so
+   `receive` refuses while it runs ("Another ship-fleet is running").
 
 On the **old** computer, `ship-fleet migrate check` must say "Ready to move". It
 refuses while:
@@ -265,7 +269,8 @@ same vault.
   until the new computer has checked every Ship; a large fleet takes a while.
 - **"This FleetLedger was retired"** or **"is on standby"**: this copy does not act
   on the fleet; the line says where it went or came from. Use the active copy, or
-  hand over as above.
+  hand over as above. A web UI that was already running says the same on every
+  page and action, and polls no Ship, from the moment its copy is marked so.
 - **"has a retired FleetLedger"** (when moving the fleet back): wipe that copy first
   (`ship-fleet migrate wipe --now`), then push again.
 - **"an older state"**: the fleet coming in is older than one this computer handed

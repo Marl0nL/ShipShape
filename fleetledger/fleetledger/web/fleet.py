@@ -15,6 +15,9 @@ the dashboard's charts.
 While FleetLedger's vault is locked (vault.py) it does not poll at all: nothing can
 log in to a Ship, and the pages show the last known state. It polls again as soon
 as the vault is unlocked.
+
+Nor does it poll a Ship while this copy may not act on the fleet (on standby or
+retired, web/copyguard.py): it checks before every poll, a single Ship's included.
 """
 
 from __future__ import annotations
@@ -159,6 +162,11 @@ class Fleet:
         with self._poll_lock:
             try:
                 inv = self.app.store_factory().load()
+                # After the load: a receive writes its standby marker before ships.toml,
+                # so an inventory read here that a receive wrote has its marker by now.
+                why = _may_not_act(self.app)
+                if why is not None:
+                    raise why
                 ships = inv.ships()
                 wanted = [s for s in ships if names is None or s.name in names]
                 tooling = None
@@ -185,7 +193,7 @@ class Fleet:
                 polled_at = self.snapshot.polled_at or self.wall()
             self._publish(Snapshot(inv, views, polled_at))
             self._record(fresh)
-        if names is None:
+        if names is None and _may_not_act(self.app) is None:  # a long poll: ask again
             self._renew_this_computer()
 
     def _record(self, views: list[status.ShipView]) -> None:
@@ -235,7 +243,7 @@ class Fleet:
 
     def _may_poll(self) -> bool:
         try:
-            return bool(self.ready())
+            return bool(self.ready()) and _may_not_act(self.app) is None
         except Exception:  # noqa: BLE001 - unsure: do not poll
             return False
 
@@ -249,6 +257,13 @@ class Fleet:
         self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+
+
+def _may_not_act(app: Any) -> FleetError | None:
+    """Why this copy may not act on the fleet (on standby or retired), or None."""
+    from fleetledger.web import copyguard
+
+    return copyguard.refusal(app)
 
 
 def _vault_open() -> bool:

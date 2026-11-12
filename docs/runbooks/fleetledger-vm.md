@@ -174,7 +174,9 @@ passphrase is lost ([../vault.md](../vault.md#recovery-if-the-passphrase-is-lost
 ## 4. Move the fleet
 
 On the desktop, stop FleetLedger there (Ctrl-C the UI, or `systemctl --user stop
-fleetledger`), then:
+fleetledger`). If the VM rebooted since its seed, its service started at boot: stop
+it there too (`systemctl --user stop fleetledger` as `fleetledger`; step 5 starts it
+again), or the push refuses ("Another ship-fleet is running"). Then:
 
 ```sh
 ship-fleet migrate check

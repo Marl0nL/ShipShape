@@ -48,6 +48,7 @@ from fleetledger.web import (
     actions,
     activity,
     adopt,
+    copyguard,
     dashboard,
     destroy,
     devicesweb,
@@ -1408,5 +1409,7 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
                       jobs=jobs or Jobs(app, on_finished=lambda ships: fleet.poll(ships)),
                       env=make_env(),
                       setups=setup.Setups(), start_page=start_page)
-    # The gate first (who you are), then the vault (locked: read-only).
-    return GateMiddleware(vaultweb.VaultGuard(web, web.state.ui), gate)
+    # The gate first (who you are), then whether this copy acts on the fleet at all
+    # (on standby or retired: no), then the vault (locked: read-only).
+    return GateMiddleware(copyguard.CopyGuard(vaultweb.VaultGuard(web, web.state.ui),
+                                              web.state.ui), gate)
