@@ -45,6 +45,9 @@ def test_the_page_aims_at_every_ship_or_a_tag_and_counts_them(fa):
     page = fa.client.get("/fleet/actions").text
     assert "every Ship (2)" in page and "every work Ship (1)" in page
     assert 'data-confirm-action="Update 2 Ships"' in _form(page, "/fleet/actions/update")
+    # auto, the default, is never a reboot of a herdr-core Ship (for herdr or the core).
+    assert ('<option value="auto">auto: only a herdr Ship whose herdr changed, never a '
+            'herdr-core Ship</option>') in _form(page, "/fleet/actions/update")
     page = fa.client.get("/fleet/actions?tag=work").text
     form = _form(page, "/fleet/actions/update")
     assert 'data-confirm-action="Update 1 Ship"' in form and 'value="tag:work"' in form
