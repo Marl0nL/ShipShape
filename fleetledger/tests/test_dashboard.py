@@ -222,6 +222,7 @@ def test_off_the_overlay_only_when_one_is_configured(store):
     ("overlay-down", "link"),  # to Settings ▸ Access ▸ Overlay, where Check is
     # These need a shell: copy the command.
     ("agent-waiting", "command"), ("disk-nearly-full", "command"),
+    ("runtime-deprecated", "command"),  # the web UI has no runtime switch
 ])
 def test_fixes_the_ui_can_do_are_buttons(code, kind):
     action = dashboard.action_for(code, "ship-01", None, None)
@@ -439,6 +440,18 @@ def test_a_tmp_waiting_for_its_reboot_offers_a_reboot_that_is_not_urgent(store):
     from fleetledger import ops
 
     assert ops.SEVERITY["tmp-reboot-pending"] == "low"
+
+
+def test_classic_herdr_going_offers_the_command_that_moves_the_ship(store):
+    action = dashboard.action_for("runtime-deprecated", "ship-01", view(store), None)
+    assert action.kind == "command" and action.value == "ship-fleet runtime ship-01 core"
+    assert "herdr-core" in action.hint
+    remote = dashboard.action_for("runtime-deprecated", "ship-01", view(store), None,
+                                  remote=True)
+    assert "on the FleetLedger computer" in remote.hint
+    from fleetledger import ops
+
+    assert ops.SEVERITY["runtime-deprecated"] == "medium"
 
 
 def test_a_pending_core_restart_offers_a_reboot_that_is_not_urgent(store):

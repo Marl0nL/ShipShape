@@ -2302,6 +2302,27 @@ def test_a_core_ship_never_offers_a_reboot_for_herdr(web):
     assert "a herdr-core Ship is not rebooted" in page
 
 
+def test_a_classic_herdr_ship_is_told_how_to_move_on_every_page(web):
+    """runtime-deprecated shows in Needs attention and on the Ship's page, with the
+    command that moves it (the web UI has no runtime switch); a core Ship has none."""
+    from test_cli import RUNNING_CORE
+
+    web.ship.status_override["ship-01"] = json.loads(
+        (EXAMPLES / "ship-status" / "running-herdr.json").read_text())
+    web.ship.status_override["ship-02"] = copy.deepcopy(RUNNING_CORE)
+    web.fleet.poll()
+    web.sign_in()
+    command = '<code class="cmd">ship-fleet runtime ship-01 core</code>'
+    for path in ("/", "/ships/ship-01"):
+        page = web.client.get(path).text
+        assert "Classic herdr is deprecated" in page, path
+        assert command in page, path
+        assert 'data-copy="ship-fleet runtime ship-01 core"' in page, path
+    page = web.client.get("/ships/ship-02").text
+    assert "Classic herdr is deprecated" not in page
+    assert "ship-fleet runtime ship-02" not in page
+
+
 def test_a_core_ships_settings_show_the_runtime_read_only(web):
     from test_cli import RUNNING_CORE
 

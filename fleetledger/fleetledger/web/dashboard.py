@@ -215,6 +215,9 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         "agent-waiting": (f"Attach to answer it{'' if attach_here else on_fleetledger}:",
                           attach.for_ship(ship, view.status if view else None, agent)
                           if attach_here else f"ship-fleet ssh {ship}"),
+        # The web UI has no runtime switch: the command is the fix.
+        "runtime-deprecated": (f"Move it to herdr-core{on_fleetledger}:",
+                               f"ship-fleet runtime {ship} core"),
         "disk-nearly-full": (f"See what fills it{on_fleetledger}:",
                              f"ship-fleet ssh {ship} -- du -xhd1 /home/agent"),
     }

@@ -173,6 +173,9 @@ herdr-core from their first boot. Unset still means `herdr`: a Ship made before 
 has no `runtime` and stays on herdr until it is moved (below).
 
 - `herdr`: the herdr server (`herdr.service`), as Ships have always run.
+  **Deprecated:** the next ShipShape release removes classic herdr. A Ship on it
+  shows attention `runtime-deprecated` with the command that moves it to
+  herdr-core.
 - `core`: herdr-core (`hc`, `ship-core.service`). Each agent runs in a kept
   terminal, labelled for the herdr desktop app (one space, `shipshape`, a tab per
   agent), started through `/opt/shipshape/bin/agent-launch`; agents report their
@@ -183,10 +186,12 @@ has no `runtime` and stays on herdr until it is moved (below).
 Agents continue their sessions across a change of runtime (the agent record has
 each one's session and mode; `ship-ctl.md`, "On herdr-core Ships"), from the next
 boot: until then an agent that ran under the other runtime is started by neither. A
-live Ship moves between the two with `ship-ctl runtime switch core|herdr`
-(`ship-fleet runtime SHIP core|herdr`; `ship-ctl.md`), which stops the agents
-first, resumes them on the other runtime in their modes, and rolls back on any
-failure; `docs/runbooks/switch-runtime.md` has the steps.
+live Ship moves to herdr-core with `ship-ctl runtime switch core` (`ship-fleet
+runtime SHIP core`; `ship-ctl.md`), which stops the agents first, resumes them on
+herdr-core in their modes, and rolls back to herdr on any failure;
+`docs/runbooks/switch-runtime.md` has the steps. The switch is one-way: a switch
+from herdr-core to herdr is refused, changing nothing (on a Ship still on herdr,
+`switch herdr` only puts that runtime right after a switch that stopped part way).
 
 ## Permission modes across reboots
 

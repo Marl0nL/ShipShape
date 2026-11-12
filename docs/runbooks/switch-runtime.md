@@ -1,11 +1,16 @@
-# Runbook: move a Ship between herdr and herdr-core
+# Runbook: move a Ship from herdr to herdr-core
 
-How to move one live Ship's agents from herdr's server to herdr-core (`hc`), or back.
+How to move one live Ship's agents from herdr's server to herdr-core (`hc`).
 Every agent keeps its conversation and its permission mode; if anything goes wrong
-the Ship puts itself back on the runtime it ran, with its agents resumed there.
+the Ship puts itself back on herdr, with its agents resumed there.
 
-The command is `ship-fleet runtime SHIP core|herdr` (on the Ship: `sudo ship-ctl
-runtime switch core|herdr`). What it does, step by step, is in
+**Classic herdr is deprecated.** The next ShipShape release removes it, so move every
+Ship still on it now. Such a Ship shows attention `runtime-deprecated` (in `ship-fleet
+status`, `ship-fleet update` and the web UI) with the command for it. The switch is
+**one-way**: a switch from herdr-core back to herdr is refused, and changes nothing.
+
+The command is `ship-fleet runtime SHIP core` (on the Ship: `sudo ship-ctl
+runtime switch core`). What it does, step by step, is in
 [`contracts/ship-ctl.md`](../../contracts/ship-ctl.md), "`ship-ctl runtime switch`".
 
 Move one Ship at a time, a trial Ship first.
@@ -99,9 +104,9 @@ message says what is left. Two cases:
   ship.toml names and resumes every recorded agent on it, in its mode.
 - **The old runtime did not start again** (its unit failed). Fix what the message
   names, then switch to the runtime ship.toml names:
-  `ship-fleet runtime ship-01 herdr` (if it was going back to herdr). That starts
-  it, puts the boot units right and resumes the agents waiting for it (outcome
-  `repaired`).
+  `ship-fleet runtime ship-01 herdr` (if it was going back to herdr: allowed because
+  the Ship is still on herdr). That starts it, puts the boot units right and resumes
+  the agents waiting for it (outcome `repaired`).
 
 **Attention `runtime-switch-unfinished`**: ship-ctl was stopped part way (the Ship
 lost power, say). Switch to the runtime ship.toml names (the attention message names
@@ -110,20 +115,17 @@ agents the switch had stopped, in their modes (outcome `repaired`); it records t
 unfinished switch as `interrupted`. Then, if you still want to move the Ship, run the
 switch again.
 
-## 5. Rolling back on purpose
+## 5. No way back
 
-The same command the other way:
+Once a Ship runs herdr-core it stays there: `ship-fleet runtime ship-01 herdr` (and
+`ship-ctl runtime switch herdr` on the Ship) is refused, and nothing on the Ship
+changes:
 
-```sh
-ship-fleet runtime ship-01 herdr
+```
+ship-01: not switched: classic herdr is deprecated and the next ShipShape release removes it, so the switch to herdr-core is one-way; nothing changed
 ```
 
-It stops the agents on core (gracefully: never `hc kill` or `hc server stop`; the
-core keeps running), removes their finished terminals, enables and starts
-`herdr.service`, sets ship.toml back to herdr, and resumes each agent in a new herdr
-workspace, in its mode. Both runtimes stay installed, so you can move back and forth.
-Afterwards, make each laptop's trust bundle again (step 3) so its herdr machine
-entry is back.
+If something does not work on herdr-core, report it rather than moving back.
 
 ## Do not
 

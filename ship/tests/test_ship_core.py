@@ -151,6 +151,19 @@ def test_status_maps_claudes_own_state(core):
                        "approve Bash: curl -sI https://example.com"}
     assert doc["state"] == "running"
     assert {a["state"] for a in doc["agent_record"]["agents"]} == {"running"}
+    assert "runtime-deprecated" not in {a["code"] for a in doc["attention"]}
+
+
+def test_a_core_ship_is_never_told_herdr_is_deprecated(core):
+    """runtime-deprecated is for classic herdr only, even with herdr installed and a
+    herdr server (another tool's, say) running beside the core."""
+    ship = core
+    s = ship.scenario()
+    s["herdr"]["server"] = True
+    ship.set(herdr=s["herdr"])
+    doc = ship.status()
+    assert doc["herdr"]["runtime"] == "core"
+    assert "runtime-deprecated" not in {a["code"] for a in doc["attention"]}
 
 
 def test_terminals_that_are_not_agents_are_not_listed(core):

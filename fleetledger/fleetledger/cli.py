@@ -346,16 +346,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also restart an agent that is working, interrupting its turn")
     p.add_argument("--json", action="store_true", help="print the result as JSON")
 
-    p = _add(sub, "runtime", "move a Ship's agents between herdr and herdr-core",
-             "Move every agent on one Ship to the other runtime: herdr (its server, the\n"
-             "default) or core (herdr-core). Each agent stops gracefully, then continues\n"
-             "its conversation on the new runtime in its own permission mode; the Ship\n"
-             "boots into the new runtime from then on. Both stay installed. If any step\n"
-             "fails, the Ship goes back to the runtime it ran, with its agents resumed\n"
-             "there, and says what happened. Agents must be idle (or done) first, unless\n"
-             "--force. One Ship at a time; see docs/runbooks/switch-runtime.md.\n\n"
-             "  ship-fleet runtime ship-01 core     move to herdr-core\n"
-             "  ship-fleet runtime ship-01 herdr    move back")
+    p = _add(sub, "runtime", "move a Ship's agents from classic herdr to herdr-core",
+             "Move every agent on one Ship from classic herdr (its server) to core\n"
+             "(herdr-core). Each agent stops gracefully, then continues its conversation\n"
+             "on herdr-core in its own permission mode; the Ship boots into herdr-core\n"
+             "from then on. Both stay installed. If any step fails, the Ship goes back to\n"
+             "herdr, with its agents resumed there, and says what happened. Agents must\n"
+             "be idle (or done) first, unless --force. One Ship at a time; see\n"
+             "docs/runbooks/switch-runtime.md.\n\n"
+             "Classic herdr is deprecated and the next release removes it, so the switch\n"
+             "is one-way: moving a herdr-core Ship to herdr is refused. On a Ship still on\n"
+             "herdr, `herdr` only puts that runtime right after a switch that stopped part\n"
+             "way.\n\n"
+             "  ship-fleet runtime ship-01 core     move to herdr-core")
     p.add_argument("ship", metavar="SHIP")
     p.add_argument("target", choices=("core", "herdr"))
     p.add_argument("--force", action="store_true",

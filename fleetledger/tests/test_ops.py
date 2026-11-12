@@ -120,6 +120,7 @@ class SimShip:
         self.runtime = None  # tooling with herdr.runtime: "herdr" or "core"
         self.switch = "switched"  # how `ship-ctl runtime switch` ends, or "refused"
         self.switch_drops = None  # an agent missing after the switch, though the Ship said ok
+        self.deprecated = False  # tooling that says classic herdr goes (runtime-deprecated)
 
     # --- state ------------------------------------------------------------
     def up(self):
@@ -182,6 +183,9 @@ class SimShip:
                                      "message": "herdr was updated; reboot to switch."})
         if self.runtime == "core":
             doc["herdr"]["runtime"] = "core"
+        elif self.deprecated:
+            doc["attention"].append({"code": "runtime-deprecated", "subject": "runtime",
+                                     "message": DEPRECATED.format(ship=ship.name)})
         if self.core_pending:
             doc["attention"].append({"code": "core-restart-pending",
                                      "message": "herdr-core was updated.",
@@ -1468,6 +1472,61 @@ def test_cli_update_says_why_it_left_a_ship_and_force_rolls_it_back(app, world, 
 # --- runtime switch -------------------------------------------------------------------
 
 
+DEPRECATED = ("Classic herdr is deprecated and will be removed in the next ShipShape "
+              "release; this Ship still runs on it. Move it to herdr-core before that "
+              "update: ship-fleet runtime {ship} core (or, on the Ship, ship-ctl runtime "
+              "switch core). The switch is one-way.")
+
+
+def test_update_repeats_that_classic_herdr_is_deprecated(world):
+    """A classic herdr Ship: the update's result says what its status says, with the
+    command that moves it; it is still updated, and not rebooted for it."""
+    sim = world.sims["ship-01"]
+    sim.deprecated = True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and sim.converged and sim.reboots == []
+    assert DEPRECATED.format(ship="ship-01") in outcome.details
+    # Already up to date: still said.
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.summary.startswith("already on")
+    assert DEPRECATED.format(ship="ship-01") in outcome.details
+
+
+def test_update_of_a_core_ship_says_nothing_about_herdr_going(world):
+    sim = world.sims["ship-01"]
+    sim.runtime, sim.deprecated = "core", True
+    [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
+    assert outcome.ok and not any("deprecated" in d for d in outcome.details)
+
+
+def test_cli_status_and_attention_show_that_classic_herdr_is_deprecated(app, world):
+    world.sims["ship-01"].deprecated = True
+    code, out, _ = app.run("status", "ship-01")
+    assert code == 0 and f"! {DEPRECATED.format(ship='ship-01')}" in out
+    code, out, _ = app.run("attention", "--json")
+    [item] = [i for i in json.loads(out) if i["code"] == "runtime-deprecated"]
+    assert item["ship"] == "ship-01" and item["severity"] == "medium"
+    assert "ship-fleet runtime ship-01 core" in item["message"]
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_switch_runtime_refuses_a_move_back_to_herdr(world, force):
+    """Classic herdr is deprecated: a herdr-core Ship is never sent `switch herdr`
+    (older tooling there would still do it), forced or not; nothing on it changes."""
+    sim = world.sims["ship-01"]
+    sim.runtime = "core"
+    seen, on_event = events()
+    outcome = ops.switch_runtime(world.fleet, world.ship("ship-01"), "herdr", force=force,
+                                 on_event=on_event)
+    assert not outcome.ok
+    assert outcome.summary.startswith("not switched: classic herdr is deprecated")
+    assert "one-way" in outcome.summary and "nothing changed" in outcome.summary
+    assert outcome.data == {"outcome": "refused", "from": "core", "to": "herdr"}
+    assert not [c for c in sim.calls if c[3:4] == ["runtime"]]
+    assert sim.runtime == "core"
+    assert seen == [("ship-01", "not switched: classic herdr is deprecated")]
+
+
 def test_switch_runtime_moves_the_ship_and_checks_its_agents(world):
     sim = world.sims["ship-01"]
     sim.runtime = "herdr"
@@ -1541,5 +1600,9 @@ def test_cli_runtime(app, world):
     code, out, err = app.run("runtime", "ship-01", "core")
     assert code == 0, err
     assert "moved from herdr to core" in out
+    # The way back is refused, and says so.
+    code, out, err = app.run("runtime", "ship-01", "herdr")
+    assert code == 1 and "classic herdr is deprecated" in out + err
     code, out, _ = app.run("runtime", "ship-01", "herdr", "--json")
-    assert code == 0 and json.loads(out)[0]["data"]["runtime_after"] == "herdr"
+    assert code == 1 and json.loads(out)[0]["data"]["outcome"] == "refused"
+    assert world.sims["ship-01"].runtime == "core"

@@ -502,6 +502,15 @@ def bundle_info(ctx: Context) -> tuple[str, str | None, list[str]]:
 
 
 # --- the document -----------------------------------------------------------
+def deprecated_message(ship: str) -> str:
+    """Attention runtime-deprecated: the Ship still runs classic herdr, which the next
+    release removes. The switch to herdr-core is one-way (switch.py refuses herdr)."""
+    return ("Classic herdr is deprecated and will be removed in the next ShipShape "
+            "release; this Ship still runs on it. Move it to herdr-core before that "
+            f"update: ship-fleet runtime {ship} core (or, on the Ship, ship-ctl runtime "
+            "switch core). The switch is one-way.")
+
+
 def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = False,
                   core_pending: bool = False, labels: dict[str, str] | None = None
                   ) -> list[dict]:
@@ -562,6 +571,8 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             "herdr was updated; the running server is the old version until the next reboot.",
             "herdr",
         )
+    if doc["herdr"].get("runtime") == "herdr":
+        add("runtime-deprecated", deprecated_message(doc["ship"]["name"]), "runtime")
     if core_pending:
         add(
             "core-restart-pending",

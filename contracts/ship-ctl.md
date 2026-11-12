@@ -83,7 +83,10 @@ extra scope `github.scopes` chooses, or has a catalogue scope it no longer choos
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
 running), `overlay-down` (joined, but the overlay is not `running`),
 `agent-relaunch-failed` (a recorded agent stopped and did not start again after 3
-tries this boot; subject: the agent).
+tries this boot; subject: the agent), `runtime-deprecated` (subject `runtime`: the
+Ship runs classic herdr, which the next ShipShape release removes; the message names
+`ship-fleet runtime <ship> core`, the one-way switch to herdr-core; never on a
+herdr-core Ship).
 FleetLedger adds its own on top (`signin-wrong-account` from the tag check,
 `behind-tooling` from `versions.toml`, `tags-differ` from the inventory,
 `host-cert-missing` and `ssh-trust-behind` from its certificate authority); it
@@ -282,8 +285,15 @@ Moves a live Ship's agents to the other runtime (ship.toml `runtime`,
 `settings.md`): each running Claude agent continues its own conversation there, in
 its own permission mode, and the Ship boots into that runtime from then on. Both
 runtimes stay installed. Any failure part way puts the Ship back on the runtime it
-ran, with its agents resumed there. `ship-fleet runtime SHIP core|herdr` runs it;
+ran, with its agents resumed there. `ship-fleet runtime SHIP core` runs it;
 the steps for a person are in `docs/runbooks/switch-runtime.md`.
+
+Classic herdr is deprecated (the next release removes it), so the switch is
+one-way: `switch herdr` on a Ship whose ship.toml names `core` is refused before
+anything else (`invalid-input`, nothing changed, the record not even read).
+`ship-fleet runtime SHIP herdr` refuses it too, before asking the Ship. On a Ship
+whose ship.toml names herdr, `switch herdr` still does what "Already on the target"
+below says, and the rollback of a failed switch to core still goes back to herdr.
 
 It holds the agent record's lock from start to end, so the status refresh (which
 would start a missing agent) stays out. It ignores SIGHUP and carries on when its
