@@ -1262,6 +1262,379 @@ def test_a_failure_part_way_takes_back_everything_it_wrote(computers, monkeypatc
     assert set(b.ring.items) == {("fleetledger", "key-passphrase:unrelated")}
 
 
+# --- receive cut short: only one copy acts, at every instant ---------------------------------
+#
+# Each test below starts B in one of the states receive takes (nothing, a copy on standby
+# it replaces, the marker a wiped copy leaves), then stops a receive at each change it
+# makes to B's files in turn. Wherever it stops, B never reads as an active FleetLedger
+# (an inventory and no marker), and running receive again finishes the move.
+
+_CHANGES = ("open", "replace", "rename", "unlink", "mkdir", "rmdir")
+
+
+def _at_each_change(mp, under: Path, before) -> None:
+    """Call before(n, path) ahead of each change to a file or folder under `under` (n
+    counts from 1)."""
+    seen = [0]
+    root = str(under)
+
+    def hook(name, real):
+        def run(*args, **kw):
+            flags = args[1] if len(args) > 1 else kw.get("flags", 0)
+            if name == "open" and not flags & os.O_CREAT:
+                return real(*args, **kw)
+            names = [os.fspath(a) for a in args[:2] if isinstance(a, (str, os.PathLike))]
+            if any(n.startswith(root) for n in names):
+                seen[0] += 1
+                before(seen[0], names[0])
+            return real(*args, **kw)
+        return run
+
+    for name in _CHANGES:
+        mp.setattr(os, name, hook(name, getattr(os, name)))
+
+
+def _acting(b: Computer) -> bool:
+    """B reads as the active FleetLedger: an inventory, and no marker saying otherwise."""
+    return b.store.path.exists() and handover.marker(b.store) is None
+
+
+def _start(b: Computer, monkeypatch, stream: bytes, how: str, snapshot: Path) -> None:
+    # Checking the Ships comes after everything is written (and is tested above): leave
+    # it out, so each step can be stopped in turn quickly.
+    monkeypatch.setattr(migrate, "verify", lambda app, **kw: [])
+    b.use(monkeypatch)
+    if how == "standby":
+        assert receive(b, monkeypatch, stream, store_kind="file") == migrate.VERIFIED
+    elif how == "wiped":
+        when = handover.now()
+        handover.write(b.store, handover.Marker("retired", when, "desktop", 0, wiped=when))
+    if b.root.exists():
+        shutil.copytree(b.root, snapshot, symlinks=True)
+
+
+def _back_to(b: Computer, snapshot: Path) -> None:
+    shutil.rmtree(b.root, ignore_errors=True)
+    if snapshot.exists():
+        shutil.copytree(snapshot, b.root, symlinks=True)
+
+
+def _whole(b: Computer) -> dict[str, bytes]:
+    """B's files, the marker aside (its time differs, and a write of it killed before
+    its rename leaves a temporary file that the next receive removes)."""
+    return {f: data for f, data in b.files().items()
+            if f != "config/standby.json" and not f.startswith("config/.standby.json.tmp-")}
+
+
+def _stops(b, monkeypatch, stream) -> tuple[list[int], dict[str, bytes]]:
+    """Each change a whole receive makes (the stream's files written one by one into
+    its staging folder count once: they are alike), and B's files after it."""
+    changes: list[str] = []
+    with pytest.MonkeyPatch.context() as mp:
+        _at_each_change(mp, b.root, lambda n, path: changes.append(path))
+        assert receive(b, monkeypatch, stream, store_kind="file") == migrate.VERIFIED
+    staging = str(b.root / "data" / migrate.STAGING)
+    stops = [n for n, path in enumerate(changes, 1)
+             if not (path.startswith(staging) and changes[n - 2].startswith(staging))]
+    return stops, _whole(b)
+
+
+@pytest.mark.parametrize("how", ["empty", "standby", "wiped"])
+def test_a_receive_that_fails_at_any_step_never_leaves_a_copy_that_acts(
+        computers, monkeypatch, tmp_path, how):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    snapshot = tmp_path / "start"
+    _start(b, monkeypatch, stream, how, snapshot)
+    stops, whole = _stops(b, monkeypatch, stream)
+    for stop in stops:
+        _back_to(b, snapshot)
+        acted = []
+
+        def before(n, path, stop=stop, acted=acted):
+            if _acting(b):
+                acted.append(n)
+            if n == stop:
+                raise RuntimeError("cut short")
+
+        with pytest.MonkeyPatch.context() as mp:
+            _at_each_change(mp, b.root, before)
+            try:
+                receive(b, monkeypatch, stream, store_kind="file")
+            except Exception:  # noqa: BLE001 - any failure: what matters is what is left
+                pass
+        assert not acted, f"failed at change {stop}: B acted before change {acted}"
+        assert not _acting(b), f"failed at change {stop}: B is left acting"
+        assert receive(b, monkeypatch, stream, store_kind="file") == migrate.VERIFIED, \
+            (stop, b.out.getvalue())
+        assert _whole(b) == whole, stop
+        assert handover.marker(b.store).role == "standby"
+
+
+@pytest.mark.parametrize("how", ["empty", "standby", "wiped"])
+def test_a_receive_killed_at_any_step_never_leaves_a_copy_that_acts_and_runs_again(
+        computers, monkeypatch, tmp_path, how):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    snapshot = tmp_path / "start"
+    _start(b, monkeypatch, stream, how, snapshot)
+    stops, whole = _stops(b, monkeypatch, stream)
+    for stop in stops:
+        _back_to(b, snapshot)
+        pid = os.fork()
+        if pid == 0:  # the receive, killed outright (no rollback runs) before change `stop`
+            try:
+                with pytest.MonkeyPatch.context() as mp:
+                    _at_each_change(mp, b.root, lambda n, path, stop=stop: n == stop and os.kill(
+                        os.getpid(), signal.SIGKILL))
+                    receive(b, monkeypatch, stream, store_kind="file")
+            finally:
+                os._exit(0)
+        _, status = os.waitpid(pid, 0)
+        assert os.WIFSIGNALED(status), stop
+        assert not _acting(b), f"killed at change {stop}: B is left acting"
+        left = _whole(b)
+        left.pop("config/retired.json", None)  # a wiped copy's: activate clears it too
+        code, out, err = b.run("migrate", "activate", "--yes")
+        if code == 0:  # only a copy the receive finished may be made active
+            assert left == whole, f"killed at change {stop}: a part copy was made active"
+            assert handover.marker(b.store) is None and handover.read(b.store, "retired") is None
+            continue
+        assert not _acting(b), stop
+        assert receive(b, monkeypatch, stream, store_kind="file") == migrate.VERIFIED, \
+            (stop, b.out.getvalue())
+        assert _whole(b) == whole, stop
+        assert handover.marker(b.store).role == "standby"
+
+
+def test_a_copy_a_receive_left_cut_short_refuses_to_act_and_can_be_wiped(computers,
+                                                                         monkeypatch):
+    a, b, world = computers
+    b.use(monkeypatch)
+    handover.write(b.store, handover.Marker("standby", handover.now(), "desktop", 1,
+                                            receiving=True))
+    (b.root / "data").mkdir(parents=True)
+    (b.root / "data" / "audit.log").write_text("half received\n")  # and no inventory yet
+    code, out, err = b.run("ls")
+    assert code != 0 and "a receive of the fleet from desktop" in err, out + err
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code != 0 and "cannot be made active" in err, out + err
+    code, out, err = b.run("migrate", "wipe", "--yes")
+    assert code == 0, out + err
+    assert not b.store.path.exists() and handover.marker(b.store) is None
+    assert not (b.root / "data" / "audit.log").exists()
+
+
+def _wiped(b: Computer) -> handover.Marker:
+    when = handover.now()
+    m = handover.Marker("retired", when, "desktop", 0, wiped=when)
+    handover.write(b.store, m)
+    return m
+
+
+def test_a_receive_cut_short_onto_a_wiped_copy_reads_incomplete_and_wipes(computers,
+                                                                         monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    wiped = _wiped(b)
+    monkeypatch.setattr(migrate, "_store_secret", lambda *a, **kw: (_ for _ in ()).throw(
+        KeyboardInterrupt()))  # stops it with the inventory and keys written
+    pid = os.fork()
+    if pid == 0:  # killed outright there: no rollback
+        try:
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(migrate, "_take_back", lambda undo: os.kill(os.getpid(),
+                                                                       signal.SIGKILL))
+                receive(b, monkeypatch, stream, store_kind="file")
+        finally:
+            os._exit(0)
+    os.waitpid(pid, 0)
+    assert b.store.path.exists() and handover.read(b.store, "retired") == wiped
+    code, out, err = b.run("ls")
+    assert code != 0 and "This FleetLedger is incomplete" in err, out + err
+    code, out, err = b.run("migrate", "wipe", "--yes")
+    assert code == 0, out + err
+    assert not b.store.path.exists() and not (b.home / ".ssh" / "shipshape_fleet_ed25519").exists()
+    assert handover.marker(b.store) == wiped  # the older fleet is still refused here
+
+
+def test_a_receive_onto_a_wiped_copy_stopped_at_its_very_end_can_be_activated(
+        computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    _wiped(b)
+    real = handover.clear
+
+    def stop(store, role):
+        if role == "retired":
+            raise KeyboardInterrupt  # just before the wiped copy's marker goes
+        real(store, role)
+
+    monkeypatch.setattr(handover, "clear", stop)
+    with pytest.raises(KeyboardInterrupt):
+        receive(b, monkeypatch, stream, store_kind="file")
+    monkeypatch.setattr(handover, "clear", real)
+    m = handover.marker(b.store)
+    assert m.role == "standby" and not m.receiving
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0, out + err
+    assert handover.marker(b.store) is None and not (b.root / "config" / "retired.json").exists()
+
+
+def test_a_rollback_never_runs_under_a_marker_that_says_the_copy_is_whole(computers,
+                                                                          monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    real_write = handover.write
+
+    def whole_then_stopped(store, m):  # Ctrl-C just after the marker says whole
+        real_write(store, m)
+        if not m.receiving:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(handover, "write", whole_then_stopped)
+    real_back = migrate._take_back
+    said = []
+
+    def watched(undo):
+        said.append(handover.read(b.store, "standby").receiving)
+        return real_back(undo)
+
+    monkeypatch.setattr(migrate, "_take_back", watched)
+    with pytest.raises(KeyboardInterrupt):
+        receive(b, monkeypatch, stream, store_kind="file")
+    assert said == [True]  # marked incomplete again before anything was taken back
+    assert not b.store.path.exists() and handover.marker(b.store) is None
+
+
+def test_a_fleet_made_here_while_receive_waited_for_its_lock_is_left_alone(computers,
+                                                                           monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    real = migrate.choose_store
+
+    def meanwhile(kind):  # another ship-fleet makes a fleet here, before receive's lock
+        b.store.path.parent.mkdir(parents=True)
+        b.store.path.write_text("# another fleet\n")
+        return real(kind)
+
+    monkeypatch.setattr(migrate, "choose_store", meanwhile)
+    with pytest.raises(FleetError, match="already has a FleetLedger"):
+        receive(b, monkeypatch, stream, store_kind="file")
+    assert handover.marker(b.store) is None
+    assert b.store.path.read_text() == "# another fleet\n"
+
+
+@pytest.mark.parametrize("then", ["receive", "wipe"])
+def test_a_receive_cut_short_on_a_seeded_appliance_keeps_its_setup_entries(
+        computers, monkeypatch, vaults, then):
+    from fleetledger import vault
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    own = paths.audit_log_path().read_bytes()  # the seed's and the vault init's entries
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    with pytest.MonkeyPatch.context() as mp:  # stopped storing secrets, killed in rollback
+        mp.setattr(migrate, "_store_secret", lambda *a, **kw: (_ for _ in ()).throw(
+            KeyboardInterrupt()))
+        mp.setattr(migrate, "_take_back", lambda undo: (_ for _ in ()).throw(
+            KeyboardInterrupt()))
+        with pytest.raises(KeyboardInterrupt):
+            receive(b, monkeypatch, stream)
+    assert handover.marker(b.store).receiving and b.store.path.exists()
+    if then == "receive":
+        assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+        assert paths.audit_log_path().read_bytes().endswith(own)  # the fleet's, then its own
+    else:
+        code, out, err = b.run("migrate", "wipe", "--yes")
+        assert code == 0, out + err
+        assert paths.audit_log_path().read_bytes() == own and vault.vault_path().exists()
+        assert not b.store.path.exists() and handover.marker(b.store) is None
+
+
+def test_activate_stopped_between_its_markers_is_still_on_standby_and_runs_again(
+        computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    _wiped(b)
+    real = handover.clear
+
+    def stop_at_retired(store, role):
+        if role == "retired":
+            raise KeyboardInterrupt  # receive stopped at its very end
+        real(store, role)
+
+    monkeypatch.setattr(handover, "clear", stop_at_retired)
+    with pytest.raises(KeyboardInterrupt):
+        receive(b, monkeypatch, stream, store_kind="file")
+
+    def stop_at_standby(store, role):
+        real(store, role)
+        if role == "retired":
+            raise KeyboardInterrupt  # activate stopped between its two markers
+
+    monkeypatch.setattr(handover, "clear", stop_at_standby)
+    with pytest.raises(KeyboardInterrupt):
+        handover.activate(b.store)
+    monkeypatch.setattr(handover, "clear", real)
+    assert handover.marker(b.store).role == "standby"
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0, out + err
+    assert handover.marker(b.store) is None
+
+
+def test_a_rollback_that_cannot_take_back_a_secret_keeps_the_inventory_naming_it(
+        computers, monkeypatch, vaults):
+    from fleetledger.overlay import secret_store
+
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    seeded_appliance(b, monkeypatch)
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    with pytest.MonkeyPatch.context() as mp:
+        real = handover.write
+
+        def fails_at_the_end(store, m):
+            if not m.receiving:
+                raise FleetError("the disk filled up")
+            real(store, m)
+
+        mp.setattr(handover, "write", fails_at_the_end)
+        mp.setattr(secret_store, "delete_from_keyring", lambda item: (_ for _ in ()).throw(
+            FleetError("the vault went away")))
+        with pytest.raises(FleetError, match="the disk filled up"):
+            receive(b, monkeypatch, stream)
+    assert handover.marker(b.store).receiving and b.store.path.exists()
+    assert vaults.backend().item_names("fleetledger")  # the secrets it could not take back
+    code, out, err = b.run("migrate", "wipe", "--yes")
+    assert code == 0, out + err
+    assert not vaults.backend().item_names("fleetledger")  # named by the inventory: gone
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+
+
+def test_a_receive_that_another_one_overtook_writes_nothing(computers, monkeypatch):
+    a, b, world = computers
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    real = inuse.exclusive
+    other = handover.Marker("standby", handover.now(), "laptop", 1)
+
+    def overtaken(store):  # another receive finished while this one waited for the lock
+        handover.write(store, other)
+        return real(store)
+
+    monkeypatch.setattr(inuse, "exclusive", overtaken)
+    with pytest.raises(FleetError, match="Another ship-fleet migrate changed this computer"):
+        receive(b, monkeypatch, stream)
+    assert handover.marker(b.store) == other and not b.store.path.exists()
+
+
 def test_the_keyring_asked_for_but_locked_is_refused_not_swapped(computers, monkeypatch):
     a, b, world = computers
     stream = send_bytes(a, monkeypatch)
