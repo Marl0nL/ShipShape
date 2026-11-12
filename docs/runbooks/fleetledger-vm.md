@@ -181,8 +181,10 @@ ship-fleet migrate check
 ship-fleet migrate push fleetledger@fleetledger
 ```
 
-Push checks the VM's pinned host key by itself. It streams everything into `migrate
-receive` on the VM, which:
+Push checks the VM's pinned host key by itself. The VM counts as having no
+FleetLedger yet: the seed's service install and your `vault init` (left unlocked, and
+empty) are all it holds. It streams everything into `migrate receive` on the VM,
+which:
 - stores every secret in the VM's vault (no file, no OS keyring);
 - reaches every Ship read-only, over the LAN or the tailnet;
 - hands over: the desktop retires, the VM activates.

@@ -518,6 +518,10 @@ class Backend:
     def item_names(self, service: str) -> list[str]:
         return sorted(self._items().get(service, {}))
 
+    def count(self) -> int:
+        """How many secrets it holds, under every service."""
+        return sum(len(v) for v in self._items().values())
+
     def set_password(self, service: str, item: str, secret: str) -> None:
         if not isinstance(secret, str) or len(secret.encode("utf-8")) > MAX_SECRET:
             raise FleetError("That secret is too large for the vault.")
