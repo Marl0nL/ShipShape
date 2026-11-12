@@ -216,7 +216,9 @@ secret, the inventory) to another computer, so:
 - `receive` checks the whole stream against the SHA-256 sums its manifest sends
   first, before it writes anything; it writes only into FleetLedger's folders and
   `~/.ssh`, never over a file already there, and takes back what it wrote if a
-  step fails;
+  step fails. It marks the copy standby before it writes anything else, so a
+  receive killed outright (a power cut) leaves a copy that refuses to act and
+  cannot be activated until a new receive replaces it;
 - a key of your own that FleetLedger made stays on your machines (only its `.pub`
   moves), so the new computer never attaches as you.
 

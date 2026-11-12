@@ -28,7 +28,9 @@ inventory pushes a revocation list that un-revokes machines. So `push` hands ove
 in steps:
 
 1. The new computer receives the fleet **on standby**: it has everything, but
-   refuses to act on the fleet.
+   refuses to act on the fleet. It marks itself standby before it writes anything
+   else, so a receive cut short at any point (a power cut included) never leaves a
+   copy that acts.
 2. It checks every key, secret and Ship (read-only).
 3. Only then does the old copy **retire**: it refuses to act on the fleet from
    then on, and keeps its files for a rollback.
@@ -52,7 +54,8 @@ On the **new** computer:
 2. Have no FleetLedger there yet. `receive` never writes over one: it refuses if
    `~/.config/fleetledger` or `~/.local/share/fleetledger` holds anything (an
    inventory, keys, history, the audit log of a FleetLedger that was used), except:
-   - a copy on standby from an earlier move (replaced: it never acted);
+   - a copy on standby from an earlier move or from a receive cut short (replaced:
+     it never acted);
    - the marker a wiped copy leaves, and this computer's vault, which the wipe
      keeps (see "Wipe the old copy");
    - what setting it up leaves before the move: the service unit
@@ -258,18 +261,23 @@ same vault.
 
 ## If something goes wrong
 
-- **A move cut short** (the network dropped, Ctrl-C): nothing was written on the
-  new computer; run it again. A receive that fails while writing takes back what
-  it wrote, keyring items included. One killed outright while writing (a power
-  cut) cannot: if the next run says "already has a FleetLedger", move
-  `~/.config/fleetledger` and `~/.local/share/fleetledger` aside there and run it
-  again. With the vault on there (the appliance), `ship-fleet vault init` again
-  before the run: moving the folders aside moves the vault too.
+- **A move cut short** (the network dropped, Ctrl-C, a power cut): run it again.
+  A receive that fails while writing takes back what it wrote, keyring items
+  included, and leaves nothing. One killed outright while writing (a power cut)
+  cannot, but it marked the copy standby before it wrote anything else: the new
+  computer then says **"This FleetLedger is incomplete"**, refuses every command
+  but `migrate`, `doctor`, `service`, `unlock` and `vault` (its web UI too), and
+  `migrate activate` refuses it. Running the move again replaces that copy (it
+  deletes what the cut short one wrote, as `migrate wipe` would, keeping the vault,
+  then writes the fleet). To drop it instead, run `ship-fleet migrate wipe` there.
+  On a computer that held a wiped copy, both keep the wiped copy's marker, so an
+  older fleet is still refused.
 - **Nothing else starts on the old computer during a push**, the web UI included,
   until the new computer has checked every Ship; a large fleet takes a while.
-- **"This FleetLedger was retired"** or **"is on standby"**: this copy does not act
-  on the fleet; the line says where it went or came from. Use the active copy, or
-  hand over as above. A web UI that was already running says the same on every
+- **"This FleetLedger was retired"**, **"is on standby"** or **"is incomplete"**:
+  this copy does not act on the fleet; the line says where it went or came from.
+  Use the active copy, or hand over as above (an incomplete copy: see "A move cut
+  short"). A web UI that was already running says the same on every
   page and action, and polls no Ship, from the moment its copy is marked so.
 - **"has a retired FleetLedger"** (when moving the fleet back): wipe that copy first
   (`ship-fleet migrate wipe --now`), then push again.
@@ -279,8 +287,8 @@ same vault.
   damaged, so this copy acts on nothing and no hand-over command acts on what it
   seems to say. Find out which copy is the active one, then fix or delete the file.
 - **A push that replaces a copy on standby** clears that copy first, so if the new
-  stream then breaks off, the new computer is left empty. Nothing is lost (this
-  copy is still the active one): push again.
+  stream then breaks off, the new computer is left empty (or, killed outright,
+  incomplete). Nothing is lost (this copy is still the active one): push again.
 - **"already has a FleetLedger"**: that computer has one. Move its files aside (or
   point `FLEETLEDGER_CONFIG_DIR` and `FLEETLEDGER_DATA_DIR` at empty folders). A
   service install and a vault init there before the move do not count (see "Before

@@ -45,6 +45,7 @@ its .pub moves (the new computer never attaches as you).
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import io
 import json
@@ -893,6 +894,8 @@ def existing_state(store) -> list[Path]:
                 continue
             if f == log and setup_only_log(f):
                 continue
+            if f.parent == store.path.parent and f.name.startswith(f".{handover.STANDBY}.tmp-"):
+                continue  # a receive cut short while writing its marker, before anything else
             if f not in found:
                 found.append(f)
     if store.exists() and store.path not in found:
@@ -1347,67 +1350,84 @@ def _store_secret(kind: str, where: str, value: str, store_kind: str,
 
 def _install(staged: dict[str, Path], where: dict[str, Path], same: set[str],
              text: str, to_store: list[tuple[str, str, str]], store_kind: str,
-             store, standby: handover.Marker, kept: dict[Path, bytes] | None = None
+             store, undo: list[Callable[[], None]], kept: dict[Path, bytes] | None = None
              ) -> list[Path]:
-    """Put everything in place: the standby marker before ships.toml (so the copy is
-    never active by accident), ships.toml last. Anything going wrong takes back what
-    this receive wrote, so the computer is left as it was. kept: files here whose bytes
-    go after the incoming file's (clashes' merged)."""
+    """Put everything in place, under the standby marker receive wrote first: ships.toml
+    before the rest, so a receive cut short here leaves an inventory that names what to
+    delete when it is replaced. Each step adds its own undo to undo (receive runs them).
+    kept: files here whose bytes go after the incoming file's (clashes' merged)."""
     kept = kept or {}
     merge: list[tuple[Path, Path]] = []
-    undo: list[Callable[[], None]] = []
     written: list[Path] = []
     placed: set[Path] = set()
     paths.private_dir(paths.config_dir())
     paths.private_dir(paths.data_dir())
-    try:
-        for member, path in staged.items():
-            if member == "config/ships.toml" or member in same:
-                continue
-            target = where[member]
-            if target in kept:
-                merge.append((target, path))  # last but one: fewer failures to take back
-                continue
-            if target.exists() or target.is_symlink():
-                if target in placed:
-                    continue  # the same file again (two key roles sharing one key)
-                raise FleetError(f"{paths.tilde(target)} appeared while receiving; nothing "
-                                 "was written.")  # clashes() saw nothing there
-            placed.add(target)
-            if member.startswith("keys/") and target.parent != paths.config_dir() / AGENT_KEYS_DIR:
-                target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)  # e.g. ~/.ssh
-            else:
-                paths.private_dir(target.parent)
-            if member.startswith("keys/"):
-                paths.write_private(target, path.read_bytes())
-                if member.endswith(".pub"):
-                    os.chmod(target, 0o644)
-            else:
-                shutil.move(str(path), str(target))
-                os.chmod(target, 0o600)
-            undo.append(lambda t=target: t.unlink(missing_ok=True))
-            written.append(target)
-        for kind, place, value in to_store:
-            _store_secret(kind, place, value, store_kind, undo)
-        for target, path in merge:  # this computer's own setup entries, after the fleet's
-            came = path.read_bytes()
-            undo.append(lambda t=target: paths.write_private(t, kept[t]))
-            paths.write_private(target, came + (b"" if came.endswith(b"\n") or not came
-                                                else b"\n") + kept[target])
-            written.append(target)
-        paths.private_dir(store.path.parent)
-        handover.write(store, standby)
-        undo.append(lambda: handover.clear(store, "standby"))
-        paths.write_private(store.path, text.encode("utf-8"))
-        handover.clear(store, "retired")  # a wiped copy's marker: this one is newer
-    except BaseException:
-        for step in reversed(undo):
-            try:
-                step()
-            except Exception:  # noqa: BLE001 - undo as much as possible
-                pass
-        raise
+    paths.private_dir(store.path.parent)
+    if store.path.exists() or store.path.is_symlink():
+        raise FleetError(f"{paths.tilde(store.path)} appeared while receiving; nothing was "
+                         "written.")
+    undo.append(lambda: store.path.unlink(missing_ok=True))
+    paths.write_private(store.path, text.encode("utf-8"))
+    for member, path in staged.items():
+        if member == "config/ships.toml" or member in same:
+            continue
+        target = where[member]
+        if target in kept:
+            merge.append((target, path))  # last: fewer failures to take back
+            continue
+        if target.exists() or target.is_symlink():
+            if target in placed:
+                continue  # the same file again (two key roles sharing one key)
+            raise FleetError(f"{paths.tilde(target)} appeared while receiving; nothing "
+                             "was written.")  # clashes() saw nothing there
+        placed.add(target)
+        if member.startswith("keys/") and target.parent != paths.config_dir() / AGENT_KEYS_DIR:
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)  # e.g. ~/.ssh
+        else:
+            paths.private_dir(target.parent)
+        if member.startswith("keys/"):
+            for stale in target.parent.glob(f".{target.name}.tmp-*"):
+                stale.unlink(missing_ok=True)  # a write of it killed before (a receive cut short)
+            paths.write_private(target, path.read_bytes())
+            if member.endswith(".pub"):
+                os.chmod(target, 0o644)
+        else:
+            shutil.move(str(path), str(target))
+            os.chmod(target, 0o600)
+        undo.append(lambda t=target: t.unlink(missing_ok=True))
+        written.append(target)
+    for kind, place, value in to_store:
+        _store_secret(kind, place, value, store_kind, undo)
+    for target, path in merge:  # this computer's own setup entries, after the fleet's
+        came = path.read_bytes()
+        undo.append(lambda t=target: paths.write_private(t, kept[t]))
+        paths.write_private(target, came + (b"" if came.endswith(b"\n") or not came
+                                            else b"\n") + kept[target])
+        written.append(target)
     return written
+
+
+def _take_back(undo: list[Callable[[], None]]) -> bool:
+    """Run a receive's undo steps, newest first; True when every one of them worked."""
+    clean = True
+    for step in reversed(undo):
+        try:
+            step()
+        except Exception:  # noqa: BLE001 - undo as much as possible
+            clean = False
+    return clean
+
+
+def _standby_files(store) -> list[handover.Gone]:
+    """What wiping the copy on standby here deletes (migrate wipe, or receive replacing
+    it). A receive cut short before its inventory was in place (or a wipe or rollback
+    cut short after it went) leaves no inventory to say what it wrote, only files in
+    FleetLedger's own folders (receive writes keys and secrets after the inventory, and
+    deletes them before it): those, as receive counts them (not the vault, nor an audit
+    log of setup alone)."""
+    if store.exists():
+        return handover.wipe_plan(store)[0]
+    return [handover.Gone("FleetLedger's own file", str(f)) for f in existing_state(store)]
 
 
 def receive(app, source: BinaryIO, *, store_kind: str | None = None,
@@ -1431,13 +1451,19 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
             hint="To bring the fleet back here with what changed since: ship-fleet migrate wipe "
             "here first. To roll back without those changes: ship-fleet migrate retire there, "
             "then ship-fleet migrate unretire here.")
-    replacing = here is not None and here.role == "standby"
+    replacing = here is not None and here.role == "standby"  # also one cut short
+    retired = handover.read(store, "retired")  # a wiped copy's (beside a standby one too)
     refuse_existing(store, here)
     kind = choose_store(store_kind)
     with inuse.exclusive(store):
+        if handover.marker(store) != here or handover.read(store, "retired") != retired:
+            raise FleetError("Another ship-fleet migrate changed this computer just now; "
+                             "nothing was written.", hint="Run the move again.")
         refuse_existing(store, here)  # again: nothing can change it from here on
         for old in paths.data_dir().glob(STAGING + "*"):
             shutil.rmtree(old, ignore_errors=True)  # a receive cut short before
+        for old in store.path.parent.glob(f".{handover.STANDBY}.tmp-*"):
+            old.unlink(missing_ok=True)  # its marker, cut short while being written
         try:
             tar = tarfile.open(fileobj=source, mode="r|")
             first = tar.next()
@@ -1452,43 +1478,65 @@ def receive(app, source: BinaryIO, *, store_kind: str | None = None,
         except (tarfile.TarError, OSError) as exc:
             raise FleetError(f"The stream broke off ({type(exc).__name__}); nothing was "
                              "written.", hint="Run the move again.") from None
-        if here is not None and here.role == "retired" and manifest["epoch"] < here.epoch:
+        if retired is not None and manifest["epoch"] < retired.epoch:
             raise FleetError(
-                f"This computer handed the fleet on at epoch {here.epoch}, and the fleet coming "
+                f"This computer handed the fleet on at epoch {retired.epoch}, and the fleet coming "
                 f"in is from epoch {manifest['epoch']}: an older state. Nothing was written.",
                 hint="Move the active FleetLedger's fleet here, not an older copy or backup.")
         _check_commit(app, manifest)
-        if replacing:
-            app.say(f"Replacing the copy on standby here (from {here.other or 'another computer'}"
-                    f", received {here.when[:10]}; it never acted on the fleet).")
-            handover.wipe(store, handover.wipe_plan(store)[0])
-            handover.clear(store, "standby")
-        where = placement(manifest, store)
-        log = paths.audit_log_path()
-        kept = {log: log.read_bytes()} if setup_only_log(log) else {}
-        refused, same = clashes(manifest, where, frozenset(kept))
-        if refused:
-            raise FleetError("Not writing over files already here: " + "; ".join(refused) + ".",
-                             hint="These belong to something else (another fleet?): move them "
-                             "aside, then try again. Nothing was written.")
         src = manifest["source"]
-        app.say(f"Receiving the fleet from {src.get('host', '?')} (commit "
-                f"{str(src.get('commit'))[:12]}): {manifest.get('summary', '')}.")
-        staging = paths.private_dir(paths.data_dir() / f"{STAGING}{os.getpid()}")
+        if replacing:  # a wipe that would refuse at once leaves the copy here as it is
+            old_files = _standby_files(store)
+            handover.wipe_can_start(old_files)
+        # Standby before anything else, durably, and marked receiving until every file is
+        # in place: wherever this stops (a power cut included), the copy never acts, and
+        # activate refuses it. Only a rollback that took back everything removes it.
+        standby = handover.Marker("standby", handover.now(), src.get("host"),
+                                  manifest["epoch"] + 1, receiving=True)
+        handover.write(store, standby)
+        undo: list[Callable[[], None]] = []
+        old_gone = not replacing
         try:
+            if replacing:
+                app.say(f"Replacing the copy on standby here (from "
+                        f"{here.other or 'another computer'}, received {here.when[:10]}; it "
+                        "never acted on the fleet).")
+                handover.wipe(store, old_files)
+                old_gone = True
+            where = placement(manifest, store)
+            log = paths.audit_log_path()
+            kept = {log: log.read_bytes()} if setup_only_log(log) else {}
+            refused, same = clashes(manifest, where, frozenset(kept))
+            if refused:
+                raise FleetError("Not writing over files already here: " + "; ".join(refused)
+                                 + ".", hint="These belong to something else (another fleet?): "
+                                 "move them aside, then try again. Nothing was written.")
+            app.say(f"Receiving the fleet from {src.get('host', '?')} (commit "
+                    f"{str(src.get('commit'))[:12]}): {manifest.get('summary', '')}.")
+            staging = paths.private_dir(paths.data_dir() / f"{STAGING}{os.getpid()}")
             try:
-                staged, secrets = _read_members(tar, manifest, staging)
-            except (tarfile.TarError, OSError) as exc:
-                raise FleetError(f"The stream broke off ({type(exc).__name__}); nothing was "
-                                 "written.", hint="Run the move again.") from None
-            text = staged["config/ships.toml"].read_text(encoding="utf-8")
-            new_text, to_store = rewrite(text, manifest, where, kind, secrets)
-            del secrets
-            standby = handover.Marker("standby", handover.now(), src.get("host"),
-                                      manifest["epoch"] + 1)
-            _install(staged, where, same, new_text, to_store, kind, store, standby, kept)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+                try:
+                    staged, secrets = _read_members(tar, manifest, staging)
+                except (tarfile.TarError, OSError) as exc:
+                    raise FleetError(f"The stream broke off ({type(exc).__name__}); nothing "
+                                     "was written.", hint="Run the move again.") from None
+                text = staged["config/ships.toml"].read_text(encoding="utf-8")
+                new_text, to_store = rewrite(text, manifest, where, kind, secrets)
+                del secrets
+                _install(staged, where, same, new_text, to_store, kind, store, undo, kept)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            os.sync()  # every file on disk before the marker says the copy is whole
+            handover.write(store, dataclasses.replace(standby, receiving=False))
+        except BaseException:
+            try:  # the marker may say whole already (stopped just after): not while undoing
+                handover.write(store, standby)
+            except Exception:  # noqa: BLE001 - then it says whole, and the files still are
+                pass
+            if _take_back(undo) and old_gone and not store.exists():
+                handover.clear(store, "standby")  # nothing of this receive is left
+            raise
+        handover.clear(store, "retired")  # a wiped copy's marker: this one is newer
     inv = store.load()
     _say_received(app, manifest, where, kind, inv)
     try:
@@ -1864,6 +1912,8 @@ def _activate(args, app) -> int:
             raise handover.banner(m)
         if m is None or m.role != "standby":
             raise FleetError("This FleetLedger is not on standby: there is nothing to activate.")
+        if m.receiving:
+            raise handover.banner(m)
         handover.confirm(app, f"Make this copy the active FleetLedger (epoch {m.epoch})? Only "
                          f"once the copy on {m.other or 'the old computer'} is retired "
                          "(ship-fleet migrate retire there): two active copies undo each "
@@ -1920,8 +1970,6 @@ def _unretire(args, app) -> int:
 
 
 def _wipe(args, app) -> int:
-    import dataclasses
-
     from fleetledger.commands import table
 
     store = app.store_factory()
@@ -1942,7 +1990,10 @@ def _wipe(args, app) -> int:
                              f"rollback ({left} more day(s)).",
                              hint=f"Check the fleet works from {m.other or 'its new computer'}, "
                              "then wipe it now with --now.")
-        gone, kept = handover.wipe_plan(store)
+        if m.role == "standby" and not store.exists():  # a receive cut short: no inventory
+            gone, kept = _standby_files(store), []
+        else:
+            gone, kept = handover.wipe_plan(store)
         app.say("Deletes:")
         app.say(table([[g.what, ("keyring item " if g.keyring else "") + (
             g.where if g.keyring else paths.tilde(g.where))] for g in gone], ["WHAT", "WHERE"]))

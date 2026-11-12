@@ -5,7 +5,10 @@ changes: an older checkout's `update` rolls Ships back, and a stale inventory's
 revocation list un-revokes machines. So `ship-fleet migrate` hands over in steps:
 
 - receive leaves the new copy on **standby**: it has the whole fleet, but refuses to
-  act until it is activated;
+  act until it is activated. Receive writes that marker before anything else, marked
+  "receiving" until every file is in place, so a receive cut short at any point (a
+  power cut included) leaves nothing, or a copy that refuses to act and that the next
+  receive replaces; activate refuses a copy still marked receiving;
 - at the cut-over (push, once the new copy has checked every Ship) the old copy
   **retires** itself first, then the new copy **activates** with the next epoch.
   Retiring first means a cut-over cut short leaves no copy active, never two.
@@ -30,6 +33,7 @@ copy, never moved with the fleet.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -56,6 +60,7 @@ class Marker:
     epoch: int  # standby: the epoch it activates with; retired: the epoch handed over to
     wiped: str | None = None  # retired: when its keys, secrets and state were deleted
     path: str = field(default="", compare=False)  # the file it was read from
+    receiving: bool = False  # standby: a receive is still writing it (or was cut short)
 
     @property
     def age(self) -> timedelta:
@@ -66,6 +71,8 @@ class Marker:
                "epoch": self.epoch}
         if self.wiped:
             out["wiped"] = self.wiped
+        if self.receiving:
+            out["receiving"] = True
         return out
 
 
@@ -91,34 +98,47 @@ def _path(store, name: str) -> Path:
 def marker(store) -> Marker | None:
     """This copy's marker (standby or retired), or None: an active copy, or none at all.
     A marker that cannot be read, or holds anything but what FleetLedger writes, is
-    "unreadable": never active, and nothing acts on what it seems to say."""
-    for name, role in ((RETIRED, "retired"), (STANDBY, "standby")):
-        path = _path(store, name)
-        if not (path.exists() or path.is_symlink()):
-            continue
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-            m = Marker(role, doc["when"], doc.get("other"), doc["epoch"], doc.get("wiped"),
-                       str(path))
-            ok = (doc.get("schema") == SCHEMA and doc.get("role") == role
-                  and isinstance(m.when, str) and _parse(m.when)
-                  and (m.other is None or isinstance(m.other, str))
-                  and isinstance(m.epoch, int) and not isinstance(m.epoch, bool)
-                  and 0 <= m.epoch < 1 << 31
-                  and (m.wiped is None or (role == "retired" and isinstance(m.wiped, str)
-                                           and _parse(m.wiped))))
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            ok = False
-        if not ok:
-            return Marker("unreadable", "", None, 0, None, str(path))
-        return m
-    return None
+    "unreadable": never active, and nothing acts on what it seems to say. A standby
+    marker beside a wiped copy's is the newer: a receive onto the wiped copy wrote it
+    (and clears the wiped one last), so that copy is on standby, or incomplete."""
+    retired, standby = read(store, "retired"), read(store, "standby")
+    if retired is not None and not (retired.wiped and standby is not None):
+        return retired
+    return standby
+
+
+def read(store, role: str) -> Marker | None:
+    """The one marker file of that role (standby or retired), as marker() reads it."""
+    path = _path(store, RETIRED if role == "retired" else STANDBY)
+    if not (path.exists() or path.is_symlink()):
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        m = Marker(role, doc["when"], doc.get("other"), doc["epoch"], doc.get("wiped"),
+                   str(path), doc.get("receiving", False))
+        ok = (doc.get("schema") == SCHEMA and doc.get("role") == role
+              and isinstance(m.when, str) and _parse(m.when)
+              and (m.other is None or isinstance(m.other, str))
+              and isinstance(m.epoch, int) and not isinstance(m.epoch, bool)
+              and 0 <= m.epoch < 1 << 31
+              and (m.wiped is None or (role == "retired" and isinstance(m.wiped, str)
+                                       and _parse(m.wiped)))
+              and isinstance(m.receiving, bool)
+              and (not m.receiving or role == "standby"))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        ok = False
+    if not ok:
+        return Marker("unreadable", "", None, 0, None, str(path))
+    return m
 
 
 def write(store, m: Marker) -> None:
+    """Write the marker durably (synced to disk with the folders that hold it): what is
+    written after it is never found on disk without it, even after a power cut."""
     paths.private_dir(store.path.parent)
     paths.write_private(_path(store, RETIRED if m.role == "retired" else STANDBY),
                         (json.dumps(m.doc(), indent=2) + "\n").encode("utf-8"))
+    os.sync()
 
 
 def clear(store, role: str) -> None:
@@ -133,6 +153,13 @@ def banner(m: Marker) -> FleetError:
             hint="Fix or delete that file once you know which copy is the active one (two "
             "active copies undo each other's changes); docs/runbooks/move-fleetledger.md.")
     day = m.when[:10]
+    if m.role == "standby" and m.receiving:
+        return FleetError(
+            f"This FleetLedger is incomplete: a receive of the fleet from "
+            f"{m.other or 'another computer'} (started {day}) did not finish, so this copy "
+            "does not act on the fleet and cannot be made active.",
+            hint="Run the move again (ship-fleet migrate push on the active copy, or receive "
+            "here): it replaces this copy. To drop it instead: ship-fleet migrate wipe.")
     if m.role == "standby":
         return FleetError(
             f"This FleetLedger is on standby: it has the fleet from "
@@ -196,9 +223,12 @@ def activate(store) -> int:
     m = marker(store)
     if m is None or m.role != "standby":
         raise FleetError("This FleetLedger is not on standby: there is nothing to activate.")
+    if m.receiving:
+        raise banner(m)
     with store.edit() as ed:
         ed.doc["fleet"]["epoch"] = m.epoch
     clear(store, "standby")
+    clear(store, "retired")  # a wiped copy's marker, left if its receive stopped at the end
     return m.epoch
 
 
@@ -370,6 +400,25 @@ def wipe_plan(store) -> tuple[list[Gone], list[tuple[str, str]]]:
     return gone, kept
 
 
+def wipe_can_start(gone: list[Gone]) -> set[str] | None:
+    """Raise what stops wipe(gone) before it deletes anything (a locked keyring or
+    vault); else the items the vault holds (None: no vault items to delete). Reads only."""
+    from fleetledger.overlay import secret_store
+
+    ring = [g for g in gone if g.keyring and not g.os_keyring]
+    if ring and vault.is_on():
+        try:  # what the vault holds, read once: locked or unreadable stops it here
+            return set(vault.backend().item_names(secret_store.SERVICE))
+        except FleetError as exc:
+            raise FleetError(f"{exc.message} Nothing was deleted.", hint=exc.hint) from None
+    if ring:
+        usable, why = secret_store.keyring_usable()
+        if not usable:
+            raise FleetError(f"Cannot reach the keyring ({why}); nothing was deleted.",
+                             hint="Unlock it (log in to your desktop session), then try again.")
+    return None
+
+
 def wipe(store, gone: list[Gone]) -> None:
     """Delete what wipe_plan listed: keyring items first (a locked keyring or vault
     stops it before any file goes), then the files, ships.toml last (so a wipe cut
@@ -377,19 +426,12 @@ def wipe(store, gone: list[Gone]) -> None:
     from fleetledger.overlay import secret_store
 
     ring = [g for g in gone if g.keyring and not g.os_keyring]
+    held = wipe_can_start(gone)
     if ring and vault.is_on():
-        try:  # what the vault holds, read once: locked or unreadable stops it here
-            held = set(vault.backend().item_names(secret_store.SERVICE))
-        except FleetError as exc:
-            raise FleetError(f"{exc.message} Nothing was deleted.", hint=exc.hint) from None
         for g in ring:
             if g.where in held:
                 secret_store.delete_from_keyring(g.where)
     elif ring:
-        usable, why = secret_store.keyring_usable()
-        if not usable:
-            raise FleetError(f"Cannot reach the keyring ({why}); nothing was deleted.",
-                             hint="Unlock it (log in to your desktop session), then try again.")
         for g in ring:
             if secret_store.existing_in_keyring(g.where) is not None:
                 secret_store.delete_from_keyring(g.where)
