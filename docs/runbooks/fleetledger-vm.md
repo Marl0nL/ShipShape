@@ -40,6 +40,11 @@ There are no passwords and root logins are off. The seed:
 - clones this ShipShape checkout at **this very commit** (migrate needs both
   computers on the same commit) and installs it;
 - installs the service unit, without starting it;
+- puts `ship-fleet` on the PATH a plain ssh command gets, so `ssh fleetledger@<vm>
+  ship-fleet ...` works as written (ssh runs a command with no login shell, and pipx's
+  `~/.local/bin` is only on a login shell's PATH): `/usr/local/bin/ship-fleet`,
+  root-owned, runs the `fleetledger` user's own install and refuses anyone else, so
+  `vmadmin` never runs code that `fleetledger` can change;
 - turns lingering on, so the service starts at boot;
 - lets a reboot wait for running jobs (up to 25 minutes, inside the 30 systemd gives a
   reboot before forcing it; [fleetledger-service.md](fleetledger-service.md));
@@ -301,6 +306,30 @@ next Ship tooling, so roll it out when you choose, with `ship-fleet update`
 
 System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is needed
 (then unlock).
+
+**A VM seeded before `/usr/local/bin/ship-fleet` came in** answers `ship-fleet: command
+not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Add the file as
+`vmadmin`, from this page (the seed writes the same bytes). Never install it from the
+VM's own checkout: that is `fleetledger`'s, so it could change the file between your
+reading it and root copying it.
+
+```sh
+sudo tee /usr/local/bin/ship-fleet >/dev/null <<'EOF'
+#!/bin/sh
+# /usr/local/bin/ship-fleet on FleetLedger's own VM (docs/runbooks/fleetledger-vm.md).
+#
+# pipx installs ship-fleet in ~/.local/bin, which only a login shell puts on PATH, so a
+# plain `ssh fleetledger@<vm> ship-fleet ...` would not find it. This root-owned file is
+# on the PATH ssh gives a command, and runs the fleetledger user's own install. Anyone
+# else is refused: vmadmin, who has sudo, never runs code the fleetledger user can change.
+if [ "$(/usr/bin/id -un)" != fleetledger ]; then
+  echo "ship-fleet: on this VM, FleetLedger is the fleetledger user's: ssh fleetledger@<this VM> ship-fleet ..." >&2
+  exit 126
+fi
+exec /home/fleetledger/.local/bin/ship-fleet "$@"
+EOF
+sudo chmod 0755 /usr/local/bin/ship-fleet
+```
 
 **Testing unmerged ShipShape changes:**
 - keep a separate dev fleet (its own inventory and test Ships) on your desktop; or

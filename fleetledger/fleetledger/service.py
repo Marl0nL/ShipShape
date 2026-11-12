@@ -98,8 +98,10 @@ def _last(text: str) -> str:
 
 
 def ship_fleet_path(given: str | None = None) -> str:
-    """The ship-fleet command the unit runs, as an absolute path."""
-    candidates = [given] if given else [shutil.which("ship-fleet"), _argv0()]
+    """The ship-fleet command the unit runs, as an absolute path: the one given, else the
+    one running (through FleetLedger VM's /usr/local/bin/ship-fleet, that is pipx's own
+    install, not the wrapper), else the one on PATH."""
+    candidates = [given] if given else [_argv0(), shutil.which("ship-fleet")]
     for found in candidates:
         if found:
             path = Path(found).expanduser()
@@ -116,7 +118,9 @@ def ship_fleet_path(given: str | None = None) -> str:
 
 def _argv0() -> str | None:
     name = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else ""
-    return str(Path(sys.argv[0]).resolve()) if name == "ship-fleet" else None
+    # Not resolved: pipx's ~/.local/bin/ship-fleet is a link into its venv, and the unit
+    # names (and puts on its PATH) the folder you run it from, not the venv's.
+    return os.path.abspath(sys.argv[0]) if name == "ship-fleet" else None
 
 
 def carried_environment(env: dict[str, str] | None = None) -> list[tuple[str, str]]:

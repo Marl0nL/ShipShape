@@ -38,4 +38,4 @@ py-modules = ["shipfleet_launch"]
 include = ["fleetledger*"]
 
 [tool.setuptools.package-data]
-fleetledger = ["web/templates/*.html", "web/static/*"]
+fleetledger = ["web/templates/*.html", "web/static/*", "seed/*.sh"]

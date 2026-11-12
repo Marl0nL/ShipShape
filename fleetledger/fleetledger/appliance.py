@@ -6,7 +6,9 @@
   `vmadmin` for the system itself (Tailscale, updates; sudo), both for your keys only
   (no passwords, root off), this ShipShape checkout cloned at this very commit and
   installed, the service unit installed but not started (`ship-fleet migrate`
-  needs it stopped), lingering on, a reboot that lets running jobs finish, and no
+  needs it stopped), a root-owned /usr/local/bin/ship-fleet that runs the fleetledger
+  user's pipx install (so a plain `ssh fleetledger@<vm> ship-fleet ...` finds it; it
+  refuses anyone else), lingering on, a reboot that lets running jobs finish, and no
   swap. It pins the VM's own host key, made here, so the first ssh to it is
   checked (ship-fleet migrate push uses the pin by itself), and records the VM as
   `[fleet] self`. Then it prints the Proxmox `qm` steps: the VM goes in **no pool**,
@@ -48,6 +50,10 @@ URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._/~-]+$")
 SIZE = {"cores": 2, "memory_mb": 4096, "disk_gb": 40}
 # Not "admin": that name is taken on Ubuntu (cloud-init cannot create it).
 ADMIN = "vmadmin"
+# /usr/local/bin/ship-fleet on the VM: ssh runs a command without a login shell, so
+# without it pipx's ~/.local/bin is not on PATH.
+WRAPPER_FILE = Path(__file__).parent / "seed" / "appliance-ship-fleet.sh"
+WRAPPER = WRAPPER_FILE.read_text()
 SSHD = ("# FleetLedger's VM: keys only, its two users only.\nPasswordAuthentication no\n"
         "KbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers fleetledger vmadmin\n")
 
@@ -190,6 +196,8 @@ def user_data(name: str, host_key: Any, login_keys: list[str], repo_url: str, co
              "owner": "root:root", "permissions": "0644", "content": REBOOT_DROP_IN},
             {"path": "/etc/ssh/sshd_config.d/10-fleetledger.conf", "owner": "root:root",
              "permissions": "0644", "content": SSHD},
+            {"path": "/usr/local/bin/ship-fleet", "owner": "root:root",
+             "permissions": "0755", "content": WRAPPER},
         ],
         "runcmd": [
             ["bash", "-c", "swapoff -a; systemctl daemon-reload; systemctl reload ssh || true"],

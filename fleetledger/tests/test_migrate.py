@@ -1105,10 +1105,12 @@ def test_push_streams_everything_into_receive_over_ssh(computers, monkeypatch):
     opts = [argv[i + 1] for i, x in enumerate(argv) if x == "-o"]
     assert opts.index("StrictHostKeyChecking=yes") < opts.index("StrictHostKeyChecking=no")
     assert "ForwardAgent=no" in opts and "Port=2222" in opts
-    assert argv[-1] == "sh -lc 'exec ship-fleet migrate receive --pushed --store file'"
+    assert argv[-1] == ("sh -lc 'PATH=\"$PATH:$HOME/.local/bin\"; exec ship-fleet migrate "
+                        "receive --pushed --store file'")
     assert "vm.example: This computer has the fleet" in out
     # Checked there, so the hand-over: this copy retires first, then vm.example activates.
-    assert procs[1].argv[-1] == "sh -lc 'exec ship-fleet migrate activate --yes'"
+    assert procs[1].argv[-1] == \
+        "sh -lc 'PATH=\"$PATH:$HOME/.local/bin\"; exec ship-fleet migrate activate --yes'"
     assert "-o" in procs[1].argv and "Port=2222" in procs[1].argv
     assert "now the active FleetLedger (epoch 1)" in out
     assert json.loads((a.root / "config" / "retired.json").read_text())["other"] == \
@@ -1156,6 +1158,57 @@ def test_the_remote_command_quotes_a_path_under_home():
         "sh -lc 'exec \"$HOME\"/.local/bin/ship-fleet migrate receive'"
     assert migrate.remote_command("/opt/x y/ship-fleet", ["migrate", "activate"]) == \
         "sh -lc 'exec '\"'\"'/opt/x y/ship-fleet'\"'\"' migrate activate'"
+
+
+def _fake_ship_fleet(folder: Path, name: str) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "ship-fleet").write_text(
+        f'#!/bin/sh\nprintf "%s\\n" {name} "$@" > "$HOME/ran"\n')
+    (folder / "ship-fleet").chmod(0o755)
+
+
+def _as_sshd_runs_it(remote: str, home: Path, path: str) -> subprocess.CompletedProcess:
+    """The remote command as sshd runs it: the user's shell -c, with the PATH ssh gives a
+    command (no ~/.local/bin). Its sh is a login shell whose profiles add nothing to PATH
+    (this computer's own /etc/profile may add ~/.local/bin, a stock Ubuntu's does not)."""
+    shim = home.parent / "login-sh"
+    shim.mkdir(exist_ok=True)
+    (shim / "sh").write_text('#!/bin/sh\n[ "$1" = -lc ] && shift\nexec /bin/sh -c "$@"\n')
+    (shim / "sh").chmod(0o755)
+    return subprocess.run(["/bin/sh", "-c", remote],
+                          env={"HOME": str(home), "PATH": f"{shim}:{path}"},
+                          capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize("argv", [["migrate", "receive", "--pushed"],
+                                  ["migrate", "activate", "--yes"]])
+def test_the_default_remote_command_finds_pipxs_ship_fleet_off_the_path(tmp_path, argv):
+    # pipx installs ship-fleet in ~/.local/bin, which only a login profile puts on PATH
+    # (Ubuntu's ~/.profile, and only if the folder existed at login): a plain ssh command
+    # has no such PATH, and this home has no profile at all.
+    home = tmp_path / "home"
+    _fake_ship_fleet(home / ".local" / "bin", "pipx")
+    proc = _as_sshd_runs_it(migrate.remote_command("ship-fleet", argv), home, "/usr/bin:/bin")
+    assert proc.returncode == 0, proc.stderr
+    assert (home / "ran").read_text().split() == ["pipx", *argv]
+
+
+def test_a_ship_fleet_on_the_path_wins_over_pipxs(tmp_path):
+    home = tmp_path / "home"
+    _fake_ship_fleet(home / ".local" / "bin", "pipx")
+    _fake_ship_fleet(tmp_path / "bin", "on-path")
+    proc = _as_sshd_runs_it(migrate.remote_command("ship-fleet", ["migrate", "receive"]), home,
+                            f"{tmp_path / 'bin'}:/usr/bin:/bin")
+    assert proc.returncode == 0, proc.stderr
+    assert (home / "ran").read_text().split() == ["on-path", "migrate", "receive"]
+
+
+def test_no_ship_fleet_anywhere_is_127_which_push_explains(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    proc = _as_sshd_runs_it(migrate.remote_command("ship-fleet", ["migrate", "receive"]), home,
+                            "/usr/bin:/bin")
+    assert proc.returncode == 127
 
 
 # --- FleetLedger's vault (vault.py) on either computer ---------------------------------------
