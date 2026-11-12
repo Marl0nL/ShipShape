@@ -183,7 +183,11 @@ In order:
 
 A copy handed over by `ship-fleet migrate` (on standby, or retired) refuses almost
 everything, but `unlock` and `vault` still work there: after a reboot, a copy waiting
-to be activated, unretired or wiped must be able to open its vault first.
+to be activated, unretired or wiped must be able to open its vault first. Wiping a
+copy (`ship-fleet migrate wipe`, or a receive replacing a copy on standby) takes the
+fleet's secrets out of the vault and never deletes the vault itself: it stays this
+computer's, with the same passphrase and recovery code, and the next fleet received
+here goes into it.
 
 ## Turning it on, on the desktop or a VM
 

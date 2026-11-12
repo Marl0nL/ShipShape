@@ -1393,12 +1393,76 @@ def test_onto_a_computer_whose_vault_is_on_every_secret_goes_in_it(computers, mo
         migrate.choose_store("file")
 
 
-@pytest.mark.parametrize("own_key", [True, False])
-def test_a_copy_with_its_vault_on_moves_and_its_wipe_empties_the_vault(computers, monkeypatch,
-                                                                     vaults, own_key):
+def test_a_second_receive_onto_the_vault_keeps_it_and_stores_into_it(computers, monkeypatch,
+                                                                     vaults):
+    """The appliance's way, twice: its vault, a fleet on standby, then the fleet again
+    (a push run once more). Replacing the copy on standby wipes it, and that wipe takes
+    only the old copy's secrets out of the vault: never the vault itself, so the second
+    fleet's secrets go in it too (not an OS keyring, which a headless VM has not got)."""
+    a, b, world = computers
+    token_item, oauth_item = _with_hypervisor_secrets(a, monkeypatch)
+    first = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    vaults.create("correct horse battery staple")
+    slots = json.loads(vaults.vault_path().read_text())["slots"]
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    assert receive(b, monkeypatch, first) == migrate.VERIFIED, b.out.getvalue()
+    assert handover.marker(b.store).role == "standby"
+    admin_item = keys.item(b.home / ".ssh" / "shipshape_fleet_ed25519")
+    assert {token_item, oauth_item, admin_item} <= set(vaults.backend().item_names("fleetledger"))
+    # The fleet's keys here are only its role keys: your own key stayed on the desktop.
+    managed = keys.managed(b.store.load())[1]
+    assert managed and all(k.name != "shipshape_ed25519" for k in managed)
+    vaults.backend().set_password("another-app", "token", "not the fleet's")  # not ours
+
+    a.use(monkeypatch)
+    a.ring.set_password("fleetledger", token_item, "99999999-8888-7777-6666-555555555555")
+    second = send_bytes(a, monkeypatch)
+    code = receive(b, monkeypatch, second)
+    out = b.out.getvalue() + b.err.getvalue()
+    assert code == migrate.VERIFIED, out
+    assert "Replacing the copy on standby here" in out
+    # Still this computer's vault: the same file, the same slots, the same passphrase.
+    assert vaults.vault_path().is_file(), "the wipe deleted this computer's vault"
+    assert json.loads(vaults.vault_path().read_text())["slots"] == slots
+    assert vaults.state() == "unlocked"
+    assert b.ring.sets == []  # not one item in an OS keyring
+    assert vaults.backend().get_password("fleetledger", token_item) == \
+        "99999999-8888-7777-6666-555555555555"
+    assert {oauth_item, admin_item} <= set(vaults.backend().item_names("fleetledger"))
+    assert vaults.backend().get_password("another-app", "token") == "not the fleet's"
+    assert handover.marker(b.store).role == "standby"
+    vaults.lock()
+    vaults.unlock("correct horse battery staple")
+    assert b.run("migrate", "activate", "--yes")[0] == 0
+    monkeypatch.setattr(keys, "_ADDED", {})
+    code, out, err = b.run("ls")
+    assert code == 0 and "ship-01" in out, err
+
+
+def test_a_second_receive_onto_a_locked_vault_changes_nothing(computers, monkeypatch,
+                                                              vaults):
+    a, b, world = computers
+    _with_hypervisor_secrets(a, monkeypatch)
+    stream = send_bytes(a, monkeypatch)
+    b.use(monkeypatch)
+    vaults.create("correct horse battery staple")
+    b.app.proxmox_api, b.app.overlay_api = _PVE, _Tailnet
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    vaults.lock()
+    before = b.files()
+    with pytest.raises(FleetError, match="vault is locked"):
+        receive(b, monkeypatch, stream)
+    assert b.files() == before and b.ring.sets == []
+    assert handover.marker(b.store).role == "standby"
+
+
+def _retired_with_vault(a: Computer, b: Computer, monkeypatch, vaults,
+                        own_key: bool = False) -> list[str]:
+    """Copy A with its vault on (and something of another app's in it), moved to B and
+    retired; returns the fleet's secrets as they were in A's vault."""
     from fleetledger import vaultcmd
 
-    a, b, world = computers
     _with_hypervisor_secrets(a, monkeypatch)
     own = a.home / ".ssh" / "shipshape_ed25519"
     if not own_key:  # your own key is yours to look after: the vault holds only the fleet's
@@ -1408,6 +1472,9 @@ def test_a_copy_with_its_vault_on_moves_and_its_wipe_empties_the_vault(computers
     vaults.create("correct horse battery staple")
     moved = vaultcmd.move_in(a.app, a.store)
     assert len(moved) == (6 if own_key else 5) and not a.ring.items
+    secrets_ = [v for k, v in vaults.backend()._items()["fleetledger"].items()
+                if k != keys.item(own)]
+    vaults.backend().set_password("another-app", "token", "not the fleet's")
     code, out, err = a.run("migrate", "check")
     assert code == 0 and "this computer's vault: the secrets in it move as secrets" in out, \
         out + err
@@ -1417,17 +1484,199 @@ def test_a_copy_with_its_vault_on_moves_and_its_wipe_empties_the_vault(computers
     assert b.ring.items  # B has no vault: its OS keyring, as before
     a.use(monkeypatch)
     assert a.run("migrate", "retire", "--to", "vm", "--yes")[0] == 0
+    return secrets_
+
+
+@pytest.mark.parametrize("own_key", [True, False])
+def test_a_copy_with_its_vault_on_moves_and_its_wipe_empties_the_vault(computers, monkeypatch,
+                                                                     vaults, own_key):
+    """The wipe takes every secret of the fleet's out of the vault, and leaves the vault
+    itself (this computer's keyring) with whatever else is in it."""
+    a, b, world = computers
+    secrets_ = _retired_with_vault(a, b, monkeypatch, vaults, own_key)
+    own = a.home / ".ssh" / "shipshape_ed25519"
+    slots = json.loads(vaults.vault_path().read_text())["slots"]
     code, out, err = a.run("migrate", "wipe", "--now", "--yes")
     assert code == 0, out + err
+    assert "the vault (every secret in it)" not in out
+    assert vaults.state() == "unlocked"
+    assert json.loads(vaults.vault_path().read_text())["slots"] == slots
+    items = vaults.backend()._items()
+    assert secrets_ and not any(s in json.dumps(items) for s in secrets_)
+    assert items["another-app"] == {"token": "not the fleet's"}
     if own_key:  # it still opens your own key, which wipe keeps: only the fleet's items go
         assert "it still holds your own key's passphrase" in out
+        assert "vault off here would delete that passphrase with it" in out
         assert vaults.backend().item_names("fleetledger") == [keys.item(own)]
         assert keys.public_of(own, keys.read_passphrase(own, "keyring")) == \
             keys.public_line(own)
-        return
-    assert "the vault (every secret in it)" in out
-    assert not vaults.vault_path().exists() and not vaults.key_path().exists()
-    assert vaults.state() == "off"
+    else:
+        assert "this computer's keyring: the fleet's secrets are deleted from it" in out
+        assert vaults.backend().item_names("fleetledger") == []
+    # Nothing else of the copy's is left: only its marker and the vault.
+    left = sorted(str(f.relative_to(a.root)) for f in (a.root / "config").rglob("*")
+                  if f.is_file()) + [str(f) for f in (a.root / "data").rglob("*")]
+    assert left == ["config/retired.json", "config/vault.json"]
+    assert handover.marker(a.store).wiped
+
+
+def test_a_wipe_with_the_vault_locked_deletes_nothing(computers, monkeypatch, vaults):
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults)
+    vaults.lock()
+    before = a.files()
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 1 and "vault is locked" in err and "ship-fleet unlock" in err, out + err
+    # The wipe itself refuses too (receive's replacing a copy on standby calls it).
+    with pytest.raises(FleetError, match="vault is locked. Nothing was deleted") as caught:
+        handover.wipe(a.store, handover.wipe_plan(a.store)[0])
+    assert "ship-fleet unlock" in caught.value.hint
+    assert a.files() == before
+    assert not handover.marker(a.store).wiped
+
+
+def test_a_wipe_cut_short_in_the_vault_runs_again_and_finishes(computers, monkeypatch,
+                                                               vaults):
+    a, b, world = computers
+    secrets_ = _retired_with_vault(a, b, monkeypatch, vaults)
+    real, calls = secret_store.delete_from_keyring, []
+
+    def flaky(item):
+        calls.append(item)
+        if len(calls) == 2:
+            raise FleetError("the keyring went away")
+        real(item)
+
+    monkeypatch.setattr(secret_store, "delete_from_keyring", flaky)
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 1 and "the keyring went away" in err
+    assert a.store.path.exists() and not handover.marker(a.store).wiped  # no file went yet
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    assert vaults.backend().item_names("fleetledger") == []
+    assert vaults.backend().get_password("another-app", "token") == "not the fleet's"
+    disk = b"".join(f.read_bytes() for f in a.root.rglob("*") if f.is_file())
+    assert not any(s.encode() in disk for s in secrets_)
+    assert handover.marker(a.store).wiped
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")  # once more: refused
+    assert code == 1 and "wiped already" in err
+    assert vaults.vault_path().is_file()
+
+
+def test_a_wipe_stopped_on_a_file_keeps_ships_toml_and_finishes_next_time(
+        computers, monkeypatch, vaults):
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults)
+    real = Path.unlink
+    stuck = a.root / "data" / "audit.log"
+
+    def unlink(self, missing_ok=False):
+        if self == stuck:
+            raise PermissionError(13, "Permission denied")
+        return real(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 1 and "Could not delete" in err and "run ship-fleet migrate wipe again" in \
+        err, out + err
+    assert a.store.path.exists() and not handover.marker(a.store).wiped  # ships.toml goes last
+    monkeypatch.setattr(Path, "unlink", real)
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    assert not stuck.exists() and not a.store.path.exists() and handover.marker(a.store).wiped
+    assert vaults.backend().item_names("fleetledger") == []
+
+
+def test_a_vault_it_cannot_read_stops_the_wipe_saying_why(computers, monkeypatch, vaults):
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults)
+    vaults.vault_path().write_text("{}\n")
+    before = a.files()
+    with pytest.raises(FleetError, match="is not a vault FleetLedger wrote.*Nothing was deleted"):
+        handover.wipe(a.store, handover.wipe_plan(a.store)[0])
+    assert a.files() == before
+
+
+def test_a_wipe_takes_an_old_copy_in_the_os_keyring_only_when_it_is_the_same(
+        computers, monkeypatch, vaults):
+    """The vault is on, but the OS keyring still holds a copy of a fleet secret (a vault
+    init cut short): it goes as well. One under the same name holding something else
+    (another FleetLedger's, say) stays, and so does your own key's passphrase."""
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults, own_key=True)
+    own = a.home / ".ssh" / "shipshape_ed25519"
+    token_item = secret_store.proxmox_item("fleet@pve!ledger")
+    oauth_item = secret_store.oauth_item("k123EXAMPLE")
+    a.ring.set_password("fleetledger", token_item, "11111111-2222-3333-4444-555555555555")
+    a.ring.set_password("fleetledger", oauth_item, "another fleetledger's")
+    a.ring.set_password("fleetledger", keys.item(own), "your own")
+    a.ring.set_password("another-app", "token", "not the fleet's")
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    assert "the Proxmox token (an old copy in your OS keyring)" in out
+    assert f"OS keyring item {oauth_item}" in out and "left as it is" in out
+    assert a.ring.items == {("fleetledger", oauth_item): "another fleetledger's",
+                            ("fleetledger", keys.item(own)): "your own",
+                            ("another-app", "token"): "not the fleet's"}
+    assert vaults.backend().item_names("fleetledger") == [keys.item(own)]
+
+
+def test_an_os_keyring_it_cannot_check_is_said_not_skipped(computers, monkeypatch, vaults):
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults)
+    locked = fake_backend(locked=True)
+    monkeypatch.setattr(secret_store, "os_backend", lambda: (locked, "locked"))
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    assert "could not be checked for an old copy of the Proxmox token" in out
+    assert vaults.backend().item_names("fleetledger") == []
+
+
+def test_a_wipe_never_takes_your_own_keys_passphrase_by_another_name(computers, monkeypatch,
+                                                                    vaults):
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults, own_key=True)
+    own = a.home / ".ssh" / "shipshape_ed25519"
+    with a.store.edit() as ed:  # a ships.toml edited by hand
+        ed.doc["drivers"]["proxmox"]["keyring_item"] = keys.item(own)
+    gone, kept = handover.wipe_plan(a.store)
+    assert keys.item(own) not in {g.where for g in gone if g.keyring}
+    # Nor its passphrase file, named as another secret's file.
+    from fleetledger import secretplaces
+
+    passfile = keys.passphrase_file(own)
+    paths.private_dir(passfile.parent)
+    paths.write_private(passfile, b"your own\n")
+    with a.store.edit() as ed:
+        secretplaces.OAUTH.set(ed.doc["overlay"]["api"], "file", file=passfile)
+    gone, kept = handover.wipe_plan(a.store)
+    assert passfile.resolve() not in {Path(g.where).resolve() for g in gone if not g.keyring}
+
+
+@pytest.mark.parametrize("same", [True, False])
+def test_a_wipe_takes_a_copy_left_in_the_vault_when_it_is_the_same(computers, monkeypatch,
+                                                                   vaults, same):
+    """ships.toml reads the Proxmox token from a file, but the vault holds a copy too (a
+    vault init cut short): both go, as the copy's own. A vault item of that name holding
+    something else is not shown to be the copy's: it stays."""
+    from fleetledger import secretplaces
+
+    a, b, world = computers
+    _retired_with_vault(a, b, monkeypatch, vaults)
+    item = secret_store.proxmox_item("fleet@pve!ledger")
+    token = a.root / "config" / "proxmox-token"
+    value = "11111111-2222-3333-4444-555555555555" if same else \
+        "22222222-3333-4444-5555-666666666666"
+    paths.write_private(token, (value + "\n").encode())
+    with a.store.edit() as ed:
+        secretplaces.PROXMOX.set(ed.doc["drivers"]["proxmox"], "file", file=token)
+    assert vaults.backend().get_password("fleetledger", item)
+    code, out, err = a.run("migrate", "wipe", "--now", "--yes")
+    assert code == 0, out + err
+    assert "the Proxmox token" in out and not token.exists()
+    assert vaults.backend().item_names("fleetledger") == ([] if same else [item])
+    assert same or "not what ships.toml reads" in out
+    assert vaults.backend().get_password("another-app", "token") == "not the fleet's"
 
 
 # --- backups (backup.py) and restoring one (migrate import) ---------------------------------
