@@ -406,7 +406,7 @@ INSTALL_TIMEOUT = 120  # seconds for this computer's install.sh
 
 def core_ships(ships) -> set[str]:
     """The Ships that run herdr-core, by their last fetched status (none fetched:
-    herdr). install.sh gives these to hc and takes them out of herdr."""
+    core, as a new Ship runs). install.sh gives these to hc and takes them out of herdr."""
     return {s.name for s in ships if attach.cached_runtime(s.name) == attach.CORE}
 
 

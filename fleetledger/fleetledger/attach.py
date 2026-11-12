@@ -1,8 +1,10 @@
 """How you attach to a Ship's agents from a trusted machine, by what runs them.
 
-A Ship runs its agents in herdr's server (the default) or in herdr-core (ship.toml
-`runtime = "core"`); its status document says which (`herdr.runtime`, absent from
-older tooling: herdr). herdr Ships attach with the herdr TUI, `herdr --remote <ship>`.
+A Ship runs its agents in herdr's server or in herdr-core (ship.toml
+`runtime = "core"`, which every new Ship's seed writes); its status document says
+which (`herdr.runtime`, absent from older tooling: herdr). A Ship with no status yet
+is taken to run herdr-core: a Ship that has never answered is almost always a new one.
+herdr Ships attach with the herdr TUI, `herdr --remote <ship>`.
 The herdr TUI cannot attach to herdr-core: core Ships attach with `hc attach
 <ship>/<agent>` (or the bare `hc` picker), or in the herdr desktop app.
 """
@@ -20,15 +22,18 @@ APP_HINT = ("or in the herdr desktop app: add the Ship under Settings > Machines
 
 
 def runtime_of(doc: Mapping[str, Any] | None) -> str:
-    """herdr or core, from a status document (None, or older tooling: herdr). Anything
-    else a newer Ship might report attaches as herdr does."""
+    """herdr or core, from a status document. None (no status yet): core, as every new
+    Ship runs. A document from older tooling (no herdr.runtime): herdr. Anything else
+    a newer Ship might report attaches as herdr does."""
     from fleetledger import status
 
+    if doc is None:
+        return CORE
     return CORE if status.runtime_of(doc) == CORE else HERDR
 
 
 def cached_runtime(name: str) -> str:
-    """A Ship's runtime from its last fetched status (none fetched yet: herdr)."""
+    """A Ship's runtime from its last fetched status (none fetched yet: core)."""
     from fleetledger import status
 
     return runtime_of(status.read_cache(name))

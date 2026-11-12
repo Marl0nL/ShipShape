@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from fl_harness import keygen
 from fleetledger.inventory import Ship
 from fleetledger.web import dashboard
 from fleetledger.web.fleet import attention_items
@@ -45,7 +46,7 @@ def core_doc(doc=None):
 
 
 def test_the_attach_command_follows_the_runtime():
-    assert attach.runtime_of(None) == "herdr"
+    assert attach.runtime_of(None) == "core"  # no status yet: a new Ship, which runs core
     assert attach.runtime_of(RUNNING) == "herdr"  # older tooling: no runtime field
     assert attach.runtime_of(core_doc()) == "core"
     assert attach.command("ship-01", "herdr") == "herdr --remote ship-01"
@@ -60,14 +61,42 @@ def test_the_attach_command_follows_the_runtime():
 
 
 def test_the_runtime_comes_from_the_last_fetched_status(home):
-    assert attach.cached_runtime("ship-01") == "herdr"  # never fetched
+    assert attach.cached_runtime("ship-01") == "core"  # never fetched: a new Ship
     status.write_cache("ship-01", core_doc())
     status.write_cache("ship-02", RUNNING)
     assert attach.cached_runtime("ship-01") == "core"
-    assert attach.cached_runtime("ship-02") == "herdr"
+    assert attach.cached_runtime("ship-02") == "herdr"  # classic herdr stays herdr
     ships = [Ship(name=n, id="x", driver="manual", names=(f"{n}.local",), host_key="k")
              for n in ("ship-01", "ship-02", "ship-03")]
-    assert trustcmd.core_ships(ships) == {"ship-01"}
+    assert trustcmd.core_ships(ships) == {"ship-01", "ship-03"}  # ship-03: no status yet
+
+
+def test_a_new_ships_bundle_gives_it_to_hc_not_the_herdr_tui(caenv, tmp_path, laptop):  # noqa: F811
+    """A bundle made right after `ship-fleet new`, before the Ship's first status: the
+    Ship runs herdr-core, so herdr gets no saved machine for it (one would start a
+    stray herdr server there) and hc gets it. Once its status says classic herdr, the
+    bundle is as before core existed."""
+    keygen(tmp_path / "laptop", "laptop")
+    out = tmp_path / "bundle"
+    trust = ("trust", "laptop", "--key", str(tmp_path / "laptop.pub"), "--scope", "tag:work",
+             "--out", str(out))
+    assert status.read_cache("ship-01") is None  # never fetched
+    code, _, err = caenv.run(*trust)
+    assert code == 0, err
+    script = (out / "install.sh").read_text()
+    assert "core='ship-01'" in script and "for ship in ; do" in script  # herdr's: none
+    assert script.endswith("(then hc attach ship-01/<agent>, or hc)\"\n")
+    proc = laptop.run(out)
+    assert not [c for c in laptop.log("herdr") if c.startswith("machine add")]
+    assert "Removed ship-01 from herdr's saved machines" in proc.stdout
+    assert (laptop.state / "hc").read_text().split() == ["ship-01"]
+
+    status.write_cache("ship-01", RUNNING)  # older tooling's status: classic herdr
+    code, _, err = caenv.run("trust", "laptop", "--out", str(out))
+    assert code == 0, err
+    script = (out / "install.sh").read_text()
+    assert "core=" not in script and "for ship in ship-01; do" in script
+    assert script.endswith("(then herdr --remote ship-01)\"\n")
 
 
 # --- install.sh ------------------------------------------------------------------------

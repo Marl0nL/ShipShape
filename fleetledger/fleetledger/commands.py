@@ -558,6 +558,12 @@ def cmd_adopt(args, app) -> int:
                                     names=(host,), host_key=f"{key} {name}", tags=tuple(tags)))
             ed.add_ship(name, entry)
         ed.mark_enrolled(name, now_timestamp())
+    # Its status is the cached one from now on: a Ship with none counts as herdr-core
+    # (attach.runtime_of), and an adopted Ship may run classic herdr.
+    try:
+        status.write_cache(name, report)
+    except OSError:
+        pass  # the next poll writes it
     if inv.has_ship(name):
         audit.record(name, "re-pin", "host-key", "ok")
     app.say(f"{'Re-pinned' if inv.has_ship(name) else 'Adopted'} {name} "

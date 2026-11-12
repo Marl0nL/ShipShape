@@ -34,9 +34,17 @@ ssh-add ~/.ssh/shipshape_fleet_ed25519
 `init` makes the fleet admin key (FleetLedger's own key; it logs in to Ships as
 `fleet`) and an empty inventory, `~/.config/fleetledger/ships.toml`. Your own key
 (`~/.ssh/id_ed25519.pub` by default, or `--agent-key`) goes onto each Ship's
-`agent` user, so you can attach with herdr or plain SSH. By hand, also run
+`agent` user, so you can attach with `hc` or plain SSH. By hand, also run
 `ship-fleet ca init`, and after the first Ship `ship-fleet trust --this-computer`,
-so `ssh ship-01` and `herdr --remote ship-01` work here.
+so `ssh ship-01` and `hc attach ship-01/<agent>` work here.
+
+A new Ship runs its agents in herdr-core: its seed's ship.toml says
+`runtime = "core"`, so its first boot starts `ship-core.service`, not herdr's
+server. You attach with `hc` (or the herdr desktop app), not the herdr TUI. A trust
+bundle made before the Ship's first status already treats it so: hc gets it, and
+herdr gets no saved machine for it. Ships made before this keep the runtime they
+run (a ship.toml without `runtime` still means herdr); see
+[switch-runtime.md](switch-runtime.md) to move one.
 
 Either way, put your tags and the accounts each tag must use into the inventory
 (setup fills in `[defaults] driver` and `[drivers.proxmox]` itself). A typical one:
@@ -123,8 +131,8 @@ ship-fleet ls                     # every Ship: state, agents, sign-ins, load
 ship-fleet status ship-01         # one Ship in detail
 ship-fleet ssh ship-01            # a shell as agent (your key)
 ship-fleet logs ship-01 provision # what provisioning did
-herdr --remote ship-01            # attach herdr, once this computer is trusted
-                                  # (setup does it); else agent@ship-01.local
+hc attach ship-01/<agent>         # attach an agent (hc alone: the picker), once
+                                  # this computer is trusted (setup does it)
 ```
 
 `/tmp` is a folder on the Ship's disk, not in memory. A Ship made from an image

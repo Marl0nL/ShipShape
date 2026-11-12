@@ -861,7 +861,8 @@ def test_the_first_ship_lets_this_computer_attach(chosen, monkeypatch):
             break
         time.sleep(0.05)
     assert trusted == [True]
-    assert "<code>herdr --remote ship-01</code>" in response.text
+    # No status cached yet: a new Ship runs herdr-core, attached with hc (attach.py).
+    assert "<code>hc</code>" in response.text and "herdr --remote" not in response.text
 
 
 def test_the_first_ship_can_be_sized(chosen, monkeypatch):
