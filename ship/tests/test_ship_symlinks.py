@@ -130,19 +130,21 @@ def test_status_does_not_read_ledger_through_symlink(ship, tmp_path):
     ledger = ship.p("/home/agent/.local/state/shipshape/modes.json")
     ledger.symlink_to(other)
     ship.set(
-        herdr={
+        hc={
             "server": True,
-            "agents": [
+            "terminals": [
                 {
-                    "agent": "claude",
-                    "agent_status": "idle",
-                    "pane_id": "w1:p1",
-                    "workspace_id": "w1",
-                    "tab_id": "t",
-                    "terminal_id": "t",
-                    "focused": False,
-                    "revision": 1,
-                    "agent_session": {"source": "x", "agent": "claude", "kind": "id", "value": "s"},
+                    "address": "t1",
+                    "name": None,
+                    "argv": ["/opt/shipshape/bin/agent-launch"],
+                    "labels": {"shipshape.session": "s"},
+                    "cwd": "/home/agent",
+                    "state": "live",
+                    "keep": True,
+                    "created_ms": 1,
+                    "status": {"app": "claude-code", "state": "idle"},
+                    "foreground": {"pid": 4343, "name": "claude", "argv": ["claude"],
+                                   "cwd": "/home/agent"},
                 }
             ],
         }

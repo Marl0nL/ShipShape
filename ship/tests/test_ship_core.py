@@ -1,10 +1,11 @@
 """Ships whose agents run in herdr-core (ship.toml runtime = "core"; runtime.Core).
 
-`ship.use_core()` makes the sandbox Ship a core Ship; its `hc` is the fake in
-fakes/fake.py. `ship.core_reboot()` is a reboot as ship-ctl sees it: a new boot id,
-and every kept terminal back under its address and name with no program in it
-until its new shell starts. Ships without the setting are herdr Ships, exactly as
-before (the other test files).
+Every sandbox Ship is a core Ship (the harness's default; `ship.use_core()` says so
+again); its `hc` is the fake in fakes/fake.py. `ship.core_reboot()` is a reboot as
+ship-ctl sees it: a new boot id, and every kept terminal back under its address and
+name with no program in it until its new shell starts. The tests here that start on
+herdr (moving a Ship between runtimes) say so with `ship.use_herdr()`; what only
+classic herdr does is test_ship_herdr_legacy.py.
 """
 
 from __future__ import annotations
@@ -55,17 +56,6 @@ def core(ship):
 
 
 # --- choosing the runtime ---------------------------------------------------------------
-def test_herdr_stays_the_default_and_never_meets_hc(ship):
-    ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
-    ship.ctl("apply", "--json")
-    ship.ctl("refresh")
-    assert {a["name"] for a in ship.scenario()["herdr"]["agents"]} == {"main", "grinder"}
-    assert ship.calls("hc") == []
-    doc = ship.status()
-    assert doc["herdr"]["runtime"] == "herdr" and doc["agent_record"]["runtime"] == "herdr"
-    assert ship.record()["runtime"] == "herdr"
-
-
 def test_a_core_ship_never_meets_herdr(core):
     ship = core
     ship.status()
@@ -75,7 +65,7 @@ def test_a_core_ship_never_meets_herdr(core):
 
 def test_ship_toml_refuses_an_unknown_runtime(ship):
     text = ship.p("/etc/shipshape/ship.toml").read_text()
-    ship.write_toml(text.replace("schema = 1\n", 'schema = 1\nruntime = "tmux"\n', 1))
+    ship.write_toml(text.replace('runtime = "core"\n', 'runtime = "tmux"\n', 1))
     rc, doc, _ = ship.ctl("status", "--json")
     assert rc != 0 and doc["error"]["code"] == "invalid-ship-toml"
 
@@ -118,14 +108,6 @@ def test_claude_too_old_for_core_starts_nothing(ship):
     reasons = {s["name"]: s["reason"] for s in doc["data"]["skipped"]}
     assert "older than 2.1.295" in reasons["main"]
     assert "agents" not in ship.record() or not ship.record()["agents"]
-
-
-def test_the_claude_floor_is_only_for_core(ship):
-    ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
-    ship.set(claude={"logged_in": True, "email": "work@example.com", "version": "2.1.290"})
-    ship.ctl("apply", "--json")
-    ship.ctl("refresh")
-    assert {a["name"] for a in ship.scenario()["herdr"]["agents"]} == {"main", "grinder"}
 
 
 # --- the status document ------------------------------------------------------------------
@@ -251,6 +233,7 @@ def test_name_taken_means_it_is_running_already(core):
 def test_a_ship_moved_from_herdr_resumes_its_agents_on_core(ship):
     """Sessions made under herdr continue under core; herdr's panes mean nothing there."""
     ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    ship.use_herdr()
     ship.ctl("apply", "--json")
     ship.ctl("refresh")
     ship.reboot()
@@ -569,6 +552,7 @@ def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
     """ship.toml says core while the herdr agents still run (no reboot): core starts
     none of them this boot; the next boot resumes them on core."""
     ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    ship.use_herdr()
     ship.ctl("apply", "--json")
     ship.ctl("refresh")
     ship.use_core()
@@ -588,6 +572,7 @@ def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
 def test_switching_back_to_herdr_while_core_agents_run_starts_nothing_twice(core):
     ship = core
     text = ship.p("/etc/shipshape/ship.toml").read_text()
+    ship.runtime = None  # ship.toml as written: no runtime, so herdr
     ship.write_toml(text.replace('runtime = "core"\n', ""))
     ship.ctl("refresh")
     assert [c for c in ship.calls("herdr") if c[1:3] == ["agent", "start"]] == []
@@ -691,18 +676,6 @@ def test_core_restart_pending_when_the_core_runs_an_old_binary(core, tmp_path):
     assert "herdr-restart-pending" not in _codes(doc)
 
 
-def test_an_old_herdr_server_is_still_herdr_restart_pending_not_core(ship, tmp_path):
-    herdr = ship.p("/usr/local/bin/herdr")
-    herdr.parent.mkdir(parents=True, exist_ok=True)
-    herdr.write_text("new herdr")
-    _install_core(ship)
-    old = tmp_path / "old"
-    old.write_text("old")
-    _fake_process(ship, 4400, ["/usr/local/bin/herdr", "server"], old)
-    codes = _codes(ship.status())
-    assert "herdr-restart-pending" in codes and "core-restart-pending" not in codes
-
-
 # A herdr server another tool runs on a herdr-core Ship: a named session (a supervising
 # agent's crew), or a default one a laptop's saved herdr entry started over ssh.
 OTHER_HERDR_SERVERS = {
@@ -742,16 +715,6 @@ def test_a_core_ships_own_restart_pending_is_unchanged_beside_an_old_herdr(core,
     _fake_process(ship, 4501, ["/usr/local/bin/herdr-core", "serve"], old_core)
     codes = _codes(ship.status())
     assert "core-restart-pending" in codes and "herdr-restart-pending" not in codes
-
-
-@pytest.mark.parametrize("server", OTHER_HERDR_SERVERS)
-def test_a_herdr_ship_still_reports_any_old_herdr_server(ship, tmp_path, server):
-    """A classic herdr Ship keeps today's rule: any agent-user herdr server on an old
-    binary means a reboot is needed for the new herdr."""
-    _old_herdr_server(ship, tmp_path, OTHER_HERDR_SERVERS[server])
-    doc = ship.status()
-    assert doc["herdr"]["runtime"] == "herdr"
-    assert "herdr-restart-pending" in _codes(doc)
 
 
 def test_logs_core_reads_the_boot_unit_and_the_cores_own_logs(core):

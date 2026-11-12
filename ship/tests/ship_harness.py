@@ -1,18 +1,25 @@
 """Test harness for the Ship track: a sandbox Ship in a temporary folder.
 
 `ship` builds a fake root (SHIPSHAPE_ROOT) with ship.toml, the agent's home, a fake
-/proc and a bin folder whose herdr, claude, gh, gcloud, apt-get, npm, ... are
+/proc and a bin folder whose hc, herdr, claude, gh, gcloud, apt-get, npm, ... are
 ship/tests/fakes/fake.py. PATH holds only that folder plus the system folders, and
 the fakes shadow every command ship-ctl runs, so no test reaches a real tool.
+
+A sandbox Ship is a herdr-core Ship (ship.toml runtime = "core"; its agents run in
+the fake `hc`). `ship.use_herdr()` makes it a classic herdr Ship instead
+(test_ship_herdr_legacy.py, test_ship_runtime_switch.py). The agent helpers below
+(agent, args, prompts, set_state, crash, exit, reboot) work on either runtime.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +59,8 @@ FAKE_COMMANDS = [
 ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the sandbox
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
 LEDGER = "/home/agent/.local/state/shipshape/modes.json"
+LAUNCHER = "/opt/shipshape/bin/agent-launch"
+RUNTIME_LINE = re.compile(r'^runtime = "[^"]*"\n', re.M)
 
 BASIC_TOML = """\
 schema = 1
@@ -95,12 +104,35 @@ def make_bundle(dest: Path, catalogue: bool = False) -> Path:
     return dest
 
 
+def with_runtime(text: str, runtime: str | None) -> str:
+    """ship.toml text with `runtime` set, unless the text sets one itself (or does not
+    parse: a test of a broken ship.toml gets exactly what it wrote). None: as given."""
+    if runtime is None:
+        return text
+    try:
+        if "runtime" in tomllib.loads(text):
+            return text
+    except tomllib.TOMLDecodeError:
+        return text
+    line = f'runtime = "{runtime}"\n'
+    if "schema = 1\n" in text:
+        return text.replace("schema = 1\n", "schema = 1\n" + line, 1)
+    return line + text
+
+
 @dataclass
 class Ship:
     root: Path
     bundle: Path
     fake_dir: Path
     env: dict
+    # What write_toml gives a ship.toml that names no runtime: "core" (the default),
+    # "herdr" (use_herdr), or None (nothing: the product's own default).
+    runtime: str | None = "core"
+
+    @property
+    def on_core(self) -> bool:
+        return self.runtime != "herdr"
 
     # --- scenario -----------------------------------------------------------------
     def scenario(self) -> dict:
@@ -112,8 +144,15 @@ class Ship:
         (self.fake_dir / "scenario.json").write_text(json.dumps(s))
 
     def prompts(self) -> list[list[str]]:
-        """What was typed into herdr panes, in order."""
-        return self.scenario()["herdr"].get("prompts", [])
+        """What was typed into agents, in order. herdr: [target, text] as ship-ctl named
+        it (a name, or a pane for /exit). core: [terminal name, text] for each hc send
+        that was not a launch typed into a shell."""
+        if not self.on_core:
+            return self.scenario()["herdr"].get("prompts", [])
+        hc = self.scenario().get("hc", {})
+        names = {t["address"]: t.get("name") for t in hc.get("terminals", [])}
+        return [[names.get(addr, addr), text] for addr, text in hc.get("sent", [])
+                if f"exec {LAUNCHER}" not in text]
 
     def homes(self, command: str) -> list[tuple[list[str], str | None]]:
         """(argv, HOME) for each call of `command`: whose environment it ran in."""
@@ -130,10 +169,36 @@ class Ship:
 
     # --- what happens to agents -----------------------------------------------------
     def agent(self, name: str) -> dict:
+        """herdr: the named agent as herdr lists it. core: its live terminal."""
+        if self.on_core:
+            return self.terminal(name)
         return next(a for a in self.scenario()["herdr"]["agents"] if a.get("name") == name)
 
+    def args(self) -> dict[str, list[str]]:
+        """{name: claude's arguments} for each named agent running now."""
+        if not self.on_core:
+            return {a["name"]: a["args"] for a in self.scenario()["herdr"]["agents"]
+                    if a.get("name")}
+        return {t["name"]: t["claude_args"] for t in self.terminals()
+                if t.get("name") and t["state"] == "live"
+                and (t.get("foreground") or {}).get("name") == "claude"}
+
+    def place(self, name: str) -> str:
+        """Where the named agent runs: herdr's pane id, the core's terminal address."""
+        ag = self.agent(name)
+        return ag["address"] if self.on_core else ag["pane_id"]
+
+    def session(self, name: str) -> str:
+        """The Claude session the named agent runs now."""
+        ag = self.agent(name)
+        return ag["session"] if self.on_core else ag["agent_session"]["value"]
+
     def set_state(self, name: str, state: str) -> None:
-        """herdr reports the named agent in this state (idle, working, blocked, ...)."""
+        """The runtime reports the named agent in this state (idle, working, blocked,
+        ...). core: Claude's own report; unknown: it reports nothing."""
+        if self.on_core:
+            self.core_status(name, None if state == "unknown" else state)
+            return
         s = self.scenario()
         for a in s["herdr"]["agents"]:
             if a.get("name") == name:
@@ -141,14 +206,28 @@ class Ship:
         self.set(herdr=s["herdr"])
 
     def crash(self, name: str) -> None:
-        """claude dies in its pane (killed, out of memory): no SessionEnd, and the
-        pane stays, back at its shell."""
+        """claude dies (killed, out of memory): no SessionEnd. herdr: the pane stays,
+        back at its shell. core: its kept terminal gets a shell (core_crash)."""
+        if self.on_core:
+            self.core_crash(name)
+            return
         s = self.scenario()
         s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a.get("name") != name]
         self.set(herdr=s["herdr"])
 
     def exit(self, name: str, reason: str = "prompt_input_exit") -> None:
-        """Someone exits the agent (/exit): Claude runs the SessionEnd hook first."""
+        """Someone exits the agent (/exit): Claude runs the SessionEnd hook first.
+        core: its terminal finishes (exit 0)."""
+        if self.on_core:
+            session = self.session(name)
+
+            def change(t):
+                if t.get("name") == name and t["state"] == "live":
+                    t.update(state="finished", exit_code=0, reason="exited", foreground=None,
+                             status=None)
+            self._core_change(change)
+            self.end_session(session, reason)
+            return
         ag = self.agent(name)
         self.crash(name)
         self.end_session(ag["agent_session"]["value"], reason)
@@ -165,19 +244,21 @@ class Ship:
         path.write_text(json.dumps(doc))
 
     def reboot(self, uptime: float = 40.0) -> None:
-        """A new boot: herdr's server starts again and restores every pane under its
-        old id, a fresh shell in its folder, with no agent in it (ShipShape turns
-        herdr's own resume off)."""
+        """A new boot, for whatever runs in either runtime (a Ship that moved between
+        them has had agents in both): the core's kept terminals come back without
+        their program (core_reboot); herdr's server starts again and restores every
+        pane under its old id, a fresh shell in its folder, with no agent in it
+        (ShipShape turns herdr's own resume off)."""
         s = self.scenario()
         h = s["herdr"]
         known = {p["pane_id"] for p in h.get("panes", [])}
         h.setdefault("panes", []).extend(
             {"pane_id": a["pane_id"], "workspace_id": a.get("workspace_id"), "cwd": a.get("cwd")}
-            for a in h["agents"] if a.get("pane_id") and a["pane_id"] not in known)
+            for a in h.get("agents", []) if a.get("pane_id") and a["pane_id"] not in known)
         h["agents"] = []
         h["exited"] = []
         self.set(herdr=h)
-        self._new_boot(uptime)
+        self.core_reboot(uptime)
 
     def _new_boot(self, uptime: float) -> None:
         """What every boot changes: a new boot id, the uptime, and an empty /run."""
@@ -192,14 +273,23 @@ class Ship:
     def record(self) -> dict:
         return self.json("/var/lib/shipshape/agents.json")
 
-    # --- herdr-core (ship.toml runtime = "core") ---------------------------------------
-    def use_core(self) -> None:
-        """Make this Ship a herdr-core Ship (ship.toml runtime = "core")."""
+    # --- the runtime (ship.toml runtime) -------------------------------------------------
+    def _use(self, runtime: str) -> None:
+        self.runtime = runtime
         text = self.p("/etc/shipshape/ship.toml").read_text()
-        self.write_toml(text.replace("schema = 1\n", 'schema = 1\nruntime = "core"\n', 1))
+        self.write_toml(with_runtime(RUNTIME_LINE.sub("", text), runtime))
+
+    def use_core(self) -> None:
+        """Make this Ship a herdr-core Ship (ship.toml runtime = "core"): the default."""
+        self._use("core")
         s = self.scenario()
         s.setdefault("hc", {"server": True, "terminals": []})
         self.set(hc=s["hc"])
+
+    def use_herdr(self) -> None:
+        """Make this Ship a classic herdr Ship (ship.toml runtime = "herdr"): only for
+        what is classic herdr's own (test_ship_herdr_legacy.py) and the runtime switch."""
+        self._use("herdr")
 
     def terminals(self, name: str | None = None) -> list[dict]:
         terms = self.scenario().get("hc", {}).get("terminals", [])
@@ -212,9 +302,10 @@ class Ship:
 
     def _core_change(self, change) -> None:
         s = self.scenario()
-        for t in s["hc"]["terminals"]:
+        hc = s.setdefault("hc", {})
+        for t in hc.get("terminals", []):
             change(t)
-        self.set(hc=s["hc"])
+        self.set(hc=hc)
 
     def core_status(self, name: str, state: str | None, kind: str | None = None,
                     msg: str | None = None) -> None:
@@ -286,7 +377,8 @@ class Ship:
         return self.root / path.lstrip("/")
 
     def write_toml(self, text: str) -> None:
-        self.p("/etc/shipshape/ship.toml").write_text(text)
+        """Write ship.toml; one that names no runtime gets this Ship's (with_runtime)."""
+        self.p("/etc/shipshape/ship.toml").write_text(with_runtime(text, self.runtime))
 
     def json(self, path: str):
         return json.loads(self.p(path).read_text())
@@ -319,8 +411,9 @@ def ship(tmp_path: Path) -> Ship:
     return build_ship(tmp_path)
 
 
-def build_ship(tmp_path: Path, toml: str = BASIC_TOML) -> Ship:
-    """A sandbox Ship in tmp_path (FleetLedger's tests drive one too: test_toolkitpush.py)."""
+def build_ship(tmp_path: Path, toml: str = BASIC_TOML, runtime: str | None = "core") -> Ship:
+    """A sandbox Ship in tmp_path (FleetLedger's tests drive one too: test_toolkitpush.py),
+    on herdr-core unless runtime says otherwise (with_runtime)."""
     root = tmp_path / "root"
     bundle = make_bundle(tmp_path / "bundle")
     fake_dir = tmp_path / "fake"
@@ -339,13 +432,14 @@ def build_ship(tmp_path: Path, toml: str = BASIC_TOML) -> Ship:
         json.dumps(
             {
                 "herdr": {"server": True, "agents": []},
+                "hc": {"server": True, "terminals": []},
                 "claude": {"logged_in": True, "email": "work@example.com"},
                 "gcloud": {"account": "work@example.com", "adc": True},
                 "gh": {"login": "example-user"},
             }
         )
     )
-    (root / "etc/shipshape/ship.toml").write_text(toml)
+    (root / "etc/shipshape/ship.toml").write_text(with_runtime(toml, runtime))
     for zone in ZONES:
         zone_file = root / "usr/share/zoneinfo" / zone
         zone_file.parent.mkdir(parents=True, exist_ok=True)
@@ -368,7 +462,7 @@ def build_ship(tmp_path: Path, toml: str = BASIC_TOML) -> Ship:
         "HOME": str(tmp_path),
         "LANG": "C.UTF-8",
     }
-    return Ship(root, bundle, fake_dir, env)
+    return Ship(root, bundle, fake_dir, env, runtime)
 
 
 PROVISION = SHIP / "provision" / "ship-provision"
