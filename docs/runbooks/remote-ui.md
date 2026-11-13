@@ -25,7 +25,7 @@ fleet.
   trusted machine's certificate, by contrast, opens only `agent` (and your owner login)
   on the Ships in its scope, for 7 days. A stolen unlocked laptop, a compromised phone,
   or a compromised Tailscale account plus a pairing link would all be enough. What
-  limits it: only the Tailscale logins you list get in; a device lapses after 12 hours
+  limits it: only the Tailscale logins you list get in; a device lapses after 7 days
   unused and 30 days after pairing; destroy, rollback, trusting machines, setup's keys
   and pairing another device need a device paired in the last 4 hours; you can revoke
   any device at once; and the destructive actions keep their typed confirmations. Still,
@@ -154,7 +154,7 @@ laptop, signed in to Tailscale as a login you allowed. The link works once, with
 minutes, on the remote address only, and only while `ship-fleet ui` runs (it can be
 made before the UI starts). The laptop is then a **device** called "laptop": it stays
 signed in when you close the browser or restart `ship-fleet ui`, until it is unused for
-12 hours, 30 days after pairing, or you revoke it.
+7 days, 30 days after pairing, or you revoke it.
 
 The link for your other devices that `ship-fleet ui` prints in its terminal works too,
 once, within 15 minutes (Enter there prints a new one). A device paired that way is

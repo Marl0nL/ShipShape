@@ -14,7 +14,7 @@
     {% else %}Nobody may yet: <code>ship-fleet ui remote --login you@example.com</code>.{% endif %}</p>
   <p class="hint">Say which trusted machine a device runs on, and a Ship's pages show that
     machine's attach commands there, and offer its bundle (its certificate, renewed).</p>
-  <p class="hint">A paired device stays signed in across restarts, until it is unused for 12 hours,
+  <p class="hint">A paired device stays signed in across restarts, until it is unused for {{ idle_days }} days,
     30 days after pairing, or you revoke it. Destroy, rollback, trusting machines, setup's keys and
     pairing another device need one paired in the last {{ fresh_hours }} hours: pair it again for
     those. Anyone with a paired device controls the whole fleet; see
