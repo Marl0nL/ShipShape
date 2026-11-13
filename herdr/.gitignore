@@ -1,0 +1,5 @@
+# Built by mods/shipshape/art/build.sh (see README.md): too big for the repo.
+mods/shipshape/img/*.png
+# Fetched by install.sh.
+mods/shipshape/fonts/
+__pycache__/
