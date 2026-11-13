@@ -90,6 +90,8 @@ scripts/check
 ```
 
 `scripts/check` needs `shellcheck` on your PATH. It is exactly what CI runs.
+It runs the tests in 4 parallel workers (pytest-xdist); set
+`SHIPSHAPE_TEST_WORKERS` to change that, 0 or 1 to run them serially.
 
 Before contributing, read `docs/tracks.md` (who owns which directory) and
 `docs/hygiene.md` (nothing personal may be committed: this is a public repo).

@@ -42,6 +42,38 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _start_sshd(d: Path, principals: Path, attempts: int = 5) -> tuple[subprocess.Popen, int]:
+    """Start sshd on a free port; returns (process, port). The port is free when
+    picked but not held, so something else (another test worker) can take it before
+    sshd binds. sshd then exits, and this tries again with a new port. Readiness is
+    sshd's own "Server listening" line, not a connection, which could reach whatever
+    took the port."""
+    log = d / "sshd.log"
+    for _ in range(attempts):
+        port = _free_port()
+        (d / "config").write_text(
+            f"Port {port}\nListenAddress 127.0.0.1\nHostKey {d / 'hostkey'}\n"
+            f"HostCertificate {d / 'hostkey-cert.pub'}\n"
+            f"TrustedUserCAKeys {d / 'user-ca.pub'}\n"
+            f"AuthorizedPrincipalsFile {principals}/%u\n"
+            f"RevokedKeys {d / 'krl'}\n"
+            f"AuthorizedKeysFile {d / 'authorized_keys'}\nUsePAM no\nStrictModes no\n"
+            "PidFile none\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
+        )
+        with log.open("wb") as err:
+            proc = subprocess.Popen([SSHD, "-D", "-e", "-f", str(d / "config")], stderr=err)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if f"Server listening on 127.0.0.1 port {port}" in log.read_text(errors="replace"):
+                return proc, port
+            if proc.poll() is not None:
+                break  # could not bind (the port was taken): try another
+            time.sleep(0.05)
+        proc.kill()
+        proc.wait(timeout=5)
+    pytest.fail(f"sshd never listened after {attempts} ports:\n{log.read_text(errors='replace')}")
+
+
 @pytest.fixture
 def setup(store, home, tmp_path, monkeypatch, short_dir):
     if not os.access(SSHD, os.X_OK):
@@ -68,24 +100,7 @@ def setup(store, home, tmp_path, monkeypatch, short_dir):
     spec.write_text(f"key: {(d / 'revoked.pub').read_text().strip()}\n")
     subprocess.run(["ssh-keygen", "-q", "-k", "-f", str(d / "krl"), str(spec)], check=True)
     shutil.copy(home / "keys" / "fleet_admin.pub", d / "authorized_keys")
-    port = _free_port()
-    (d / "config").write_text(
-        f"Port {port}\nListenAddress 127.0.0.1\nHostKey {d / 'hostkey'}\n"
-        f"HostCertificate {d / 'hostkey-cert.pub'}\n"
-        f"TrustedUserCAKeys {d / 'user-ca.pub'}\n"
-        f"AuthorizedPrincipalsFile {principals}/%u\n"
-        f"RevokedKeys {d / 'krl'}\n"
-        f"AuthorizedKeysFile {d / 'authorized_keys'}\nUsePAM no\nStrictModes no\n"
-        "PidFile none\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
-    )
-    proc = subprocess.Popen([SSHD, "-D", "-e", "-f", str(d / "config")],
-                            stderr=subprocess.DEVNULL)
-    for _ in range(50):
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-            break
-        except OSError:
-            time.sleep(0.1)
+    proc, port = _start_sshd(d, principals)
     yield {"dir": d, "port": port, "ca": cakeys, "inv": inv, "ship": ship}
     proc.terminate()
     proc.wait(timeout=5)

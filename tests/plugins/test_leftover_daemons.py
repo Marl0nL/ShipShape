@@ -170,11 +170,35 @@ def test_a_live_runs_folder_is_held(tmp_path):
     assert leftover_daemons.held_by_live_run(folder)
 
 
-def test_the_pytest_root_is_where_pytest_makes_its_folders(request, tmp_path_factory):
+# For a pytest run in a subprocess: where the plugin thinks the pytest root is, next to
+# where pytest made the run's base temp folder.
+ROOT_CHECK = '''
+import leftover_daemons
+
+def test_root(request, tmp_path_factory):
     root = leftover_daemons.temp_root(request.config)
-    if root is None:
-        pytest.skip("--basetemp: no pytest root")
-    assert root == tmp_path_factory.getbasetemp().parent
+    open("{out}", "w").write(f"{root}\\n{tmp_path_factory.getbasetemp()}\\n")
+'''
+
+
+@pytest.mark.parametrize("basetemp", [False, True], ids=["pytest-root", "basetemp"])
+def test_the_pytest_root_is_where_pytest_makes_its_folders(tmp_path, basetemp):
+    """In a run of its own, so it does not depend on how the outer run was started
+    (xdist gives each worker a --basetemp, where there is no pytest root)."""
+    out = tmp_path / "out"
+    argv, env, expected = inner_run(tmp_path, ROOT_CHECK.replace("{out}", str(out)))
+    if basetemp:
+        argv += ["--basetemp", str(tmp_path / "basetemp")]
+    r = subprocess.run(argv, env=env, cwd=tmp_path / "project",
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    root, made = out.read_text().splitlines()
+    if basetemp:
+        assert root == "None"
+        assert Path(made) == (tmp_path / "basetemp").resolve()
+    else:
+        assert Path(root) == expected
+        assert Path(made).parent == expected
 
 
 INNER = '''
