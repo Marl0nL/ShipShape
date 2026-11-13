@@ -467,10 +467,11 @@ With ship.toml `runtime = "core"` the record works the same through herdr-core
   follows `/clear` and a Claude restarted by hand there, as on herdr; the
   `shipshape.session` label is the session it was started with. A launch typed
   into a kept shell is labelled `shipshape.launching` and never typed again within
-  2 minutes, even if the shell is slow to run it. An agent whose terminal is at
-  its shell within those 2 minutes (a slow start, or Claude came up and was killed
-  again) is not started, counted as a try or reported then; the first pass after
-  them that still finds it not running starts it, and counts the early stop then.
+  2 minutes, even if the shell is slow to run it. An agent whose kept terminal is
+  at (or waiting for) its shell within those 2 minutes (a slow start, or Claude
+  came up and was killed again) is not started, counted as a try or reported then;
+  the first pass after them that still finds it not running counts the early stop
+  and, unless that was its last try, starts it.
 - **Changing the runtime** in ship.toml while agents run: an agent that ran this
   boot under the other runtime may still run there, so neither runtime starts it
   (its state is `unknown`) until the next boot, when only the new one starts and

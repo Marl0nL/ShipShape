@@ -504,13 +504,18 @@ def test_an_agent_killed_again_soon_after_it_came_back_is_started_again_after_th
     assert recorded(ship)["grinder"]["relaunch_failures"] == 1
     assert ship.args().get("grinder") == want and launches(ship, "grinder") == 1 + 1
     for n in (2, 3):
-        ship.crash("grinder")
-        for _ in range(2):  # within the grace (the terminal lost, then at its shell)
+        # Killed by a signal: the second time its kept terminal stays without a
+        # program through the refreshes within the grace (lost), the third time it
+        # is back at its shell for them.
+        ship.core_crash("grinder", recover_in=99 if n == 2 else 1)
+        for _ in range(2):  # within the grace
             _, _, out = ship.ctl("refresh")
             assert "grinder" not in out and "grinder" not in ship.args()
             assert launches(ship, "grinder") == n
             grinder = recorded(ship)["grinder"]
             assert grinder["state"] == "starting" and grinder["relaunch_failures"] == n - 1
+            assert (ship.terminal("grinder")["foreground"] is None) == (n == 2)
+        shell_back(ship, "grinder")
         age_typed_launches(ship, 120)  # LAUNCH_GRACE_S
         _, _, out = ship.ctl("refresh")
         if n == 2:
@@ -526,6 +531,15 @@ def test_an_agent_killed_again_soon_after_it_came_back_is_started_again_after_th
     grinder = recorded(ship)["grinder"]
     assert grinder["state"] == "failed" and grinder["relaunch_failures"] == 3
     assert "agent-relaunch-failed" in {a["code"] for a in ship.status()["attention"]}
+
+
+def shell_back(ship, name: str) -> None:
+    """The named agent's kept terminal, if still without a program, gets its shell."""
+    s = ship.scenario()
+    for t in s["hc"]["terminals"]:
+        if t.get("name") == name and t["state"] == "live" and "recover_in" in t:
+            t["recover_in"] = 1
+    ship.set(hc=s["hc"])
 
 
 def age_launch(ship, name: str, minutes: int) -> None:
