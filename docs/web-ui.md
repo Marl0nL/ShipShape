@@ -209,7 +209,7 @@ sign-ins, pending reboots and herdr restarts, expiring certificates, the overlay
 and **notice** (low: Ships behind on tooling, tools waiting for a sign-in, tags
 that differ, a herdr-core update waiting for the next reboot). Above them come any sign-ins in the browser that are waiting for
 you. Each alert carries its fix. Where the UI can do it, that is a button: **Sign in**;
-**Reboot** (reboot required, herdr restart pending, and herdr-core restart pending,
+**Reboot** (reboot required, herdr restart pending on a herdr Ship, and herdr-core restart pending,
 where it says agents keep running meanwhile), **Update** (behind on tooling) and
 **Join** (not on the overlay), each through the same confirm dialog as the Ship page's
 action bar, with the CLI command as its tooltip; **Renew** for a host certificate that is

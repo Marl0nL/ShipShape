@@ -50,9 +50,9 @@ It prints each step on stderr (upload, converge, reboot) and a result per Ship:
 ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in their modes
 ```
 
-- If herdr changed, the Ship is rebooted (cleanly, with `systemctl reboot`) so the
-  new herdr takes over, and FleetLedger checks every agent came back in the mode
-  it had. Add `--reboot never` to postpone that; the Ship then shows
+- If herdr changed on a herdr Ship, the Ship is rebooted (cleanly, with
+  `systemctl reboot`) so the new herdr takes over, and FleetLedger checks every
+  agent came back in the mode it had. Add `--reboot never` to postpone that; the Ship then shows
   `herdr-restart-pending` until you run `ship-fleet reboot ship-01`.
 - On a herdr-core Ship (ship.toml `runtime = "core"`), a new herdr-core does **not**
   reboot it: the running core keeps serving every agent, and the new one takes over
@@ -60,6 +60,10 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   `core-restart-pending`, a notice, and the result says "herdr-core was updated".
   Reboot when it suits you (`ship-fleet reboot ship-01`), or update with
   `--reboot always`. Its core's own log is `ship-fleet logs ship-01 core`.
+  A new herdr never reboots it either, and never shows `herdr-restart-pending`
+  there: herdr is not its runtime, even when another tool runs its own herdr
+  server on it (a named session, say). Such a server keeps the old herdr until it
+  restarts or the Ship next reboots.
 - The first update with the disk-backed `/tmp` masks `tmp.mount` (systemd's tmpfs on
   `/tmp`) but unmounts nothing: running agents and their sockets live in `/tmp`. The
   result says "/tmp moves from memory (tmpfs) to the disk at the next reboot", and
@@ -124,9 +128,10 @@ ship-fleet ls
 ship-fleet attention
 ```
 
-`behind-tooling` and `herdr-restart-pending` should be gone (`core-restart-pending`
-stays on herdr-core Ships until their next reboot, `tmp-reboot-pending` on every Ship
-whose `/tmp` was moved to the disk; both are expected).
+`behind-tooling` and `herdr-restart-pending` (herdr Ships only) should be gone
+(`core-restart-pending` stays on herdr-core Ships until their next reboot,
+`tmp-reboot-pending` on every Ship whose `/tmp` was moved to the disk; both are
+expected).
 
 ## OS updates and reboots
 

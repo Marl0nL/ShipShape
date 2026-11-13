@@ -39,7 +39,7 @@
     <input type="hidden" name="ships" value="{{ value }}">
     <label>Reboot
       <select name="reboot">
-        {% for p, said in (("auto", "auto: only when herdr changed"), ("always", "always"), ("never", "never")) %}<option value="{{ p }}">{{ said }}</option>{% endfor %}
+        {% for p, said in (("auto", "auto: only a herdr Ship whose herdr changed, never a herdr-core Ship"), ("always", "always"), ("never", "never")) %}<option value="{{ p }}">{{ said }}</option>{% endfor %}
       </select></label>
     <label class="inline-check"><input type="checkbox" name="force" value="yes"> converge even a Ship already on this tooling, or roll back one on a newer commit</label>
     <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>

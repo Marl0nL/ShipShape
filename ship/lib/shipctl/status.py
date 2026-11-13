@@ -298,6 +298,16 @@ def herdr_restart_pending(ctx: Context) -> bool:
     return _restart_pending(ctx, HERDR_BIN, ("herdr",), b"server")
 
 
+def runtime_herdr_restart_pending(ctx: Context, ship: ShipToml) -> bool:
+    """herdr_restart_pending, only on a Ship whose agents herdr runs. On a herdr-core
+    Ship herdr is not the runtime: other tools may run their own herdr servers there
+    (a named session, or a default one a laptop's saved entry started), so a new herdr
+    is never a restart ShipShape needs, and never a reason to reboot it."""
+    from .runtime import Herdr, for_ship
+
+    return for_ship(ctx, ship).kind == Herdr.kind and herdr_restart_pending(ctx)
+
+
 def core_restart_pending(ctx: Context) -> bool:
     """True when the running herdr-core (`herdr-core serve`, which the core starts as
     its own transient user unit) is not the installed /usr/local/bin/herdr-core.
@@ -650,7 +660,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_overlay = pool.submit(overlay.status, ctx, ship)
         f_ssh = pool.submit(ssh_state, ctx)
         f_net = pool.submit(net_section, ctx)
-        f_pending = pool.submit(herdr_restart_pending, ctx)
+        f_pending = pool.submit(runtime_herdr_restart_pending, ctx, ship)
         f_core_pending = pool.submit(core_restart_pending, ctx)
         f_auth = pool.submit(signincheck.check, ctx, reg, reg.keys)
         host, e = f_host.result()

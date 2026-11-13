@@ -2281,6 +2281,27 @@ def test_a_core_ships_page_shows_its_runtime_terminals_and_what_agents_wait_for(
     assert "waiting for you to approve something: npm test" in page
 
 
+def test_a_core_ship_never_offers_a_reboot_for_herdr(web):
+    """A herdr-core Ship on older tooling may report herdr-restart-pending for another
+    tool's herdr server: herdr is not its runtime, so no alert offers a reboot for
+    it, and the fleet's Update dialog does not promise that Ship a reboot."""
+    from test_cli import RUNNING_CORE
+
+    core = copy.deepcopy(RUNNING_CORE)
+    core["attention"] = [{"code": "herdr-restart-pending", "message": "herdr was updated."}]
+    web.ship.status_override["ship-01"] = core
+    classic = copy.deepcopy(RUNNING)
+    classic["attention"] = [{"code": "herdr-restart-pending", "message": "herdr was updated."}]
+    web.ship.status_override["ship-02"] = classic
+    web.fleet.poll()
+    web.sign_in()
+    page = web.client.get("/").text
+    assert 'data-key="ship-01/herdr-restart-pending/' not in page
+    assert 'data-key="ship-02/herdr-restart-pending/' in page  # a herdr Ship: as before
+    assert "A herdr Ship whose herdr changed reboots" in page
+    assert "a herdr-core Ship is not rebooted" in page
+
+
 def test_a_core_ships_settings_show_the_runtime_read_only(web):
     from test_cli import RUNNING_CORE
 

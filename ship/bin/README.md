@@ -46,9 +46,9 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
   it when the guard is off. Every address is parsed and printed back by Python's
   `ipaddress` before it is written into the rules, so nothing else reaches nft.
   A DHCP change of gateway during a boot is picked up at the next boot or apply.
-- `herdr-restart-pending`: status compares the inode of each running
-  `herdr server` (agent's processes only, `/proc/<pid>/exe`) with
-  `/usr/local/bin/herdr`.
+- `herdr-restart-pending`: on a herdr Ship only (never herdr-core), status
+  compares the inode of each running `herdr server` (agent's processes only,
+  `/proc/<pid>/exe`) with `/usr/local/bin/herdr`.
 - Agents: `record.py` is the agent record (`/var/lib/shipshape/agents.json`,
   `contracts/agent-record.schema.json`) and the resume, the crash policy and the
   pick-up of agents started by hand (`upkeep`, run by every status refresh, by

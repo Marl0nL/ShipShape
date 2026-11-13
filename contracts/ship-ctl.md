@@ -89,10 +89,13 @@ FleetLedger adds its own on top (`signin-wrong-account` from the tag check,
 `host-cert-missing` and `ssh-trust-behind` from its certificate authority); it
 shows unknown codes as they are.
 
-`herdr-restart-pending`: the running herdr server is not the installed
-`/usr/local/bin/herdr` (a converge replaced the binary; the server keeps running
-the old one). A reboot switches to the new one and resumes every agent in its
-mode; `ship-fleet update` does that for you unless told not to.
+`herdr-restart-pending`: on a Ship whose runtime is herdr, a running herdr server
+is not the installed `/usr/local/bin/herdr` (a converge replaced the binary; the
+server keeps running the old one). A reboot switches to the new one and resumes
+every agent in its mode; `ship-fleet update` does that for you unless told not to.
+A herdr-core Ship never reports it: herdr is not its runtime, and a herdr server
+another tool runs there (a named session, or a default one) is not ShipShape's
+to restart. FleetLedger ignores it from a herdr-core Ship's older tooling.
 
 `core-restart-pending`: the running herdr-core (`herdr-core serve`) is not the
 installed `/usr/local/bin/herdr-core`. Its agents are not affected: the old core
@@ -574,8 +577,8 @@ If any step fails, `current` goes back to the previous release and the command
 exits 1. `data`: `{ "from": release, "to": release }`.
 
 Converge never restarts herdr or reboots: agents keep running. When it replaced
-the herdr binary, the status document reports `herdr-restart-pending` until the
-next reboot (`core-restart-pending` for the herdr-core binary;
+the herdr binary on a herdr Ship, the status document reports
+`herdr-restart-pending` until the next reboot (`core-restart-pending` for the herdr-core binary;
 `tmp-reboot-pending` when it has just moved `/tmp` to the disk). Its `apply` records every running agent in the agent record first, so
 the next reboot brings them back in their modes.
 
