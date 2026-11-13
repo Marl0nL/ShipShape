@@ -2,8 +2,9 @@
 
 `ship` builds a fake root (SHIPSHAPE_ROOT) with ship.toml, the agent's home, a fake
 /proc and a bin folder whose hc, herdr, claude, gh, gcloud, apt-get, npm, ... are
-ship/tests/fakes/fake.py. PATH holds only that folder plus the system folders, and
-the fakes shadow every command ship-ctl runs, so no test reaches a real tool.
+links to ship/tests/fakes/fakecmd, which runs ship/tests/fakes/fake.py as a module
+(so its bytecode is cached). PATH holds only that folder plus the system folders,
+and the fakes shadow every command ship-ctl runs, so no test reaches a real tool.
 
 A sandbox Ship is a herdr-core Ship (ship.toml runtime = "core"; its agents run in
 the fake `hc`). `ship.use_herdr()` makes it a classic herdr Ship instead
@@ -13,12 +14,15 @@ the fake `hc`). `ship.use_herdr()` makes it a classic herdr Ship instead
 
 from __future__ import annotations
 
+import atexit
+import compileall
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +31,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SHIP = REPO / "ship"
-FAKE = Path(__file__).resolve().parent / "fakes" / "fake.py"
+# Each faked command is a link to this entry script; it imports fakes/fake.py.
+FAKE = Path(__file__).resolve().parent / "fakes" / "fakecmd"
 FAKE_COMMANDS = [
     "example-cli",
     "herdr",
@@ -85,22 +90,58 @@ mode = "bypassPermissions"
 """
 
 
+_BUNDLES: dict[bool, Path] = {}  # this process's compiled bundles, by `catalogue`
+_bundle_home: Path | None = None  # where they are built (use_bundle_home)
+
+
+def use_bundle_home(folder: Path) -> None:
+    """Build this process's compiled bundles in folder: ship/tests/conftest.py gives
+    each session one under pytest's own temporary folder, which pytest cleans up
+    even after a killed run. Without one (FleetLedger's tests that drive a sandbox
+    Ship), they go in a temporary folder removed when the process exits."""
+    global _bundle_home
+    _bundle_home = folder
+
+
+def _compiled_bundle(catalogue: bool) -> Path:
+    """The bundle make_bundle copies, built and byte-compiled once per process.
+
+    Every pytest-xdist worker is its own process and builds its own in a fresh
+    folder, so no worker shares it or sees one half written. The copies keep each
+    source file's mtime (copy2), which is what its .pyc is checked against: a test
+    that changes a bundle file gets that file compiled afresh.
+    """
+    if catalogue not in _BUNDLES:
+        if _bundle_home is not None:
+            work = Path(tempfile.mkdtemp(prefix="ship-bundle-", dir=_bundle_home))
+        else:
+            work = Path(tempfile.mkdtemp(prefix="ship-bundle-"))
+            atexit.register(shutil.rmtree, work, ignore_errors=True)
+        bundle = work / "bundle"
+        parts = ["lib", "bin", "schemas", "files", "signins"]
+        if catalogue:
+            parts += ["tools", "profiles", "skills"]
+        for part in parts:
+            shutil.copytree(SHIP / part, bundle / part,
+                            ignore=shutil.ignore_patterns("__pycache__", "node_modules"))
+        for part in ("tools", "profiles", "provision"):
+            (bundle / part).mkdir(exist_ok=True)
+        shutil.copy(REPO / "versions.toml", bundle / "versions.toml")
+        # The interpreter ship-ctl runs under (Ship.ctl), so the cache matches it.
+        compileall.compile_dir(bundle, quiet=1, workers=1)
+        _BUNDLES[catalogue] = bundle
+    return _BUNDLES[catalogue]
+
+
 def make_bundle(dest: Path, catalogue: bool = False) -> Path:
     """A tooling bundle laid out as on a Ship: ship/ contents plus versions.toml.
 
     With `catalogue`, the real recipes, profiles and skills come along; otherwise
-    tools/ and profiles/ start empty for a test to fill.
+    tools/ and profiles/ start empty for a test to fill. Its Python modules come
+    already compiled (_compiled_bundle), so a test's first ship-ctl call does not
+    compile shipctl again.
     """
-    parts = ["lib", "bin", "schemas", "files", "signins"]
-    if catalogue:
-        parts += ["tools", "profiles", "skills"]
-    for part in parts:
-        shutil.copytree(
-            SHIP / part, dest / part, ignore=shutil.ignore_patterns("__pycache__", "node_modules")
-        )
-    for part in ("tools", "profiles", "provision"):
-        (dest / part).mkdir(exist_ok=True)
-    shutil.copy(REPO / "versions.toml", dest / "versions.toml")
+    shutil.copytree(_compiled_bundle(catalogue), dest, symlinks=True, dirs_exist_ok=True)
     return dest
 
 

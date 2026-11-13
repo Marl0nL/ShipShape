@@ -27,6 +27,10 @@ from test_ship_converge import pack
 sys.path.insert(0, str(SHIP / "lib"))
 from shipctl import status  # noqa: E402
 
+# Classic herdr only: CI runs these, a local scripts/check leaves them out unless
+# SHIPSHAPE_TEST_CLASSIC_HERDR=1 (pytest.ini). They are deleted with classic herdr.
+pytestmark = pytest.mark.classic_herdr
+
 
 @pytest.fixture
 def ship(ship):

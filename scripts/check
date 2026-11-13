@@ -13,6 +13,8 @@
 #   SHIPSHAPE_HYGIENE_DENYLIST   private deny-list path (see docs/hygiene.md)
 #   SHIPSHAPE_TEST_WORKERS       pytest workers (pytest-xdist), default 4;
 #                                0 or 1 runs the tests serially in one process
+#   SHIPSHAPE_TEST_CLASSIC_HERDR 1 also runs the tests marked classic_herdr (only
+#                                for classic herdr Ships; CI sets it), default 0
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -64,15 +66,26 @@ case "$workers" in
     echo "check: SHIPSHAPE_TEST_WORKERS must be a whole number (0 or 1: serial), not '$workers'" >&2
     exit 2 ;;
 esac
+# Tests marked classic_herdr exist only for classic herdr and are deleted with it.
+# CI runs them (SHIPSHAPE_TEST_CLASSIC_HERDR=1); an everyday local check leaves them out.
+pytest_args=(-q)
+case "${SHIPSHAPE_TEST_CLASSIC_HERDR:-0}" in
+  1) ;;
+  0) pytest_args+=(-m "not classic_herdr") ;;
+  *)
+    echo "check: SHIPSHAPE_TEST_CLASSIC_HERDR must be 1 (run the classic herdr tests) or 0," \
+      "not '${SHIPSHAPE_TEST_CLASSIC_HERDR}'" >&2
+    exit 2 ;;
+esac
 if [ "$workers" -le 1 ]; then
-  run pytest "$PYTHON" -m pytest -q
+  run pytest "$PYTHON" -m pytest "${pytest_args[@]}"
 else
   if ! "$PYTHON" -c 'import xdist' 2>/dev/null; then
     echo "check: pytest-xdist is missing: $PYTHON -m pip install -r requirements-dev.txt" \
       "(or SHIPSHAPE_TEST_WORKERS=1 to run the tests serially)." >&2
     exit 2
   fi
-  run pytest "$PYTHON" -m pytest -q -n "$workers"
+  run pytest "$PYTHON" -m pytest "${pytest_args[@]}" -n "$workers"
 fi
 
 step "npm test"

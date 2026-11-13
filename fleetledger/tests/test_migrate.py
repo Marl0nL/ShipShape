@@ -50,6 +50,7 @@ from test_cli import RUNNING, result
 from test_secret_store import fake_backend
 
 from fleetledger import ca, cli, handover, inuse, keys, migrate, paths, schemas
+from fleetledger import repo as repo_mod
 
 pytestmark = pytest.mark.skipif(
     not (shutil.which("ssh-keygen") and shutil.which("ssh-agent") and shutil.which("ssh-add")),
@@ -1326,6 +1327,26 @@ def _whole(b: Computer) -> dict[str, bytes]:
             if f != "config/standby.json" and not f.startswith("config/.standby.json.tmp-")}
 
 
+def _git_once(monkeypatch) -> None:
+    """Each git question about the checkout asked once for the rest of the test: a loop
+    below runs receive (and activate) hundreds of times, and the checkout cannot change
+    while it does. Whether a dirty or moved checkout stops a receive is tested above,
+    with git asked every time."""
+    real, answers = repo_mod.git, {}
+
+    def git(root, *args, timeout=None, check=False):
+        key = (os.fspath(root), args)
+        if key not in answers:
+            answers[key] = real(root, *args, timeout=timeout)
+        proc = answers[key]
+        if check and proc.returncode:
+            raise subprocess.CalledProcessError(proc.returncode, proc.args, proc.stdout,
+                                                proc.stderr)
+        return proc
+
+    monkeypatch.setattr(repo_mod, "git", git)
+
+
 def _stops(b, monkeypatch, stream) -> tuple[list[int], dict[str, bytes]]:
     """Each change a whole receive makes (the stream's files written one by one into
     its staging folder count once: they are alike), and B's files after it."""
@@ -1346,6 +1367,7 @@ def test_a_receive_that_fails_at_any_step_never_leaves_a_copy_that_acts(
     stream = send_bytes(a, monkeypatch)
     snapshot = tmp_path / "start"
     _start(b, monkeypatch, stream, how, snapshot)
+    _git_once(monkeypatch)  # asked once here, by the whole receive _stops runs
     stops, whole = _stops(b, monkeypatch, stream)
     for stop in stops:
         _back_to(b, snapshot)
@@ -1378,6 +1400,7 @@ def test_a_receive_killed_at_any_step_never_leaves_a_copy_that_acts_and_runs_aga
     stream = send_bytes(a, monkeypatch)
     snapshot = tmp_path / "start"
     _start(b, monkeypatch, stream, how, snapshot)
+    _git_once(monkeypatch)  # asked once here, by the whole receive _stops runs
     stops, whole = _stops(b, monkeypatch, stream)
     for stop in stops:
         _back_to(b, snapshot)

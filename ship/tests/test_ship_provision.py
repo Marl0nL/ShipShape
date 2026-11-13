@@ -23,17 +23,68 @@ def mode(path: Path) -> str:
     return oct(stat.S_IMODE(path.lstat().st_mode))
 
 
-def test_guest_agent_starts_right_after_base_packages(tmp_path):
+# --- one first boot and one converge per module ---------------------------------------
+# A sandbox run takes seconds, and many tests only need the tree a first run on an
+# empty root leaves. Each is made once per module (in each pytest-xdist worker, its
+# own: nothing is shared between workers) and copied into the test's own root.
+class Pristine:
+    def __init__(self, root: Path, result: subprocess.CompletedProcess):
+        self.root, self.result = root, result
+
+    def copy_to(self, dest: Path) -> Path:
+        """The tree, copied into dest (made if missing; dest's own mode is kept): links
+        stay links, files keep their modes and times, and we own it as the run did."""
+        dest.mkdir(parents=True, exist_ok=True)
+        for child in self.root.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.copytree(child, dest / child.name, symlinks=True)
+            else:
+                shutil.copy2(child, dest / child.name, follow_symlinks=False)
+        return dest
+
+
+def _pristine(tmp_path_factory, mode_flag: str) -> Pristine:
+    root = tmp_path_factory.mktemp("pristine") / "root"
+    root.mkdir()
+    result = provision(mode_flag, "--root", str(root))
+    assert result.returncode == 0, result.stdout + result.stderr
+    # A copy is only the same tree if nothing in it names where it was made, and if
+    # it holds only what copytree copies faithfully (no fifo, socket or device).
+    here = str(root)
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            assert here not in os.readlink(path), path
+        elif path.is_file():
+            assert here.encode() not in path.read_bytes(), path
+        else:
+            assert path.is_dir(), path
+    return Pristine(root, result)
+
+
+@pytest.fixture(scope="module")
+def first_booted(tmp_path_factory) -> Pristine:
+    """`--first-boot` on an empty root."""
+    return _pristine(tmp_path_factory, "--first-boot")
+
+
+@pytest.fixture(scope="module")
+def converged(tmp_path_factory) -> Pristine:
+    """`--converge` on an empty root."""
+    return _pristine(tmp_path_factory, "--converge")
+
+
+def test_guest_agent_starts_right_after_base_packages(first_booted):
     """The hypervisor reads the address from the guest agent: start it before the slow steps."""
-    lines = provision("--first-boot", "--root", str(tmp_path)).stdout.splitlines()
+    lines = first_booted.result.stdout.splitlines()
     start = lines.index("ship-provision: skipped (--root): systemctl start qemu-guest-agent")
     assert "apt packages" in lines[start - 1] and "qemu-guest-agent" in lines[start - 1]
     assert "keyrings" in lines[start + 1]  # before the apt repos, herdr, claude, tools
 
 
-def test_first_boot_in_sandbox_is_idempotent(tmp_path):
-    first = provision("--first-boot", "--root", str(tmp_path))
+def test_first_boot_in_sandbox_is_idempotent(tmp_path, first_booted):
+    first = first_booted.result
     assert first.returncode == 0, first.stdout + first.stderr
+    first_booted.copy_to(tmp_path)
     assert "done: 0 change(s)" not in first.stdout
     second = provision("--first-boot", "--root", str(tmp_path))
     assert second.returncode == 0
@@ -65,8 +116,8 @@ def test_first_boot_in_sandbox_is_idempotent(tmp_path):
     assert mode(root / "var/lib/shipshape/provision.json") == "0o644"
 
 
-def test_apt_sources_from_versions(tmp_path):
-    assert provision("--converge", "--root", str(tmp_path)).returncode == 0
+def test_apt_sources_from_versions(tmp_path, converged):
+    converged.copy_to(tmp_path)
     sources = tmp_path / "etc/apt/sources.list.d"
     assert sorted(p.name for p in sources.iterdir()) == [
         "shipshape-github-cli.sources",
@@ -83,9 +134,9 @@ def test_apt_sources_from_versions(tmp_path):
     assert "Suites: nodistro\n" in node and "Architectures" not in node
 
 
-def test_old_gcloud_logs_are_removed(tmp_path):
+def test_old_gcloud_logs_are_removed(tmp_path, converged):
     """gcloud logs can hold tokens a command printed: converge removes them."""
-    assert provision("--converge", "--root", str(tmp_path)).returncode == 0
+    converged.copy_to(tmp_path)
     logs = tmp_path / "home/agent/.config/gcloud/logs/2026.01.01"
     logs.mkdir(parents=True)
     (logs / "12.00.00.000000.log").write_text("INFO ___FILE_ONLY___ ya29.example\n")
@@ -98,8 +149,8 @@ def test_old_gcloud_logs_are_removed(tmp_path):
     assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
 
 
-def test_gcloud_logs_link_is_removed_not_followed(tmp_path):
-    assert provision("--converge", "--root", str(tmp_path)).returncode == 0
+def test_gcloud_logs_link_is_removed_not_followed(tmp_path, converged):
+    converged.copy_to(tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     (elsewhere / "keep.txt").write_text("kept")
@@ -118,8 +169,8 @@ def test_dry_run_writes_nothing(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_dry_run_spots_a_drifted_file(tmp_path):
-    provision("--converge", "--root", str(tmp_path))
+def test_dry_run_spots_a_drifted_file(tmp_path, converged):
+    converged.copy_to(tmp_path)
     conf = tmp_path / "etc/ssh/sshd_config.d/10-shipshape.conf"
     conf.write_text("PasswordAuthentication yes\n")
     r = provision("--converge", "--dry-run", "--root", str(tmp_path))
@@ -395,8 +446,8 @@ def test_claude_folder_symlink_and_home_mode(tmp_path):
     assert mode(home) == "0o750"  # the home folder keeps its own mode
 
 
-def test_mode_drift_is_repaired(tmp_path):
-    provision("--converge", "--root", str(tmp_path))
+def test_mode_drift_is_repaired(tmp_path, converged):
+    converged.copy_to(tmp_path)
     hook = tmp_path / "opt/shipshape/hooks/mode-ledger"
     hook.chmod(0o700)
     r = provision("--converge", "--root", str(tmp_path))
@@ -405,10 +456,10 @@ def test_mode_drift_is_repaired(tmp_path):
     assert mode(hook) == "0o755"
 
 
-def test_converge_removes_the_resume_shim_and_ship_resume(tmp_path):
+def test_converge_removes_the_resume_shim_and_ship_resume(tmp_path, converged):
     """A Ship provisioned before the agent record had the resume shim and the
     hidden-client unit, enabled: a converge takes both away."""
-    provision("--converge", "--root", str(tmp_path))
+    converged.copy_to(tmp_path)
     old = {"opt/shipshape/shim/claude": "#!/usr/bin/python3\n",
            "etc/systemd/user/ship-resume.service": "[Unit]\n"}
     for rel, text in old.items():
@@ -450,20 +501,20 @@ def test_units_are_enabled(tmp_path):
     assert sorted(p.name for p in wants.iterdir()) == ["ship-core.service"]
 
 
-def test_the_agent_launcher_is_installed(tmp_path):
-    provision("--converge", "--root", str(tmp_path))
+def test_the_agent_launcher_is_installed(tmp_path, converged):
+    converged.copy_to(tmp_path)
     launcher = tmp_path / "opt/shipshape/bin/agent-launch"
     assert mode(launcher) == "0o755"
     assert launcher.read_bytes() == (FILES / "bin/agent-launch").read_bytes()
     assert (tmp_path / "etc/systemd/user/ship-core.service").exists()
 
 
-def test_a_core_ship_starts_herdr_core_at_boot_not_herdr(tmp_path):
+def test_a_core_ship_starts_herdr_core_at_boot_not_herdr(tmp_path, first_booted):
     """ship.toml runtime = "core": ship-core.service is enabled instead of herdr.service
     (both stay installed), and back again when it says herdr."""
     if shutil.which("systemctl") is None:
         pytest.skip("needs systemctl")
-    provision("--first-boot", "--root", str(tmp_path))
+    first_booted.copy_to(tmp_path)
     wants = tmp_path / "etc/systemd/user/default.target.wants"
     toml = tmp_path / "etc/shipshape/ship.toml"
     toml.write_text('schema = 1\nruntime = "core"\n\n[ship]\nname = "ship-01"\n'
@@ -734,12 +785,10 @@ def test_a_new_ship_gets_a_disk_tmp_with_age_cleanup(tmp_path):
     assert again.stdout.rstrip().endswith("done: 0 change(s)"), again.stdout
 
 
-def test_an_existing_ships_update_moves_tmp_to_disk_at_the_next_reboot(tmp_path):
+def test_an_existing_ships_update_moves_tmp_to_disk_at_the_next_reboot(tmp_path, converged):
     """A Ship provisioned before this change, /tmp a live tmpfs: its next converge masks
     tmp.mount once, says the reboot applies it, and never unmounts or stops anything."""
-    root = tmp_path / "root"
-    root.mkdir()
-    assert provision("--converge", "--root", str(root)).returncode == 0
+    root = converged.copy_to(tmp_path / "root")
     (root / TMP_MASK).unlink()  # as an older release left it
     (root / TMPFILES).unlink()
     (root / "proc/self").mkdir(parents=True)
@@ -761,10 +810,8 @@ def test_an_existing_ships_update_moves_tmp_to_disk_at_the_next_reboot(tmp_path)
     assert "tmpfs" not in again.stdout  # said once, when it changed
 
 
-def test_tmp_mask_replaces_a_unit_file_and_dry_run_only_reports(tmp_path):
-    root = tmp_path / "root"
-    root.mkdir()
-    assert provision("--converge", "--root", str(root)).returncode == 0
+def test_tmp_mask_replaces_a_unit_file_and_dry_run_only_reports(tmp_path, converged):
+    root = converged.copy_to(tmp_path / "root")
     (root / TMP_MASK).unlink()
     (root / TMP_MASK).write_text("[Mount]\nWhat=tmpfs\nWhere=/tmp\nType=tmpfs\n")
     dry = provision("--converge", "--dry-run", "--root", str(root))
