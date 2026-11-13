@@ -145,7 +145,9 @@ use their own GitHub sign-in.
 A Ship with `runtime = "core"` in its ship.toml runs its agents in herdr-core,
 and the herdr TUI (`herdr --remote`) cannot attach to it. FleetLedger knows a
 Ship's runtime from its last status (`herdr.runtime`), and every attach command
-it shows follows it. Nothing about SSH changes: the same certificate (`clear,
+it shows follows it. A Ship with no status yet (one just made: every new Ship runs
+herdr-core) counts as herdr-core; an adopted Ship's status is kept from the moment
+it is adopted. Nothing about SSH changes: the same certificate (`clear,
 permit-pty`), CA line and `Host` block work for herdr-core.
 
 For each herdr-core Ship, `install.sh`:

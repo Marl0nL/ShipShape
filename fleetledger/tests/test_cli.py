@@ -569,6 +569,19 @@ def test_adopt_with_fingerprint(env, stranger):
     assert ship.enrolled and "Adopted ship-07" in out
 
 
+def test_an_adopted_ship_attaches_as_what_it_runs_before_its_first_poll(env, stranger):
+    """A Ship with no cached status counts as herdr-core (attach.runtime_of: a new Ship).
+    An adopted Ship may run classic herdr, so adopt keeps the status it read."""
+    from fleetledger import attach
+
+    key, fp = stranger
+    env.app.keyscan = lambda host: key
+    env.ship.status_override["ship-07"] = RUNNING  # no herdr.runtime: classic herdr
+    code, _, err = env.run("adopt", "ship-07", "--host", "192.0.2.17", "--fingerprint", fp)
+    assert code == 0, err
+    assert attach.cached_runtime("ship-07") == "herdr"
+
+
 def test_adopt_accepts_a_newer_ships_unknown_status_block(env, stranger):
     """Forward compatibility, as status.fetch: a block this FleetLedger does not know
     is dropped; the rest is still checked."""

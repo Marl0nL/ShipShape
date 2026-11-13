@@ -98,7 +98,9 @@ def build(
 ) -> dict[str, Any]:
     """The ship.toml document as plain data, validated against the contract."""
     options = options or SeedOptions()
-    doc: dict[str, Any] = {"schema": 1}
+    # A new Ship runs herdr-core. Written out: a ship.toml without `runtime` means
+    # herdr (every Ship made before this), and that meaning does not change.
+    doc: dict[str, Any] = {"schema": 1, "runtime": "core"}
     doc["ship"] = {
         "name": ship.name,
         "id": ship.id,
@@ -168,6 +170,8 @@ def render(doc: Mapping[str, Any]) -> str:
     out.add(tomlkit.comment("ShipShape Ship settings (contracts/ship.toml.schema.json)."))
     out.add(tomlkit.comment("Written by FleetLedger; change it with `ship-fleet set`."))
     out["schema"] = doc["schema"]
+    if "runtime" in doc:
+        out["runtime"] = doc["runtime"]
     for section in ("ship", "claude", "agent", "network", "github", "tools"):
         if section in doc:
             table = tomlkit.table()

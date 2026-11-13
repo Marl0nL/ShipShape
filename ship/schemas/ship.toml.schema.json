@@ -11,7 +11,7 @@
     "runtime": {
       "enum": ["herdr", "core"],
       "default": "herdr",
-      "description": "What runs the agents. herdr: the herdr server (herdr.service). core: herdr-core (hc, ship-core.service), each agent in a kept terminal started through /opt/shipshape/bin/agent-launch; needs Claude Code 2.1.295 or newer. Per Ship; herdr stays installed either way."
+      "description": "What runs the agents. herdr: the herdr server (herdr.service). core: herdr-core (hc, ship-core.service), each agent in a kept terminal started through /opt/shipshape/bin/agent-launch; needs Claude Code 2.1.295 or newer. Per Ship; herdr stays installed either way. FleetLedger writes core for every new Ship; unset (every Ship made before that) is herdr."
     },
     "ship": {
       "type": "object",

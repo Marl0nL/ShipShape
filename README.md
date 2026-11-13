@@ -51,7 +51,7 @@ Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [access from outside the LAN](docs/runbooks/remote-access.md),
 [the web UI from your laptop and phone](docs/runbooks/remote-ui.md) (Tailscale Serve),
 [sign it in](docs/runbooks/sign-in.md),
-[attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, herdr --remote),
+[attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, hc; herdr --remote for classic Ships),
 [update the fleet](docs/runbooks/update-fleet.md) (and switch running agents to a new
 permission mode: `ship-fleet agent restart`),
 [move a Ship between herdr and herdr-core](docs/runbooks/switch-runtime.md) (`ship-fleet

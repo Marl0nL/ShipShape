@@ -191,4 +191,5 @@ def test_a_corrupt_cache_reads_as_no_cache(home, raw):
     assert read_cache("ship-01") is None
     from fleetledger import attach
 
-    assert attach.cached_runtime("ship-01") == attach.HERDR  # [1, 2] crashed .get() here
+    # [1, 2] crashed .get() here. Not a status: as for a Ship never fetched.
+    assert attach.cached_runtime("ship-01") == attach.CORE

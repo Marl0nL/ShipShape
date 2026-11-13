@@ -167,7 +167,10 @@ the delay ("10 minutes"); `ship-ctl set wake.text=` (empty) goes back to this on
 
 ## The agent runtime
 
-`runtime` (top level, `herdr` when unset) chooses what runs the Ship's agents:
+`runtime` (top level, `herdr` when unset) chooses what runs the Ship's agents.
+FleetLedger writes `runtime = "core"` into every new Ship's seed, so new Ships run
+herdr-core from their first boot. Unset still means `herdr`: a Ship made before that
+has no `runtime` and stays on herdr until it is moved (below).
 
 - `herdr`: the herdr server (`herdr.service`), as Ships have always run.
 - `core`: herdr-core (`hc`, `ship-core.service`). Each agent runs in a kept

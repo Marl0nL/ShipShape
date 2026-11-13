@@ -6,8 +6,10 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tomllib
 from pathlib import Path
@@ -62,6 +64,41 @@ def test_ship_toml_from_inventory(store, fake_repo):
     text = shiptoml.render(doc)
     assert tomllib.loads(text) == doc
     assert schemas.is_valid("ship.toml", tomllib.loads(text))
+
+
+def test_a_new_ships_ship_toml_says_it_runs_herdr_core(store, fake_repo):
+    """Written out, not left to the default: a ship.toml without `runtime` means classic
+    herdr, as it has for every Ship made before herdr-core, and keeps meaning that."""
+    inv = store.load()
+    doc = shiptoml.build(inv, inv.ship("ship-01"), Catalogue.from_repo(fake_repo))
+    assert doc["runtime"] == "core"
+    text = shiptoml.render(doc)
+    assert 'schema = 1\nruntime = "core"\n' in text  # top level, before any table
+    assert tomllib.loads(text)["runtime"] == "core"
+    schema = json.loads((CONTRACTS / "ship.toml.schema.json").read_text())
+    assert schema["properties"]["runtime"]["default"] == "herdr"  # unset: unchanged
+
+
+def test_a_freshly_seeded_ship_starts_herdr_core_at_boot_not_herdr(store, fake_repo, tmp_path):
+    """The seed's ship.toml, as cloud-init writes it, through a sandbox first boot:
+    ship-core.service is enabled at boot and herdr.service is not."""
+    if shutil.which("systemctl") is None:
+        pytest.skip("needs systemctl")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ship" / "tests"))
+    from ship_harness import provision
+
+    inv = store.load()
+    seed = make_seed(inv, inv.ship("ship-01"), fake_repo)
+    user = yaml.safe_load(iso.read(seed.path.read_bytes())[1]["user-data"])
+    written = next(f for f in user["write_files"] if f["path"] == "/etc/shipshape/ship.toml")
+    root = tmp_path / "root"
+    (root / "etc/shipshape").mkdir(parents=True)
+    (root / "etc/shipshape/ship.toml").write_text(written["content"])
+    run = provision("--first-boot", "--root", str(root))
+    assert run.returncode == 0, run.stdout + run.stderr
+    wants = root / "etc/systemd/user/default.target.wants"
+    assert sorted(p.name for p in wants.iterdir()) == ["ship-core.service"]
+    assert (root / "etc/systemd/user/herdr.service").exists()  # installed, not started
 
 
 def test_ship_toml_has_no_timezone_unless_given(store, fake_repo):
