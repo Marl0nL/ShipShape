@@ -67,6 +67,11 @@ esac
 if [ "$workers" -le 1 ]; then
   run pytest "$PYTHON" -m pytest -q
 else
+  if ! "$PYTHON" -c 'import xdist' 2>/dev/null; then
+    echo "check: pytest-xdist is missing: $PYTHON -m pip install -r requirements-dev.txt" \
+      "(or SHIPSHAPE_TEST_WORKERS=1 to run the tests serially)." >&2
+    exit 2
+  fi
   run pytest "$PYTHON" -m pytest -q -n "$workers"
 fi
 

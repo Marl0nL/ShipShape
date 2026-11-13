@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,21 @@ from fleetledger.repo import Repo
 from fleetledger.store import TomlFileStore
 
 
+@pytest.fixture(autouse=True, scope="session")
+def own_short_socket_root():
+    """paths.runtime_socket's short /tmp folder, for a runtime folder too long for a
+    socket, made under a private folder of this test process instead of /tmp itself:
+    never your real one, and never shared with another test worker running at the
+    same time (xdist's longer temp paths make that fallback likelier)."""
+    from fleetledger import paths
+
+    root = short_folder()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(paths, "SHORT_SOCKET_ROOT", root)
+        yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
 @pytest.fixture(autouse=True)
 def no_real_keyring(monkeypatch):
     from fleetledger.overlay import secret_store
@@ -36,7 +52,12 @@ def no_real_keyring(monkeypatch):
 def fast_keys(monkeypatch):
     """Managed keys made with 1 bcrypt round instead of ssh-keygen's default, and no
     pause when a pexpect-driven ssh-keygen or ssh-add closes: the same steps, much
-    faster (as test_vault.py's `fast` lowers the vault's scrypt cost)."""
+    faster (as test_vault.py's `fast` lowers the vault's scrypt cost).
+
+    With no pause, a child still running at close (one asked for a passphrase it
+    never gets) may not be reaped yet just after its SIGKILL on a busy machine (tests
+    in parallel workers), and ptyprocess then says it could not terminate it; so a
+    forced close waits for the kill to land instead."""
     from fleetledger import keys
 
     monkeypatch.setattr(keys, "KDF_ROUNDS", 1)
@@ -47,6 +68,17 @@ def fast_keys(monkeypatch):
         for proc in (child, child.ptyproc):
             proc.delayafterclose = 0
             proc.delayafterterminate = 0
+        pty, terminate = child.ptyproc, child.ptyproc.terminate
+
+        def terminate_and_wait(force=False):
+            if terminate(force) or not force:
+                return not pty.isalive()  # done, or not asked to kill
+            deadline = time.monotonic() + 10
+            while pty.isalive() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            return not pty.isalive()
+
+        pty.terminate = terminate_and_wait
         return child
 
     monkeypatch.setattr(keys, "_spawn", quick)
