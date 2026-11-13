@@ -589,16 +589,21 @@ class Core(AgentRuntime):
 
     def places(self) -> dict[str, dict] | None:
         """Every terminal, finished ones too: {address: {workspace, cwd, agent,
-        usable}}. usable: a kept terminal back at (or about to get) its shell."""
+        usable, typed}}. usable: a kept terminal back at (or about to get) its shell.
+        typed: one of those, its launch typed within LAUNCH_GRACE_S (claude may still
+        come up, or came up and stopped again): `launch` types nothing into it yet."""
         _, terms, _ = self.terminals(finished=True)
         if terms is None:
             return None
         out = {}
         for t in terms:
             v = self.view(t)
+            usable = v["kind"] in ("shell", "lost")
             out[v["place"]] = {"workspace": v["workspace"], "cwd": v["cwd"],
                                "agent": v["kind"] if self.is_agent(v) else None,
-                               "usable": v["kind"] in ("shell", "lost")}
+                               "usable": usable,
+                               "typed": usable and v["launching"] is not None
+                               and 0 <= time.time() - v["launching"] < LAUNCH_GRACE_S}
         return out
 
     def in_place(self, place: str, name: str | None = None) -> dict | None:

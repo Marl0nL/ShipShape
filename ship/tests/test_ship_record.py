@@ -490,22 +490,42 @@ def test_an_agent_that_keeps_dying_soon_after_it_starts_is_not_started_forever(s
     assert "agent-relaunch-failed" in {a["code"] for a in ship.status()["attention"]}
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "core gap: the shipshape.launching label stays on a kept terminal once claude is up "
-    "(runtime.Core._exec_in), so within LAUNCH_GRACE_S (120 s) of a launch typed into it "
-    "a new crash is reported as started again but nothing is typed"))
-def test_an_agent_killed_again_soon_after_it_came_back_is_started_again(started):
-    """claude is killed in its kept terminal, comes back there, and is killed again
-    a minute later: it comes back again (an early stop, a failed try)."""
+def test_an_agent_killed_again_soon_after_it_came_back_is_started_again_after_the_grace(
+        started):
+    """claude is killed (a signal) in its kept terminal, comes back there, and is
+    killed again within LAUNCH_GRACE_S of that launch. Nothing is typed into its
+    terminal until the grace has passed, so the refreshes before then neither start
+    it nor count a try; the first one after it starts it again, once, and counts one.
+    A third early stop leaves it alone."""
     ship = started
-    grinder_sid = sid(ship, "grinder")
-    want = ["--dangerously-skip-permissions", "--resume", grinder_sid]
-    for n in (1, 2):
+    want = ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder")]
+    ship.crash("grinder")
+    ship.ctl("refresh")
+    assert recorded(ship)["grinder"]["relaunch_failures"] == 1
+    assert ship.args().get("grinder") == want and launches(ship, "grinder") == 1 + 1
+    for n in (2, 3):
         ship.crash("grinder")
-        ship.ctl("refresh")
-        assert recorded(ship)["grinder"]["relaunch_failures"] == n
-        assert ship.args().get("grinder") == want
-    assert launches(ship, "grinder") == 1 + 2 and ship.place("grinder") == "t2"
+        for _ in range(2):  # within the grace (the terminal lost, then at its shell)
+            _, _, out = ship.ctl("refresh")
+            assert "grinder" not in out and "grinder" not in ship.args()
+            assert launches(ship, "grinder") == n
+            grinder = recorded(ship)["grinder"]
+            assert grinder["state"] == "starting" and grinder["relaunch_failures"] == n - 1
+        age_typed_launches(ship, 120)  # LAUNCH_GRACE_S
+        _, _, out = ship.ctl("refresh")
+        if n == 2:
+            assert "grinder started again" in out
+            assert ship.args().get("grinder") == want and ship.place("grinder") == "t2"
+            assert launches(ship, "grinder") == 1 + 2
+            assert recorded(ship)["grinder"]["relaunch_failures"] == 2
+            ship.ctl("refresh")  # it runs: nothing more is started or counted
+            assert launches(ship, "grinder") == 1 + 2
+            assert recorded(ship)["grinder"]["relaunch_failures"] == 2
+    # The third early stop: left alone, with attention.
+    assert launches(ship, "grinder") == 1 + 2 and "grinder" not in ship.args()
+    grinder = recorded(ship)["grinder"]
+    assert grinder["state"] == "failed" and grinder["relaunch_failures"] == 3
+    assert "agent-relaunch-failed" in {a["code"] for a in ship.status()["attention"]}
 
 
 def age_launch(ship, name: str, minutes: int) -> None:

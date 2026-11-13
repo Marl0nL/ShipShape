@@ -643,6 +643,11 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[d
             continue
         if r["failures"] >= MAX_TRIES:
             continue
+        if ((places or {}).get(own_place(rt, e) or "") or {}).get("typed"):
+            # Its launch was typed into its terminal moments ago (herdr-core): launch
+            # would type nothing yet, so this is no start and no try. A refresh once
+            # that grace has passed starts it, and counts an early stop then.
+            continue
         lived = age_s(e["launched_at"]) if this_boot else None
         if lived is not None and lived < STABLE_S and r["counted_launch"] is None:
             # It stopped soon after it started (its transcript too big to load, a
