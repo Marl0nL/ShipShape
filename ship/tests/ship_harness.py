@@ -91,19 +91,32 @@ mode = "bypassPermissions"
 
 
 _BUNDLES: dict[bool, Path] = {}  # this process's compiled bundles, by `catalogue`
+_bundle_home: Path | None = None  # where they are built (use_bundle_home)
+
+
+def use_bundle_home(folder: Path) -> None:
+    """Build this process's compiled bundles in folder: ship/tests/conftest.py gives
+    each session one under pytest's own temporary folder, which pytest cleans up
+    even after a killed run. Without one (FleetLedger's tests that drive a sandbox
+    Ship), they go in a temporary folder removed when the process exits."""
+    global _bundle_home
+    _bundle_home = folder
 
 
 def _compiled_bundle(catalogue: bool) -> Path:
     """The bundle make_bundle copies, built and byte-compiled once per process.
 
     Every pytest-xdist worker is its own process and builds its own in a fresh
-    temporary folder, so no worker shares it or sees one half written. The copies
-    keep each source file's mtime (copy2), which is what its .pyc is checked
-    against: a test that changes a bundle file gets that file compiled afresh.
+    folder, so no worker shares it or sees one half written. The copies keep each
+    source file's mtime (copy2), which is what its .pyc is checked against: a test
+    that changes a bundle file gets that file compiled afresh.
     """
     if catalogue not in _BUNDLES:
-        work = Path(tempfile.mkdtemp(prefix="ship-bundle-"))
-        atexit.register(shutil.rmtree, work, ignore_errors=True)
+        if _bundle_home is not None:
+            work = Path(tempfile.mkdtemp(prefix="ship-bundle-", dir=_bundle_home))
+        else:
+            work = Path(tempfile.mkdtemp(prefix="ship-bundle-"))
+            atexit.register(shutil.rmtree, work, ignore_errors=True)
         bundle = work / "bundle"
         parts = ["lib", "bin", "schemas", "files", "signins"]
         if catalogue:

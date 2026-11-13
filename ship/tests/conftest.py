@@ -3,7 +3,15 @@ import helpers from there (a module named `conftest` is ambiguous: fleetledger/t
 has one too)."""
 
 import pytest
+import ship_harness
 from ship_harness import clean_env, ship  # noqa: F401  (fixtures)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _bundle_home(tmp_path_factory):
+    """The compiled bundles make_bundle copies are built under pytest's temporary
+    folder (each xdist worker its own), so even a killed run leaves none behind."""
+    ship_harness.use_bundle_home(tmp_path_factory.mktemp("bundles"))
 
 
 @pytest.fixture(autouse=True)

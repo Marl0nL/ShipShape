@@ -2,7 +2,7 @@
 
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
-- Checks: `PYTHON=.venv/bin/python scripts/check` is exactly what CI runs (shellcheck, ruff, pytest, npm test, public-repo hygiene). The repo is public: read `docs/hygiene.md`; only placeholder names, `example.com`/`example.invalid` and documentation address ranges in code, docs, tests and screenshots.
+- Checks: `PYTHON=.venv/bin/python scripts/check` is what CI runs, less the `classic_herdr` tests (below) (shellcheck, ruff, pytest, npm test, public-repo hygiene). The repo is public: read `docs/hygiene.md`; only placeholder names, `example.com`/`example.invalid` and documentation address ranges in code, docs, tests and screenshots.
 - On a busy Ship the full check takes over 10 minutes: run it in the background, and prefer targeted tests while you work.
 - pytest runs in parallel workers (pytest-xdist; `SHIPSHAPE_TEST_WORKERS`, default 4, 1 for serial): a test may share no fixed path, port or folder with another. Use `tmp_path`, `short_dir` for sockets, `fl_harness.start_sshd` for a real sshd, and bind port 0 rather than picking a port to bind later. Mark a test that exists only for classic herdr `classic_herdr`: `scripts/check` skips those unless `SHIPSHAPE_TEST_CLASSIC_HERDR=1` (CI sets it).
 - FleetLedger tests touch no network: the autouse guard in `fleetledger/tests/fl_netguard.py` fails a test that looks a name up, connects off this computer or runs the real ssh. Inject fakes (`FakeSSH`; `fl_harness.no_ship_answers` for a test that starts the real poller through `server.serve`); mark only deliberate cases `real_resolver` or `local_sshd`.

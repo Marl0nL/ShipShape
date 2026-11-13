@@ -89,7 +89,8 @@ pip install -r requirements-dev.txt
 scripts/check
 ```
 
-`scripts/check` needs `shellcheck` on your PATH. It is exactly what CI runs.
+`scripts/check` needs `shellcheck` on your PATH. It is what CI runs (see the
+classic herdr tier below).
 It runs the tests in 4 parallel workers (pytest-xdist); set
 `SHIPSHAPE_TEST_WORKERS` to change that, 0 or 1 to run them serially.
 It leaves out the tests marked `classic_herdr`, which exist only for classic
