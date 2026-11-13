@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from fl_harness import Clock, wait_for
+from fl_harness import Clock, no_ship_answers, wait_for
 from fleetledger.concierge import audit, engine
 from fleetledger.errors import FleetError
 from fleetledger.web import actions, flows, network, security, server
@@ -96,6 +96,7 @@ def web(store, fake_repo, monkeypatch, tmp_path):
         stdin_isatty=lambda: False,
         sleep=lambda s: None,
     )
+    app.github_visibility = lambda repo: "unknown"  # never ask GitHub (--repo)
     clock = Clock(1000.0)
     gate = Gate(PORT, clock=clock)
     fleet = Fleet(app, interval=30)
@@ -409,7 +410,7 @@ def test_browser_gets_a_private_file_not_the_token(store, monkeypatch, home):
 
     monkeypatch.setattr(uvicorn.Server, "run", fake_run)
     out = io.StringIO()
-    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    app = cli.App(out=out, err=out, store_factory=lambda: store, ssh_factory=no_ship_answers)
     monkeypatch.setattr(server.sys.stdin, "isatty", lambda: False, raising=False)
     assert server.serve(app, port=0, open_browser=True, interval=3600) == 0
     assert opened and opened[0].startswith("file://") and "token" not in opened[0]

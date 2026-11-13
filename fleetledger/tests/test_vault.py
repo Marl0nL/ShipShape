@@ -17,7 +17,7 @@ import subprocess
 import time
 
 import pytest
-from fl_harness import fake_tskey
+from fl_harness import fake_tskey, no_ship_answers
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.overlay import secret_store
 from test_secret_store import fake_backend
@@ -592,6 +592,7 @@ def test_a_handed_over_copy_whose_vault_locked_can_unlock_then_move_on(store, ho
     app, out = app_for(store)
     assert cli.main(["vault", "status"], app) == 0 and "unlocked" in out.getvalue()
     app, out = app_for(store)
+    app.ssh_factory = no_ship_answers  # activate checks every Ship: none answers
     code = cli.main(then, app)
     said = out.getvalue()
     assert "vault is locked" not in said and "on standby: it has" not in said

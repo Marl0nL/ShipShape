@@ -270,8 +270,9 @@ def test_ssh_and_signing_load_managed_keys_first(home, monkeypatch, store):
 
 @pytest.fixture
 def short_folder():
-    """The short /tmp folder these tests may make: removed again if they made it."""
-    folder = keys.Path("/tmp") / f"fleetledger-{os.getuid()}"
+    """The short folder these tests may make (under this test process's own root, see
+    conftest's own_short_socket_root): removed again if they made it."""
+    folder = keys.paths.SHORT_SOCKET_ROOT / f"fleetledger-{os.getuid()}"
     existed = folder.exists()
     yield folder
     if not existed:
@@ -337,7 +338,7 @@ def test_a_short_folder_owned_by_someone_else_is_refused(monkeypatch, tmp_path):
     monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(deep))
     other_uid = 4242424
     monkeypatch.setattr(keys.os, "getuid", lambda: other_uid)
-    folder = keys.Path("/tmp") / f"fleetledger-{other_uid}"
+    folder = keys.paths.SHORT_SOCKET_ROOT / f"fleetledger-{other_uid}"
     try:
         with pytest.raises(FleetError, match="not a private folder"):
             keys._agent_socket()  # it exists (made just now) but belongs to the real uid

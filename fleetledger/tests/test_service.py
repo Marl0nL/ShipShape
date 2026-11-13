@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 import pytest
+from fl_harness import no_ship_answers
 from fleetledger.errors import FleetError
 from fleetledger.web import control, server
 from fleetledger.web.jobs import Jobs
@@ -253,7 +254,8 @@ def test_the_service_prints_no_link_and_hands_one_out_on_its_socket(store, runti
     monkeypatch.setattr(server.webbrowser, "open",
                         lambda url: pytest.fail("a service opens no browser"))
     out = io.StringIO()
-    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    app = cli.App(out=out, err=out, store_factory=lambda: store,
+                  ssh_factory=no_ship_answers)
     assert server.serve(app, port=0, open_browser=False, interval=3600, service=True) == 0
     assert "token" not in out.getvalue()  # the journal gets no link
     assert "ship-fleet ui link --local" in out.getvalue()
@@ -279,7 +281,8 @@ def test_the_service_polls_with_nobody_looking(store, runtime, monkeypatch):
 
     monkeypatch.setattr(fleet_mod, "Fleet", spy)
     monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: None)
-    app = cli.App(out=io.StringIO(), err=io.StringIO(), store_factory=lambda: store)
+    app = cli.App(out=io.StringIO(), err=io.StringIO(), store_factory=lambda: store,
+                  ssh_factory=no_ship_answers)
     server.serve(app, port=0, open_browser=False, interval=3600, service=True)
     assert made["idle_after"] == math.inf
     made.clear()
@@ -307,7 +310,8 @@ def test_the_terminal_ui_also_answers_link_local(store, runtime, monkeypatch):
                         lambda self, sockets=None: seen.update(link=control.ask("link")))
     monkeypatch.setattr(server.sys.stdin, "isatty", lambda: False, raising=False)
     out = io.StringIO()
-    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    app = cli.App(out=out, err=out, store_factory=lambda: store,
+                  ssh_factory=no_ship_answers)
     server.serve(app, port=0, open_browser=False, interval=3600)
     assert "/login?token=" in seen["link"]["link"]
     assert seen["link"]["link"] not in out.getvalue()  # a new one, not the printed one

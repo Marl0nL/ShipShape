@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import fcntl
 import json
+import sys
 import time
 
 import pytest
-from ship_harness import LAUNCHER, LEDGER, assert_valid
+from ship_harness import LAUNCHER, LEDGER, SHIP, assert_valid
 
 RECORD = "/var/lib/shipshape/agents.json"
 
@@ -94,9 +95,11 @@ def add_live(ship, name, session, cwd, address, mode=None, kind="claude", keep=F
         ledger_start(ship, session, address, mode)
 
 
-def claude_by_hand_in(ship, name: str, session: str, cwd: str, mode: str) -> None:
+def claude_by_hand_in(ship, name: str, session: str, cwd: str, mode: str,
+                      reported: bool = True) -> None:
     """In the kept terminal by that name, whose claude crashed, someone `cd`s to cwd
-    and runs claude by hand: a new session there."""
+    and runs claude by hand: a new session there. reported=False: its hook has not
+    reported the session yet (the terminal still shows the one it was started with)."""
     s = ship.scenario()
     t = next(t for t in s["hc"]["terminals"] if t.get("name") == name and t["state"] == "live")
     t.pop("recover_in", None)
@@ -104,7 +107,8 @@ def claude_by_hand_in(ship, name: str, session: str, cwd: str, mode: str) -> Non
              session=session,
              foreground={"pid": 10, "name": "claude", "argv": ["claude"], "cwd": cwd})
     ship.set(hc=s["hc"])
-    ledger_start(ship, session, t["address"], mode)
+    if reported:
+        ledger_start(ship, session, t["address"], mode)
 
 
 def lose_sessions(ship, *sessions: str) -> None:
@@ -223,10 +227,6 @@ def test_another_agent_in_its_old_terminal_never_becomes_it(started):
     assert ship.record()["agents"]["main"]["session"] == main_sid
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "core gap: a claude started by hand in a crashed agent's kept terminal, in another "
-    "folder, is matched to that agent by the terminal's name (record.match), so the "
-    "record moves the agent to that folder, session and mode"))
 def test_an_unnamed_agent_in_its_terminal_but_another_folder_never_becomes_it(started):
     """main crashed; someone uses its kept terminal, `cd`s elsewhere and runs claude
     there by hand. That is another agent: main keeps its own session, mode and folder,
@@ -249,6 +249,125 @@ def test_an_unnamed_agent_in_its_terminal_but_another_folder_never_becomes_it(st
     assert ship.args()["main"] == ["--permission-mode", "auto", "--name", "ship-01-main",
                                    "--session-id", sid(ship, "main")]
     assert sid(ship, "main") not in (main_sid, "sess-x")
+
+
+def test_the_crashed_agent_resumes_its_own_session_once_its_terminal_is_free(started):
+    """The same, and nothing is lost while both exist: a restart of main never takes
+    the other's Claude for it (hc gives no second terminal main's name), and once
+    that one is gone main resumes its own session, in its own folder and mode, and
+    the other its own, in a terminal of its own."""
+    ship = started
+    main_sid = sid(ship, "main")
+    ship.crash("main")
+    claude_by_hand_in(ship, "main", "sess-x", "/home/agent/work/elsewhere", "plan")
+    ship.ctl("refresh")
+    rc, _, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc != 0  # its terminal runs another Claude
+    record = ship.record()["agents"]
+    assert set(record) == {"main", "grinder", "elsewhere"}
+    assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"]) == (
+        main_sid, "auto", "/home/agent/work/main")
+    assert (record["elsewhere"]["session"], record["elsewhere"]["cwd"]) == (
+        "sess-x", "/home/agent/work/elsewhere")
+    assert not typed(ship, "t1") and len(runs(ship)) == 2
+    # The other one crashes too: it is started again in a new terminal, by its name.
+    ship.p("/home/agent/work/elsewhere").mkdir(parents=True)
+    ship.core_crash("main")  # (the terminal is still called main)
+    ship.ctl("refresh")
+    assert ship.args()["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x"]
+    assert ship.agent("elsewhere")["cwd"] == "/home/agent/work/elsewhere"
+    assert not typed(ship, "t1")
+    # main, back by hand, resumes its own conversation in its kept terminal.
+    rc, _, out = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 0, out
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.place("main") == "t1" and ship.agent("main")["cwd"] == "/home/agent/work/main"
+    ship.ctl("refresh")
+    record = ship.record()["agents"]
+    assert set(record) == {"main", "grinder", "elsewhere"}
+    assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"],
+            record["main"]["want"]) == (main_sid, "auto", "/home/agent/work/main", "running")
+    assert (record["elsewhere"]["session"], record["elsewhere"]["mode"],
+            record["elsewhere"]["want"]) == ("sess-x", "plan", "running")
+    assert record["elsewhere"]["place"]["id"] != "t1"
+
+
+def test_before_its_hook_reports_the_other_claude_still_never_becomes_it(started):
+    """The same, before the other Claude's hook has reported its session: its
+    terminal still shows main's, which is no proof it is main."""
+    ship = started
+    main_sid = sid(ship, "main")
+    ship.crash("main")
+    claude_by_hand_in(ship, "main", "sess-x", "/home/agent/work/elsewhere", "plan",
+                      reported=False)
+    for reported in (False, True):
+        if reported:
+            ledger_start(ship, "sess-x", "t1", "plan")
+        ship.ctl("refresh")
+        record = ship.record()["agents"]
+        assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"]) == (
+            main_sid, "auto", "/home/agent/work/main")
+        assert [n for n, e in record.items() if e["session"] == main_sid] == ["main"]
+    assert (record["elsewhere"]["session"], record["elsewhere"]["mode"]) == ("sess-x", "plan")
+    assert not typed(ship, "t1")
+
+
+def test_the_other_claude_keeps_its_own_record_in_a_let_go_agents_terminal(started):
+    """An agent not in [[autostart]] whose kept terminal someone used is let go;
+    the Claude started there by hand, in another folder, stays recorded as itself
+    (not, once that name is free, under the name of the terminal it runs in)."""
+    ship = started
+    ship.p("/home/agent/work/foo").mkdir(parents=True)
+    add_live(ship, "foo", "sess-foo", "/home/agent/work/foo", "t5", mode="plan", keep=True)
+    ship.ctl("refresh")
+    assert sid(ship, "foo") == "sess-foo"
+    ship.core_crash("foo")
+    claude_by_hand_in(ship, "foo", "sess-x", "/home/agent/work/elsewhere", "auto")
+    for _ in range(3):
+        ship.ctl("refresh")
+        record = ship.record()["agents"]
+        assert (record["elsewhere"]["session"], record["elsewhere"]["want"]) == ("sess-x",
+                                                                                  "running")
+        assert [n for n, e in record.items() if e["session"] == "sess-x"] == ["elsewhere"]
+
+
+def test_a_folder_spelt_another_way_is_still_its_folder(tmp_path):
+    """A runtime reports the folder a process runs in with its links resolved: a
+    recorded folder reached through a link is the same folder, so the agent by its
+    name is still itself (here with no session known yet, as on classic herdr
+    until it reports one), and a folder that is really another is not."""
+    sys.path.insert(0, str(SHIP / "lib"))
+    from shipctl import record
+
+    (tmp_path / "real" / "main").mkdir(parents=True)
+    (tmp_path / "real" / "elsewhere").mkdir()
+    (tmp_path / "work").symlink_to(tmp_path / "real")
+    doc = {"agents": {"main": {"cwd": str(tmp_path / "work" / "main"), "session": None,
+                               "place": None}}}
+
+    def live(cwd):
+        return [{"name": "main", "kind": "claude", "session": "sess-1", "place": "t1",
+                 "cwd": str(cwd)}]
+
+    assert record.match(doc, live(tmp_path / "real" / "main"))["main"]["place"] == "t1"
+    assert record.match(doc, live(tmp_path / "real" / "elsewhere")) == {}
+
+
+def test_a_relaunch_in_its_own_terminal_and_folder_is_still_it(started):
+    """A normal relaunch after a crash: in its kept terminal, in its folder, by its
+    name; the record keeps it as itself, and nothing is picked up beside it."""
+    ship = started
+    main_sid = sid(ship, "main")
+    ship.crash("main")
+    ship.ctl("refresh")
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.place("main") == "t1"
+    ship.ctl("refresh")
+    record = ship.record()["agents"]
+    assert set(record) == {"main", "grinder"}
+    assert (record["main"]["session"], record["main"]["cwd"], record["main"]["want"],
+            record["main"]["place"]["id"]) == (main_sid, "/home/agent/work/main", "running", "t1")
+    assert launches(ship, "main") == 2  # its first start and this one, never a third
 
 
 def test_claude_started_again_by_hand_in_its_terminal_and_folder_is_still_it(started):
@@ -371,22 +490,56 @@ def test_an_agent_that_keeps_dying_soon_after_it_starts_is_not_started_forever(s
     assert "agent-relaunch-failed" in {a["code"] for a in ship.status()["attention"]}
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "core gap: the shipshape.launching label stays on a kept terminal once claude is up "
-    "(runtime.Core._exec_in), so within LAUNCH_GRACE_S (120 s) of a launch typed into it "
-    "a new crash is reported as started again but nothing is typed"))
-def test_an_agent_killed_again_soon_after_it_came_back_is_started_again(started):
-    """claude is killed in its kept terminal, comes back there, and is killed again
-    a minute later: it comes back again (an early stop, a failed try)."""
+def test_an_agent_killed_again_soon_after_it_came_back_is_started_again_after_the_grace(
+        started):
+    """claude is killed (a signal) in its kept terminal, comes back there, and is
+    killed again within LAUNCH_GRACE_S of that launch. Nothing is typed into its
+    terminal until the grace has passed, so the refreshes before then neither start
+    it nor count a try; the first one after it starts it again, once, and counts one.
+    A third early stop leaves it alone."""
     ship = started
-    grinder_sid = sid(ship, "grinder")
-    want = ["--dangerously-skip-permissions", "--resume", grinder_sid]
-    for n in (1, 2):
-        ship.crash("grinder")
-        ship.ctl("refresh")
-        assert recorded(ship)["grinder"]["relaunch_failures"] == n
-        assert ship.args().get("grinder") == want
-    assert launches(ship, "grinder") == 1 + 2 and ship.place("grinder") == "t2"
+    want = ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder")]
+    ship.crash("grinder")
+    ship.ctl("refresh")
+    assert recorded(ship)["grinder"]["relaunch_failures"] == 1
+    assert ship.args().get("grinder") == want and launches(ship, "grinder") == 1 + 1
+    for n in (2, 3):
+        # Killed by a signal: the second time its kept terminal stays without a
+        # program through the refreshes within the grace (lost), the third time it
+        # is back at its shell for them.
+        ship.core_crash("grinder", recover_in=99 if n == 2 else 1)
+        for _ in range(2):  # within the grace
+            _, _, out = ship.ctl("refresh")
+            assert "grinder" not in out and "grinder" not in ship.args()
+            assert launches(ship, "grinder") == n
+            grinder = recorded(ship)["grinder"]
+            assert grinder["state"] == "starting" and grinder["relaunch_failures"] == n - 1
+            assert (ship.terminal("grinder")["foreground"] is None) == (n == 2)
+        shell_back(ship, "grinder")
+        age_typed_launches(ship, 120)  # LAUNCH_GRACE_S
+        _, _, out = ship.ctl("refresh")
+        if n == 2:
+            assert "grinder started again" in out
+            assert ship.args().get("grinder") == want and ship.place("grinder") == "t2"
+            assert launches(ship, "grinder") == 1 + 2
+            assert recorded(ship)["grinder"]["relaunch_failures"] == 2
+            ship.ctl("refresh")  # it runs: nothing more is started or counted
+            assert launches(ship, "grinder") == 1 + 2
+            assert recorded(ship)["grinder"]["relaunch_failures"] == 2
+    # The third early stop: left alone, with attention.
+    assert launches(ship, "grinder") == 1 + 2 and "grinder" not in ship.args()
+    grinder = recorded(ship)["grinder"]
+    assert grinder["state"] == "failed" and grinder["relaunch_failures"] == 3
+    assert "agent-relaunch-failed" in {a["code"] for a in ship.status()["attention"]}
+
+
+def shell_back(ship, name: str) -> None:
+    """The named agent's kept terminal, if still without a program, gets its shell."""
+    s = ship.scenario()
+    for t in s["hc"]["terminals"]:
+        if t.get("name") == name and t["state"] == "live" and "recover_in" in t:
+            t["recover_in"] = 1
+    ship.set(hc=s["hc"])
 
 
 def age_launch(ship, name: str, minutes: int) -> None:

@@ -61,6 +61,13 @@ def wait_until(ctx: Context, seconds: float, done) -> bool:
         time.sleep(POLL_S)
 
 
+def one_folder(a: str, b: str) -> bool:
+    """Folders a and b are one, however spelt (a runtime reports the folder a
+    process runs in, its links resolved)."""
+    return (os.path.normpath(a) == os.path.normpath(b)
+            or os.path.realpath(a) == os.path.realpath(b))
+
+
 def mode_args(mode: str | None) -> list[str]:
     """claude's flags for a permission mode (none for an unknown one)."""
     if mode == "bypassPermissions":
@@ -582,16 +589,21 @@ class Core(AgentRuntime):
 
     def places(self) -> dict[str, dict] | None:
         """Every terminal, finished ones too: {address: {workspace, cwd, agent,
-        usable}}. usable: a kept terminal back at (or about to get) its shell."""
+        usable, typed}}. usable: a kept terminal back at (or about to get) its shell.
+        typed: one of those, its launch typed within LAUNCH_GRACE_S (claude may still
+        come up, or came up and stopped again): `launch` types nothing into it yet."""
         _, terms, _ = self.terminals(finished=True)
         if terms is None:
             return None
         out = {}
         for t in terms:
             v = self.view(t)
+            usable = v["kind"] in ("shell", "lost")
             out[v["place"]] = {"workspace": v["workspace"], "cwd": v["cwd"],
                                "agent": v["kind"] if self.is_agent(v) else None,
-                               "usable": v["kind"] in ("shell", "lost")}
+                               "usable": usable,
+                               "typed": usable and v["launching"] is not None
+                               and 0 <= time.time() - v["launching"] < LAUNCH_GRACE_S}
         return out
 
     def in_place(self, place: str, name: str | None = None) -> dict | None:
@@ -700,6 +712,11 @@ class Core(AgentRuntime):
                 or next((v for v in live if v["name"] == name), None))
         for attempt in range(2):
             if ours is not None and ours["kind"] == "claude" and ours["name"] == name:
+                if ours["cwd"] and cwd and not one_folder(ours["cwd"], cwd):
+                    # Claude started by hand in its kept terminal, in another folder:
+                    # another agent, and hc gives no second terminal this name.
+                    return launched(False, why=f"its terminal {ours['place']} runs another "
+                                    f"Claude, in {ours['cwd']}")
                 return launched(True, ours["place"], CORE_SPACE)  # running already
             why = self.claude_floor()
             if why:

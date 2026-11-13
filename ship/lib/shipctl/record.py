@@ -43,7 +43,7 @@ from . import PERMISSION_MODES
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
-from .runtime import Herdr, Runtime, for_ship, mode_args, wait_budget
+from .runtime import Herdr, Runtime, for_ship, mode_args, one_folder, wait_budget
 from .shiptoml import ShipToml
 from .status import boot_id, read_ledger
 
@@ -264,12 +264,16 @@ def same_folder(a: str | None, b: str | None) -> bool:
 
 def match(doc: dict, live: list[dict]) -> dict[str, dict]:
     """{record name: the live agent that is it}. A live Claude agent is a recorded
-    one if it has its name; else, having no name, if it runs its session, or sits
+    one if it has its name; else if it runs its session, or, having no name, sits
     in its place in its folder (claude started again by hand there). One started
-    by hand in that pane but in another folder is another agent."""
+    by hand in that pane but in another folder is another agent: also on
+    herdr-core, where it has the name of the kept terminal it runs in, so a name
+    counts only in the agent's own folder (until Claude's hook reports it, such a
+    Claude shows the terminal's old session, so that is no proof)."""
     claude = [a for a in live if a["kind"] == "claude"]
     out: dict[str, dict] = {}
     taken: set[int] = set()
+    agents = doc["agents"]
 
     def claim(name: str, test) -> None:
         a = next((a for a in claude if id(a) not in taken and test(a)), None)
@@ -277,17 +281,25 @@ def match(doc: dict, live: list[dict]) -> dict[str, dict]:
             out[name] = a
             taken.add(id(a))
 
-    agents = doc["agents"]
-    for name in agents:
-        claim(name, lambda a, n=name: a["name"] == n)
+    for name, e in agents.items():
+        claim(name, lambda a, n=name, c=e["cwd"]: a["name"] == n and in_folder(a, c))
+    # Left now: the unnamed, those by a name not recorded, and those by a recorded
+    # name in another folder, which are never that one.
     for name, e in agents.items():
         if name not in out and e["session"]:
-            claim(name, lambda a, s=e["session"]: a["name"] is None and a["session"] == s)
+            claim(name, lambda a, n=name, s=e["session"]: a["name"] != n
+                  and a["session"] == s)
     for name, e in agents.items():
         if name not in out and e["place"]:
-            claim(name, lambda a, p=e["place"]["id"], c=e["cwd"]: a["name"] is None
+            claim(name, lambda a, n=name, p=e["place"]["id"], c=e["cwd"]: a["name"] != n
+                  and (a["name"] is None or a["name"] in agents)
                   and a["place"] == p and same_folder(a["cwd"], c))
     return out
+
+
+def in_folder(a: dict, cwd: str | None) -> bool:
+    """Live agent a runs in folder cwd, as far as is known."""
+    return not (a["cwd"] and cwd) or one_folder(a["cwd"], cwd)
 
 
 def find_live(ctx: Context, name: str, live: list[dict], doc: dict | None = None) -> dict | None:
@@ -420,11 +432,14 @@ def sync(ctx: Context, rt: Runtime, doc: dict, live: list[dict], ledger: dict[st
         changed |= _set(e, **fields)
     claimed = {id(a) for a in found.values()}
     taken = set(doc["agents"]) | {a["name"] for a in live if a["name"]}
+    recorded = {e["session"] for e in doc["agents"].values() if e["session"]}
     for a in live:
         if id(a) in claimed or a["kind"] != "claude" or not a["session"] or not a["cwd"]:
             continue
+        if a["session"] in recorded:
+            continue  # not its own (a terminal's old session, until Claude's hook reports)
         name = a["name"]
-        if name is None:
+        if name is None or name in doc["agents"]:  # (core: the name of another's terminal)
             name = _new_name(a["cwd"], taken)
             if a["place"] and rt.rename(a["place"], name):
                 a["name"] = name
@@ -627,6 +642,11 @@ def reconcile(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, live: list[d
             messages.append(f"{name}: no session to resume; left stopped.")
             continue
         if r["failures"] >= MAX_TRIES:
+            continue
+        if ((places or {}).get(own_place(rt, e) or "") or {}).get("typed"):
+            # Its launch was typed into its terminal moments ago (herdr-core): launch
+            # would type nothing yet, so this is no start and no try. A refresh once
+            # that grace has passed starts it, and counts an early stop then.
             continue
         lived = age_s(e["launched_at"]) if this_boot else None
         if lived is not None and lived < STABLE_S and r["counted_launch"] is None:

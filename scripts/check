@@ -11,6 +11,8 @@
 #                                (default: python3)
 #   SHIPSHAPE_HYGIENE_BASE       also scan commit messages in BASE..HEAD
 #   SHIPSHAPE_HYGIENE_DENYLIST   private deny-list path (see docs/hygiene.md)
+#   SHIPSHAPE_TEST_WORKERS       pytest workers (pytest-xdist), default 4;
+#                                0 or 1 runs the tests serially in one process
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -56,7 +58,22 @@ step "ruff"
 run ruff "$PYTHON" -m ruff check .
 
 step "pytest"
-run pytest "$PYTHON" -m pytest -q
+workers="${SHIPSHAPE_TEST_WORKERS:-4}"
+case "$workers" in
+  '' | *[!0-9]*)
+    echo "check: SHIPSHAPE_TEST_WORKERS must be a whole number (0 or 1: serial), not '$workers'" >&2
+    exit 2 ;;
+esac
+if [ "$workers" -le 1 ]; then
+  run pytest "$PYTHON" -m pytest -q
+else
+  if ! "$PYTHON" -c 'import xdist' 2>/dev/null; then
+    echo "check: pytest-xdist is missing: $PYTHON -m pip install -r requirements-dev.txt" \
+      "(or SHIPSHAPE_TEST_WORKERS=1 to run the tests serially)." >&2
+    exit 2
+  fi
+  run pytest "$PYTHON" -m pytest -q -n "$workers"
+fi
 
 step "npm test"
 mapfile -t packages < <(git ls-files 'ship/**/package.json' 'fleetledger/**/package.json' |

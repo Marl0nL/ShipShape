@@ -234,6 +234,7 @@ def env(store, fake_repo, monkeypatch, tmp_path):
         resolves=lambda host: False,
         sleep=lambda s: None,
     )
+    app.github_visibility = lambda repo: "unknown"  # never ask GitHub (--repo)
 
     class Env:
         pass
@@ -509,6 +510,7 @@ def test_new_proxmox_without_an_address(env):
     assert env.store.load().ship("ship-11").names == ("ship-11.local",)
 
 
+@pytest.mark.real_resolver
 def test_resolves_uses_the_system_resolver():
     assert cli._resolves("localhost")
     assert not cli._resolves("ship-01.invalid")
@@ -1363,6 +1365,7 @@ def test_destroy_with_pasted_keys_says_how_to_remove_the_device(env):
     assert code == 0 and "admin console > Machines" in err
 
 
+@pytest.mark.real_resolver
 def test_resolving_a_name_is_capped(monkeypatch):
     """An mDNS name nobody answers must not stall `ship-fleet ssh` or `new`."""
     import time as _time

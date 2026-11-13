@@ -20,26 +20,20 @@ from __future__ import annotations
 import getpass
 import os
 import shutil
-import socket
 import subprocess
-import time
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from fl_harness import keygen
+from fl_harness import keygen, start_sshd
 from fleetledger.ssh import SSH
 
 from fleetledger import ca
 
 SSHD = os.environ.get("FLEETLEDGER_TEST_SSHD") or shutil.which("sshd") or "/usr/sbin/sshd"
 NO_AGENT = ca.Signer(agent_keys=lambda: set())
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+# Every test here runs real ssh against a private sshd on 127.0.0.1 (fl_netguard.py).
+pytestmark = pytest.mark.local_sshd
 
 
 @pytest.fixture
@@ -68,8 +62,7 @@ def setup(store, home, tmp_path, monkeypatch, short_dir):
     spec.write_text(f"key: {(d / 'revoked.pub').read_text().strip()}\n")
     subprocess.run(["ssh-keygen", "-q", "-k", "-f", str(d / "krl"), str(spec)], check=True)
     shutil.copy(home / "keys" / "fleet_admin.pub", d / "authorized_keys")
-    port = _free_port()
-    (d / "config").write_text(
+    proc, port = start_sshd(SSHD, d, lambda port: (
         f"Port {port}\nListenAddress 127.0.0.1\nHostKey {d / 'hostkey'}\n"
         f"HostCertificate {d / 'hostkey-cert.pub'}\n"
         f"TrustedUserCAKeys {d / 'user-ca.pub'}\n"
@@ -77,15 +70,7 @@ def setup(store, home, tmp_path, monkeypatch, short_dir):
         f"RevokedKeys {d / 'krl'}\n"
         f"AuthorizedKeysFile {d / 'authorized_keys'}\nUsePAM no\nStrictModes no\n"
         "PidFile none\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
-    )
-    proc = subprocess.Popen([SSHD, "-D", "-e", "-f", str(d / "config")],
-                            stderr=subprocess.DEVNULL)
-    for _ in range(50):
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-            break
-        except OSError:
-            time.sleep(0.1)
+    ))
     yield {"dir": d, "port": port, "ca": cakeys, "inv": inv, "ship": ship}
     proc.terminate()
     proc.wait(timeout=5)

@@ -4,10 +4,11 @@ import shutil
 import socket
 import stat
 import subprocess
-import time
 from pathlib import Path
 
+import fl_harness
 import pytest
+from fl_harness import start_sshd
 from fleetledger.errors import FleetError
 from fleetledger.ssh import SSH, HostKeyMismatch, Unreachable, as_agent, ship_ctl
 
@@ -148,12 +149,6 @@ def test_remote_exit_codes_pass_through(store):
 SSHD = os.environ.get("FLEETLEDGER_TEST_SSHD") or shutil.which("sshd") or "/usr/sbin/sshd"
 
 
-def _free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture
 def short_runtime(monkeypatch, short_dir):
     """A runtime folder short enough for an SSH control socket."""
@@ -173,25 +168,38 @@ def sshd(tmp_path, home, short_runtime):
         check=True,
     )
     shutil.copy(home / "keys" / "fleet_admin.pub", folder / "authorized_keys")
-    port = _free_port()
-    (folder / "config").write_text(
+    proc, port = start_sshd(SSHD, folder, lambda port: (
         f"Port {port}\nListenAddress 127.0.0.1\nHostKey {folder / 'hostkey'}\n"
         f"AuthorizedKeysFile {folder / 'authorized_keys'}\nUsePAM no\nStrictModes no\n"
         "PidFile none\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
-    )
-    proc = subprocess.Popen(
-        [SSHD, "-D", "-e", "-f", str(folder / "config")],
-        stderr=subprocess.DEVNULL,
-    )
-    for _ in range(50):
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-            break
-        except OSError:
-            time.sleep(0.1)
+    ))
     yield port, (folder / "hostkey.pub").read_text().strip()
     proc.terminate()
     proc.wait(timeout=5)
+
+
+def test_sshd_start_tries_another_port_when_its_port_is_taken(tmp_path, monkeypatch):
+    """Another test worker can take the picked port before sshd binds it."""
+    if not os.access(SSHD, os.X_OK):
+        pytest.skip("no sshd binary (set FLEETLEDGER_TEST_SSHD)")
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(tmp_path / "hostkey")],
+                   check=True)
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        held = taken.getsockname()[1]
+        ports = iter([held])
+        free = fl_harness._free_port
+        monkeypatch.setattr(fl_harness, "_free_port", lambda: next(ports, None) or free())
+        proc, port = fl_harness.start_sshd(SSHD, tmp_path, lambda port: (
+            f"Port {port}\nListenAddress 127.0.0.1\nHostKey {tmp_path / 'hostkey'}\n"
+            "UsePAM no\nPidFile none\n"))
+        try:
+            assert port != held
+            assert proc.poll() is None
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
 
 
 def _pin(store, key):
@@ -200,6 +208,7 @@ def _pin(store, key):
         ed.set_field("ship-01", "host_key", key)
 
 
+@pytest.mark.local_sshd
 def test_real_ssh_runs_with_pinned_key(store, sshd):
     port, host_key = sshd
     _pin(store, host_key)
@@ -218,6 +227,7 @@ def test_real_ssh_runs_with_pinned_key(store, sshd):
     )
 
 
+@pytest.mark.local_sshd
 def test_repin_is_checked_even_with_a_shared_connection_open(store, sshd, tmp_path):
     """The control socket is named after the pinned key: a re-pin never reuses
     a connection that was checked against the old key."""
@@ -243,6 +253,7 @@ def test_control_socket_follows_the_pin(store, short_runtime):
     assert one != two and one.endswith("-%C") and two.endswith("-%C")
 
 
+@pytest.mark.local_sshd
 def test_real_ssh_refuses_impostor(store, sshd, tmp_path):
     """A server at the Ship's name with a different host key is refused."""
     port, _ = sshd

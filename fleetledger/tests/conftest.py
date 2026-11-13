@@ -1,15 +1,18 @@
 """Shared fixtures: a private FleetLedger home and a small fake ShipShape repo.
 
 Nothing here touches your real ~/.config/fleetledger, keys or network. Helpers
-live in fl_harness.py: import them from there, never from conftest.
+live in fl_harness.py: import them from there, never from conftest. The network guard
+every test runs under, and its opt-in markers, are in fl_netguard.py.
 """
 
 from __future__ import annotations
 
 import shutil
 import textwrap
+import time
 from pathlib import Path
 
+import fl_netguard
 import pytest
 from fl_harness import (
     CONTRACTS,
@@ -25,6 +28,64 @@ from fleetledger.repo import Repo
 from fleetledger.store import TomlFileStore
 
 
+@pytest.fixture(autouse=True, scope="session")
+def own_short_socket_root():
+    """paths.runtime_socket's short /tmp folder, for a runtime folder too long for a
+    socket, made under a private folder of this test process instead of /tmp itself:
+    never your real one, and never shared with another test worker running at the
+    same time (xdist's longer temp paths make that fallback likelier)."""
+    from fleetledger import paths
+
+    root = short_folder()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(paths, "SHORT_SOCKET_ROOT", root)
+        yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
+HERE = Path(__file__).resolve().parent
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_resolver: may look names up for real (fl_netguard.py)")
+    config.addinivalue_line(
+        "markers", "local_sshd: may run real ssh to a loopback sshd (fl_netguard.py)")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    """The network guard (fl_netguard.py) for a FleetLedger test's whole run: its
+    module and session fixtures' setup and teardown too, not just the test. Only for
+    tests in this folder: a conftest hook sees every test of the run."""
+    if HERE not in item.path.parents:
+        return (yield)
+    fl_netguard.start(item.nodeid)
+    try:
+        return (yield)
+    finally:
+        fl_netguard.stop()
+
+
+@pytest.fixture(autouse=True)
+def no_network(request, monkeypatch):
+    """No DNS, no connection to another machine, no real ssh (fl_netguard.py): a test
+    that tries fails, naming what it tried, even when a background thread swallowed
+    the error. cli._resolves is a fake unless the test is marked real_resolver."""
+    from fleetledger import cli
+
+    guard = fl_netguard.active() or fl_netguard.start(request.node.nodeid)
+    guard.real_resolver = request.node.get_closest_marker("real_resolver") is not None
+    guard.local_sshd = request.node.get_closest_marker("local_sshd") is not None
+    if not guard.real_resolver:
+        monkeypatch.setattr(cli, "_resolves", fl_netguard.fake_resolves)
+    yield guard
+    guard.real_resolver = guard.local_sshd = False  # the opt-ins end with the test
+    if guard.refused:
+        pytest.fail("The test reached for the network:\n  " + "\n  ".join(guard.refused)
+                    + "\n" + fl_netguard.HELP, pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def no_real_keyring(monkeypatch):
     from fleetledger.overlay import secret_store
@@ -36,7 +97,12 @@ def no_real_keyring(monkeypatch):
 def fast_keys(monkeypatch):
     """Managed keys made with 1 bcrypt round instead of ssh-keygen's default, and no
     pause when a pexpect-driven ssh-keygen or ssh-add closes: the same steps, much
-    faster (as test_vault.py's `fast` lowers the vault's scrypt cost)."""
+    faster (as test_vault.py's `fast` lowers the vault's scrypt cost).
+
+    With no pause, a child still running at close (one asked for a passphrase it
+    never gets) may not be reaped yet just after its SIGKILL on a busy machine (tests
+    in parallel workers), and ptyprocess then says it could not terminate it; so a
+    forced close waits for the kill to land instead."""
     from fleetledger import keys
 
     monkeypatch.setattr(keys, "KDF_ROUNDS", 1)
@@ -47,6 +113,17 @@ def fast_keys(monkeypatch):
         for proc in (child, child.ptyproc):
             proc.delayafterclose = 0
             proc.delayafterterminate = 0
+        pty, terminate = child.ptyproc, child.ptyproc.terminate
+
+        def terminate_and_wait(force=False):
+            if terminate(force) or not force:
+                return not pty.isalive()  # done, or not asked to kill
+            deadline = time.monotonic() + 10
+            while pty.isalive() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            return not pty.isalive()
+
+        pty.terminate = terminate_and_wait
         return child
 
     monkeypatch.setattr(keys, "_spawn", quick)

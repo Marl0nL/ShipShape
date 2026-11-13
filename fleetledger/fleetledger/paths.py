@@ -89,6 +89,8 @@ def private_dir(path: Path) -> Path:
 
 
 SOCKET_PATH_MAX = 100  # Unix socket paths are limited to about 108 bytes
+# Where runtime_socket makes its short folder (tests point it at one of their own).
+SHORT_SOCKET_ROOT = Path("/tmp")
 
 
 def runtime_socket(name: str, hint: str, *, per_home: bool = False) -> Path:
@@ -106,7 +108,7 @@ def runtime_socket(name: str, hint: str, *, per_home: bool = False) -> Path:
     if len(str(sock)) <= SOCKET_PATH_MAX:
         private_dir(sock.parent)
         return sock
-    folder = Path("/tmp") / f"fleetledger-{os.getuid()}"
+    folder = SHORT_SOCKET_ROOT / f"fleetledger-{os.getuid()}"
     try:
         folder.mkdir(mode=0o700)
     except FileExistsError:
