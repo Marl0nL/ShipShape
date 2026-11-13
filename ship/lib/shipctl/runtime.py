@@ -61,6 +61,13 @@ def wait_until(ctx: Context, seconds: float, done) -> bool:
         time.sleep(POLL_S)
 
 
+def one_folder(a: str, b: str) -> bool:
+    """Folders a and b are one, however spelt (a runtime reports the folder a
+    process runs in, its links resolved)."""
+    return (os.path.normpath(a) == os.path.normpath(b)
+            or os.path.realpath(a) == os.path.realpath(b))
+
+
 def mode_args(mode: str | None) -> list[str]:
     """claude's flags for a permission mode (none for an unknown one)."""
     if mode == "bypassPermissions":
@@ -700,8 +707,7 @@ class Core(AgentRuntime):
                 or next((v for v in live if v["name"] == name), None))
         for attempt in range(2):
             if ours is not None and ours["kind"] == "claude" and ours["name"] == name:
-                if ours["cwd"] and cwd and (os.path.normpath(ours["cwd"])
-                                            != os.path.normpath(cwd)):
+                if ours["cwd"] and cwd and not one_folder(ours["cwd"], cwd):
                     # Claude started by hand in its kept terminal, in another folder:
                     # another agent, and hc gives no second terminal this name.
                     return launched(False, why=f"its terminal {ours['place']} runs another "

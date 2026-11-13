@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import fcntl
 import json
+import sys
 import time
 
 import pytest
-from ship_harness import LAUNCHER, LEDGER, assert_valid
+from ship_harness import LAUNCHER, LEDGER, SHIP, assert_valid
 
 RECORD = "/var/lib/shipshape/agents.json"
 
@@ -94,9 +95,11 @@ def add_live(ship, name, session, cwd, address, mode=None, kind="claude", keep=F
         ledger_start(ship, session, address, mode)
 
 
-def claude_by_hand_in(ship, name: str, session: str, cwd: str, mode: str) -> None:
+def claude_by_hand_in(ship, name: str, session: str, cwd: str, mode: str,
+                      reported: bool = True) -> None:
     """In the kept terminal by that name, whose claude crashed, someone `cd`s to cwd
-    and runs claude by hand: a new session there."""
+    and runs claude by hand: a new session there. reported=False: its hook has not
+    reported the session yet (the terminal still shows the one it was started with)."""
     s = ship.scenario()
     t = next(t for t in s["hc"]["terminals"] if t.get("name") == name and t["state"] == "live")
     t.pop("recover_in", None)
@@ -104,7 +107,8 @@ def claude_by_hand_in(ship, name: str, session: str, cwd: str, mode: str) -> Non
              session=session,
              foreground={"pid": 10, "name": "claude", "argv": ["claude"], "cwd": cwd})
     ship.set(hc=s["hc"])
-    ledger_start(ship, session, t["address"], mode)
+    if reported:
+        ledger_start(ship, session, t["address"], mode)
 
 
 def lose_sessions(ship, *sessions: str) -> None:
@@ -286,6 +290,67 @@ def test_the_crashed_agent_resumes_its_own_session_once_its_terminal_is_free(sta
     assert (record["elsewhere"]["session"], record["elsewhere"]["mode"],
             record["elsewhere"]["want"]) == ("sess-x", "plan", "running")
     assert record["elsewhere"]["place"]["id"] != "t1"
+
+
+def test_before_its_hook_reports_the_other_claude_still_never_becomes_it(started):
+    """The same, before the other Claude's hook has reported its session: its
+    terminal still shows main's, which is no proof it is main."""
+    ship = started
+    main_sid = sid(ship, "main")
+    ship.crash("main")
+    claude_by_hand_in(ship, "main", "sess-x", "/home/agent/work/elsewhere", "plan",
+                      reported=False)
+    for reported in (False, True):
+        if reported:
+            ledger_start(ship, "sess-x", "t1", "plan")
+        ship.ctl("refresh")
+        record = ship.record()["agents"]
+        assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"]) == (
+            main_sid, "auto", "/home/agent/work/main")
+        assert [n for n, e in record.items() if e["session"] == main_sid] == ["main"]
+    assert (record["elsewhere"]["session"], record["elsewhere"]["mode"]) == ("sess-x", "plan")
+    assert not typed(ship, "t1")
+
+
+def test_the_other_claude_keeps_its_own_record_in_a_let_go_agents_terminal(started):
+    """An agent not in [[autostart]] whose kept terminal someone used is let go;
+    the Claude started there by hand, in another folder, stays recorded as itself
+    (not, once that name is free, under the name of the terminal it runs in)."""
+    ship = started
+    ship.p("/home/agent/work/foo").mkdir(parents=True)
+    add_live(ship, "foo", "sess-foo", "/home/agent/work/foo", "t5", mode="plan", keep=True)
+    ship.ctl("refresh")
+    assert sid(ship, "foo") == "sess-foo"
+    ship.core_crash("foo")
+    claude_by_hand_in(ship, "foo", "sess-x", "/home/agent/work/elsewhere", "auto")
+    for _ in range(3):
+        ship.ctl("refresh")
+        record = ship.record()["agents"]
+        assert (record["elsewhere"]["session"], record["elsewhere"]["want"]) == ("sess-x",
+                                                                                  "running")
+        assert [n for n, e in record.items() if e["session"] == "sess-x"] == ["elsewhere"]
+
+
+def test_a_folder_spelt_another_way_is_still_its_folder(tmp_path):
+    """A runtime reports the folder a process runs in with its links resolved: a
+    recorded folder reached through a link is the same folder, so the agent by its
+    name is still itself (here with no session known yet, as on classic herdr
+    until it reports one), and a folder that is really another is not."""
+    sys.path.insert(0, str(SHIP / "lib"))
+    from shipctl import record
+
+    (tmp_path / "real" / "main").mkdir(parents=True)
+    (tmp_path / "real" / "elsewhere").mkdir()
+    (tmp_path / "work").symlink_to(tmp_path / "real")
+    doc = {"agents": {"main": {"cwd": str(tmp_path / "work" / "main"), "session": None,
+                               "place": None}}}
+
+    def live(cwd):
+        return [{"name": "main", "kind": "claude", "session": "sess-1", "place": "t1",
+                 "cwd": str(cwd)}]
+
+    assert record.match(doc, live(tmp_path / "real" / "main"))["main"]["place"] == "t1"
+    assert record.match(doc, live(tmp_path / "real" / "elsewhere")) == {}
 
 
 def test_a_relaunch_in_its_own_terminal_and_folder_is_still_it(started):
