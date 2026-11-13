@@ -1,0 +1,17 @@
+#!/usr/bin/env -S python3 -IS
+"""Every faked command (herdr, hc, claude, gh, ...) is a link to this file.
+
+It imports fake.py as a module instead of running it as a script, so Python keeps
+its compiled bytecode (fakes/__pycache__) rather than compiling the whole file on
+every call; ship-ctl calls fakes many times per command. -I keeps the caller's
+PYTHON* settings out, -S skips site (fake.py needs only the standard library).
+fake.main() reads the command's name from sys.argv[0], the link's name, as before.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import fake  # noqa: E402
+
+sys.exit(fake.main())
