@@ -108,6 +108,13 @@ def test_the_real_resolver_mark_keeps_the_real_resolver(no_network):
      ["::1", "jump.example.com"]),
     (["/usr/bin/ssh-keyscan", "-T", "10", "--", "a.example.com,b.example.com"],
      ["a.example.com", "b.example.com"]),
+    (["scp", "-p", "ship-01.local:/a", "b"], ["ship-01.local"]),
+    (["scp", "-B", "-O", "b", "fleet@ship-01.local:/a"], ["ship-01.local"]),
+    (["sftp", "-p", "ship-01.local"], ["ship-01.local"]),
+    (["ssh", "-o", "HostName=ship-01.local", "localhost"], ["localhost", "ship-01.local"]),
+    (["ssh", "-o", "ProxyCommand nc %h %p", "localhost"], ["localhost", "(a ProxyCommand)"]),
+    (["ssh", "-o", "ProxyJump=none", "localhost"], ["localhost"]),
+    (["ssh", "-J", "127.0.0.1:2222", "localhost"], ["localhost", "127.0.0.1"]),
     (["ssh", "-G", "ship-01.local"], None),
     (["ssh", "-O", "exit", "ship-01.local"], None),
 ])
@@ -126,3 +133,33 @@ def test_a_tests_own_stand_in_named_ssh_may_run(no_network, tmp_path):
     assert subprocess.run(["ssh", "ship-01.local"], env=env, capture_output=True,
                           text=True).stdout == "stand-in\n"
     assert no_network.refused == []
+
+
+def test_a_refusal_names_the_test_and_the_thread(no_network, request):
+    with pytest.raises(NetworkRefused) as caught:
+        socket.getaddrinfo("ship-01.local", 22)
+    assert request.node.nodeid in str(caught.value) and "MainThread" in str(caught.value)
+    no_network.refused.clear()
+
+
+def test_a_reverse_lookup_is_refused(no_network):
+    with pytest.raises(NetworkRefused, match="reverse lookup"):
+        socket.gethostbyaddr("192.0.2.1")
+    refused_and_cleared(no_network, "192.0.2.1")
+    with pytest.raises(NetworkRefused, match="reverse lookup"):
+        socket.getnameinfo(("192.0.2.1", 22), 0)
+    refused_and_cleared(no_network, "192.0.2.1")
+
+
+def test_openssh_installed_anywhere_counts_as_real(no_network, tmp_path):
+    """Not just /usr/bin: a Homebrew or Nix ssh is as real; only a script stands in."""
+    binary = tmp_path / "ssh"
+    binary.write_bytes(b"\x7fELF not really")
+    binary.chmod(0o755)
+    assert fl_netguard.is_real(str(binary))
+    assert fl_netguard.is_real("ssh", path=str(tmp_path))
+    script = tmp_path / "bin" / "ssh"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\n")
+    assert not fl_netguard.is_real(str(script))
+    assert not fl_netguard.is_real(str(tmp_path / "nothing" / "ssh"))

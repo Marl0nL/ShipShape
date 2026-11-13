@@ -43,11 +43,28 @@ def own_short_socket_root():
     shutil.rmtree(root, ignore_errors=True)
 
 
+HERE = Path(__file__).resolve().parent
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "real_resolver: may look names up for real (fl_netguard.py)")
     config.addinivalue_line(
         "markers", "local_sshd: may run real ssh to a loopback sshd (fl_netguard.py)")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    """The network guard (fl_netguard.py) for a FleetLedger test's whole run: its
+    module and session fixtures' setup and teardown too, not just the test. Only for
+    tests in this folder: a conftest hook sees every test of the run."""
+    if HERE not in item.path.parents:
+        return (yield)
+    fl_netguard.start(item.nodeid)
+    try:
+        return (yield)
+    finally:
+        fl_netguard.stop()
 
 
 @pytest.fixture(autouse=True)
@@ -57,15 +74,13 @@ def no_network(request, monkeypatch):
     the error. cli._resolves is a fake unless the test is marked real_resolver."""
     from fleetledger import cli
 
-    real_resolver = request.node.get_closest_marker("real_resolver") is not None
-    local_sshd = request.node.get_closest_marker("local_sshd") is not None
-    if not real_resolver:
+    guard = fl_netguard.active() or fl_netguard.start(request.node.nodeid)
+    guard.real_resolver = request.node.get_closest_marker("real_resolver") is not None
+    guard.local_sshd = request.node.get_closest_marker("local_sshd") is not None
+    if not guard.real_resolver:
         monkeypatch.setattr(cli, "_resolves", fl_netguard.fake_resolves)
-    guard = fl_netguard.start(real_resolver=real_resolver, local_sshd=local_sshd)
-    try:
-        yield guard
-    finally:
-        fl_netguard.stop()
+    yield guard
+    guard.real_resolver = guard.local_sshd = False  # the opt-ins end with the test
     if guard.refused:
         pytest.fail("The test reached for the network:\n  " + "\n  ".join(guard.refused)
                     + "\n" + fl_netguard.HELP, pytrace=False)

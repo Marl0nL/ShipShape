@@ -28,7 +28,6 @@ so it is added once, on import, and does nothing while no guard is active.
 
 from __future__ import annotations
 
-import functools
 import ipaddress
 import os
 import shutil
@@ -44,7 +43,9 @@ SSH_ARG_OPTS = set("BbcDEeFIiJLlmOopPQRSWw")
 # Modes in which ssh opens no connection: print its config (-G), query (-Q), version
 # (-V), or a command to an existing master over its local socket (-O).
 SSH_NO_CONNECT = set("GQVO")
-SSH_KEYSCAN_ARG_OPTS = set("fOpTt")
+# Options that take an argument, per program (ssh(1), scp(1), sftp(1), ssh-keyscan(1)).
+ARG_OPTS = {"ssh": SSH_ARG_OPTS, "scp": set("cDFiJloPSX"), "sftp": set("BbcDFiJloPRSsX"),
+            "ssh-keyscan": set("fOpTt")}
 SSH_PROGRAMS = {"ssh", "scp", "sftp", "ssh-keyscan"}
 
 
@@ -54,11 +55,14 @@ class NetworkRefused(RuntimeError):
 
 @dataclass
 class Guard:
+    test: str = ""
     real_resolver: bool = False
     local_sshd: bool = False
     refused: list[str] = field(default_factory=list)
 
     def refuse(self, what: str) -> None:
+        where = threading.current_thread().name
+        what = f"{what} [in {self.test or 'a test'}, thread {where}]"
         with _lock:
             self.refused.append(what)
         raise NetworkRefused(f"test reached for the network: {what}. {HELP}")
@@ -71,9 +75,13 @@ _lock = threading.Lock()
 _active: Guard | None = None
 
 
-def start(*, real_resolver: bool = False, local_sshd: bool = False) -> Guard:
+def start(test: str = "", *, real_resolver: bool = False, local_sshd: bool = False) -> Guard:
     global _active
-    _active = Guard(real_resolver=real_resolver, local_sshd=local_sshd)
+    _active = Guard(test=test, real_resolver=real_resolver, local_sshd=local_sshd)
+    return _active
+
+
+def active() -> Guard | None:
     return _active
 
 
@@ -101,6 +109,12 @@ def is_loopback(host: str) -> bool:
     return addr is not None and (addr.is_loopback or addr.is_unspecified)
 
 
+def _own_name(host: object) -> bool:
+    """A loopback address or name, or this computer's own name (socket.getfqdn())."""
+    host = os.fsdecode(host) if isinstance(host, bytes) else str(host)
+    return not host or is_loopback(host) or host == socket.gethostname()
+
+
 def needs_lookup(host: object) -> bool:
     """Would getaddrinfo(host) ask a resolver? An address, an empty host (a wildcard
     bind) or a loopback name does not."""
@@ -122,16 +136,32 @@ def _bare_host(dest: str) -> str:
         if dest.startswith("["):
             return dest[1:].split("]", 1)[0]
         return dest.rsplit(":", 1)[0] if dest.count(":") == 1 else dest
-    return dest.rsplit("@", 1)[-1]
+    dest = dest.rsplit("@", 1)[-1]
+    if dest.startswith("[") and "]" in dest:  # [::1]:2222
+        return dest[1:].split("]", 1)[0]
+    return dest.rsplit(":", 1)[0] if dest.count(":") == 1 else dest  # host:port
+
+
+def _option_hosts(option: str) -> list[str]:
+    """Hosts an ssh -o option sends the connection to instead (or through)."""
+    key, _, value = option.replace("=", " ", 1).partition(" ")
+    key, value = key.lower(), value.strip()
+    if key == "proxyjump" and value.lower() != "none":
+        return [_bare_host(h) for h in value.split(",")]
+    if key == "hostname":
+        return [value]
+    if key == "proxycommand" and value.lower() != "none":
+        return ["(a ProxyCommand)"]  # it could reach anywhere: never loopback
+    return []
 
 
 def ssh_destinations(argv: list[str]) -> list[str] | None:
     """The hosts this ssh/scp/sftp/ssh-keyscan argv would connect to, or None when it
     opens no connection (ssh -G, -O ...)."""
     program = os.path.basename(argv[0])
-    arg_opts = SSH_KEYSCAN_ARG_OPTS if program == "ssh-keyscan" else SSH_ARG_OPTS
+    arg_opts = ARG_OPTS[program]
     positional: list[str] = []
-    jump: list[str] = []
+    jump: list[str] = []  # also hosts ssh -o HostName= / ProxyCommand= would reach
     i = 1
     while i < len(argv):
         arg = argv[i]
@@ -148,8 +178,8 @@ def ssh_destinations(argv: list[str]) -> list[str] | None:
                         i += 1
                     if flag == "J":
                         jump += [_bare_host(h) for h in value.split(",")]
-                    elif flag == "o" and value.lower().startswith("proxyjump"):
-                        jump += [_bare_host(h) for h in value.split("=", 1)[-1].split(",")]
+                    elif flag == "o":
+                        jump += _option_hosts(value)
                     break
             i += 1
             continue
@@ -169,23 +199,18 @@ def ssh_destinations(argv: list[str]) -> list[str] | None:
     return hosts + jump
 
 
-SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
-
-
-@functools.cache
-def _system_binary(program: str) -> str | None:
-    found = shutil.which(program, path=SYSTEM_PATH)
-    return os.path.realpath(found) if found else None
-
-
 def is_real(program: str, path: str | None = None) -> bool:
-    """Is this the system's OpenSSH program, not a test's stand-in (a script named ssh
-    in a temp folder, put first on PATH)? A program that is not there runs nothing."""
+    """Is this OpenSSH itself, wherever it is installed, rather than a test's stand-in
+    (a script named ssh, put first on PATH)? A stand-in is a script ("#!"); anything
+    else counts as real. A program that is not there runs nothing."""
     found = program if os.sep in program else shutil.which(program, path=path)
-    if not found:
+    if not found or not os.path.isfile(found):
         return False
-    name = os.path.basename(found)
-    return os.path.realpath(found) == _system_binary(name)
+    try:
+        with open(found, "rb") as f:
+            return f.read(2) != b"#!"
+    except OSError:
+        return True  # unsure: treat it as real
 
 
 def check_spawn(argv: list[str], env: object = None) -> None:
@@ -230,6 +255,10 @@ def _audit(event: str, args: tuple) -> None:
     if event in ("socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyname_ex"):
         if not guard.real_resolver and needs_lookup(args[0]):
             guard.refuse(f"a DNS lookup of {args[0]!r} without @pytest.mark.real_resolver")
+    elif event in ("socket.gethostbyaddr", "socket.getnameinfo"):  # reverse lookups
+        host = args[0][0] if event == "socket.getnameinfo" else args[0]
+        if not guard.real_resolver and not _own_name(host):
+            guard.refuse(f"a reverse lookup of {host!r} without @pytest.mark.real_resolver")
     elif event in ("socket.connect", "socket.sendto", "socket.sendmsg"):
         sock, address = args[0], args[-1]
         if getattr(sock, "family", None) in (socket.AF_INET, socket.AF_INET6) \
