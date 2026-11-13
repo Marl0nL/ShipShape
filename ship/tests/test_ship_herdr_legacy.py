@@ -528,7 +528,8 @@ def test_status_running_ship_validates(ship):
     assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
     assert doc["agent_record"] == {"runtime": "herdr", "agents": [], "resume": None,
                                    "primary": None}
-    assert {a["code"] for a in doc["attention"]} == {"agent-waiting"}
+    # Classic herdr: told it is going, and how to move.
+    assert {a["code"] for a in doc["attention"]} == {"agent-waiting", "runtime-deprecated"}
     assert doc["host"]["mem_used_pct"] == 50.0 and doc["host"]["uptime_s"] == 4000
 
 
@@ -544,6 +545,22 @@ def test_status_states(ship, change, state):
     assert rc == 0
     assert_valid("ship-status", doc)
     assert doc["state"] == state
+
+
+def test_status_tells_a_classic_herdr_ship_it_is_deprecated(ship):
+    """runtime-deprecated: classic herdr goes in the next release; the item names the
+    exact command that moves this Ship to herdr-core. ship-ctl status prints it too."""
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert rc == 0 and doc["herdr"]["runtime"] == "herdr"
+    assert_valid("ship-status", doc)
+    (item,) = [a for a in doc["attention"] if a["code"] == "runtime-deprecated"]
+    name = doc["ship"]["name"]
+    assert item["subject"] == "runtime"
+    assert "removed in the next ShipShape release" in item["message"]
+    assert f"ship-fleet runtime {name} core" in item["message"]
+    assert "ship-ctl runtime switch core" in item["message"]
+    rc, _, out = ship.ctl("status")
+    assert rc == 0 and f"! {item['message']}" in out
 
 
 # --- provisioning (test_ship_provision.py) ---------------------------------------------
@@ -653,6 +670,34 @@ def test_no_herdr_installed_means_nothing_pending(ship, tmp_path):
     fake_process(ship, 4242, ["herdr", "server"], old)
     rc, doc, _ = ship.ctl("status", "--json")
     assert "herdr-restart-pending" not in codes(doc)
+
+
+# A herdr server another tool runs beside ShipShape: a named session (a supervising
+# agent's crew), or a default one a laptop's saved herdr entry started over ssh.
+OTHER_HERDR_SERVERS = {
+    "named-session": ["/usr/local/bin/herdr", "server", "--session", "crew"],
+    "default": ["herdr", "server"],
+}
+
+
+def _old_herdr_server(ship, tmp_path, argv) -> None:
+    """herdr was replaced (a converge with a new pin) under a running `herdr server`."""
+    herdr = ship.p("/usr/local/bin/herdr")
+    herdr.parent.mkdir(parents=True, exist_ok=True)
+    herdr.write_text("new herdr")
+    old = tmp_path / "old-herdr"
+    old.write_text("old herdr")
+    fake_process(ship, 4500, argv, old)
+
+
+@pytest.mark.parametrize("server", OTHER_HERDR_SERVERS)
+def test_a_herdr_ship_still_reports_any_old_herdr_server(ship, tmp_path, server):
+    """A classic herdr Ship keeps today's rule: any agent-user herdr server on an old
+    binary means a reboot is needed for the new herdr."""
+    _old_herdr_server(ship, tmp_path, OTHER_HERDR_SERVERS[server])
+    doc = ship.status()
+    assert doc["herdr"]["runtime"] == "herdr"
+    assert "herdr-restart-pending" in codes(doc)
 
 
 # --- choosing the runtime, and the status document (test_ship_core.py) -----------------
