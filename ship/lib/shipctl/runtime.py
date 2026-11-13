@@ -700,6 +700,12 @@ class Core(AgentRuntime):
                 or next((v for v in live if v["name"] == name), None))
         for attempt in range(2):
             if ours is not None and ours["kind"] == "claude" and ours["name"] == name:
+                if ours["cwd"] and cwd and (os.path.normpath(ours["cwd"])
+                                            != os.path.normpath(cwd)):
+                    # Claude started by hand in its kept terminal, in another folder:
+                    # another agent, and hc gives no second terminal this name.
+                    return launched(False, why=f"its terminal {ours['place']} runs another "
+                                    f"Claude, in {ours['cwd']}")
                 return launched(True, ours["place"], CORE_SPACE)  # running already
             why = self.claude_floor()
             if why:

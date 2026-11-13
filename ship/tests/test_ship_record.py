@@ -223,10 +223,6 @@ def test_another_agent_in_its_old_terminal_never_becomes_it(started):
     assert ship.record()["agents"]["main"]["session"] == main_sid
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "core gap: a claude started by hand in a crashed agent's kept terminal, in another "
-    "folder, is matched to that agent by the terminal's name (record.match), so the "
-    "record moves the agent to that folder, session and mode"))
 def test_an_unnamed_agent_in_its_terminal_but_another_folder_never_becomes_it(started):
     """main crashed; someone uses its kept terminal, `cd`s elsewhere and runs claude
     there by hand. That is another agent: main keeps its own session, mode and folder,
@@ -249,6 +245,64 @@ def test_an_unnamed_agent_in_its_terminal_but_another_folder_never_becomes_it(st
     assert ship.args()["main"] == ["--permission-mode", "auto", "--name", "ship-01-main",
                                    "--session-id", sid(ship, "main")]
     assert sid(ship, "main") not in (main_sid, "sess-x")
+
+
+def test_the_crashed_agent_resumes_its_own_session_once_its_terminal_is_free(started):
+    """The same, and nothing is lost while both exist: a restart of main never takes
+    the other's Claude for it (hc gives no second terminal main's name), and once
+    that one is gone main resumes its own session, in its own folder and mode, and
+    the other its own, in a terminal of its own."""
+    ship = started
+    main_sid = sid(ship, "main")
+    ship.crash("main")
+    claude_by_hand_in(ship, "main", "sess-x", "/home/agent/work/elsewhere", "plan")
+    ship.ctl("refresh")
+    rc, _, _ = ship.ctl("agent", "restart", "main", "--json")
+    assert rc != 0  # its terminal runs another Claude
+    record = ship.record()["agents"]
+    assert set(record) == {"main", "grinder", "elsewhere"}
+    assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"]) == (
+        main_sid, "auto", "/home/agent/work/main")
+    assert (record["elsewhere"]["session"], record["elsewhere"]["cwd"]) == (
+        "sess-x", "/home/agent/work/elsewhere")
+    assert not typed(ship, "t1") and len(runs(ship)) == 2
+    # The other one crashes too: it is started again in a new terminal, by its name.
+    ship.p("/home/agent/work/elsewhere").mkdir(parents=True)
+    ship.core_crash("main")  # (the terminal is still called main)
+    ship.ctl("refresh")
+    assert ship.args()["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x"]
+    assert ship.agent("elsewhere")["cwd"] == "/home/agent/work/elsewhere"
+    assert not typed(ship, "t1")
+    # main, back by hand, resumes its own conversation in its kept terminal.
+    rc, _, out = ship.ctl("agent", "restart", "main", "--json")
+    assert rc == 0, out
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.place("main") == "t1" and ship.agent("main")["cwd"] == "/home/agent/work/main"
+    ship.ctl("refresh")
+    record = ship.record()["agents"]
+    assert set(record) == {"main", "grinder", "elsewhere"}
+    assert (record["main"]["session"], record["main"]["mode"], record["main"]["cwd"],
+            record["main"]["want"]) == (main_sid, "auto", "/home/agent/work/main", "running")
+    assert (record["elsewhere"]["session"], record["elsewhere"]["mode"],
+            record["elsewhere"]["want"]) == ("sess-x", "plan", "running")
+    assert record["elsewhere"]["place"]["id"] != "t1"
+
+
+def test_a_relaunch_in_its_own_terminal_and_folder_is_still_it(started):
+    """A normal relaunch after a crash: in its kept terminal, in its folder, by its
+    name; the record keeps it as itself, and nothing is picked up beside it."""
+    ship = started
+    main_sid = sid(ship, "main")
+    ship.crash("main")
+    ship.ctl("refresh")
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.place("main") == "t1"
+    ship.ctl("refresh")
+    record = ship.record()["agents"]
+    assert set(record) == {"main", "grinder"}
+    assert (record["main"]["session"], record["main"]["cwd"], record["main"]["want"],
+            record["main"]["place"]["id"]) == (main_sid, "/home/agent/work/main", "running", "t1")
+    assert launches(ship, "main") == 2  # its first start and this one, never a third
 
 
 def test_claude_started_again_by_hand_in_its_terminal_and_folder_is_still_it(started):

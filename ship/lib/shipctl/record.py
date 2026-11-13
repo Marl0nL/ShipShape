@@ -266,10 +266,18 @@ def match(doc: dict, live: list[dict]) -> dict[str, dict]:
     """{record name: the live agent that is it}. A live Claude agent is a recorded
     one if it has its name; else, having no name, if it runs its session, or sits
     in its place in its folder (claude started again by hand there). One started
-    by hand in that pane but in another folder is another agent."""
+    by hand in that pane but in another folder is another agent: also on
+    herdr-core, where it has the name of the kept terminal it runs in, so a name
+    counts only in the agent's own folder or session, and one that does not is
+    as good as unnamed."""
     claude = [a for a in live if a["kind"] == "claude"]
     out: dict[str, dict] = {}
     taken: set[int] = set()
+    agents = doc["agents"]
+
+    def unnamed(a: dict) -> bool:
+        e = agents.get(a["name"]) if a["name"] else None
+        return a["name"] is None or (e is not None and not its_own(e, a))
 
     def claim(name: str, test) -> None:
         a = next((a for a in claude if id(a) not in taken and test(a)), None)
@@ -277,17 +285,23 @@ def match(doc: dict, live: list[dict]) -> dict[str, dict]:
             out[name] = a
             taken.add(id(a))
 
-    agents = doc["agents"]
     for name in agents:
-        claim(name, lambda a, n=name: a["name"] == n)
+        claim(name, lambda a, n=name: a["name"] == n and not unnamed(a))
     for name, e in agents.items():
         if name not in out and e["session"]:
-            claim(name, lambda a, s=e["session"]: a["name"] is None and a["session"] == s)
+            claim(name, lambda a, s=e["session"]: unnamed(a) and a["session"] == s)
     for name, e in agents.items():
         if name not in out and e["place"]:
-            claim(name, lambda a, p=e["place"]["id"], c=e["cwd"]: a["name"] is None
+            claim(name, lambda a, p=e["place"]["id"], c=e["cwd"]: unnamed(a)
                   and a["place"] == p and same_folder(a["cwd"], c))
     return out
+
+
+def its_own(e: dict, a: dict) -> bool:
+    """Live agent a, by entry e's name, is e: it runs e's session, or in e's
+    folder (either not known: its name is all there is to go by)."""
+    return ((bool(e["session"]) and a["session"] == e["session"])
+            or not (a["cwd"] and e["cwd"]) or same_folder(a["cwd"], e["cwd"]))
 
 
 def find_live(ctx: Context, name: str, live: list[dict], doc: dict | None = None) -> dict | None:
@@ -424,7 +438,7 @@ def sync(ctx: Context, rt: Runtime, doc: dict, live: list[dict], ledger: dict[st
         if id(a) in claimed or a["kind"] != "claude" or not a["session"] or not a["cwd"]:
             continue
         name = a["name"]
-        if name is None:
+        if name is None or name in doc["agents"]:  # (core: the name of another's terminal)
             name = _new_name(a["cwd"], taken)
             if a["place"] and rt.rename(a["place"], name):
                 a["name"] = name
