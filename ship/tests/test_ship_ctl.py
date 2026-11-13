@@ -81,8 +81,25 @@ def test_status_running_ship_validates(ship):
     assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
     assert doc["agent_record"] == {"runtime": "herdr", "agents": [], "resume": None,
                                    "primary": None}
-    assert {a["code"] for a in doc["attention"]} == {"agent-waiting"}
+    # Classic herdr (no runtime in ship.toml): told it is going, and how to move.
+    assert {a["code"] for a in doc["attention"]} == {"agent-waiting", "runtime-deprecated"}
     assert doc["host"]["mem_used_pct"] == 50.0 and doc["host"]["uptime_s"] == 4000
+
+
+def test_status_tells_a_classic_herdr_ship_it_is_deprecated(ship):
+    """runtime-deprecated: classic herdr goes in the next release; the item names the
+    exact command that moves this Ship to herdr-core. ship-ctl status prints it too."""
+    rc, doc, _ = ship.ctl("status", "--json")
+    assert rc == 0 and doc["herdr"]["runtime"] == "herdr"
+    assert_valid("ship-status", doc)
+    (item,) = [a for a in doc["attention"] if a["code"] == "runtime-deprecated"]
+    name = doc["ship"]["name"]
+    assert item["subject"] == "runtime"
+    assert "removed in the next ShipShape release" in item["message"]
+    assert f"ship-fleet runtime {name} core" in item["message"]
+    assert "ship-ctl runtime switch core" in item["message"]
+    rc, _, out = ship.ctl("status")
+    assert rc == 0 and f"! {item['message']}" in out
 
 
 def test_status_never_contains_a_token(ship):

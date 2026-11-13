@@ -53,7 +53,7 @@
           "code": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, core-restart-pending, tmp-reboot-pending, provision-failed, tool-waiting, tool-failed, agent-repo-waiting, agent-repo-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down, agent-relaunch-failed, runtime-switch-failed, runtime-switch-unfinished. FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, core-restart-pending, tmp-reboot-pending, provision-failed, tool-waiting, tool-failed, agent-repo-waiting, agent-repo-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down, agent-relaunch-failed, runtime-switch-failed, runtime-switch-unfinished, runtime-deprecated (the Ship runs classic herdr, which the next release removes; the message names the command that moves it). FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
           },
           "message": { "type": "string", "maxLength": 500 },
           "subject": {

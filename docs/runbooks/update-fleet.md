@@ -64,6 +64,10 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   there: herdr is not its runtime, even when another tool runs its own herdr
   server on it (a named session, say). Such a server keeps the old herdr until it
   restarts or the Ship next reboots.
+- A Ship still on classic herdr (no `runtime`, or `runtime = "herdr"`) shows
+  `runtime-deprecated`, and the result repeats it: the next ShipShape release removes
+  classic herdr, so move it with `ship-fleet runtime ship-01 core`
+  ([switch-runtime.md](switch-runtime.md)) before that update. The switch is one-way.
 - The first update with the disk-backed `/tmp` masks `tmp.mount` (systemd's tmpfs on
   `/tmp`) but unmounts nothing: running agents and their sockets live in `/tmp`. The
   result says "/tmp moves from memory (tmpfs) to the disk at the next reboot", and
@@ -131,7 +135,7 @@ ship-fleet attention
 `behind-tooling` and `herdr-restart-pending` (herdr Ships only) should be gone
 (`core-restart-pending` stays on herdr-core Ships until their next reboot,
 `tmp-reboot-pending` on every Ship whose `/tmp` was moved to the disk; both are
-expected).
+expected). `runtime-deprecated` stays until the Ship is moved to herdr-core.
 
 ## OS updates and reboots
 

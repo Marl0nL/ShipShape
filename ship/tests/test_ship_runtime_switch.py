@@ -1,5 +1,6 @@
-"""`ship-ctl runtime switch core|herdr` (switch.py): moving a live Ship's agents between
-herdr and herdr-core, with a rollback on any failure.
+"""`ship-ctl runtime switch core|herdr` (switch.py): moving a live Ship's agents from
+herdr to herdr-core, with a rollback on any failure; the way back is refused (classic
+herdr is deprecated).
 
 The invariants every test checks (`intact`): each agent runs exactly once, on one
 runtime, continuing its own session, in its own mode; nothing ended an agent the
@@ -152,16 +153,66 @@ def test_refuses_when_core_cannot_run_the_agents(herdr_ship, setup, code, why):
     untouched(ship, before)
 
 
-def test_refuses_when_herdr_is_not_installed(core_ship):
+@pytest.mark.parametrize("last", [
+    {"switch": {"from": "herdr", "to": "core", "started_at": "2026-01-01T00:00:00Z",
+                "forced": False, "step": "switching", "agents": {}}},
+    {"switches": [{"at": "2026-01-01T00:00:00Z", "from": "herdr", "to": "core",
+                   "outcome": "rollback-failed", "forced": False, "agents": 2,
+                   "message": "herdr was not put back: x"}]},
+])
+def test_the_way_back_of_an_unfinished_switch_from_herdr_is_not_refused(core_ship, last):
+    """A switch from herdr that did not finish (interrupted, or a rollback that failed
+    before ship.toml went back) leaves ship.toml on core: switching to herdr finishes
+    the way back, deprecated or not."""
+    ship = core_ship
+    expect = as_running(ship)
+    record = {**ship.record(), **last}
+    ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(record))
+    rc, doc, out = switch(ship, "herdr")
+    assert rc == 0 and doc["data"]["outcome"] == "switched", out
+    intact(ship, "herdr", expect)
+
+
+def test_a_switch_to_herdr_after_other_unfinished_switches_is_still_refused(core_ship):
+    """Only the way back of a switch that left herdr: not a core repair that failed, and
+    not once the Ship has been put right on core."""
+    ship = core_ship
+    for entry in ({"from": "core", "to": "core", "outcome": "rollback-failed"},
+                  {"from": "herdr", "to": "core", "outcome": "repaired"},
+                  {"from": "herdr", "to": "core", "outcome": "switched"}):
+        record = {**ship.record(), "switches": [
+            {"at": "2026-01-01T00:00:00Z", "forced": False, "agents": 2, "message": "m",
+             **entry}]}
+        ship.p("/var/lib/shipshape/agents.json").write_text(json.dumps(record))
+        rc, doc, _ = switch(ship, "herdr")
+        assert rc != 0 and "one-way" in doc["error"]["message"], entry
+        assert runtime_in_toml(ship) == "core"
+
+
+@pytest.mark.parametrize("extra", [(), ("--force",)])
+@pytest.mark.parametrize("installed", [True, False])
+def test_a_switch_back_to_herdr_is_refused_and_changes_nothing(core_ship, extra, installed):
+    """Classic herdr is deprecated: the switch is one-way. The refusal comes before
+    anything else (installed or not, forced or not): no runtime, unit or agent is
+    touched, and ship.toml, the record and the mode ledger are byte for byte as they
+    were."""
     ship = core_ship
     s = ship.scenario()
-    s["herdr"]["installed"] = False
+    s["herdr"]["installed"] = installed
     ship.set(herdr=s["herdr"])
-    rc, doc, _ = switch(ship, "herdr")
-    assert rc != 0 and doc["error"]["code"] == "runtime-missing"
-    assert ("herdr is not installed on this Ship (/usr/local/bin/herdr does not answer)"
-            in doc["error"]["message"])
+    files = ["/etc/shipshape/ship.toml", "/var/lib/shipshape/agents.json", LEDGER]
+    before = {f: ship.p(f).read_bytes() for f in files}
+    scenario, calls = ship.scenario(), len(ship.calls())
+    rc, doc, _ = switch(ship, "herdr", *extra)
+    assert rc != 0 and doc["error"]["code"] == "invalid-input"
+    message = doc["error"]["message"]
+    assert "classic herdr is no longer possible" in message
+    assert "one-way" in message and "nothing changed" in message
+    assert ship.calls()[calls:] == []  # not even asked what runs
+    assert ship.scenario() == scenario
+    assert {f: ship.p(f).read_bytes() for f in files} == before
     assert set(core_agents(ship)) == {"main", "grinder"} and runtime_in_toml(ship) == "core"
+    assert "switch" not in ship.record() and "switches" not in ship.record()
 
 
 @pytest.mark.parametrize("state", ["working", "blocked", "unknown"])
@@ -302,28 +353,9 @@ def test_herdr_to_core(herdr_ship):
     intact(ship, "core", expect)
 
 
-def test_core_to_herdr(core_ship):
-    ship = core_ship
-    expect = as_running(ship)
-    old = {n: t[0]["address"] for n, t in core_agents(ship).items()}
-    rc, doc, out = switch(ship, "herdr")
-    assert rc == 0, out
-    assert doc["data"]["outcome"] == "switched"
-    intact(ship, "herdr", expect)
-    assert core_agents(ship) == {}
-    hc = ship.scenario()["hc"]
-    assert sorted(hc["removed"]) == sorted(old.values())  # finished terminals only
-    for address in old.values():
-        assert [address, "/exit"] in hc["sent"]
-    # The core keeps running (stopping it would end every terminal); herdr starts.
-    assert ship.scenario()["user_unit_calls"] == [["start", "herdr.service"]]
-    runs = len(herdr_starts(ship))
-    ship.ctl("refresh")
-    assert len(herdr_starts(ship)) == runs
-
-
-def test_modes_survive_a_round_trip(herdr_ship):
-    """acceptEdits and plan (and bypass, and auto) come back as they were, both ways."""
+def test_modes_survive_the_switch(herdr_ship):
+    """acceptEdits and plan (and bypass, and auto) come back as they were on core, and
+    the way back to herdr is refused, leaving them there."""
     ship = herdr_ship
     for name, mode in (("main", "acceptEdits"), ("grinder", "plan")):
         rc, _, out = ship.ctl("agent", "restart", name, "--mode", mode, "--json")
@@ -333,10 +365,10 @@ def test_modes_survive_a_round_trip(herdr_ship):
     rc, _, out = switch(ship, "core")
     assert rc == 0, out
     intact(ship, "core", expect)
-    rc, _, out = switch(ship, "herdr")
-    assert rc == 0, out
-    intact(ship, "herdr", expect)
-    assert [s["outcome"] for s in ship.record()["switches"]] == ["switched", "switched"]
+    rc, doc, out = switch(ship, "herdr")
+    assert rc != 0 and doc["error"]["code"] == "invalid-input", out
+    intact(ship, "core", expect)
+    assert [s["outcome"] for s in ship.record()["switches"]] == ["switched"]
 
 
 def test_a_forced_switch_interrupts_a_busy_agent_first(herdr_ship):
@@ -394,23 +426,9 @@ def test_a_failed_launch_rolls_back_to_herdr(herdr_ship):
         ["stop", "herdr.service"], ["start", "ship-core.service"], ["start", "herdr.service"]]
     last = ship.status()["agent_record"]["last_switch"]
     assert last["outcome"] == "rolled-back"
-    assert "runtime-switch-failed" not in {a["code"] for a in ship.status()["attention"]}
-
-
-def test_a_lost_session_on_the_target_rolls_back(core_ship):
-    """herdr cannot start grinder: everything goes back on core."""
-    ship = core_ship
-    expect = as_running(ship)
-    s = ship.scenario()
-    s["herdr"]["fail_start"] = ["grinder"]
-    ship.set(herdr=s["herdr"])
-    rc, doc, out = switch(ship, "herdr")
-    assert rc != 0 and doc["data"]["outcome"] == "rolled-back", out
-    intact(ship, "core", expect)
-    assert herdr_agents(ship) == {}
-    assert ship.scenario()["herdr"]["server"] is False  # herdr stopped again
-    assert ship.scenario()["user_unit_calls"][-2:] == [["stop", "herdr.service"],
-                                                       ["start", "ship-core.service"]]
+    codes = {a["code"] for a in ship.status()["attention"]}
+    assert "runtime-switch-failed" not in codes
+    assert "runtime-deprecated" in codes  # still on classic herdr: still told
 
 
 def test_an_agent_back_in_another_mode_rolls_back(herdr_ship):
@@ -575,7 +593,9 @@ def test_switching_again_after_a_failed_rollback_puts_it_right(herdr_ship):
     assert runtime_in_toml(ship) == "herdr" and herdr_agents(ship) == {}
     assert ship.scenario()["herdr"]["server"] is False
     assert not any(m.endswith("were not started on herdr") for m in doc["messages"])
-    assert "runtime-switch-failed" in {a["code"] for a in ship.status()["attention"]}
+    codes = [a["code"] for a in ship.status()["attention"]]
+    assert "runtime-switch-failed" in codes
+    assert codes[-1] == "runtime-deprecated"  # after the urgent one, not before it
     ship.set(unit_fails=[])
     # Switching to core refuses (herdr, which runs the agents' record, is down) and
     # says how to put it right.

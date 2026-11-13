@@ -46,6 +46,13 @@ otherwise start a missing agent, stays out until the switch is over):
    runtime (and, the core left running, not on it). An agent that did not exit when
    asked and has exited since is resumed with them.
 
+Classic herdr is deprecated (the next release removes it), so the switch is one-way:
+a switch to herdr from herdr-core is refused, changing nothing. The rollback of a
+failed switch to herdr-core still goes back to herdr, a Ship already on herdr can
+still be put right with a switch to herdr (below), and so can one whose switch from
+herdr did not finish (interrupted, or a rollback that failed before ship.toml went
+back): the switch to herdr then finishes the way back.
+
 A switch to the runtime ship.toml already names changes nothing, unless the last
 switch stopped part way or did not roll back cleanly, or that runtime is not
 running: then it puts the units right, starts it, and resumes the agents waiting.
@@ -74,6 +81,29 @@ VERIFY_WAIT_S = 90  # for every agent to be back, in its session and mode
 HISTORY = 10  # switches kept in the record
 UNFINISHED_S = 3600  # a switch still in progress after this long was interrupted
 LATE_EXIT_S = 20  # in a rollback, for an agent that did not exit when asked
+
+
+# Runtimes a person may no longer switch a Ship onto. Classic herdr goes in the next
+# release: a Ship already on it can still be put right (settle), and a failed switch
+# away from it still rolls back to it (Switch.rollback never comes through switch()).
+DEPRECATED = ("herdr",)
+
+
+def unfinished_from(doc: dict) -> str | None:
+    """The runtime a switch that did not finish was leaving (one still in the record,
+    interrupted, or whose rollback failed before ship.toml went back), else None. A
+    switch back to it finishes that way back, so it is not refused as deprecated."""
+    if doc.get("switch"):
+        return doc["switch"].get("from")
+    last = (doc.get("switches") or [{}])[-1]
+    return last.get("from") if last.get("outcome") in ("interrupted", "rollback-failed") \
+        else None
+
+
+def refused_message(target: str) -> str:
+    return (f"switching to classic {target} is no longer possible: it is deprecated and the "
+            "next ShipShape release removes it, so the switch to herdr-core is one-way; "
+            "nothing changed")
 
 
 class Failed(Exception):
@@ -617,6 +647,9 @@ def switch(ctx: Context, ship: ShipToml, target: str, *, force: bool = False
     rolled back (switch-failed, with what happened attached)."""
     if target not in TARGETS:
         raise CtlError("usage", f"switch to one of: {', '.join(TARGETS)}")
+    if (target in DEPRECATED and ship.runtime != target
+            and unfinished_from(record.load(ctx)) != target):
+        raise CtlError("invalid-input", refused_message(target))
     # The switch must finish even if the SSH session that started it drops: a half
     # switch is what the rollback exists to avoid.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)

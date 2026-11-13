@@ -54,8 +54,8 @@ Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
 [attach from other machines](docs/runbooks/trust-machines.md) (SSH certificates, hc; herdr --remote for classic Ships),
 [update the fleet](docs/runbooks/update-fleet.md) (and switch running agents to a new
 permission mode: `ship-fleet agent restart`),
-[move a Ship between herdr and herdr-core](docs/runbooks/switch-runtime.md) (`ship-fleet
-runtime`, with an automatic rollback),
+[move a Ship from herdr to herdr-core](docs/runbooks/switch-runtime.md) (`ship-fleet
+runtime`, with an automatic rollback; classic herdr is deprecated, so the move is one-way),
 [send files to its agents](docs/runbooks/send-files.md) (`ship-fleet put`, or drop them on
 the web UI's Inbox tab),
 [the web UI](docs/web-ui.md),

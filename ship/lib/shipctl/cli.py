@@ -133,8 +133,9 @@ def build_parser() -> Parser:
                     help="also restart an agent that is working (interrupts its turn)")
     ag.add_argument("--clear", action="store_true",
                     help="primary: unmark it (the first autostart agent is the primary)")
-    rs = cmd("runtime", "Move this Ship's agents to the other runtime (herdr or herdr-core), "
-                        "rolling back on any failure.")
+    rs = cmd("runtime", "Move this Ship's agents to herdr-core, rolling back on any failure. "
+                        "Classic herdr is deprecated: a switch back to it is refused (a Ship "
+                        "already on herdr can still be put right with switch herdr).")
     rs.add_argument("action", choices=["switch"])
     rs.add_argument("target", choices=list(switch.TARGETS), metavar="core|herdr")
     rs.add_argument("--force", action="store_true",

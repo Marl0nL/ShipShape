@@ -97,6 +97,7 @@ SEVERITY = {
     "agent-repo-failed": "medium",
     "agent-relaunch-failed": "medium",  # a recorded agent died and did not start again
     "runtime-switch-unfinished": "medium",  # a runtime switch stopped part way
+    "runtime-deprecated": "medium",  # classic herdr: the next release removes it
     "behind-tooling": "low",
     "not-enrolled": "low",  # in the inventory, never enrolled: being made or made by hand
     "tool-waiting": "low",
@@ -601,7 +602,7 @@ def update_one(
 
     if up_to_date(before, bundle) and not force:
         on_event(ship.name, f"already on {release}")
-        details = []
+        details = deprecated_notes(before)
         if status_mod.herdr_restart_pending(before) and reboot_policy != "never":
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
@@ -653,6 +654,7 @@ def update_one(
         details.insert(0, f"Rolled back on purpose (--force): {data['rolled_back']}.")
     outcome = Outcome(ship.name, True, ("rolled back to " if data.get("rolled_back") else
                                         "updated to ") + release, details, data)
+    outcome.details += deprecated_notes(after)
     needs_reboot = reboot_policy == "always" or (reboot_policy == "auto" and pending)
     if not needs_reboot:
         if pending:
@@ -670,6 +672,13 @@ def update_one(
         return outcome
     return _reboot_after(fleet, ship, on_event, outcome, wait, times, before=before,
                          host=after_view.host)
+
+
+def deprecated_notes(doc: dict[str, Any]) -> list[str]:
+    """The update's note for a Ship still on classic herdr (attention
+    runtime-deprecated): the Ship's own message, which names the switch command."""
+    return [item["message"] for item in doc["attention"]
+            if item["code"] == "runtime-deprecated"]
 
 
 def tmp_note(name: str) -> str:
@@ -927,6 +936,10 @@ def restart_agents(
 # --- runtime switch ---------------------------------------------------------------
 
 RUNTIMES = ("herdr", "core")
+# Runtimes a Ship may no longer be moved onto (ship-ctl's switch.DEPRECATED): classic
+# herdr goes in the next release. A Ship already on it may still be put right, and
+# one whose switch away from it did not finish may still go back.
+DEPRECATED_RUNTIMES = ("herdr",)
 RUNTIME_SWITCH_TIMEOUT = 600  # per agent: stop it, start it on the other runtime, check it
 
 
@@ -941,7 +954,8 @@ def switch_runtime(
     """Move one Ship's agents to another runtime (ship-ctl runtime switch): each
     continues its conversation there in its own mode, and the Ship rolls back by itself
     on any failure. Then, as after a reboot, check from here that every agent that ran
-    before runs now, in its mode, on the runtime the Ship says."""
+    before runs now, in its mode, on the runtime the Ship says. A move onto a
+    deprecated runtime (classic herdr) is refused before the Ship is asked."""
     on_event = on_event or _quiet
     if target not in RUNTIMES:
         raise FleetError(f"Unknown runtime '{target}' (runtimes: {', '.join(RUNTIMES)}).")
@@ -949,6 +963,17 @@ def switch_runtime(
     view = _fetch(fleet, inventory, ship)
     before = _require_status(view)
     current = before["herdr"].get("runtime", "herdr")
+    last = (before.get("agent_record") or {}).get("last_switch") or {}
+    finishing = last.get("from") == target and last.get("outcome") in (
+        "interrupted", "rollback-failed", "in-progress")  # the way back of an unfinished one
+    if target in DEPRECATED_RUNTIMES and current != target and not finishing:
+        # Asked here as well as on the Ship: older tooling there still switches back.
+        on_event(ship.name, f"not switched: classic {target} is deprecated")
+        return Outcome(ship.name, False,
+                       f"not switched: classic {target} is deprecated and the next ShipShape "
+                       f"release removes it, so the switch to herdr-core is one-way; "
+                       "nothing changed",
+                       [], {"outcome": "refused", "from": current, "to": target})
     expected = agent_modes(before)
     on_event(ship.name, f"moving {len(expected)} agent(s) from {current} to {target}"
              + (", interrupting busy ones" if force else ""))
