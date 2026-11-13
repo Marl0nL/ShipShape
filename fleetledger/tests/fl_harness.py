@@ -11,6 +11,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -24,6 +25,40 @@ def keygen(path: Path, comment: str) -> Path:
         capture_output=True,
     )
     return path
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def start_sshd(sshd: str, folder: Path, config: Callable[[int], str],
+               attempts: int = 5) -> tuple[subprocess.Popen, int]:
+    """Start an unprivileged sshd on a free localhost port, its config file
+    `folder/config` written by config(port); returns (process, port).
+
+    The port is free when picked but not held, so something else (another test
+    worker) can take it before sshd binds: sshd then exits, and this tries again with
+    a new port. Ready means sshd's own "Server listening" line, not a connection,
+    which could reach whatever took the port."""
+    log = folder / "sshd.log"
+    for _ in range(attempts):
+        port = _free_port()
+        (folder / "config").write_text(config(port))
+        with log.open("wb") as err:
+            proc = subprocess.Popen([sshd, "-D", "-e", "-f", str(folder / "config")], stderr=err)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if f"Server listening on 127.0.0.1 port {port}" in log.read_text(errors="replace"):
+                return proc, port
+            if proc.poll() is not None:
+                break  # it could not bind (the port was taken): try another
+            time.sleep(0.05)
+        proc.kill()
+        proc.wait(timeout=5)
+    raise RuntimeError(
+        f"sshd never listened after {attempts} ports:\n{log.read_text(errors='replace')}")
 
 
 def short_folder() -> Path:
