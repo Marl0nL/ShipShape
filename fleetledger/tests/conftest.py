@@ -7,6 +7,8 @@ every test runs under, and its opt-in markers, are in fl_netguard.py.
 
 from __future__ import annotations
 
+import itertools
+import os
 import shutil
 import textwrap
 import time
@@ -51,6 +53,8 @@ def pytest_configure(config):
         "markers", "real_resolver: may look names up for real (fl_netguard.py)")
     config.addinivalue_line(
         "markers", "local_sshd: may run real ssh to a loopback sshd (fl_netguard.py)")
+    config.addinivalue_line(
+        "markers", "real_sync: os.fsync and os.sync reach the disk (conftest.no_disk_sync)")
 
 
 @pytest.hookimpl(wrapper=True)
@@ -129,9 +133,54 @@ def fast_keys(monkeypatch):
     monkeypatch.setattr(keys, "_spawn", quick)
 
 
+@pytest.fixture(autouse=True)
+def no_disk_sync(request, monkeypatch):
+    """os.fsync and os.sync return at once: FleetLedger still calls them at every step it
+    makes durable, they just do not wait for the disk. No test checks durability against
+    a power cut, and a test that kills a process (SIGKILL) keeps the page cache, so what
+    it reads back is the same; a whole-system sync on a busy machine can take seconds.
+    os.fsync still refuses a file descriptor that is not open. A test that needs the
+    real calls is marked real_sync."""
+    if request.node.get_closest_marker("real_sync") is not None:
+        return
+
+    def fsync(fd):
+        os.fstat(fd if isinstance(fd, int) else fd.fileno())  # EBADF as the real one says
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    monkeypatch.setattr(os, "sync", lambda: None)
+
+
+KEY_POOL = 3  # pairs of keys each test worker makes once; `home` hands them out in turn
+
+
+@pytest.fixture(scope="session")
+def _key_pool(tmp_path_factory):
+    """KEY_POOL pairs of throwaway ssh keys (fleet_admin and you), made once per test
+    process (each xdist worker its own) instead of twice for every test that uses
+    `home`. In a pair the two keys differ; tests that check making keys make their own."""
+    root = tmp_path_factory.mktemp("key-pool")
+    pairs = []
+    for n in range(KEY_POOL):
+        folder = root / str(n)
+        folder.mkdir(mode=0o700)
+        pairs.append((keygen(folder / "fleet_admin", "fleet-admin"), keygen(folder / "you", "you")))
+    return itertools.cycle(pairs)
+
+
+def _copy_key(private: Path, to: Path) -> None:
+    """A pool key copied in as ssh-keygen wrote it: private 0600, public 0644."""
+    for src, dst, mode in ((private, to, 0o600),
+                           (private.with_name(private.name + ".pub"),
+                            to.with_name(to.name + ".pub"), 0o644)):
+        dst.write_bytes(src.read_bytes())
+        dst.chmod(mode)
+
+
 @pytest.fixture
-def home(tmp_path, monkeypatch):
-    """FleetLedger config/data/runtime dirs under tmp, with throwaway keys."""
+def home(tmp_path, monkeypatch, _key_pool):
+    """FleetLedger config/data/runtime dirs under tmp, with throwaway keys (copies of a
+    pair from the worker's pool: see _key_pool)."""
     config = tmp_path / "config"
     data = tmp_path / "data"
     runtime = tmp_path / "run"
@@ -141,8 +190,9 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("FLEETLEDGER_CONFIG_DIR", str(config))
     monkeypatch.setenv("FLEETLEDGER_DATA_DIR", str(data))
     monkeypatch.setenv("FLEETLEDGER_RUNTIME_DIR", str(runtime))
-    keygen(keys / "fleet_admin", "fleet-admin")
-    keygen(keys / "you", "you")
+    admin, you = next(_key_pool)
+    _copy_key(admin, keys / "fleet_admin")
+    _copy_key(you, keys / "you")
     return tmp_path
 
 
