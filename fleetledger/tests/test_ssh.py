@@ -208,6 +208,7 @@ def _pin(store, key):
         ed.set_field("ship-01", "host_key", key)
 
 
+@pytest.mark.local_sshd
 def test_real_ssh_runs_with_pinned_key(store, sshd):
     port, host_key = sshd
     _pin(store, host_key)
@@ -226,6 +227,7 @@ def test_real_ssh_runs_with_pinned_key(store, sshd):
     )
 
 
+@pytest.mark.local_sshd
 def test_repin_is_checked_even_with_a_shared_connection_open(store, sshd, tmp_path):
     """The control socket is named after the pinned key: a re-pin never reuses
     a connection that was checked against the old key."""
@@ -251,6 +253,7 @@ def test_control_socket_follows_the_pin(store, short_runtime):
     assert one != two and one.endswith("-%C") and two.endswith("-%C")
 
 
+@pytest.mark.local_sshd
 def test_real_ssh_refuses_impostor(store, sshd, tmp_path):
     """A server at the Ship's name with a different host key is refused."""
     port, _ = sshd

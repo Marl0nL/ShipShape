@@ -32,6 +32,8 @@ from fleetledger import ca
 
 SSHD = os.environ.get("FLEETLEDGER_TEST_SSHD") or shutil.which("sshd") or "/usr/sbin/sshd"
 NO_AGENT = ca.Signer(agent_keys=lambda: set())
+# Every test here runs real ssh against a private sshd on 127.0.0.1 (fl_netguard.py).
+pytestmark = pytest.mark.local_sshd
 
 
 @pytest.fixture

@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 import pytest
+from fl_harness import no_ship_answers
 from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.web import app as webapp
@@ -560,7 +561,8 @@ def test_the_server_prints_a_link_for_each_address(store, monkeypatch, home):
     monkeypatch.setattr(uvicorn.Server, "run",
                         lambda self, sockets=None: seen.update(port=sockets[0].getsockname()))
     out = io.StringIO()
-    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    app = cli.App(out=out, err=out, store_factory=lambda: store,
+                  ssh_factory=no_ship_answers)
     monkeypatch.setattr(server.sys.stdin, "isatty", lambda: False, raising=False)
     assert server.serve(app, open_browser=False, interval=3600,
                         remote=Remote(REMOTE, port, (LOGIN,))) == 0
@@ -601,7 +603,8 @@ def test_enter_prints_a_new_link_per_address_each_with_its_own_token(store, monk
 
     monkeypatch.setattr(uvicorn.Server, "run", run)
     monkeypatch.setattr(server.sys, "stdin", Terminal())
-    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    app = cli.App(out=out, err=out, store_factory=lambda: store,
+                  ssh_factory=no_ship_answers)
     assert server.serve(app, open_browser=False, interval=3600,
                         remote=Remote(REMOTE, port, (LOGIN,))) == 0
     said = out.getvalue()
@@ -633,7 +636,8 @@ def test_the_browser_opened_here_leaves_the_remote_link_working(store, monkeypat
     monkeypatch.setattr(server.webbrowser, "open", lambda uri: True)
     monkeypatch.setattr(server.sys.stdin, "isatty", lambda: False, raising=False)
     out = io.StringIO()
-    app = cli.App(out=out, err=out, store_factory=lambda: store)
+    app = cli.App(out=out, err=out, store_factory=lambda: store,
+                  ssh_factory=no_ship_answers)
     assert server.serve(app, open_browser=True, interval=3600,
                         remote=Remote(REMOTE, port, (LOGIN,))) == 0
     assert seen["browser"] is not None

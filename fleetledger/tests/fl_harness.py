@@ -184,6 +184,17 @@ class FakeSSH:
         return Result(code, out, err, ship.names[0])
 
 
+def no_ship_answers(inventory):
+    """An ssh_factory for tests that start the real poller (server.serve) but are not
+    about Ships: every Ship is unreachable, and no real ssh runs (fl_netguard.py)."""
+    from fleetledger.ssh import Unreachable
+
+    def handler(ship, command, input):
+        raise Unreachable(f"{ship.name} did not answer (a test: no Ship answers).")
+
+    return FakeSSH(handler)
+
+
 # --- the web UI ------------------------------------------------------------------------------
 
 

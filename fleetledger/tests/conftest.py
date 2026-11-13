@@ -1,7 +1,8 @@
 """Shared fixtures: a private FleetLedger home and a small fake ShipShape repo.
 
 Nothing here touches your real ~/.config/fleetledger, keys or network. Helpers
-live in fl_harness.py: import them from there, never from conftest.
+live in fl_harness.py: import them from there, never from conftest. The network guard
+every test runs under, and its opt-in markers, are in fl_netguard.py.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import textwrap
 import time
 from pathlib import Path
 
+import fl_netguard
 import pytest
 from fl_harness import (
     CONTRACTS,
@@ -39,6 +41,34 @@ def own_short_socket_root():
         mp.setattr(paths, "SHORT_SOCKET_ROOT", root)
         yield root
     shutil.rmtree(root, ignore_errors=True)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_resolver: may look names up for real (fl_netguard.py)")
+    config.addinivalue_line(
+        "markers", "local_sshd: may run real ssh to a loopback sshd (fl_netguard.py)")
+
+
+@pytest.fixture(autouse=True)
+def no_network(request, monkeypatch):
+    """No DNS, no connection to another machine, no real ssh (fl_netguard.py): a test
+    that tries fails, naming what it tried, even when a background thread swallowed
+    the error. cli._resolves is a fake unless the test is marked real_resolver."""
+    from fleetledger import cli
+
+    real_resolver = request.node.get_closest_marker("real_resolver") is not None
+    local_sshd = request.node.get_closest_marker("local_sshd") is not None
+    if not real_resolver:
+        monkeypatch.setattr(cli, "_resolves", fl_netguard.fake_resolves)
+    guard = fl_netguard.start(real_resolver=real_resolver, local_sshd=local_sshd)
+    try:
+        yield guard
+    finally:
+        fl_netguard.stop()
+    if guard.refused:
+        pytest.fail("The test reached for the network:\n  " + "\n  ".join(guard.refused)
+                    + "\n" + fl_netguard.HELP, pytrace=False)
 
 
 @pytest.fixture(autouse=True)
