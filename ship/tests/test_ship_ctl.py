@@ -10,48 +10,22 @@ from ship_harness import BOOT_ID, assert_valid
 
 
 # --- status ---------------------------------------------------------------------
+def core_terminal(address: str, name: str | None, state: str, session: str) -> dict:
+    """A live herdr-core terminal running claude, as the fake hc keeps it."""
+    return {"address": address, "name": name, "argv": ["/opt/shipshape/bin/agent-launch"],
+            "labels": {"shipshape.session": session, "herdr.space": "shipshape"},
+            "cwd": "/home/agent/work/main", "state": "live", "keep": True, "created_ms": 1,
+            "status": {"app": "claude-code", "state": state, "kind": None}, "turn": 0,
+            "exit_code": None, "reason": None,
+            "foreground": {"pid": 4343, "name": "claude", "argv": ["claude"],
+                           "cwd": "/home/agent/work/main"}}
+
+
 def test_status_running_ship_validates(ship):
-    ship.set(
-        herdr={
-            "server": True,
-            "agents": [
-                {
-                    "name": "main",
-                    "agent": "claude",
-                    "agent_status": "blocked",
-                    "pane_id": "w1:p1",
-                    "workspace_id": "w1",
-                    "tab_id": "w1:t1",
-                    "terminal_id": "t1",
-                    "focused": False,
-                    "revision": 3,
-                    "cwd": "/home/agent/work/main",
-                    "agent_session": {
-                        "source": "herdr:claude",
-                        "agent": "claude",
-                        "kind": "id",
-                        "value": "sess-a",
-                    },
-                },
-                {
-                    "agent": "claude",
-                    "agent_status": "working",
-                    "pane_id": "w2:p1",
-                    "workspace_id": "w2",
-                    "tab_id": "w2:t1",
-                    "terminal_id": "t2",
-                    "focused": False,
-                    "revision": 1,
-                    "agent_session": {
-                        "source": "herdr:claude",
-                        "agent": "claude",
-                        "kind": "id",
-                        "value": "sess-b",
-                    },
-                },
-            ],
-        }
-    )
+    ship.set(hc={"server": True, "terminals": [
+        core_terminal("t1", "main", "blocked", "sess-a"),
+        core_terminal("t2", None, "working", "sess-b"),
+    ]})
     ledger = ship.p("/home/agent/.local/state/shipshape/modes.json")
     ledger.write_text(
         json.dumps(
@@ -79,27 +53,11 @@ def test_status_running_ship_validates(ship):
     assert doc["auth"]["github"]["account"] == "example-user"
     assert doc["auth"]["gcloud_adc"]["state"] == "ok"
     assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
-    assert doc["agent_record"] == {"runtime": "herdr", "agents": [], "resume": None,
+    assert doc["agent_record"] == {"runtime": "core", "agents": [], "resume": None,
                                    "primary": None}
-    # Classic herdr (no runtime in ship.toml): told it is going, and how to move.
-    assert {a["code"] for a in doc["attention"]} == {"agent-waiting", "runtime-deprecated"}
+    # A herdr-core Ship is never told classic herdr is deprecated.
+    assert {a["code"] for a in doc["attention"]} == {"agent-waiting"}
     assert doc["host"]["mem_used_pct"] == 50.0 and doc["host"]["uptime_s"] == 4000
-
-
-def test_status_tells_a_classic_herdr_ship_it_is_deprecated(ship):
-    """runtime-deprecated: classic herdr goes in the next release; the item names the
-    exact command that moves this Ship to herdr-core. ship-ctl status prints it too."""
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert rc == 0 and doc["herdr"]["runtime"] == "herdr"
-    assert_valid("ship-status", doc)
-    (item,) = [a for a in doc["attention"] if a["code"] == "runtime-deprecated"]
-    name = doc["ship"]["name"]
-    assert item["subject"] == "runtime"
-    assert "removed in the next ShipShape release" in item["message"]
-    assert f"ship-fleet runtime {name} core" in item["message"]
-    assert "ship-ctl runtime switch core" in item["message"]
-    rc, _, out = ship.ctl("status")
-    assert rc == 0 and f"! {item['message']}" in out
 
 
 def test_status_never_contains_a_token(ship):
@@ -112,7 +70,7 @@ def test_status_never_contains_a_token(ship):
     [
         ({"claude": {"logged_in": False}}, "needs-sign-in"),
         ({"cloud_init": "running"}, "provisioning"),
-        ({"herdr": {"server": False}}, "unknown"),
+        ({"hc": {"server": False}}, "unknown"),
         ({"claude": {"auth_garbage": True}}, "needs-sign-in"),
         ({}, "ready"),
     ],

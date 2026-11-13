@@ -440,10 +440,14 @@ def test_a_failed_run_records_failed(tmp_path):
 def test_units_are_enabled(tmp_path):
     if shutil.which("systemctl") is None:
         pytest.skip("needs systemctl")
+    toml = tmp_path / "etc/shipshape/ship.toml"
+    toml.parent.mkdir(parents=True)
+    toml.write_text('schema = 1\nruntime = "core"\n\n[ship]\nname = "ship-01"\n'
+                    'id = "7c9e6679-7425-40de-944b-e07fc1f90ae7"\n')
     provision("--first-boot", "--root", str(tmp_path))
     assert (tmp_path / "etc/systemd/system/timers.target.wants/ship-status.timer").is_symlink()
     wants = tmp_path / "etc/systemd/user/default.target.wants"
-    assert sorted(p.name for p in wants.iterdir()) == ["herdr.service"]
+    assert sorted(p.name for p in wants.iterdir()) == ["ship-core.service"]
 
 
 def test_the_agent_launcher_is_installed(tmp_path):

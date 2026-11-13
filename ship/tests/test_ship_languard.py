@@ -1,4 +1,5 @@
-"""LAN guard, OS update policy and herdr-restart-pending (phase 2).
+"""LAN guard and OS update policy (phase 2; herdr-restart-pending, which only
+classic herdr Ships have, is in test_ship_herdr_legacy.py).
 
 Most tests run ship-ctl in the sandbox Ship with fake nft, ip and systemctl.
 One test loads the real rules with the real nft inside a throwaway user and
@@ -14,13 +15,12 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from ship_harness import BASIC_TOML, SHIP, assert_valid
 
 sys.path.insert(0, str(SHIP / "lib"))
-from shipctl import languard, status  # noqa: E402
+from shipctl import languard  # noqa: E402
 
 GUARD_TOML = BASIC_TOML + """
 [network]
@@ -371,105 +371,6 @@ def test_set_lan_guard_allow_list_and_clear(ship):
     assert "198.51.100.0/24" not in ship.p(RULES).read_text()
     rc, doc, _ = ship.ctl("set", "network.lan_guard_allow=router.example.com", "--json")
     assert rc == 4
-
-
-# --- herdr-restart-pending ----------------------------------------------------------
-
-
-def fake_process(ship, pid: int, argv: list[str], exe: Path) -> None:
-    proc = ship.p(f"/proc/{pid}")
-    proc.mkdir(parents=True)
-    (proc / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
-    (proc / "exe").symlink_to(exe)
-
-
-def install_herdr(ship) -> Path:
-    path = ship.p("/usr/local/bin/herdr")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("new herdr")
-    return path
-
-
-def codes(doc):
-    return [a["code"] for a in doc["attention"]]
-
-
-def test_herdr_restart_pending_when_the_server_runs_an_old_binary(ship, tmp_path):
-    install_herdr(ship)
-    old = tmp_path / "old-herdr"
-    old.write_text("old herdr")
-    fake_process(ship, 4242, ["/usr/local/bin/herdr", "server"], old)
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert rc == 0
-    assert_valid("ship-status", doc)
-    assert "herdr-restart-pending" in codes(doc)
-
-
-def test_no_herdr_restart_pending_when_the_server_is_current(ship):
-    installed = install_herdr(ship)
-    fake_process(ship, 4242, ["/usr/local/bin/herdr", "server"], installed)
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert "herdr-restart-pending" not in codes(doc)
-
-
-def test_only_the_herdr_server_counts(ship, tmp_path):
-    install_herdr(ship)
-    other = tmp_path / "other"
-    other.write_text("x")
-    fake_process(ship, 100, ["/usr/local/bin/herdr", "agent", "list"], other)
-    fake_process(ship, 101, ["/usr/bin/bash", "server"], other)
-    fake_process(ship, 102, ["herdr-server-lookalike", "server"], other)
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert "herdr-restart-pending" not in codes(doc)
-
-
-def _probe_ctx(ship, agent_uid):
-    """A context for calling herdr_restart_pending in-process with an agent uid:
-    the sandbox ship-ctl has no agent user, so the owner filter only runs here."""
-    from types import SimpleNamespace
-
-    paths = SimpleNamespace(p=ship.p, proc=ship.p("/proc"))
-    return SimpleNamespace(paths=paths, agent_owner=(agent_uid, agent_uid))
-
-
-def test_herdr_pending_looks_only_at_the_agents_processes(ship, tmp_path):
-    """A look-alike `herdr server` owned by someone else (root, say) never counts."""
-    install_herdr(ship)
-    old = tmp_path / "old-herdr"
-    old.write_text("old herdr")
-    fake_process(ship, 4242, ["/usr/local/bin/herdr", "server"], old)
-    me = os.getuid()
-    assert status.herdr_restart_pending(_probe_ctx(ship, me)) is True  # the agent's own
-    assert status.herdr_restart_pending(_probe_ctx(ship, me + 1)) is False  # someone else's
-
-
-def test_herdr_pending_compares_device_and_inode(ship, tmp_path, monkeypatch):
-    """Same inode number on another filesystem is a different file."""
-    installed = install_herdr(ship)
-    fake_process(ship, 4242, ["/usr/local/bin/herdr", "server"], installed)
-    exe = ship.p("/proc/4242/exe")
-    real_stat = os.stat
-
-    def other_device(path, *args, **kwargs):
-        st = real_stat(path, *args, **kwargs)
-        if Path(path) == exe:
-            fields = list(st[:10])
-            fields[2] = st.st_dev + 1  # st_dev
-            return os.stat_result(fields)
-        return st
-
-    ctx = _probe_ctx(ship, os.getuid())
-    assert status.herdr_restart_pending(ctx) is False
-    monkeypatch.setattr(status.os, "stat", other_device)
-    assert status.herdr_restart_pending(ctx) is True
-
-
-def test_no_herdr_installed_means_nothing_pending(ship, tmp_path):
-    old = tmp_path / "old-herdr"
-    old.write_text("old")
-    fake_process(ship, 4242, ["herdr", "server"], old)
-    rc, doc, _ = ship.ctl("status", "--json")
-    assert "herdr-restart-pending" not in codes(doc)
 
 
 def test_status_document_stays_valid_with_the_guard_on(ship):

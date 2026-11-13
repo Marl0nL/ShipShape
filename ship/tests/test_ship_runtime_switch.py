@@ -102,8 +102,10 @@ def as_running(ship) -> dict[str, tuple[str, str]]:
 
 @pytest.fixture
 def herdr_ship(ship):
-    """main (auto) and grinder (bypassPermissions) running under herdr."""
+    """main (auto) and grinder (bypassPermissions) running under herdr (a classic
+    herdr Ship: the harness makes a herdr-core one)."""
     ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    ship.use_herdr()
     ship.ctl("apply", "--json")
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out

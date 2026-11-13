@@ -3,7 +3,8 @@ after it (contracts/settings.md, "Waking the primary agent after a boot").
 
 The sandbox Ship's ship.toml has two [[autostart]] agents, main and grinder; with
 none marked, main (the first) is the primary. Tests set the uptime to just past the
-delay, as when ship-wake.timer fires.
+delay, as when ship-wake.timer fires. The Ship is a herdr-core Ship: agents are
+terminals of the fake `hc`, and the line is typed with `hc send`.
 """
 
 from __future__ import annotations
@@ -42,10 +43,10 @@ def booted(ship):
     ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
+    assert set(ship.args()) == {"main", "grinder"}
     s = ship.scenario()
-    assert {a["name"] for a in s["herdr"]["agents"]} == {"main", "grinder"}
-    s["herdr"]["prompts"] = []
-    ship.set(herdr=s["herdr"])
+    s["hc"]["sent"] = []
+    ship.set(hc=s["hc"])
     uptime(ship, 605)
     return ship
 
@@ -216,14 +217,14 @@ def test_a_blocked_primary_is_retried_then_given_up(booted):
 def test_an_agent_in_an_unknown_state_or_not_running_is_not_typed_into(booted):
     ship = booted
     turn_on(ship)
-    ship.set_state("main", "unknown")
+    ship.set_state("main", "unknown")  # Claude has not reported its state
     assert wake(ship)["reason"] == "not-ready"
     ship.reboot(uptime=40)
     ship.ctl("refresh")
-    ship.crash("main")
+    ship.crash("main")  # its kept terminal is back at a shell, with no Claude in it
     s = ship.scenario()
-    s["herdr"]["fail_start"] = ["main"]  # it is not back by the time the wake runs
-    ship.set(herdr=s["herdr"])
+    s["hc"]["fail_run"] = ["main"]  # it is not back by the time the wake runs
+    ship.set(hc=s["hc"])
     uptime(ship, 605)
     data = wake(ship)
     assert data["outcome"] == "gave-up"

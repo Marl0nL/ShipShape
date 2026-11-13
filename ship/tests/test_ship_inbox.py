@@ -250,17 +250,20 @@ def test_put_needs_a_name_and_size(ship):
 def test_notify_tells_the_core_agents_a_count_and_no_names(ship):
     ship.ctl("autostart", "--json")
     s = ship.scenario()
-    s["herdr"]["agents"].append({"name": "worker-1", "agent": "claude", "agent_status": "idle",
-                                 "pane_id": "w:p1", "workspace_id": "w"})
-    s["herdr"]["prompts"] = []
-    ship.set(herdr=s["herdr"])
+    # A Claude that is not an [[autostart]] agent: it is told nothing.
+    worker = {**ship.terminal("main"), "address": "t9", "name": "worker-1",
+              "labels": {"herdr.space": "w"}, "session": "sess-worker-1",
+              "status": {"app": "claude-code", "state": "idle"}}
+    s["hc"]["terminals"].append(worker)
+    s["hc"]["sent"] = []
+    ship.set(hc=s["hc"])
     rc, doc, out = ship.ctl("inbox", "notify", "--count", "2", "--json")
     assert rc == 0, out
     assert_valid("ship-ctl-result", doc)
     assert doc["data"] == {"count": 2, "sent": ["main", "grinder"], "skipped": []}
     line = inbox.notice_text(2)
     assert line.startswith("ShipShape: 2 new files in your inbox (~/inbox)")
-    assert ship.scenario()["herdr"]["prompts"] == [["main", line], ["grinder", line]]
+    assert ship.prompts() == [["main", line], ["grinder", line]]
     assert inbox.notice_text(1).startswith("ShipShape: 1 new file in")
 
 

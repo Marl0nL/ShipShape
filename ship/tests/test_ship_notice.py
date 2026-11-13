@@ -2,7 +2,8 @@
 
 The sandbox Ship's ship.toml has two autostart entries, main and grinder. Tests
 add other live agents (a firstmate's workers, say) and check they never get the
-line.
+line. The Ship is a herdr-core Ship: agents are terminals of the fake `hc`, and the
+line is typed with `hc send` (never forced: hc refuses while an agent is blocked).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import json
 import sys
 
 import pytest
-from ship_harness import SHIP, assert_valid
+from ship_harness import LEDGER, SHIP, assert_valid
 
 sys.path.insert(0, str(SHIP / "lib"))
 from shipctl import notice  # noqa: E402
@@ -19,15 +20,23 @@ from shipctl import notice  # noqa: E402
 LINE = "ShipShape: GitHub is now signed in as example-user. Re-check it if you need it."
 
 
+def claude_terminal(address: str, name: str | None, state: str = "idle") -> dict:
+    """A live terminal running Claude that ShipShape did not start (hc run by hand)."""
+    return {"address": address, "name": name, "argv": ["claude"], "labels": {},
+            "cwd": "/home/agent", "state": "live", "keep": False, "created_ms": 1,
+            "status": {"app": "claude-code", "state": state}, "turn": 0, "exit_code": None,
+            "reason": None, "foreground": {"pid": 4545, "name": "claude", "argv": ["claude"],
+                                           "cwd": "/home/agent"}}
+
+
 def start_core_agents(ship, extra=()):
     """Autostart main and grinder, then add other live agents beside them."""
     ship.ctl("autostart", "--json")
     s = ship.scenario()
-    for name in extra:
-        s["herdr"]["agents"].append({"name": name, "agent": "claude", "agent_status": "idle",
-                                     "pane_id": f"x-{name}:p1", "workspace_id": f"x-{name}"})
-    s["herdr"]["prompts"] = []  # forget autostart's first prompts
-    ship.set(herdr=s["herdr"])
+    for i, name in enumerate(extra):
+        s["hc"]["terminals"].append(claude_terminal(f"t{50 + i}", name))
+    s["hc"]["sent"] = []  # forget autostart's first prompts
+    ship.set(hc=s["hc"])
 
 
 def test_only_the_autostart_agents_get_the_notice(ship):
@@ -53,9 +62,7 @@ def test_the_notice_is_recorded_in_the_ships_journal(ship):
 
 def test_a_core_agent_that_is_not_running_is_skipped_with_a_note(ship):
     start_core_agents(ship, extra=("worker-1",))
-    s = ship.scenario()
-    s["herdr"]["agents"] = [a for a in s["herdr"]["agents"] if a["name"] != "grinder"]
-    ship.set(herdr=s["herdr"])
+    ship.core_crash("grinder", how="exit")  # its terminal finished
     rc, doc, _ = ship.ctl("notify-signin", "gcloud", "--json")
     assert rc == 0
     assert doc["data"]["sent"] == ["main"]
@@ -67,25 +74,17 @@ def test_a_core_agent_that_is_not_running_is_skipped_with_a_note(ship):
 def test_an_agent_at_a_permission_prompt_is_not_typed_into(ship):
     """Text and Enter could answer the permission dialog."""
     start_core_agents(ship)
-    s = ship.scenario()
-    for a in s["herdr"]["agents"]:
-        if a["name"] == "main":
-            a["agent_status"] = "blocked"
-    ship.set(herdr=s["herdr"])
+    ship.core_status("main", "blocked", "permission", "approve Bash: make")
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["grinder"]
     assert doc["data"]["skipped"] == [{"name": "main", "reason": "waiting-for-permission"}]
     assert [p[0] for p in ship.prompts()] == ["grinder"]
 
 
-def test_an_agent_herdr_cannot_classify_is_not_typed_into(ship):
-    """`unknown`, as just after an agent was started again."""
+def test_an_agent_that_has_not_reported_its_state_is_not_typed_into(ship):
+    """`unknown`: Claude has not reported its state, as just after it was started again."""
     start_core_agents(ship)
-    s = ship.scenario()
-    for a in s["herdr"]["agents"]:
-        if a["name"] == "grinder":
-            a["agent_status"] = "unknown"
-    ship.set(herdr=s["herdr"])
+    ship.set_state("grinder", "unknown")
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["main"]
     assert doc["data"]["skipped"] == [{"name": "grinder", "reason": "not-ready"}]
@@ -110,11 +109,11 @@ def test_nothing_is_sent_while_this_boots_resume_is_pending(ship):
 
 
 def test_the_line_is_typed_as_the_agent_user_and_logged_as_root(ship):
-    """herdr's socket and the agents belong to agent; the journal record is root's."""
+    """The core's socket and the agents belong to agent; the journal record is root's."""
     start_core_agents(ship)
     ship.ctl("notify-signin", "github", "--json")
     agent_home = str(ship.p("/home/agent"))
-    typed = [home for argv, home in ship.homes("herdr") if argv[1:3] == ["agent", "prompt"]]
+    typed = [home for argv, home in ship.homes("hc") if argv[1:2] == ["send"]]
     assert typed and all(home == agent_home for home in typed)
     logged = [home for _, home in ship.homes("logger")]
     assert logged and all(home != agent_home for home in logged)
@@ -123,27 +122,30 @@ def test_the_line_is_typed_as_the_agent_user_and_logged_as_root(ship):
 def test_a_working_agent_still_gets_it(ship):
     """Claude Code queues typed input during a turn, so a busy agent is not skipped."""
     start_core_agents(ship)
-    s = ship.scenario()
-    for a in s["herdr"]["agents"]:
-        a["agent_status"] = "working"
-    ship.set(herdr=s["herdr"])
+    for name in ("main", "grinder"):
+        ship.set_state(name, "working")
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["main", "grinder"]
 
 
-def test_a_core_agent_that_lost_its_name_is_still_found(ship):
-    """An agent without its herdr name (started again by hand in its pane) is matched
-    by the session the agent record keeps for it."""
+def test_a_core_agent_continued_by_hand_in_an_unnamed_terminal_is_still_found(ship):
+    """main and grinder ended, and each session was continued by hand (`claude
+    --resume`) in a terminal with no name: the mode-ledger hook saw it start there,
+    so it is matched by the session the agent record keeps for it."""
     start_core_agents(ship, extra=("worker-1",))
+    sessions = {n: ship.record()["agents"][n]["session"] for n in ("main", "grinder")}
+    for name in sessions:
+        ship.core_crash(name, how="exit")
     s = ship.scenario()
-    for a in s["herdr"]["agents"]:
-        if a["name"] in ("main", "grinder"):
-            a.pop("name")
-    ship.set(herdr=s["herdr"])
+    s["hc"]["terminals"] += [claude_terminal("t8", None), claude_terminal("t9", None)]
+    ship.set(hc=s["hc"])
+    doc = ship.json(LEDGER)
+    for address, sid in zip(("t8", "t9"), sessions.values(), strict=True):
+        doc["sessions"][sid].update(started_at="2026-01-02T00:00:00Z", terminal=address)
+    ship.p(LEDGER).write_text(json.dumps(doc))
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert doc["data"]["sent"] == ["main", "grinder"]
-    targets = [p[0] for p in ship.prompts()]
-    assert len(targets) == 2 and "worker-1" not in targets
+    assert ship.scenario()["hc"]["sent"] == [["t8", LINE], ["t9", LINE]]
 
 
 def test_nothing_is_sent_for_a_service_that_is_not_signed_in(ship):
@@ -159,8 +161,8 @@ def test_nothing_is_sent_for_a_service_that_is_not_signed_in(ship):
 def test_a_failed_send_is_reported(ship):
     start_core_agents(ship)
     s = ship.scenario()
-    s["herdr"]["fail_prompt"] = ["grinder"]
-    ship.set(herdr=s["herdr"])
+    s["hc"]["fail_send"] = ["grinder"]
+    ship.set(hc=s["hc"])
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert rc == 0
     assert doc["data"]["sent"] == ["main"]
@@ -170,8 +172,7 @@ def test_a_failed_send_is_reported(ship):
 def test_a_ship_without_autostart_messages_nobody(ship):
     toml = ship.p("/etc/shipshape/ship.toml").read_text()
     ship.write_toml(toml.split("[[autostart]]")[0])
-    ship.set(herdr={"server": True, "agents": [
-        {"name": "worker-1", "agent": "claude", "agent_status": "idle", "pane_id": "w:p1"}]})
+    ship.set(hc={"server": True, "terminals": [claude_terminal("t1", "worker-1")]})
     rc, doc, _ = ship.ctl("notify-signin", "github", "--json")
     assert rc == 0
     assert doc["messages"] == ["This Ship has no [[autostart]] agents; no notice sent."]

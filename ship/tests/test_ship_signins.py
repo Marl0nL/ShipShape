@@ -424,7 +424,7 @@ def test_notify_signin_takes_a_toolkit_id(ship):
     assert rc == 0, out
     assert doc["data"]["account"] == "you@example.com"
     assert sorted(doc["data"]["sent"]) == ["grinder", "main"]
-    line = ship.scenario()["herdr"]["prompts"][-1][1]
+    line = ship.prompts()[-1][1]
     assert line == ("ShipShape: Example Docs is now signed in as you@example.com. "
                     "Re-check it if you need it.")
 
@@ -432,7 +432,7 @@ def test_notify_signin_takes_a_toolkit_id(ship):
 def test_notify_signin_names_what_gcloud_signs_in(ship):
     ship.ctl("autostart", "--json")
     rc, doc, _ = ship.ctl("notify-signin", "gcloud", "--json")
-    line = ship.scenario()["herdr"]["prompts"][-1][1]
+    line = ship.prompts()[-1][1]
     assert line.startswith("ShipShape: gcloud and Application Default Credentials is now "
                            "signed in as work@example.com.")
 
