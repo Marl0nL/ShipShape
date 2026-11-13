@@ -16,8 +16,10 @@ jobs:
   check:
     name: lint and unit tests
     runs-on: ubuntu-24.04
-    # The whole suite takes 10-15 minutes on a hosted runner; room to grow.
-    timeout-minutes: 25
+    # The whole suite takes 15-25 minutes on a hosted runner (median about 20).
+    # 40 is a stopgap so a passing run is never cancelled: lower it again once
+    # the planned test speedups have landed and their run times are measured.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
