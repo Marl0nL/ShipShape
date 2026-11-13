@@ -230,6 +230,9 @@ def test_name_taken_means_it_is_running_already(core):
     assert ship.record()["agents"]["main"]["relaunch"]["failures"] == 0
 
 
+# Classic herdr only (a Ship moving between herdr and core): classic_herdr in
+# pytest.ini; CI runs it, a local scripts/check does not. Deleted with classic herdr.
+@pytest.mark.classic_herdr
 def test_a_ship_moved_from_herdr_resumes_its_agents_on_core(ship):
     """Sessions made under herdr continue under core; herdr's panes mean nothing there."""
     ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
@@ -548,6 +551,9 @@ def test_the_hook_records_the_core_terminal(tmp_path, monkeypatch):
     assert "terminal" not in sessions["s2"]
 
 
+# Classic herdr only (a Ship moving between herdr and core): classic_herdr in
+# pytest.ini; CI runs it, a local scripts/check does not. Deleted with classic herdr.
+@pytest.mark.classic_herdr
 def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
     """ship.toml says core while the herdr agents still run (no reboot): core starts
     none of them this boot; the next boot resumes them on core."""
@@ -569,6 +575,9 @@ def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
     assert launched(ship, "main")[-2:] == ["--resume", "sess-main"]
 
 
+# Classic herdr only (a Ship moving between herdr and core): classic_herdr in
+# pytest.ini; CI runs it, a local scripts/check does not. Deleted with classic herdr.
+@pytest.mark.classic_herdr
 def test_switching_back_to_herdr_while_core_agents_run_starts_nothing_twice(core):
     ship = core
     text = ship.p("/etc/shipshape/ship.toml").read_text()

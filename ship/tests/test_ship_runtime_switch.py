@@ -18,6 +18,10 @@ from ship_harness import LEDGER, assert_valid
 
 LAUNCHER = "/opt/shipshape/bin/agent-launch"
 
+# Classic herdr only: CI runs these, a local scripts/check leaves them out unless
+# SHIPSHAPE_TEST_CLASSIC_HERDR=1 (pytest.ini). They are deleted with classic herdr.
+pytestmark = pytest.mark.classic_herdr
+
 
 # --- helpers ------------------------------------------------------------------------------
 def switch(ship, target: str, *extra: str):

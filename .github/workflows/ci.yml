@@ -45,5 +45,7 @@ jobs:
         env:
           PYTHON: python
           SHIPSHAPE_TEST_WORKERS: "4"
+          # Also the tests marked classic_herdr, which a local check leaves out.
+          SHIPSHAPE_TEST_CLASSIC_HERDR: "1"
           SHIPSHAPE_HYGIENE_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
         run: scripts/check
