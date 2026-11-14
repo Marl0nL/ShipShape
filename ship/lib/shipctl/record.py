@@ -483,8 +483,8 @@ def stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
 
 def let_go(doc: dict, name: str, autostart: set[str]) -> None:
     """Let an agent go: an [[autostart]] one stays, stopped (autostart starts it
-    afresh at the next boot); any other leaves the record, as herdr forgets a pane's
-    agent when it exits."""
+    afresh at the next boot, when its folder is free); any other leaves the record, as
+    herdr forgets a pane's agent when it exits."""
     if name not in autostart:
         del doc["agents"][name]
     else:
@@ -888,6 +888,39 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
     if last_switch is not None:  # only on a Ship that has switched runtime
         block["last_switch"] = last_switch
     return block, found
+
+
+def shared_folders(ctx: Context, ship: ShipToml, live: list[dict] | None,
+                   found: dict[str, dict]) -> list[tuple[str, str, str]]:
+    """(code, message, folder): agents-share-folder, for each folder two live Claude
+    agents or more work in, unless each is an [[autostart]] entry for that folder (two
+    entries there are meant). Advice only: from what the status build already has
+    (the live agents, matched to the record), no call of its own."""
+    from .apply import expand_cwd  # it imports this module
+
+    home = ctx.paths.agent_path(ctx.paths.agent_home)
+    entries = {e["name"]: expand_cwd(e["cwd"], home) for e in ship.autostart}
+    names = {id(a): name for name, a in found.items()}
+    folders: dict[str, list[tuple[str, bool]]] = {}
+    for a in live or []:
+        if a["kind"] != "claude" or not a["cwd"]:
+            continue
+        name = names.get(id(a)) or a["name"] or a["place"] or "?"
+        meant = name in entries and one_folder(entries[name], a["cwd"])
+        folders.setdefault(os.path.normpath(a["cwd"]), []).append((name, meant))
+    out = []
+    for folder, agents in sorted(folders.items()):
+        if len(agents) < 2 or all(meant for _, meant in agents):
+            continue
+        listed = ", ".join(f"'{n}'" for n, _ in agents)
+        extra = [n for n, _ in agents if n in entries]
+        hint = (f" An [[autostart]] agent ({', '.join(extra)}) you do not want here should "
+                "also lose its entry, or it can start again at a boot." if extra else "")
+        out.append(("agents-share-folder",
+                    f"{len(agents)} Claude agents work in {folder}: {listed}. If that is not "
+                    "meant, exit the one you do not need (/exit in its terminal), so they do "
+                    f"not change the same files.{hint}", folder))
+    return out
 
 
 def attention(block: dict | None) -> list[tuple[str, str, str]]:

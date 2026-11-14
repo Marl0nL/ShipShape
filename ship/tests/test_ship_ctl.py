@@ -55,8 +55,9 @@ def test_status_running_ship_validates(ship):
     assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
     assert doc["agent_record"] == {"runtime": "core", "agents": [], "resume": None,
                                    "primary": None}
-    # A herdr-core Ship is never told classic herdr is deprecated.
-    assert {a["code"] for a in doc["attention"]} == {"agent-waiting"}
+    # A herdr-core Ship is never told classic herdr is deprecated. (Both agents work
+    # in ~/work/main, and the unnamed one is no [[autostart]] entry: that is advice.)
+    assert {a["code"] for a in doc["attention"]} == {"agent-waiting", "agents-share-folder"}
     assert doc["host"]["mem_used_pct"] == 50.0 and doc["host"]["uptime_s"] == 4000
 
 

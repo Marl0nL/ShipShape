@@ -730,7 +730,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         "errors": [],
     }
     from . import record, switch  # they import this module
-    from .autostart import repo_attention
+    from .autostart import folder_attention, repo_attention
 
     doc["agent_record"], found = record.view(ctx, ship, live)
     recorded = {a["name"]: a["mode"] for a in doc["agent_record"]["agents"]}
@@ -744,6 +744,11 @@ def build(ctx: Context, ship: ShipToml) -> dict:
                                      f_core_pending.result(), reg.labels)
     doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
                          for code, message, who in [*record.attention(doc["agent_record"]),
+                                                    *record.shared_folders(ctx, ship, live,
+                                                                           found),
+                                                    *folder_attention(ctx, ship,
+                                                                      doc["agent_record"],
+                                                                      found, live),
                                                     *switch.attention(doc["agent_record"]),
                                                     *repo_attention(ctx, ship)]]
     if herdr["runtime"] == "herdr":  # last: a summary showing one item shows the urgent one
