@@ -44,7 +44,11 @@ The managed false keeps it off for sessions an agent or a person starts (a user
 workers stay out of the Claude app. "on" must not set `disableRemoteControl`: it
 refuses the flag too. A session that had Remote Control and is resumed by hand
 reconnects to it. An adopted agent (started by hand, then recorded) keeps what
-it was started with until the Ship next starts it. Updating from a version where
+it was started with until the Ship next starts it, and from then on carries the
+flag. That includes a Claude session another agent starts in the Ship's own
+runtime (a herdr pane or herdr-core terminal): the record adopts it like any
+other, so the Ship resumes it after a boot with Remote Control. Workers an agent
+runs as its own child processes are never adopted and never get it. Updating from a version where
 "on" meant every session: running sessions keep theirs until they end; new ones
 the Ship did not start do not get it; "all" is the old behaviour.
 

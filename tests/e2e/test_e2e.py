@@ -100,7 +100,9 @@ def check_runtime_contract(fleet: Fleet, name: str) -> None:
     assert sh("stat -c '%a %U' /etc/shipshape/ship.toml").strip() == "644 root"
     assert sh("readlink -f /usr/local/bin/ship-ctl").startswith("/opt/shipshape/releases/")
     managed = json.loads(sh("cat /etc/claude-code/managed-settings.json"))
-    assert managed["remoteControlAtStartup"] is True
+    # remote_control "on": only the Ship's own agents, launched with --remote-control.
+    assert managed["remoteControlAtStartup"] is False
+    assert "disableRemoteControl" not in managed
     assert managed["permissions"]["defaultMode"] == "auto"
     assert "disableBypassPermissionsMode" not in managed["permissions"]
     assert managed["env"]["CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX"] == name
