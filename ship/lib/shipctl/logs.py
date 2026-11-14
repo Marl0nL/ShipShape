@@ -10,6 +10,9 @@ from .homefs import UnsafePath
 from .record import LOG_TAG
 
 SOURCES = ("provision", "herdr", "core", "resume", "tools", "status", "system")
+# `logs resume`: what the status refresh started or let go after a boot, the record's
+# resumes and autostart's fresh starts alike (cli.cmd_refresh logs both).
+RESUME_TAGS = (LOG_TAG, "autostart")
 
 # herdr-core has no log command. It runs itself as transient user units
 # (hc-serve-*, hc-hold-*) whose stderr systemd appends to files in its state folder
@@ -70,7 +73,8 @@ def read(ctx: Context, source: str, lines: int) -> list[str]:
     agent = [f"_UID={ids[0]}"] if ids else []
     if source == "resume":
         # Agents are resumed (and started again after a crash) by the status refresh,
-        # from the agent record: its lines in that unit's journal.
+        # from the agent record, and [[autostart]] agents started afresh there:
+        # the record's and autostart's lines in that unit's journal.
         base[-1] = str(min(10000, lines * 20))
     selector = {
         "herdr": ["_SYSTEMD_USER_UNIT=herdr.service", *agent],
@@ -84,7 +88,8 @@ def read(ctx: Context, source: str, lines: int) -> list[str]:
         raise CtlError("internal", f"journalctl failed (exit {r.rc})")
     out = [line for line in r.out.splitlines() if not line.startswith("-- No entries --")]
     if source == "resume":
-        out = [line for line in out if f"ship-ctl: {LOG_TAG}:" in line][-lines:]
+        out = [line for line in out
+               if any(f"ship-ctl: {tag}:" in line for tag in RESUME_TAGS)][-lines:]
     if source == "core":
         out = _core(ctx, out, lines)
     return out

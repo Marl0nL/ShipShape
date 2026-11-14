@@ -104,6 +104,7 @@ SEVERITY = {
     "tags-differ": "low",
     "ssh-trust-behind": "low",
     "net-collector-down": "low",
+    "agents-share-folder": "low",  # advice: two Claude agents in one folder
 }
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 

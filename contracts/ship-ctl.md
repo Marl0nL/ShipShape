@@ -83,7 +83,10 @@ extra scope `github.scopes` chooses, or has a catalogue scope it no longer choos
 `host-cert-expired`, `net-collector-down` (ship-netwatch installed but not
 running), `overlay-down` (joined, but the overlay is not `running`),
 `agent-relaunch-failed` (a recorded agent stopped and did not start again after 3
-tries this boot; subject: the agent), `runtime-deprecated` (subject `runtime`: the
+tries this boot; subject: the agent), `agents-share-folder` (advice: two live Claude
+agents or more work in one folder, subject the folder, the message naming them; from
+the agents the status already lists, no call of its own. Not raised when each of them
+is an `[[autostart]]` entry for that folder: two entries there are meant), `runtime-deprecated` (subject `runtime`: the
 Ship runs classic herdr, which the next ShipShape release removes; the message names
 `ship-fleet runtime <ship> core`, the one-way switch to herdr-core; never on a
 herdr-core Ship).
@@ -134,9 +137,11 @@ atomically, then runs `apply`.
   Booleans are `true` or `false`.
 - `autostart.add=NAME:CWD[:MODE]` adds an `[[autostart]]` agent (refused if one has
   that name), and `autostart.add=NAME:github:OWNER/REPO[:MODE]` adds one that works
-  in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it; a running
-  agent keeps running until it is stopped or the Ship reboots). Run `autostart`
-  afterwards to start a new one at once.
+  in a GitHub repo, cloned into `~/work/REPO` first (its `repo`); `autostart.remove=NAME` drops one (refused if none has it). A running
+  agent whose entry is removed stays in the agent record: it keeps running, and is
+  resumed at every reboot, until it is exited (`/exit`), when it leaves the record
+  (or `agent forget` once it has stopped). Run `autostart` afterwards to start a new
+  one at once.
 - `network.ssh_listen=overlay` is refused with `overlay-not-joined` (exit 1, no
   change) unless the Ship has joined the overlay and knows its overlay addresses.
 - `--file -` reads a complete replacement `ship.toml` on stdin. Its `ship.name`
@@ -639,8 +644,11 @@ error: `changed` is empty. `data`: `{ "device": "/dev/sda1", "grown": true|false
 ### `ship-ctl logs SOURCE [--lines N] [--json]`
 
 SOURCE is one of `provision`, `herdr`, `core`, `resume`, `tools`, `status`, `system`;
-default 200 lines. `resume` is the agent record's lines from the status refresh:
-agents resumed after a boot, started again after a crash, or let go. `core` is for
+default 200 lines. `resume` is what the status refresh started or let go: the
+agent record's lines (agents resumed after a boot, started again after a crash, or
+let go) and autostart's (`autostart: started NAME` for an `[[autostart]]` agent
+started afresh, with a new conversation, and why one could not start), so a boot's
+fresh starts show next to its resumes. `core` is for
 herdr-core Ships: `ship-core.service`'s journal (the core starting at boot), then the
 last lines of herdr-core's own `core.log` and `holder.log` (in
 `~/.local/state/herdr-core/default/`), each prefixed with its file name; `--lines`
