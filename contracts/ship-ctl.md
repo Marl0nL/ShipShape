@@ -86,7 +86,11 @@ running), `overlay-down` (joined, but the overlay is not `running`),
 tries this boot; subject: the agent), `agents-share-folder` (advice: two live Claude
 agents or more work in one folder, subject the folder, the message naming them; from
 the agents the status already lists, no call of its own. Not raised when each of them
-is an `[[autostart]]` entry for that folder: two entries there are meant), `runtime-deprecated` (subject `runtime`: the
+is an `[[autostart]]` entry for that folder: two entries there are meant),
+`autostart-folder-taken` (an `[[autostart]]` agent that is not running is not started
+afresh while another agent the record keeps running works in its folder; subject: the
+entry, the message naming both and how to have it back or let it go; from the record
+and the agents the status already has), `runtime-deprecated` (subject `runtime`: the
 Ship runs classic herdr, which the next ShipShape release removes; the message names
 `ship-fleet runtime <ship> core`, the one-way switch to herdr-core; never on a
 herdr-core Ship).
@@ -161,8 +165,24 @@ starting again, starts afresh in a new workspace labelled with its name, in its 
 mode, with `herdr agent start <name> --kind claude`, then gets its prompt, or "Get
 oriented and ready to work." if the entry has none (a chosen default: every
 autostart agent starts with a first prompt), and goes into the record. An entry
-exited on purpose (it is `stopped` in the record) starts afresh. It does nothing
-while the Ship is `provisioning` or `needs-sign-in`.
+exited on purpose (it is `stopped` in the record) starts afresh, when its folder is
+free.
+
+**A taken folder:** an entry is not started afresh while another agent the record
+keeps running (live, or being resumed or started again this boot; not one stopped,
+or given up on: `agent-relaunch-failed`) works in its folder under another name,
+unless that agent is itself an `[[autostart]]` entry for that folder (two entries in
+one folder are meant). After a boot that would be a second Claude at work on the same
+files: the case is an `[[autostart]]` agent exited on purpose while the person runs
+their own Claude in its folder. It is skipped (`folder-taken`), the status refresh
+logs `autostart: NAME not started: 'OTHER' already works in its folder
+(folder-taken)` (`logs resume`), and attention `autostart-folder-taken` names both
+for as long as that holds. Once the other agent has left the record (exited), the
+entry starts afresh at the next boot, or at once with `ship-ctl autostart`. This
+reads only what the record's upkeep, just before, already has: nothing more is asked
+of the runtime.
+
+It does nothing while the Ship is `provisioning` or `needs-sign-in`.
 
 The Ship runs it on its own: at the first status refresh after a boot, and once
 whenever Claude becomes signed in (see "Reacting to sign-ins" below). FleetLedger
@@ -181,7 +201,8 @@ at every status refresh. An agent removed from `[[autostart]]` takes its repo st
 and attention item with it. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`. A
-`reason` is `running`, `resuming` (the record is starting it again),
+`reason` is `running`, `resuming` (the record is starting it again), `folder-taken`
+(another agent works in its folder; the item's `agent` names it),
 `relaunch-failed` (the record gave up on it this boot: `agent-relaunch-failed`),
 `resume-pending`
 (this boot's resume waits for DNS), `provisioning`, `needs-sign-in`, or why its repo
@@ -258,8 +279,9 @@ records it, so a reboot keeps it.
 Drops recorded agents that are not running from the agent record: they are not
 resumed at boot and not started again (and `agent-relaunch-failed` goes). A running
 agent is refused (`invalid-input`): exit it, and it leaves the record by itself (an
-`[[autostart]]` agent stays, as `stopped`, and starts afresh at the next boot;
-removing it from `[[autostart]]` lets it go). While herdr does not answer nothing
+`[[autostart]]` agent stays, as `stopped`, and starts afresh at the next boot
+when its folder is free (see "A taken folder" under `autostart`); removing it from
+`[[autostart]]` lets it go). While herdr does not answer nothing
 is forgotten (`herdr-unavailable`): whether the agent runs is not known.
 `data`: `{ "forgotten": [names] }`.
 
@@ -427,7 +449,9 @@ layout, each pane a shell in its folder under its old id.
   left stopped too, as it was before: its exit could not be told from a crash.
   After the next boot every agent runs under the new hooks. An `[[autostart]]`
   agent stopped on purpose stays in the record, `stopped`, and starts afresh at the
-  next boot; any other (one removed from `[[autostart]]` too) leaves the record.
+  next boot, unless another agent the record keeps running works in its folder
+  (`folder-taken`, under `autostart`); any other (one removed from `[[autostart]]`
+  too) leaves the record.
   A start that fails, and an agent that stops within 10 minutes of starting (its
   transcript too big to load, a crash on start), is a failed try; the tries reset
   once it has run 10 minutes. After 3 failed tries in one boot the agent is left

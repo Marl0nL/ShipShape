@@ -5,7 +5,8 @@ brought up to date, and the agents it keeps running that are not (after a boot,
 all of them) are started again, continuing their sessions: that is the resume.
 Then each [[autostart]] entry that is still not running, and not one the record is
 starting again, starts afresh in its own workspace, in its mode, with its first
-prompt, and goes into the record.
+prompt, and goes into the record: unless its folder is taken, that is another agent
+the record keeps running works there (see folder_taker).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from .apply import expand_cwd
 from .context import Context
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, read_json_dict, write_json
-from .runtime import for_ship, mode_args
+from .runtime import for_ship, mode_args, one_folder
 from .shiptoml import ShipToml
 
 # Sent to an agent whose [[autostart]] entry has no prompt: a deliberate default,
@@ -124,6 +125,29 @@ def waiting_for_github(ctx: Context, ship: ShipToml) -> set[str]:
             if rec.get("state") == "waiting-github"}
 
 
+def folders(ctx: Context, ship: ShipToml) -> dict[str, str]:
+    """{[[autostart]] name: its folder, as the agent sees it}."""
+    home = ctx.paths.agent_path(ctx.paths.agent_home)
+    return {e["name"]: expand_cwd(e["cwd"], home) for e in ship.autostart}
+
+
+def folder_taker(name: str, cwd: str, keeps: dict[str, str],
+                 entries: dict[str, str]) -> str | None:
+    """The agent that takes entry `name`'s folder `cwd`, if any: another agent the
+    record keeps running (keeps: {name: folder}: live, or being started again; not one
+    stopped, or given up on this boot) works there, and is not itself an [[autostart]]
+    entry for that folder (two entries in one folder are meant). Such an entry is not
+    started afresh beside it: after a boot that would be a second agent at work on the
+    same files (the person runs theirs under another name there)."""
+    for other, folder in sorted(keeps.items()):
+        if other == name or not one_folder(folder, cwd):
+            continue
+        if other in entries and one_folder(entries[other], cwd):
+            continue
+        return other
+    return None
+
+
 def run(ctx: Context, ship: ShipToml, state: str,
         only: set[str] | None = None) -> tuple[dict, list[str], list[str]]:
     """Returns (data, changed, messages). `state` is the Ship's current status state.
@@ -157,6 +181,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
         failures = 0
         named = None  # whether claude takes --name; asked once, only if something starts
         repos = _repo_states(ctx, ship)
+        places = folders(ctx, ship)
 
         for entry in entries:
             name = entry["name"]
@@ -173,6 +198,17 @@ def run(ctx: Context, ship: ShipToml, state: str,
                 continue
 
             cwd = expand_cwd(entry["cwd"], agent_home)
+            # What upkeep has just done is in doc: the agents it resumed this boot (or
+            # will try again) still want to run, so nothing is asked of the runtime.
+            keeps = {n: e["cwd"] for n, e in doc["agents"].items()
+                     if e["want"] == "running" and e["cwd"]
+                     and record.tries_this_boot(ctx, e) < record.MAX_TRIES}
+            taker = folder_taker(name, cwd, keeps, places)
+            if taker is not None:
+                skipped.append({"name": name, "reason": "folder-taken", "agent": taker})
+                messages.append(f"{name} not started: '{taker}' already works in {cwd} "
+                                "(folder-taken).")
+                continue
             if entry.get("repo"):
                 repo_state, why = ensure_repo(ctx, entry["repo"], cwd)
                 repos[name] = {"repo": entry["repo"], "state": repo_state, "message": why}
@@ -223,6 +259,42 @@ def run(ctx: Context, ship: ShipToml, state: str,
             "herdr-unavailable", f"{failures} autostart agent(s) could not be started"
         ).with_data(data, started, messages)
     return {"started": started, "skipped": skipped}, started, messages
+
+
+def taken_lines(data: dict) -> list[str]:
+    """The status refresh's log lines (`ship-ctl logs resume`) for the entries run left
+    unstarted because their folder is taken."""
+    return [f"autostart: {s['name']} not started: '{s['agent']}' already works in its "
+            "folder (folder-taken)" for s in data.get("skipped", [])
+            if s.get("reason") == "folder-taken"]
+
+
+def folder_attention(ctx: Context, ship: ShipToml, block: dict, found: dict[str, dict],
+                     live: list[dict] | None) -> list[tuple[str, str, str]]:
+    """(code, message, agent): autostart-folder-taken, for each [[autostart]] agent not
+    running that is not started because another agent works in its folder (folder_taker).
+    From the status build's own data (the record's block, the live agents): no call."""
+    if live is None:
+        return []  # the runtime is not answering: who runs is not known
+    recorded = {a["name"]: a for a in block["agents"]}
+    keeps = {n: a["cwd"] for n, a in recorded.items()
+             if a["state"] not in ("stopped", "failed") and a["cwd"]}
+    places = folders(ctx, ship)
+    out = []
+    for name, cwd in places.items():
+        mine = recorded.get(name)
+        if name in found or (mine and mine["state"] != "stopped") or any(
+                a["kind"] == "claude" and a["name"] == name for a in live):
+            continue
+        taker = folder_taker(name, cwd, keeps, places)
+        if taker is None:
+            continue
+        out.append(("autostart-folder-taken",
+                    f"Autostart agent '{name}' is not started while '{taker}' works in its "
+                    f"folder {cwd}, so the two do not work on the same files. If '{taker}' "
+                    f"replaces it, remove the entry (autostart.remove={name}); to have "
+                    f"'{name}' back, exit '{taker}' and run ship-ctl autostart.", name))
+    return out
 
 
 def repo_attention(ctx: Context, ship: ShipToml) -> list[tuple[str, str, str]]:

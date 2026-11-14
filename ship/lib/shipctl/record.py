@@ -483,8 +483,8 @@ def stopped_on_purpose(e: dict, sessions: dict[str, dict], places: dict | None,
 
 def let_go(doc: dict, name: str, autostart: set[str]) -> None:
     """Let an agent go: an [[autostart]] one stays, stopped (autostart starts it
-    afresh at the next boot); any other leaves the record, as herdr forgets a pane's
-    agent when it exits."""
+    afresh at the next boot, when its folder is free); any other leaves the record, as
+    herdr forgets a pane's agent when it exits."""
     if name not in autostart:
         del doc["agents"][name]
     else:

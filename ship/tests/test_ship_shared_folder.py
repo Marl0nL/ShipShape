@@ -1,11 +1,12 @@
 """Two agents in one folder after a reboot (contracts/ship-ctl.md, "ship-ctl autostart",
-`logs resume` and attention agents-share-folder).
+`logs resume`, attention agents-share-folder and autostart-folder-taken).
 
 The case: a Ship's [[autostart]] agent `main` (in ~/work) was exited on purpose, so the
 agent record keeps it `stopped`, and the person runs their own Claude, `lead`, by hand
-in the same folder. At the next boot the record resumes `lead`, and autostart starts
-`main` afresh in that folder: two agents at work on the same files. The resume log
-shows both, and attention says the folder is shared.
+in the same folder. At the next boot the record resumes `lead`; autostart used to start
+`main` afresh beside it, two agents at work on the same files. Now autostart leaves
+`main` unstarted while `lead` works there (folder-taken), says so in the resume log, and
+attention names both. With the folder free, `main` starts afresh at a boot as before.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from ship_harness import LAUNCHER, LEDGER
+from ship_harness import LEDGER
 
 WORK = "/home/agent/work"
 TOML = """\
@@ -100,34 +101,49 @@ def setup(ship, toml: str = TOML, exit_main: bool = True) -> None:
     assert "ship-ctl: agent record: picked up lead (/home/agent/work)" in refresh(ship)
 
 
-def test_the_resume_log_and_attention_show_main_started_afresh_beside_lead(ship):
+TAKEN = ("ship-ctl: autostart: main not started: 'lead' already works in its folder "
+         "(folder-taken)")
+
+
+def taken(doc: dict) -> list[dict]:
+    return [a for a in doc["attention"] if a["code"] == "autostart-folder-taken"]
+
+
+def test_after_a_reboot_only_lead_comes_back_and_main_waits_for_its_folder(ship):
     setup(ship)
     rec = ship.record()["agents"]
     assert (rec["main"]["want"], rec["main"]["origin"]) == ("stopped", "autostart")
     assert (rec["lead"]["want"], rec["lead"]["origin"]) == ("running", "adopted")
-    assert shared(ship.status()) == []
+    # Already before the reboot: main would not come back while lead works there.
+    assert [a["subject"] for a in taken(ship.status())] == ["main"]
     ship.core_reboot(uptime=35)
     r1 = refresh(ship)
-    assert RESUMED_LEAD in r1 and "ship-ctl: autostart: started main" in r1
-    main = ship.terminal("main")
-    assert main["argv"][0] == LAUNCHER and "--session-id" in main["argv"]
+    assert RESUMED_LEAD in r1 and TAKEN in r1
+    assert not any("autostart: started" in x for x in r1)
+    assert set(live(ship)) == {"lead"}
     assert live(ship)["lead"]["claude_args"][-2:] == ["--resume", "sess-lead"]
-    # The resume log shows the fresh start as well as the resume.
-    assert resume_log(ship, r1) == ["ship-ctl: autostart: started main", RESUMED_LEAD]
+    assert len(ship.terminals("main")) == 1  # only the one it was exited in, at first boot
+    # The resume log shows the resume and why main did not start.
+    assert resume_log(ship, r1) == [TAKEN, RESUMED_LEAD]
     doc = ship.status()
-    assert {a["name"] for a in doc["herdr"]["agents"]} == {"lead", "main"}
+    assert [a["name"] for a in doc["herdr"]["agents"]] == ["lead"]
     assert doc["agent_record"]["resume"]["resumed"] == 1
-    [item] = shared(doc)
-    assert item["subject"] == WORK
-    assert "2 Claude agents work in /home/agent/work: " in item["message"]
-    assert "'lead'" in item["message"] and "'main'" in item["message"]
-    assert "(main) you do not want here should also lose its entry" in item["message"]
+    assert ship.record()["agents"]["main"]["want"] == "stopped"
+    assert shared(doc) == []
+    [item] = taken(doc)
+    assert item["subject"] == "main"
+    assert ("Autostart agent 'main' is not started while 'lead' works in its folder "
+            "/home/agent/work") in item["message"]
+    assert "autostart.remove=main" in item["message"]
+    # Later refreshes start nothing either.
+    assert not any("main" in x for x in refresh(ship))
+    assert set(live(ship)) == {"lead"}
 
 
-def test_resume_at_the_first_refresh_and_autostart_at_the_next_both_logged(ship):
+def test_resume_at_the_first_refresh_and_autostart_at_the_next(ship):
     """Claude's sign-in check does not answer at the first refresh after the boot: the
-    record resumes lead then, autostart waits for the sign-in and starts main at the
-    next refresh. The resume log has both."""
+    record resumes lead then; autostart waits for the sign-in, and at the next refresh
+    finds lead running in main's folder."""
     setup(ship)
     ship.core_reboot(uptime=35)
     ship.env["SHIPSHAPE_PROBE_TIMEOUT"] = "1"
@@ -136,9 +152,47 @@ def test_resume_at_the_first_refresh_and_autostart_at_the_next_both_logged(ship)
     assert RESUMED_LEAD in r1 and not any("autostart" in x for x in r1)
     ship.set(claude={**ship.scenario()["claude"], "hang": False})
     r2 = refresh(ship)
-    assert "ship-ctl: autostart: started main" in r2
-    assert resume_log(ship, r1 + r2) == [RESUMED_LEAD, "ship-ctl: autostart: started main"]
-    assert len(shared(ship.status())) == 1
+    assert TAKEN in r2 and not any("autostart: started" in x for x in r2)
+    assert resume_log(ship, r1 + r2) == [RESUMED_LEAD, TAKEN]
+    assert set(live(ship)) == {"lead"}
+    assert len(taken(ship.status())) == 1
+
+
+def test_dns_late_resume_and_autostart_in_one_refresh(ship):
+    """DNS answers only at the second refresh: both wait, then one refresh resumes lead
+    and, after it, leaves main unstarted."""
+    setup(ship)
+    ship.core_reboot(uptime=35)
+    ship.set(dns=False)
+    assert "ship-ctl: agent record: resume waits for DNS" in refresh(ship)
+    assert set(live(ship)) == set()
+    ship.set(dns=True)
+    r2 = refresh(ship)
+    assert RESUMED_LEAD in r2 and TAKEN in r2
+    assert set(live(ship)) == {"lead"}
+
+
+def test_ship_ctl_autostart_says_the_folder_is_taken(ship):
+    setup(ship)
+    rc, doc, _ = ship.ctl("autostart", "--json")
+    assert rc == 0, doc
+    assert doc["data"] == {"started": [], "skipped": [
+        {"name": "main", "reason": "folder-taken", "agent": "lead"}]}
+    assert doc["messages"] == ["main not started: 'lead' already works in /home/agent/work "
+                               "(folder-taken)."]
+
+
+def test_once_lead_has_left_main_starts_afresh_at_the_next_boot(ship):
+    """An [[autostart]] agent exited on purpose still comes back afresh at a boot when
+    its folder is free."""
+    setup(ship)
+    ship.exit("lead")
+    assert ("ship-ctl: agent record: lead stopped (it was exited (prompt_input_exit)); "
+            "not started again.") in refresh(ship)
+    assert taken(ship.status()) == []
+    ship.core_reboot(uptime=35)
+    assert "ship-ctl: autostart: started main" in refresh(ship)
+    assert set(live(ship)) == {"main"}
 
 
 def test_without_another_agent_in_its_folder_main_starts_afresh(ship):

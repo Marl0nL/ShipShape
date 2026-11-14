@@ -53,7 +53,7 @@
           "code": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, core-restart-pending, tmp-reboot-pending, provision-failed, tool-waiting, tool-failed, agent-repo-waiting, agent-repo-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down, agent-relaunch-failed, agents-share-folder (advice: two live Claude agents or more work in one folder, subject the folder; not when each is an [[autostart]] entry for it), runtime-switch-failed, runtime-switch-unfinished, runtime-deprecated (the Ship runs classic herdr, which the next release removes; the message names the command that moves it). FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
+            "description": "Codes the Ship emits: agent-waiting, signin-missing, signin-expiring, signin-expired, unit-failed, reboot-required, herdr-restart-pending, core-restart-pending, tmp-reboot-pending, provision-failed, tool-waiting, tool-failed, agent-repo-waiting, agent-repo-failed, host-cert-expiring, host-cert-expired, net-collector-down, overlay-down, agent-relaunch-failed, agents-share-folder (advice: two live Claude agents or more work in one folder, subject the folder; not when each is an [[autostart]] entry for it), autostart-folder-taken (an [[autostart]] agent not running is not started afresh while another agent the record keeps running works in its folder; subject the entry), runtime-switch-failed, runtime-switch-unfinished, runtime-deprecated (the Ship runs classic herdr, which the next release removes; the message names the command that moves it). FleetLedger adds its own (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind) when it displays a Ship. Consumers show unknown codes as-is."
           },
           "message": { "type": "string", "maxLength": 500 },
           "subject": {
@@ -463,7 +463,7 @@
               "autostart": { "type": "boolean", "description": "It is an [[autostart]] agent." },
               "state": {
                 "enum": ["running", "starting", "failed", "stopped", "unknown"],
-                "description": "running: live now. starting: it should run and is not live; the next status refresh starts it (after a boot, every agent until it is resumed). failed: 3 failed tries this boot (a start that failed, or it stopped within 10 minutes of starting; attention agent-relaunch-failed). stopped: exited on purpose; an [[autostart]] agent starts afresh at the next boot. unknown: the runtime is not answering."
+                "description": "running: live now. starting: it should run and is not live; the next status refresh starts it (after a boot, every agent until it is resumed). failed: 3 failed tries this boot (a start that failed, or it stopped within 10 minutes of starting; attention agent-relaunch-failed). stopped: exited on purpose; an [[autostart]] agent starts afresh at the next boot, unless another agent the record keeps running works in its folder (autostart-folder-taken). unknown: the runtime is not answering."
               },
               "relaunch_failures": { "type": "integer", "minimum": 0, "description": "Failed tries this boot." },
               "last_error": { "type": "string", "maxLength": 200 },
