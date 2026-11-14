@@ -118,35 +118,42 @@ in the same device flow, for the same account (GitHub shows the scopes to approv
 
 ## Remote Control
 
-Remote Control is on by default: once Claude is signed in, the agents the Ship
-starts and records (autostart agents and the ones it adopted, such as a
-supervising agent) show in your Claude app. Sessions those agents start
-themselves (an orchestrator's workers, say) do not, nor do sessions you start by
-hand. Set it per Ship:
+Remote Control is on by default: once Claude is signed in, the Ship's
+`[[autostart]]` agents show in your Claude app, and so does any other agent you
+give it to. Sessions those agents start themselves (an orchestrator's workers,
+say) do not, nor do sessions you start by hand. Set it per Ship:
 
 ```sh
 ship-fleet set ship-01 remote_control=off    # or remote_control=on, or remote_control=all
 ```
 
-- "on": the Ship launches each of its own agents with `claude --remote-control`
-  (a fresh start, a resume at boot, a restart after a crash, `agent restart`, a
-  runtime switch); the managed settings leave Remote Control off for every other
-  session (`remoteControlAtStartup` false), and no user setting can turn it on
-  for them. An agent you started by hand and the Ship adopted keeps what it was
-  started with until the Ship next starts it (a reboot or a restart); type
-  `/remote-control` in it to connect it now. This includes a session another
-  agent starts in a herdr pane or herdr-core terminal: the Ship adopts it, so
-  it gets Remote Control from its next start by the Ship. Workers an agent runs
-  as its own child processes never do.
+- "on": the Ship launches each agent its record gives Remote Control with
+  `claude --remote-control` (a fresh start, a resume at boot, a restart after a
+  crash, `agent restart`, a runtime switch); the managed settings leave it off for
+  every other session (`remoteControlAtStartup` false), and no user setting can
+  turn it on for them. Autostart agents have it. An agent you started by hand
+  (say a supervising agent), which the Ship picks up and resumes after a boot,
+  does not until you turn it on:
+
+  ```sh
+  ship-fleet agent remote-control ship-01 lead          # --off to take it away
+  ship-fleet agent restart ship-01 lead                 # now, continuing its conversation
+  ```
+
+  (or the Remote Control column of the agent list in the web UI). The Ship
+  cannot tell whether a session it picks up had Remote Control, so it never
+  guesses; a session another agent starts in a herdr pane or herdr-core terminal
+  is picked up the same way and stays off. Type `/remote-control` in a session to
+  connect it at once.
 - "all": every Claude session on the Ship, whoever started it
   (`remoteControlAtStartup` true). This is what "on" meant before.
 - "off" also stops resumed sessions from reconnecting (`disableRemoteControl`).
   `blocked` is an older name for the same setting.
 - Updating a Ship that had "on" to this version: "on" keeps its name and becomes
   the narrower setting. Sessions already running keep Remote Control until they
-  end, and a session that had it reconnects when it is resumed; new sessions that
-  the Ship did not start do not get it. Set `remote_control=all` to keep the old
-  behaviour.
+  end; an agent you started by hand comes back without it the next time the Ship
+  starts it, until you turn it on as above. Set `remote_control=all` to keep the
+  old behaviour.
 - A change reaches running sessions only when they restart: a reboot restarts
   them all (`ship-fleet reboot ship-01`, never a forced reset).
 - The Claude app can take a few minutes to show or drop sessions.

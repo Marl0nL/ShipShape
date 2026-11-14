@@ -72,8 +72,9 @@
     {% if running and signed_in and rc_on %}
     <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
       with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
-      Claude app (signed in as {{ claude_auth.account or "your account" }}){% if doc.claude.remote_control == "on" %}.
-      Sessions they start themselves do not (Settings, Remote Control: all for every session){% endif %}.</p>
+      Claude app (signed in as {{ claude_auth.account or "your account" }}){% if doc.claude.remote_control == "on" %}:
+      the ones the Ship starts with it (the Remote Control column). Sessions they start themselves do not
+      (Settings, Remote Control: all for every session){% endif %}.</p>
     {% elif running and not rc_on %}
     <p class="hint">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running;
       Remote Control is off, so they do not show in the Claude app (Settings, Remote Control).</p>
@@ -91,9 +92,10 @@
     {% set can_restart = answers and doc.herdr.server == "running" %}
     {% set place = "a new terminal in the same folder" if core else "the same pane and folder" %}
     <table class="agents">
-      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>{{ "Terminal" if core else "Pane" }}</th><th>Folder</th><th></th></tr></thead>
+      <thead><tr><th>Workspace</th><th>Agent</th><th>Kind</th><th>State</th><th>Mode</th><th>{{ "Terminal" if core else "Pane" }}</th><th>Folder</th><th title="Whether the Ship starts it with Remote Control">Remote Control</th><th></th></tr></thead>
       <tbody>
       {% set restart_info = restartable_by_name(view) %}
+      {% set rc_by_name = agent_remote_control(view) %}
       {% for ws, agents in workspaces.items() %}
       {% for a in agents %}
       {% set r = restart_info.get(a.name) if a.kind == "claude" else none %}
@@ -105,6 +107,14 @@
         <td>{{ a.mode or "-" }}{% if a.mode == "bypassPermissions" %} <span class="pill warn">bypass</span>{% endif %}</td>
         <td class="quiet">{{ a.pane or "" }}</td>
         <td class="quiet">{{ a.cwd or "" }}</td>
+        <td class="rc">{% if a.kind != "claude" %}{% elif doc.claude.remote_control == "all" %}<span class="quiet">all sessions</span>{% elif not rc_on %}<span class="quiet">off</span>{% elif a.name in rc_by_name %}{% set rc = rc_by_name[a.name] %}
+          <form method="post" action="/ships/{{ ship.name }}/agents/remote-control" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="agent" value="{{ a.name }}">
+            <input type="hidden" name="remote_control" value="{{ 'off' if rc else 'on' }}">
+            {{ "on" if rc else "off" }}
+            <button type="submit" class="ghost small" title="ship-fleet agent remote-control {{ ship.name }} {{ a.name }}{{ ' --off' if rc }}: from its next start by the Ship (Restart in mode&hellip; brings it now)">{{ "Turn off" if rc else "Turn on" }}</button>
+          </form>{% else %}<span class="quiet" title="not in the Ship's agent record yet">-</span>{% endif %}</td>
         <td class="row-actions">
           {% if r and can_restart %}
           <details class="agent-restart">

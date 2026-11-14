@@ -245,8 +245,9 @@ too) or a herdr agent name. `--all` is every Claude agent herdr lists with a nam
   with `--name` as autostart names it, and an agent that was given a first prompt
   (an `[[autostart]]` one) gets it again. An agent whose session is known to
   neither can only be restarted `--fresh`. Remote Control comes back by itself
-  (unless claude.remote_control is off, every launch carries `--remote-control`,
-  and a resumed session reconnects to its own Remote Control session), and
+  (a launch carries `--remote-control` when the record gives that agent Remote
+  Control, `agent remote-control`, and a resumed session reconnects to its own
+  Remote Control session), and
   session names survive the resume. One that stopped but did not
   start again is started by the next status refresh, as after a crash.
 - **A recorded agent that is not running** (it stopped, or did not start again
@@ -299,6 +300,20 @@ the mark; then the first `[[autostart]]` agent the record has that should run is
 primary. An agent that leaves the record loses the mark. A name not in the record
 is refused (`invalid-input`). `data`: `{ "primary": name or null, "marked": bool }`
 (the primary now).
+
+### `ship-ctl agent remote-control NAME... [--off] [--json]`
+
+Gives recorded agents Remote Control (or, `--off`, takes it away) from the next
+time the Ship starts them: the agent record's `remote_control`, which decides
+whether a launch carries `--remote-control` while `claude.remote_control` is
+"on" (`settings.md`, "Remote Control"). `[[autostart]]` agents have it from their
+first start; an adopted agent (started some other way, then picked up) does not
+until this turns it on. A running agent is not touched: `agent restart` brings
+the change now, continuing its conversation, or `/remote-control` typed in it
+connects it at once. With `claude.remote_control` "all" or "off" the setting is
+kept but has no effect. A name not in the record is refused (`invalid-input`).
+`data`: `{ "remote_control": { name: bool } }`; `changed` names each agent whose
+setting changed.
 
 ### `ship-ctl wake [--json]`
 
@@ -387,8 +402,8 @@ stderr is gone, so a dropped SSH session does not stop it part way.
    runs its own session, the mode ledger saw that session start after the relaunch,
    and in the snapshot mode; leaving herdr-core, none of them is live on the core
    any more. Remote Control follows ship.toml, which the switch does not touch:
-   each launch carries `--remote-control` unless it is off, and a resumed session
-   reconnects to its own Remote Control session.
+   each launch carries `--remote-control` when the record gives that agent Remote
+   Control, and a resumed session reconnects to its own Remote Control session.
 8. **Roll back** on any failure in 3-7: agents that started on the new runtime are
    stopped gracefully (one that will not stop, or that cannot be seen to stop, is
    left running where it is and is not started on the old runtime: never twice),

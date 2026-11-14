@@ -80,13 +80,18 @@ def _clean(e: dict) -> dict:
         place = None
     relaunch = e.get("relaunch") if isinstance(e.get("relaunch"), dict) else {}
     failures = relaunch.get("failures")
+    origin = e.get("origin") if e.get("origin") in ("autostart", "adopted") else "adopted"
     return {
         "cwd": e["cwd"],
         "session": _text(e.get("session")),
         "mode": e.get("mode") if e.get("mode") in PERMISSION_MODES else None,
         "prompt": _text(e.get("prompt")),
         "session_name": _text(e.get("session_name")),
-        "origin": e.get("origin") if e.get("origin") in ("autostart", "adopted") else "adopted",
+        "origin": origin,
+        # Absent in records written before it existed: what the Ship gives an agent of
+        # that origin now (autostart: on; adopted: off until turned on).
+        "remote_control": (e["remote_control"] if isinstance(e.get("remote_control"), bool)
+                           else origin == "autostart"),
         "want": "stopped" if e.get("want") == "stopped" else "running",
         "place": None if place is None else {
             "runtime": _text(place.get("runtime")) or Herdr.kind, "id": place["id"],
@@ -374,7 +379,8 @@ def new_entry(cwd: str, *, origin: str, session: str | None = None, mode: str | 
               place: dict | None = None) -> dict:
     now = utc_now()
     return {"cwd": cwd, "session": session, "mode": mode, "prompt": prompt,
-            "session_name": session_name, "origin": origin, "want": "running",
+            "session_name": session_name, "origin": origin,
+            "remote_control": origin == "autostart", "want": "running",
             "place": place, "relaunch": {"boot_id": None, "failures": 0, "last_error": None,
                                          "last_at": None, "counted_launch": None},
             "launched_at": now, "stopped_at": None, "created_at": now, "updated_at": now}
@@ -571,7 +577,7 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
         return False, f"its folder {cwd} is not there"
     sid, chosen = new_session(rt) if fresh is not None else (None, [])
     args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]]),
-            *chosen, *naming.remote_control_args(ship)]
+            *chosen, *naming.remote_control_args(ship, e["remote_control"])]
     old = own_place(rt, e)
     spot = (places or {}).get(old or "")
     if same_place:
@@ -843,6 +849,40 @@ def mark_primary(ctx: Context, ship: ShipToml, name: str | None
             [message])
 
 
+def set_remote_control(ctx: Context, ship: ShipToml, names: list[str], on: bool
+                       ) -> tuple[dict, list[str], list[str]]:
+    """Give recorded agents Remote Control from their next start by the Ship (on),
+    or take it away. Returns (data, changed, messages)."""
+    with held(ctx):
+        doc = load(ctx)
+        unknown = [n for n in names if n not in doc["agents"]]
+        if unknown:
+            raise CtlError("invalid-input", f"not in the agent record: {', '.join(unknown)} "
+                           f"(recorded: {', '.join(sorted(doc['agents'])) or 'none'})")
+        moved = [n for n in names if doc["agents"][n]["remote_control"] != on]
+        for n in moved:
+            _set(doc["agents"][n], remote_control=on)
+        if moved:
+            save(ctx, doc)
+    data = {"remote_control": {n: on for n in names}}
+    who = ", ".join(names)
+    value = ship.claude["remote_control"]
+    if value in naming.RC_OFF:
+        note = (f"Recorded for {who}; it has no effect while Remote Control is off on this "
+                "Ship (claude.remote_control).")
+    elif value == "all":
+        note = (f"Recorded for {who}; while claude.remote_control is all, every session "
+                "gets Remote Control anyway.")
+    elif on:
+        note = (f"{who} get{'s' if len(names) == 1 else ''} Remote Control from the next "
+                "time the Ship starts it (`ship-ctl agent restart` does that now, continuing "
+                "the conversation; or type /remote-control in it).")
+    else:
+        note = (f"{who} start{'s' if len(names) == 1 else ''} without Remote Control from the "
+                "next time the Ship starts it (`ship-ctl agent restart` does that now).")
+    return data, [f"remote_control {'on' if on else 'off'}: {n}" for n in moved], [note]
+
+
 # --- the status document ---------------------------------------------------------------
 def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, dict[str, dict]]:
     """The status document's `agent_record` block, and {record name: live agent}."""
@@ -866,7 +906,7 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
         else:
             state = "starting"
         item = {"name": name, "cwd": e["cwd"], "mode": e["mode"], "autostart": name in autostart,
-                "state": state, "relaunch_failures": tries,
+                "remote_control": e["remote_control"], "state": state, "relaunch_failures": tries,
                 "created_at": e["created_at"], "updated_at": e["updated_at"]}
         if tries and e["relaunch"]["last_error"]:
             item["last_error"] = e["relaunch"]["last_error"]

@@ -26,9 +26,9 @@ A running agent is restarted gracefully, one agent at a time:
    status document reports it, `ship-fleet reboot` expects it and the next boot
    resumes it in that mode.
 
-Remote Control comes back by itself: the launch carries `--remote-control` unless
-ship.toml turns it off (naming.remote_control_args), and a resumed session
-reconnects to the Remote Control session saved in it. Session
+Remote Control comes back by itself: the launch carries `--remote-control` when
+the agent record gives the agent Remote Control (naming.remote_control_args), and
+a resumed session reconnects to the Remote Control session saved in it. Session
 names survive a resume; a fresh conversation gets the name autostart gave it.
 
 `forget` drops recorded agents that are not running, so they are neither resumed
@@ -273,9 +273,10 @@ class _Restart:
         if not fresh:  # stopped: from now on the session is in its new mode
             record_mode(ctx, session, new_mode)
         sid, chosen = record.new_session(rt) if fresh else (None, [])
+        wants_rc = bool((rec or {}).get("remote_control"))  # not recorded yet: adopted, off
         args = [*mode_args(new_mode),
                 *(self.fresh_args(name) if fresh else ["--resume", session]), *chosen,
-                *naming.remote_control_args(self.ship)]
+                *naming.remote_control_args(self.ship, wants_rc)]
         cwd = a["cwd"] or (rec or {}).get("cwd")
 
         def prepare() -> None:  # the record has the new session before it starts
@@ -293,7 +294,7 @@ class _Restart:
         if not ok and back is None:
             launch = " ".join(["claude", *mode_args(new_mode),
                                *([] if fresh else ["--resume", session]),
-                               *naming.remote_control_args(self.ship)])
+                               *naming.remote_control_args(self.ship, wants_rc)])
             self.messages.append(f"{name} stopped but did not start again ({why}). Start it "
                                  f"in its pane with: {launch}")
             if rec is not None and not fresh:

@@ -2342,3 +2342,34 @@ def test_a_core_ships_settings_show_the_runtime_read_only(web):
     note = note[:note.index("</p>")]
     assert "herdr-core" in note and 'runtime = "core"' in note
     assert 'name="runtime"' not in page  # nothing to set here: the migration moves it
+
+
+def test_the_agent_list_shows_and_sets_remote_control_per_agent(web):
+    def record(d):
+        d["agent_record"] = {"runtime": "herdr", "resume": None, "agents": [
+            {"name": n, "cwd": "/home/agent/work/" + n, "mode": "auto",
+             "autostart": n == "builder", "remote_control": n == "builder",
+             "state": "running", "relaunch_failures": 0,
+             "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"}
+            for n in ("main", "builder")]}
+
+    web.sign_in()
+    _status(web, "ship-01", record)
+    page = web.client.get("/ships/ship-01").text
+    assert 'title="Whether the Ship starts it with Remote Control">Remote Control</th>' in page
+    assert 'name="remote_control" value="on"' in page  # main: off, offered Turn on
+    assert 'name="remote_control" value="off"' in page  # builder: on, offered Turn off
+    assert ">Turn on</button>" in page and ">Turn off</button>" in page
+    response = web.post("/ships/ship-01/agents/remote-control",
+                        {"agent": "main", "remote_control": "on"})
+    assert response.status_code == 303
+    calls = [c for _, c in web.ship.calls if c[3:5] == ["agent", "remote-control"]]
+    assert calls == [["sudo", "-n", "/usr/local/bin/ship-ctl", "agent", "remote-control",
+                      "main", "--json"]]
+    response = web.post("/ships/ship-01/agents/remote-control",
+                        {"agent": "main", "remote_control": "maybe"})
+    assert response.status_code == 303
+    assert len([c for _, c in web.ship.calls if c[3:5] == ["agent", "remote-control"]]) == 1
+    _status(web, "ship-01", lambda d: (record(d), d["claude"].update(remote_control="all")))
+    page = web.client.get("/ships/ship-01").text
+    assert "all sessions" in page and ">Turn on</button>" not in page

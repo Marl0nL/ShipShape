@@ -12,13 +12,14 @@ Claude Code lists it in `claude --help`, since the pinned minimum version
 predates that check.
 
 `remote_control_args` is how Remote Control reaches only the agents the Ship
-starts and records (contracts/settings.md, "Remote Control"): with
-claude.remote_control "on", the managed settings leave it off for every other
-session, and each launch a Ship makes (autostart, resume, crash restart,
-`agent restart`, a runtime switch) carries `--remote-control`. Claude Code
-documents that the flag turns it on for one session even when
-remoteControlAtStartup is false; with `--resume` it reattaches the session's
-saved Remote Control session.
+gives it (contracts/settings.md, "Remote Control"): with claude.remote_control
+"on", the managed settings leave it off for every session, and a launch the Ship
+makes (autostart, resume, crash restart, `agent restart`, a runtime switch)
+carries `--remote-control` when the agent record says that agent gets it
+(autostart agents do; an adopted one only once `ship-ctl agent remote-control`
+turns it on). Claude Code documents that the flag turns it on for one session
+even when remoteControlAtStartup is false; with `--resume` it reattaches the
+session's saved Remote Control session.
 """
 
 from __future__ import annotations
@@ -47,8 +48,11 @@ def launch_args(name: str, supported: bool) -> list[str]:
     return ["--name", name] if supported else []
 
 
-def remote_control_args(ship: ShipToml) -> list[str]:
-    """Extra `claude` arguments for a session the Ship starts: Remote Control on
-    unless ship.toml turns it off. Last on the line: the flag takes an optional
-    name, so nothing may follow it but another flag."""
-    return [] if ship.claude["remote_control"] in RC_OFF else ["--remote-control"]
+def remote_control_args(ship: ShipToml, wanted: bool) -> list[str]:
+    """Extra `claude` arguments for a session the Ship starts. wanted: the agent
+    record gives this agent Remote Control. "on" follows it, "all" gives it to
+    every session anyway, "off" to none. Last on the line: the flag takes an
+    optional name, so nothing may follow it but another flag."""
+    value = ship.claude["remote_control"]
+    on = value == "all" or (value not in RC_OFF and wanted)
+    return ["--remote-control"] if on else []

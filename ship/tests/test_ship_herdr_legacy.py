@@ -294,7 +294,8 @@ def test_an_unnamed_agent_in_its_pane_but_another_folder_never_becomes_it(herdr_
     ship.p("/home/agent/work/elsewhere").mkdir(parents=True)
     ship.reboot()
     ship.ctl("refresh")
-    assert herdr_args(ship)["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x", RC]
+    # Adopted: no Remote Control until it is turned on.
+    assert herdr_args(ship)["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x"]
     assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--name", "ship-01-main", RC]
     assert not [c for c in herdr_starts(ship) if c[3] == "main" and "sess-x" in c]
 
@@ -409,7 +410,7 @@ def test_an_update_records_what_runs_and_a_reboot_brings_it_back_in_its_modes(sh
     assert herdr_args(ship) == {
         "main": ["--permission-mode", "auto", "--resume", "sess-main", RC],
         "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder", RC],
-        "helper": ["--dangerously-skip-permissions", "--resume", "sess-helper", RC],
+        "helper": ["--dangerously-skip-permissions", "--resume", "sess-helper"],  # adopted
     }
     assert not [c for c in ship.calls("herdr") if c[1:3] == ["workspace", "create"]]
     doc = ship.status()

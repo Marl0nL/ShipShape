@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from ship_harness import LEDGER, RC
+from ship_harness import LEDGER
 
 WORK = "/home/agent/work"
 TOML = """\
@@ -121,7 +121,7 @@ def test_after_a_reboot_only_lead_comes_back_and_main_waits_for_its_folder(ship)
     assert RESUMED_LEAD in r1 and TAKEN in r1
     assert not any("autostart: started" in x for x in r1)
     assert set(live(ship)) == {"lead"}
-    assert live(ship)["lead"]["claude_args"][-3:] == ["--resume", "sess-lead", RC]
+    assert live(ship)["lead"]["claude_args"][-2:] == ["--resume", "sess-lead"]  # adopted
     assert len(ship.terminals("main")) == 1  # only the one it was exited in, at first boot
     # The resume log shows the resume and why main did not start.
     assert resume_log(ship, r1) == [TAKEN, RESUMED_LEAD]

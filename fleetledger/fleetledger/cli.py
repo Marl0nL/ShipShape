@@ -299,7 +299,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "set", "change settings on Ships (ship-ctl set)",
              "Change settings on one Ship, several, every Ship with a tag, or all.\n"
-             "Keys: remote_control (on: the agents the Ship starts; all: every session;\n"
+             "Keys: remote_control (on: autostart agents and those given it with agent\n"
+             "remote-control; all: every session;\n"
              "off; blocked = off), default_mode, allow_bypass,\n"
              "update_channel (latest|stable), session_prefix, sudo, lan_guard,\n"
              "lan_guard_allow (addresses or CIDRs, comma-separated), auto_reboot,\n"
@@ -333,8 +334,14 @@ def build_parser() -> argparse.ArgumentParser:
              "in (so a restart in the same mode picks up other settings, such as Remote\n"
              "Control); the web UI's Apply the default mode restarts only the others.\n\n"
              "  ship-fleet agent restart ship-01 --all          after changing default_mode\n"
-             "  ship-fleet agent restart ship-01 main --fresh   a new conversation")
-    p.add_argument("action", choices=("restart",))
+             "  ship-fleet agent restart ship-01 main --fresh   a new conversation\n\n"
+             "remote-control gives recorded agents Remote Control from their next start by\n"
+             "the Ship (--off takes it away). With remote_control=on, autostart agents have\n"
+             "it; an agent started some other way and picked up by the Ship does not until\n"
+             "this turns it on (agent restart brings it now).\n\n"
+             "  ship-fleet agent remote-control ship-01 lead\n"
+             "  ship-fleet agent remote-control ship-01 worker --off")
+    p.add_argument("action", choices=("restart", "remote-control"))
     p.add_argument("ship", metavar="SHIP")
     p.add_argument("agents", nargs="*", metavar="AGENT", help="herdr agent names")
     p.add_argument("--all", action="store_true", help="every running Claude agent with a name")
@@ -345,6 +352,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start a new conversation instead of continuing it")
     p.add_argument("--force", action="store_true",
                    help="also restart an agent that is working, interrupting its turn")
+    p.add_argument("--off", action="store_true",
+                   help="remote-control: start these agents without Remote Control")
     p.add_argument("--json", action="store_true", help="print the result as JSON")
 
     p = _add(sub, "runtime", "move a Ship's agents from classic herdr to herdr-core",

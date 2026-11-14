@@ -204,6 +204,10 @@
           ],
           "description": "The name it was launched with (claude --name)."
         },
+        "remote_control": {
+          "type": "boolean",
+          "description": "Whether its launches carry --remote-control while claude.remote_control is \"on\" (ship-ctl agent remote-control). New autostart agents: true; adopted ones: false. Absent in records written before it existed: read as true for autostart agents and false for adopted ones."
+        },
         "origin": {
           "enum": [
             "autostart",

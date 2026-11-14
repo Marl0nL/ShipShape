@@ -715,3 +715,14 @@ def test_refuses_an_agent_whose_folder_is_gone(herdr_ship):
     assert rc != 0 and doc["error"]["code"] == "agent-failed"
     assert f"grinder: its folder {cwd} is not there" in doc["error"]["message"]
     untouched(ship, before)
+
+
+def test_the_switch_starts_each_agent_with_remote_control_as_its_record_says(herdr_ship):
+    ship = herdr_ship
+    rc, doc, _ = ship.ctl("agent", "remote-control", "grinder", "--off", "--json")
+    assert rc == 0, doc
+    rc, doc, out = switch(ship, "core")
+    assert rc == 0 and doc["data"]["outcome"] == "switched", out
+    args = {n: ts[0]["claude_args"] for n, ts in core_agents(ship).items()}
+    assert args["main"][-1] == RC
+    assert RC not in args["grinder"]

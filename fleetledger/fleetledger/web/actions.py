@@ -56,6 +56,12 @@ def set_settings(app: Any, ship: str, assignments: list[str]) -> Outcome:
                                                  assignments))
 
 
+def set_agent_remote_control(app: Any, ship: str, agent: str, on: bool) -> Outcome:
+    fleet = _fleet(app)
+    return _guard(ship, lambda: [ops.set_agent_remote_control(
+        fleet, fleet.inventory.ship(ship), [agent], on)])
+
+
 def set_tags(app: Any, ship: str, tags: list[str]) -> Outcome:
     changes = ["none", *(f"+{t}" for t in dict.fromkeys(tags))]
     fleet = _fleet(app)

@@ -58,7 +58,8 @@ What happened on the Ship:
   FleetLedger then checks the same from the status document.
 
 Remote Control comes back by itself: the switch does not change the Ship's
-setting, each agent starts again with `--remote-control` (unless it is off), and
+setting, each agent the record gives Remote Control starts again with
+`--remote-control`, and
 each resumed session reconnects to its own Remote Control session.
 Check one in the Claude app if you rely on it.
 

@@ -47,7 +47,7 @@ test("home view lists other agents, sign-ins by account name, tools and attentio
     account: "example-work",
   });
   assert.deepEqual(view.claude, {
-    remote_control: "on (the agents the Ship starts; not Claude sessions they start)",
+    remote_control: "on (autostart agents and agents turned on; not Claude sessions they start)",
     default_mode: "auto",
     bypass_allowed: false,
   });
