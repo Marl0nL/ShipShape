@@ -867,10 +867,10 @@ def test_ship_page_says_whether_its_agents_show_in_the_claude_app(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
     assert "with Remote Control on" in page and "in the\n      Claude app" in page
-    assert "Sessions they start themselves do not" in page  # "on": the Ship's agents only
+    assert "sessions they start themselves do not show" in page  # "on": the Ship's agents
     _status(web, "ship-01", lambda d: d["claude"].update(remote_control="all"))
     page = web.client.get("/ships/ship-01").text
-    assert "with Remote Control on" in page and "Sessions they start" not in page
+    assert "with Remote Control on" in page and "sessions they start" not in page
     _status(web, "ship-01", lambda d: d["claude"].update(remote_control="off"))
     assert "Remote Control is off" in web.client.get("/ships/ship-01").text
     _status(web, "ship-01", lambda d: d["claude"].update(remote_control="on"))
@@ -2360,6 +2360,7 @@ def test_the_agent_list_shows_and_sets_remote_control_per_agent(web):
     assert 'name="remote_control" value="on"' in page  # main: off, offered Turn on
     assert 'name="remote_control" value="off"' in page  # builder: on, offered Turn off
     assert ">Turn on</button>" in page and ">Turn off</button>" in page
+    assert "2 Claude agents running,\n1 with Remote Control: it shows" in page
     response = web.post("/ships/ship-01/agents/remote-control",
                         {"agent": "main", "remote_control": "on"})
     assert response.status_code == 303

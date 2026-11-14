@@ -88,10 +88,10 @@ def _clean(e: dict) -> dict:
         "prompt": _text(e.get("prompt")),
         "session_name": _text(e.get("session_name")),
         "origin": origin,
-        # Absent in records written before it existed: what the Ship gives an agent of
-        # that origin now (autostart: on; adopted: off until turned on).
+        # A choice made with `agent remote-control`; None (also in records written
+        # before it existed): the default, gets_remote_control.
         "remote_control": (e["remote_control"] if isinstance(e.get("remote_control"), bool)
-                           else origin == "autostart"),
+                           else None),
         "want": "stopped" if e.get("want") == "stopped" else "running",
         "place": None if place is None else {
             "runtime": _text(place.get("runtime")) or Herdr.kind, "id": place["id"],
@@ -380,7 +380,7 @@ def new_entry(cwd: str, *, origin: str, session: str | None = None, mode: str | 
     now = utc_now()
     return {"cwd": cwd, "session": session, "mode": mode, "prompt": prompt,
             "session_name": session_name, "origin": origin,
-            "remote_control": origin == "autostart", "want": "running",
+            "remote_control": None, "want": "running",
             "place": place, "relaunch": {"boot_id": None, "failures": 0, "last_error": None,
                                          "last_at": None, "counted_launch": None},
             "launched_at": now, "stopped_at": None, "created_at": now, "updated_at": now}
@@ -577,7 +577,7 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
         return False, f"its folder {cwd} is not there"
     sid, chosen = new_session(rt) if fresh is not None else (None, [])
     args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]]),
-            *chosen, *naming.remote_control_args(ship, e["remote_control"])]
+            *chosen, *naming.remote_control_args(ship, gets_remote_control(ship, name, e))]
     old = own_place(rt, e)
     spot = (places or {}).get(old or "")
     if same_place:
@@ -849,6 +849,16 @@ def mark_primary(ctx: Context, ship: ShipToml, name: str | None
             [message])
 
 
+def gets_remote_control(ship: ShipToml, name: str, e: dict | None) -> bool:
+    """Whether the record gives agent `name` Remote Control (while claude.remote_control
+    is "on"): the choice made with `agent remote-control`, else whether it is an
+    [[autostart]] agent now (so an adopted agent later added to [[autostart]] gets it)."""
+    chosen = (e or {}).get("remote_control")
+    if isinstance(chosen, bool):
+        return chosen
+    return name in {a["name"] for a in ship.autostart}
+
+
 def set_remote_control(ctx: Context, ship: ShipToml, names: list[str], on: bool
                        ) -> tuple[dict, list[str], list[str]]:
     """Give recorded agents Remote Control from their next start by the Ship (on),
@@ -859,7 +869,7 @@ def set_remote_control(ctx: Context, ship: ShipToml, names: list[str], on: bool
         if unknown:
             raise CtlError("invalid-input", f"not in the agent record: {', '.join(unknown)} "
                            f"(recorded: {', '.join(sorted(doc['agents'])) or 'none'})")
-        moved = [n for n in names if doc["agents"][n]["remote_control"] != on]
+        moved = [n for n in names if doc["agents"][n]["remote_control"] is not on]
         for n in moved:
             _set(doc["agents"][n], remote_control=on)
         if moved:
@@ -906,7 +916,8 @@ def view(ctx: Context, ship: ShipToml, live: list[dict] | None) -> tuple[dict, d
         else:
             state = "starting"
         item = {"name": name, "cwd": e["cwd"], "mode": e["mode"], "autostart": name in autostart,
-                "remote_control": e["remote_control"], "state": state, "relaunch_failures": tries,
+                "remote_control": gets_remote_control(ship, name, e), "state": state,
+                "relaunch_failures": tries,
                 "created_at": e["created_at"], "updated_at": e["updated_at"]}
         if tries and e["relaunch"]["last_error"]:
             item["last_error"] = e["relaunch"]["last_error"]

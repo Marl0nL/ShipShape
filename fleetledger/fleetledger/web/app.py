@@ -179,6 +179,7 @@ def make_env() -> Environment:
         RANGE_LABELS=dashboard.RANGE_LABELS,
         op_confirm=dashboard.op_confirm,
         runtime_of=status_mod.runtime_of,
+        remote_control_agents=status_mod.remote_control_agents,
         RUNTIME_LABELS=status_mod.RUNTIME_LABELS,
         waiting_reason=status_mod.waiting_reason,
         ago=signinlist.ago,

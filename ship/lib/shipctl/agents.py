@@ -273,7 +273,7 @@ class _Restart:
         if not fresh:  # stopped: from now on the session is in its new mode
             record_mode(ctx, session, new_mode)
         sid, chosen = record.new_session(rt) if fresh else (None, [])
-        wants_rc = bool((rec or {}).get("remote_control"))  # not recorded yet: adopted, off
+        wants_rc = record.gets_remote_control(self.ship, name, rec)
         args = [*mode_args(new_mode),
                 *(self.fresh_args(name) if fresh else ["--resume", session]), *chosen,
                 *naming.remote_control_args(self.ship, wants_rc)]

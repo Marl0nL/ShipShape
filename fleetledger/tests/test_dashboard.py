@@ -469,3 +469,21 @@ def test_a_pending_core_restart_offers_a_reboot_that_is_not_urgent(store):
     assert "herdr saves" not in action.confirm.text
     herdr = dashboard.action_for("herdr-restart-pending", "ship-01", view(store), None)
     assert "herdr saves" in herdr.confirm.text  # a herdr Ship: as before
+
+
+def test_remote_control_agents_counts_only_those_given_it():
+    from fleetledger.status import remote_control_agents
+
+    doc = copy.deepcopy(RUNNING)
+    running = sum(a["kind"] == "claude" for a in doc["herdr"]["agents"])
+    assert remote_control_agents(doc) == running  # "on", tooling without per-agent records
+    doc["agent_record"] = {"runtime": "herdr", "resume": None, "agents": [
+        {"name": "main", "state": "running", "remote_control": True},
+        {"name": "builder", "state": "running", "remote_control": False},
+        {"name": "old", "state": "stopped", "remote_control": True}]}
+    assert remote_control_agents(doc) == 1
+    doc["claude"]["remote_control"] = "all"
+    assert remote_control_agents(doc) == running
+    for value in ("off", "blocked"):
+        doc["claude"]["remote_control"] = value
+        assert remote_control_agents(doc) == 0

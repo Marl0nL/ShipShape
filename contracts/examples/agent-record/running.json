@@ -9,7 +9,7 @@
       "prompt": "Get oriented.",
       "session_name": "ship-01-main",
       "origin": "autostart",
-      "remote_control": true,
+      "remote_control": null,
       "want": "running",
       "place": {
         "runtime": "herdr",

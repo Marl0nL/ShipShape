@@ -893,7 +893,7 @@ def test_an_adopted_agent_gets_remote_control_only_once_it_is_turned_on(started)
              keep=True)
     ship.p("/home/agent/work/side").mkdir(parents=True)
     ship.ctl("refresh")
-    assert ship.record()["agents"]["helper"]["remote_control"] is False
+    assert ship.record()["agents"]["helper"]["remote_control"] is None  # no choice made
     assert {a["name"]: a["remote_control"] for a in recorded(ship).values()} == {
         "main": True, "grinder": True, "helper": False}
     off = ["--permission-mode", "plan", "--resume", "sess-helper"]
@@ -940,7 +940,9 @@ def test_remote_control_for_an_agent_not_recorded_or_with_bad_usage_is_refused(s
     assert rc != 0 and doc["error"]["code"] == "usage"
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--off", "--json")
     assert rc != 0 and doc["error"]["code"] == "usage"
-    rc, doc = remote_control(ship, "main")  # already on: nothing changes
+    rc, doc = remote_control(ship, "main")  # on by default; now a recorded choice
+    assert rc == 0 and doc["changed"] == ["remote_control on: main"]
+    rc, doc = remote_control(ship, "main")  # chosen already: nothing changes
     assert rc == 0 and doc["changed"] == []
 
 
@@ -975,3 +977,18 @@ def test_a_record_written_before_the_setting_gives_it_to_autostart_agents_only(s
     ship.ctl("refresh")
     assert ship.args()["main"][-1] == RC and ship.args()["grinder"][-1] == RC
     assert ship.args()["helper"] == ["--permission-mode", "plan", "--resume", "sess-helper"]
+
+
+def test_an_adopted_agent_added_to_autostart_gets_remote_control_by_default(started):
+    ship = started
+    add_live(ship, "helper", "sess-helper", "/home/agent/work/side", "t7", mode="plan",
+             keep=True)
+    ship.p("/home/agent/work/side").mkdir(parents=True)
+    ship.ctl("refresh")
+    assert recorded(ship)["helper"]["remote_control"] is False
+    toml = ship.p("/etc/shipshape/ship.toml").read_text()
+    ship.write_toml(toml + '\n[[autostart]]\nname = "helper"\ncwd = "~/work/side"\n')
+    assert recorded(ship)["helper"]["remote_control"] is True
+    ship.crash("helper")
+    ship.ctl("refresh")
+    assert ship.args()["helper"][-3:] == ["--resume", "sess-helper", RC]

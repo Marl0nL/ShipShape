@@ -229,7 +229,7 @@ def run(ctx: Context, ship: ShipToml, state: str,
                 named = naming.name_flag_supported(ctx)
             sid, chosen = record.new_session(rt)
             # An [[autostart]] agent gets Remote Control, unless its record says not.
-            wants_rc = (doc["agents"].get(name) or {}).get("remote_control", True)
+            wants_rc = record.gets_remote_control(ship, name, doc["agents"].get(name))
             # The record has the session before the agent starts, and is put back as it
             # was if nothing started.
             prepare = partial(record.launched, ctx, rt, doc, name, cwd=cwd, place=None,

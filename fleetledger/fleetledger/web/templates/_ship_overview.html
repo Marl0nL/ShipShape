@@ -69,11 +69,12 @@
     {% set running = doc.herdr.agents|selectattr("kind", "equalto", "claude")|list %}
     {% set core = runtime_of(doc) == "core" %}
     {% set rc_on = doc.claude.remote_control in ("on", "all") %}
+    {% set rc_count = remote_control_agents(doc) %}
     {% if running and signed_in and rc_on %}
     <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
-      with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
-      Claude app (signed in as {{ claude_auth.account or "your account" }}){% if doc.claude.remote_control == "on" %}:
-      the ones the Ship starts with it (the Remote Control column). Sessions they start themselves do not
+      {% if rc_count == running|length %}with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }}{% else %}{{ rc_count }} with Remote Control: {{ "those show" if rc_count != 1 else "it shows" }}{% endif %} in the
+      Claude app (signed in as {{ claude_auth.account or "your account" }}){% if doc.claude.remote_control == "on" %}.
+      Which ones is in the Remote Control column; sessions they start themselves do not show
       (Settings, Remote Control: all for every session){% endif %}.</p>
     {% elif running and not rc_on %}
     <p class="hint">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running;

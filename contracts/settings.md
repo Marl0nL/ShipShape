@@ -46,16 +46,20 @@ reattaches the session's saved Remote Control session. "on" must not set
 
 Which agents the record gives it to:
 
-- `[[autostart]]` agents: from their first start.
-- Adopted agents (started some other way, by a person or by another agent, then
-  picked up from the runtime): not, until `ship-ctl agent remote-control NAME`
-  (`ship-fleet agent remote-control SHIP NAME`, or the agent list in the web UI)
-  turns it on; `--off` turns it off for any agent. The Ship cannot tell reliably
-  whether a session it picks up has Remote Control: a person can turn it on or off
-  inside the session at any time (`/remote-control`), which leaves no trace the
-  Ship can read, so it does not guess.
-- Records written before this setting existed: autostart agents on, adopted ones
-  off.
+- By default, the agents in ship.toml `[[autostart]]`, from their first start
+  (an adopted agent later added there gets it too).
+- Not by default: adopted agents (started some other way, by a person or by
+  another agent, then picked up from the runtime). The Ship cannot tell reliably
+  whether a session it picks up has Remote Control: a person can turn it on or
+  off inside the session at any time (`/remote-control`), which leaves no trace
+  the Ship can read, so it does not guess.
+- `ship-ctl agent remote-control NAME` (`ship-fleet agent remote-control SHIP
+  NAME`, or the agent list in the web UI) records a choice for one agent that
+  overrides the default; `--off` turns it off. An adopted agent that exits on
+  purpose leaves the record, and its choice with it: started by hand again, it is
+  adopted afresh, without Remote Control.
+- Records written before this setting existed hold no choice: the default
+  applies.
 
 The change reaches an agent the next time the Ship starts it (`agent restart`
 brings it now, continuing the conversation). A session that had Remote Control

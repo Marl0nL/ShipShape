@@ -144,7 +144,9 @@ ship-fleet set ship-01 remote_control=off    # or remote_control=on, or remote_c
   cannot tell whether a session it picks up had Remote Control, so it never
   guesses; a session another agent starts in a herdr pane or herdr-core terminal
   is picked up the same way and stays off. Type `/remote-control` in a session to
-  connect it at once.
+  connect it at once. An agent that is not an autostart agent and exits on
+  purpose leaves the record with its choice; started by hand again, turn it on
+  again.
 - "all": every Claude session on the Ship, whoever started it
   (`remoteControlAtStartup` true). This is what "on" meant before.
 - "off" also stops resumed sessions from reconnecting (`disableRemoteControl`).

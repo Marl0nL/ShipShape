@@ -718,11 +718,24 @@ def test_refuses_an_agent_whose_folder_is_gone(herdr_ship):
 
 
 def test_the_switch_starts_each_agent_with_remote_control_as_its_record_says(herdr_ship):
+    """Autostart agents (main on, grinder turned off), an adopted agent turned on (lead)
+    and one left at its default, off (worker)."""
+    from test_ship_herdr_legacy import herdr_add_live
+
     ship = herdr_ship
-    rc, doc, _ = ship.ctl("agent", "remote-control", "grinder", "--off", "--json")
-    assert rc == 0, doc
+    for name, pane in (("lead", "w5:p1"), ("worker", "w6:p1")):
+        ship.p(f"/home/agent/work/{name}").mkdir(parents=True)
+        herdr_add_live(ship, name, f"sess-{name}", f"/home/agent/work/{name}", pane, "auto")
+    ship.ctl("refresh")
+    assert {n: e["origin"] for n, e in ship.record()["agents"].items()} == {
+        "main": "autostart", "grinder": "autostart", "lead": "adopted", "worker": "adopted"}
+    for argv in (["grinder", "--off"], ["lead"]):
+        rc, doc, _ = ship.ctl("agent", "remote-control", *argv, "--json")
+        assert rc == 0, doc
     rc, doc, out = switch(ship, "core")
     assert rc == 0 and doc["data"]["outcome"] == "switched", out
     args = {n: ts[0]["claude_args"] for n, ts in core_agents(ship).items()}
-    assert args["main"][-1] == RC
+    assert args["main"][-1] == RC and args["lead"] == ["--permission-mode", "auto",
+                                                        "--resume", "sess-lead", RC]
     assert RC not in args["grinder"]
+    assert args["worker"] == ["--permission-mode", "auto", "--resume", "sess-worker"]
