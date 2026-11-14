@@ -647,8 +647,9 @@ SOURCE is one of `provision`, `herdr`, `core`, `resume`, `tools`, `status`, `sys
 default 200 lines. `resume` is what the status refresh started or let go: the
 agent record's lines (agents resumed after a boot, started again after a crash, or
 let go) and autostart's (`autostart: started NAME` for an `[[autostart]]` agent
-started afresh, with a new conversation, and why one could not start), so a boot's
-fresh starts show next to its resumes. `core` is for
+started afresh, with a new conversation, and a summary line when autostart could not
+start one or the runtime did not answer), so a boot's fresh starts show next to its
+resumes. `core` is for
 herdr-core Ships: `ship-core.service`'s journal (the core starting at boot), then the
 last lines of herdr-core's own `core.log` and `holder.log` (in
 `~/.local/state/herdr-core/default/`), each prefixed with its file name; `--lines`
