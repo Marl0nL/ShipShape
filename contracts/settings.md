@@ -22,13 +22,31 @@ Schemas: `ship.toml.schema.json`, `ships.toml.schema.json`. Examples:
 
 | ship.toml | Managed setting |
 |---|---|
-| `claude.remote_control = "on"` | `"remoteControlAtStartup": true` |
+| `claude.remote_control = "on"` (the default) | `"remoteControlAtStartup": false`; the Ship's own agents get `--remote-control` at launch (see "Remote Control") |
+| `claude.remote_control = "all"` | `"remoteControlAtStartup": true` (every session, as "on" was before) |
 | `claude.remote_control = "off"` | `"remoteControlAtStartup": false` and `"disableRemoteControl": true` |
 | `claude.remote_control = "blocked"` | the same as `"off"` (an older name, still accepted) |
 | `claude.default_mode` | `"permissions": { "defaultMode": ... }` |
 | `claude.allow_bypass = false` | `"permissions": { "disableBypassPermissionsMode": "disable" }` |
 | `claude.update_channel` | `"autoUpdatesChannel"`, plus `"minimumVersion"` from `versions.toml` `[claude].minimum_version` |
 | `claude.session_prefix` (default: the Ship's name) | `"env": { "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": ... }` (a fallback only; see "Session names") |
+
+#### Remote Control
+
+"on" gives Remote Control to the agents the Ship starts and records, and to no
+other session: every launch ship-ctl makes (autostart, the resume at boot, a
+restart after a crash, `agent restart`, `runtime switch`) ends with
+`--remote-control` (`ship/lib/shipctl/naming.py`), which Claude Code documents
+as turning it on for one session even when `remoteControlAtStartup` is false,
+and which with `--resume` reattaches the session's saved Remote Control session.
+The managed false keeps it off for sessions an agent or a person starts (a user
+`true`, from `/config`, cannot override a managed value), so an orchestrator's
+workers stay out of the Claude app. "on" must not set `disableRemoteControl`: it
+refuses the flag too. A session that had Remote Control and is resumed by hand
+reconnects to it. An adopted agent (started by hand, then recorded) keeps what
+it was started with until the Ship next starts it. Updating from a version where
+"on" meant every session: running sessions keep theirs until they end; new ones
+the Ship did not start do not get it; "all" is the old behaviour.
 
 "off" needs `disableRemoteControl`: `remoteControlAtStartup` governs only new
 sessions, and a resumed session reconnects to the Remote Control session saved

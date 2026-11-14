@@ -299,7 +299,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _add(sub, "set", "change settings on Ships (ship-ctl set)",
              "Change settings on one Ship, several, every Ship with a tag, or all.\n"
-             "Keys: remote_control (on|off; blocked = off), default_mode, allow_bypass,\n"
+             "Keys: remote_control (on: the agents the Ship starts; all: every session;\n"
+             "off; blocked = off), default_mode, allow_bypass,\n"
              "update_channel (latest|stable), session_prefix, sudo, lan_guard,\n"
              "lan_guard_allow (addresses or CIDRs, comma-separated), auto_reboot,\n"
              "reboot_time (HH:MM, the Ship's local time), timezone (e.g. Europe/Berlin),\n"

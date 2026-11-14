@@ -551,7 +551,7 @@
       "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
       "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
     },
-    "remoteControl": { "enum": ["on", "off", "blocked"] },
+    "remoteControl": { "enum": ["on", "all", "off", "blocked"] },
     "updateChannel": { "enum": ["latest", "stable"] },
     "timestamp": {
       "type": "string",

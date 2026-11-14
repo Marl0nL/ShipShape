@@ -24,6 +24,7 @@ from . import (
     inbox,
     languard,
     logs,
+    naming,
     net,
     notice,
     overlay,
@@ -69,7 +70,8 @@ RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart: "
     "`ship-fleet agent restart {ship} --all` restarts them, continuing their conversations "
     "(on the Ship: `ship-ctl agent restart --all`; a reboot restarts them too). The Claude "
-    "app can take a few minutes to show or drop them."
+    "app can take a few minutes to show or drop them. Sessions the Ship did not start "
+    "(by hand, or by an agent) keep what they had until they end."
 )
 PREFIX_CHANGE_NOTE = (
     "Running sessions keep their names, even across a restart; send /rename <name>, or "
@@ -304,11 +306,17 @@ def cmd_set(ctx: Context, args) -> dict:
     new_ship = shiptoml.ShipToml(new)
     applied, messages = apply.apply(ctx, new_ship)
     messages = messages or ["Saved and applied."]
-    if (current.claude["remote_control"] == "on") != (new_ship.claude["remote_control"] == "on"):
+    if _rc_effect(current) != _rc_effect(new_ship):
         messages.append(RC_CHANGE_NOTE.format(ship=new_ship.name))
     if current.claude["session_prefix"] != new_ship.claude["session_prefix"]:
         messages.append(PREFIX_CHANGE_NOTE.format(ship=new_ship.name))
     return result("set", changed=changed + applied, messages=messages)
+
+
+def _rc_effect(ship: shiptoml.ShipToml) -> str:
+    """claude.remote_control as it acts ("blocked" is "off")."""
+    value = ship.claude["remote_control"]
+    return "off" if value in naming.RC_OFF else value
 
 
 def _check_listen(ctx: Context, current: shiptoml.ShipToml, new: dict) -> None:

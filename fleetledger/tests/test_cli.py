@@ -829,6 +829,10 @@ def test_set(env):
         "remote_control": "off", "default_mode": "bypassPermissions", "allow_bypass": True}
     assert env.run("set", "ship-01", "colour=blue")[0] == 1
     assert env.run("set", "ship-01", "remote_control=maybe")[0] == 1
+    # "all": Remote Control for every session on the Ship, as "on" was before.
+    assert env.run("set", "ship-01", "remote_control=all")[0] == 0
+    assert env.ship.calls[-1][1][3:] == ["set", "claude.remote_control=all", "--json"]
+    assert env.store.load().ship("ship-01").claude["remote_control"] == "all"
     assert env.run("set", "ship-01", "remote_control")[0] == 1
 
 

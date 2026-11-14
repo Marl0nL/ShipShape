@@ -6,6 +6,10 @@ import { readFileSync, statSync } from "node:fs";
 
 export const STATUS_PATH = "/run/shipshape/status.json";
 const STALE_SECONDS = 300;
+const RC_WORDS = {
+  on: "on (the agents the Ship starts; not Claude sessions they start)",
+  all: "all (every Claude session)",
+};
 
 export function readStatus(path = process.env.SHIPSHAPE_STATUS || STATUS_PATH, now = Date.now()) {
   let doc;
@@ -76,8 +80,10 @@ export function homeView(doc, note, env = process.env) {
   out.agents = (doc.herdr?.agents ?? [])
     .filter((a) => a !== me)
     .map((a) => ({ name: a.name ?? a.pane ?? "?", state: a.state, mode: a.mode ?? "?" }));
+  // "on" reaches only the agents the Ship starts (contracts/settings.md): an agent
+  // that starts its own Claude sessions should know they do not show in the app.
   out.claude = {
-    remote_control: doc.claude.remote_control,
+    remote_control: RC_WORDS[doc.claude.remote_control] ?? doc.claude.remote_control,
     default_mode: doc.claude.default_mode,
     bypass_allowed: doc.claude.allow_bypass,
   };

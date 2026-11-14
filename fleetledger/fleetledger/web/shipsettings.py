@@ -43,7 +43,8 @@ def _modes() -> tuple[tuple[str, str], ...]:
 GROUPS: tuple[tuple[str, tuple[Field, ...]], ...] = (
     ("Claude Code", (
         Field("remote_control", "Remote Control",
-              (("on", "on"), ("off", "off"), ("blocked", "blocked"))),
+              (("on", "on: the agents the Ship starts"), ("all", "all: every Claude session"),
+               ("off", "off"), ("blocked", "blocked"))),
         Field("default_mode", "Default permission mode", _modes()),
         Field("allow_bypass", "Allow bypassPermissions", BOOL),
         Field("update_channel", "Update channel", (("latest", "latest"), ("stable", "stable"))),

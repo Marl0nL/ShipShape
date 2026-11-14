@@ -245,8 +245,9 @@ too) or a herdr agent name. `--all` is every Claude agent herdr lists with a nam
   with `--name` as autostart names it, and an agent that was given a first prompt
   (an `[[autostart]]` one) gets it again. An agent whose session is known to
   neither can only be restarted `--fresh`. Remote Control comes back by itself
-  (managed settings; a resumed session reconnects to its own Remote Control
-  session), and session names survive the resume. One that stopped but did not
+  (unless claude.remote_control is off, every launch carries `--remote-control`,
+  and a resumed session reconnects to its own Remote Control session), and
+  session names survive the resume. One that stopped but did not
   start again is started by the next status refresh, as after a crash.
 - **A recorded agent that is not running** (it stopped, or did not start again
   after a crash: `failed`) is started again from the record: its folder and
@@ -385,8 +386,9 @@ stderr is gone, so a dropped SSH session does not stop it part way.
 7. **Verify**, like `ship-fleet reboot`: each agent is live by its name exactly once,
    runs its own session, the mode ledger saw that session start after the relaunch,
    and in the snapshot mode; leaving herdr-core, none of them is live on the core
-   any more. Remote Control follows the managed settings, which the switch does not
-   touch, and a resumed session reconnects to its own Remote Control session.
+   any more. Remote Control follows ship.toml, which the switch does not touch:
+   each launch carries `--remote-control` unless it is off, and a resumed session
+   reconnects to its own Remote Control session.
 8. **Roll back** on any failure in 3-7: agents that started on the new runtime are
    stopped gracefully (one that will not stop, or that cannot be seen to stop, is
    left running where it is and is not started on the old runtime: never twice),

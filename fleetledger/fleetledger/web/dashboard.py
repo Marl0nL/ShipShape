@@ -326,7 +326,7 @@ def summary(views: Sequence[ShipView], alerts_: Sequence[Alert],
         "working": sum(1 for _, a in agents if a["state"] == "working"),
         "waiting": sum(1 for _, a in agents if a["state"] == "blocked"),
         "remote_control": sum(1 for v, _ in agents
-                              if v.status["claude"]["remote_control"] == "on"),
+                              if v.status["claude"]["remote_control"] in ("on", "all")),
         "levels": {level: sum(1 for a in alerts_ if a.level == level) for level in LEVELS},
         "signin_expired": codes.count("signin-expired") + codes.count("signin-wrong-account"),
         "signin_missing": codes.count("signin-missing"),

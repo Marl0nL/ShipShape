@@ -259,6 +259,11 @@ def test_summary_counts(store):
     assert s["working"] != s["waiting"]  # the fixture can tell them apart
     assert s["remote_control"] == (len(agents) if RUNNING["claude"]["remote_control"] == "on"
                                    else 0)
+    # "all" (every session) counts too; "off" and its older name "blocked" do not.
+    for value, count in (("all", len(agents)), ("off", 0), ("blocked", 0)):
+        doc["claude"]["remote_control"] = value
+        views[0] = view(store, "ship-01", doc)
+        assert dashboard.summary(views, alerts, store.load())["remote_control"] == count
     assert s["reboots"] == 1 and (s["os_updates"], s["os_update_ships"]) == (4, 1)
     assert s["levels"]["critical"] >= 1
     assert s["overlay"] is None

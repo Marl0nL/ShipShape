@@ -68,11 +68,13 @@
     {% set signed_in = claude_auth and claude_auth.state in ("ok", "expiring") %}
     {% set running = doc.herdr.agents|selectattr("kind", "equalto", "claude")|list %}
     {% set core = runtime_of(doc) == "core" %}
-    {% if running and signed_in and doc.claude.remote_control == "on" %}
+    {% set rc_on = doc.claude.remote_control in ("on", "all") %}
+    {% if running and signed_in and rc_on %}
     <p class="notice">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running,
       with Remote Control on: {{ "they show" if running|length != 1 else "it shows" }} in the
-      Claude app (signed in as {{ claude_auth.account or "your account" }}).</p>
-    {% elif running and doc.claude.remote_control != "on" %}
+      Claude app (signed in as {{ claude_auth.account or "your account" }}){% if doc.claude.remote_control == "on" %}.
+      Sessions they start themselves do not (Settings, Remote Control: all for every session){% endif %}.</p>
+    {% elif running and not rc_on %}
     <p class="hint">{{ running|length }} Claude agent{{ "s" if running|length != 1 }} running;
       Remote Control is off, so they do not show in the Claude app (Settings, Remote Control).</p>
     {% elif not signed_in %}
@@ -80,7 +82,7 @@
       in (above): its agents then start, and with Remote Control on they show in the Claude app.</p>
     {% elif not running %}
     <p class="warning">No agent is running on {{ ship.name }}. Add one below: it starts now and on
-      every boot{% if doc.claude.remote_control == "on" %}, and shows in the Claude app (Remote
+      every boot{% if rc_on %}, and shows in the Claude app (Remote
       Control is on){% endif %}.</p>
     {% endif %}
     {% if workspaces %}

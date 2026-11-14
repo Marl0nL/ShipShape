@@ -235,7 +235,9 @@ def run(ctx: Context, ship: ShipToml, state: str,
                               prompt=prompt, session_name=session)
             start = partial(rt.launch, name, cwd, [*mode_args(mode),
                                                    *naming.launch_args(session, named),
-                                                   *chosen], settled=False)
+                                                   *chosen,
+                                                   *naming.remote_control_args(ship)],
+                            settled=False)
             done = record.start_and_record(ctx, doc, name, sid, prepare, start,
                                            lambda d: d["ok"])
             if not done["ok"]:

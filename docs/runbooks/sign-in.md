@@ -118,15 +118,32 @@ in the same device flow, for the same account (GitHub shows the scopes to approv
 
 ## Remote Control
 
-Remote Control is on by default: once Claude is signed in, every agent's session
-shows in your Claude app. Turn it off or on per Ship:
+Remote Control is on by default: once Claude is signed in, the agents the Ship
+starts and records (autostart agents and the ones it adopted, such as a
+supervising agent) show in your Claude app. Sessions those agents start
+themselves (an orchestrator's workers, say) do not, nor do sessions you start by
+hand. Set it per Ship:
 
 ```sh
-ship-fleet set ship-01 remote_control=off    # or remote_control=on
+ship-fleet set ship-01 remote_control=off    # or remote_control=on, or remote_control=all
 ```
 
+- "on": the Ship launches each of its own agents with `claude --remote-control`
+  (a fresh start, a resume at boot, a restart after a crash, `agent restart`, a
+  runtime switch); the managed settings leave Remote Control off for every other
+  session (`remoteControlAtStartup` false), and no user setting can turn it on
+  for them. An agent you started by hand and the Ship adopted keeps what it was
+  started with until the Ship next starts it (a reboot or a restart); type
+  `/remote-control` in it to connect it now.
+- "all": every Claude session on the Ship, whoever started it
+  (`remoteControlAtStartup` true). This is what "on" meant before.
 - "off" also stops resumed sessions from reconnecting (`disableRemoteControl`).
   `blocked` is an older name for the same setting.
+- Updating a Ship that had "on" to this version: "on" keeps its name and becomes
+  the narrower setting. Sessions already running keep Remote Control until they
+  end, and a session that had it reconnects when it is resumed; new sessions that
+  the Ship did not start do not get it. Set `remote_control=all` to keep the old
+  behaviour.
 - A change reaches running sessions only when they restart: a reboot restarts
   them all (`ship-fleet reboot ship-01`, never a forced reset).
 - The Claude app can take a few minutes to show or drop sessions.

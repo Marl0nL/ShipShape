@@ -39,7 +39,7 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import PERMISSION_MODES
+from . import PERMISSION_MODES, naming
 from .context import Context, utc_now
 from .errors import CtlError
 from .fsutil import ensure_dir, read_json, write_atomic
@@ -571,7 +571,7 @@ def relaunch(ctx: Context, ship: ShipToml, rt: Runtime, doc: dict, name: str,
         return False, f"its folder {cwd} is not there"
     sid, chosen = new_session(rt) if fresh is not None else (None, [])
     args = [*mode_args(mode), *(fresh if fresh is not None else ["--resume", e["session"]]),
-            *chosen]
+            *chosen, *naming.remote_control_args(ship)]
     old = own_place(rt, e)
     spot = (places or {}).get(old or "")
     if same_place:

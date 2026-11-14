@@ -867,6 +867,13 @@ def test_ship_page_says_whether_its_agents_show_in_the_claude_app(web):
     web.sign_in()
     page = web.client.get("/ships/ship-01").text
     assert "with Remote Control on" in page and "in the\n      Claude app" in page
+    assert "Sessions they start themselves do not" in page  # "on": the Ship's agents only
+    _status(web, "ship-01", lambda d: d["claude"].update(remote_control="all"))
+    page = web.client.get("/ships/ship-01").text
+    assert "with Remote Control on" in page and "Sessions they start" not in page
+    _status(web, "ship-01", lambda d: d["claude"].update(remote_control="off"))
+    assert "Remote Control is off" in web.client.get("/ships/ship-01").text
+    _status(web, "ship-01", lambda d: d["claude"].update(remote_control="on"))
     _status(web, "ship-01", lambda d: d["herdr"].update(agents=[]))
     page = web.client.get("/ships/ship-01").text
     assert "No agent is running on ship-01" in page and 'name="agent" value="main"' in page

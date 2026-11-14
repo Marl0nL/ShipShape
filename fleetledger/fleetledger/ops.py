@@ -49,7 +49,7 @@ PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 # `ship-fleet set` short keys -> ship-ctl set keys, with allowed values (None: free,
 # checked by a pattern below or by the Ship's schema).
 SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
-    "remote_control": ("claude.remote_control", ("on", "off", "blocked")),
+    "remote_control": ("claude.remote_control", ("on", "all", "off", "blocked")),
     "default_mode": ("claude.default_mode", MODES),
     "allow_bypass": ("claude.allow_bypass", ("true", "false")),
     "update_channel": ("claude.update_channel", ("latest", "stable")),
