@@ -398,7 +398,7 @@ def test_a_kept_terminal_in_another_folder_resumes_in_the_agents_folder(started)
     main = ship.agent("main")
     assert main["address"] == "t1" and main["cwd"] == "/home/agent/work/main"
     assert typed(ship, "t1") == [f"cd -- /home/agent/work/main && exec {LAUNCHER} "
-                                 f"--permission-mode auto --resume {sid(ship, 'main')}"]
+                                 f"--permission-mode auto --resume {sid(ship, 'main')} {RC}"]
     assert len(runs(ship)) == 2
 
 
