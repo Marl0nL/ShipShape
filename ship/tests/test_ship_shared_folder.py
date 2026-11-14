@@ -177,7 +177,7 @@ def test_ship_ctl_autostart_says_the_folder_is_taken(ship):
     rc, doc, _ = ship.ctl("autostart", "--json")
     assert rc == 0, doc
     assert doc["data"] == {"started": [], "skipped": [
-        {"name": "main", "reason": "folder-taken", "agent": "lead"}]}
+        {"name": "main", "reason": "folder-taken", "agent": "lead", "agent_running": True}]}
     assert doc["messages"] == ["main not started: 'lead' already works in /home/agent/work "
                                "(folder-taken)."]
 
@@ -273,3 +273,27 @@ def test_the_resume_log_keeps_autostart_and_record_lines_only(ship):
                               "ship-ctl: autostart: the herdr server is not answering"])
     assert lines == ["ship-ctl: autostart: started main", RESUMED_LEAD,
                      "ship-ctl: autostart: the herdr server is not answering"]
+
+
+def test_main_starts_once_the_record_gives_up_on_lead(ship):
+    """lead's session no longer loads: it dies at each start. While the record still
+    tries it, it takes the folder; once it gives up on it (agent-relaunch-failed), the
+    folder is free and main starts afresh in that boot, at the next refresh."""
+    setup(ship)
+    ship.core_reboot(uptime=35)
+    s = ship.scenario()
+    s["hc"]["lost_sessions"] = ["sess-lead"]
+    ship.set(hc=s["hc"])
+    lines: list[str] = []
+    for _ in range(6):
+        lines += refresh(ship)
+        if "main" in live(ship):
+            break
+    assert any("lead stopped again soon after it started" in x
+               or "lead did not start again" in x for x in lines)
+    assert not any("folder-taken" in x for x in lines)  # lead never ran: no final skip
+    assert "ship-ctl: autostart: started main" in lines
+    assert set(live(ship)) == {"main"}
+    doc = ship.status()
+    assert "agent-relaunch-failed" in {a["code"] for a in doc["attention"]}
+    assert taken(doc) == []

@@ -177,8 +177,11 @@ files: the case is an `[[autostart]]` agent exited on purpose while the person r
 their own Claude in its folder. It is skipped (`folder-taken`), the status refresh
 logs `autostart: NAME not started: 'OTHER' already works in its folder
 (folder-taken)` (`logs resume`), and attention `autostart-folder-taken` names both
-for as long as that holds. Once the other agent has left the record (exited), the
-entry starts afresh at the next boot, or at once with `ship-ctl autostart`. This
+for as long as that holds. While the other agent is still being started again (not
+running yet), the status refresh runs autostart again at its next pass, so an entry
+whose folder is freed because the record gave up on that agent starts then. Once the
+other agent runs, the skip holds for the boot: after it has left the record (exited),
+the entry starts afresh at the next boot, or at once with `ship-ctl autostart`. This
 reads only what the record's upkeep, just before, already has: nothing more is asked
 of the runtime.
 
@@ -202,7 +205,8 @@ and attention item with it. Other agents start regardless.
 
 `data`: `{ "started": [names], "skipped": [{ "name": ..., "reason": ... }] }`. A
 `reason` is `running`, `resuming` (the record is starting it again), `folder-taken`
-(another agent works in its folder; the item's `agent` names it),
+(another agent works in its folder; the item's `agent` names it, and `agent_running`
+says whether it runs now or is still being started again),
 `relaunch-failed` (the record gave up on it this boot: `agent-relaunch-failed`),
 `resume-pending`
 (this boot's resume waits for DNS), `provisioning`, `needs-sign-in`, or why its repo

@@ -601,10 +601,13 @@ def cmd_refresh(ctx: Context, args) -> dict:
                 record["claude"] = prev.get("claude", "missing")  # try again next refresh
             elif data["started"]:
                 messages.append(f"autostart: started {', '.join(data['started'])}")
-            messages += autostart.taken_lines(data)
+            lines, again = autostart.taken_lines(data)
+            messages += lines
+            if again:  # an agent in its folder is still being started: ask again
+                record["claude"] = prev.get("claude", "missing")
         except CtlError as exc:
             messages.append(f"autostart: {exc.message}")
-            messages += autostart.taken_lines(exc.data or {})
+            messages += autostart.taken_lines(exc.data or {})[0]
             upkept += [m for m in exc.messages if m.startswith(agent_record.LOG_TAG)]
             record["claude"] = prev.get("claude", "missing")
     if doc["herdr"]["server"] == "running":

@@ -205,7 +205,10 @@ def run(ctx: Context, ship: ShipToml, state: str,
                      and record.tries_this_boot(ctx, e) < record.MAX_TRIES}
             taker = folder_taker(name, cwd, keeps, places)
             if taker is not None:
-                skipped.append({"name": name, "reason": "folder-taken", "agent": taker})
+                # agent_running false: the taker is still being started again; if the
+                # record gives up on it, the folder is free (the refresh asks again).
+                skipped.append({"name": name, "reason": "folder-taken", "agent": taker,
+                                "agent_running": taker in found})
                 messages.append(f"{name} not started: '{taker}' already works in {cwd} "
                                 "(folder-taken).")
                 continue
@@ -261,12 +264,16 @@ def run(ctx: Context, ship: ShipToml, state: str,
     return {"started": started, "skipped": skipped}, started, messages
 
 
-def taken_lines(data: dict) -> list[str]:
-    """The status refresh's log lines (`ship-ctl logs resume`) for the entries run left
-    unstarted because their folder is taken."""
-    return [f"autostart: {s['name']} not started: '{s['agent']}' already works in its "
-            "folder (folder-taken)" for s in data.get("skipped", [])
-            if s.get("reason") == "folder-taken"]
+def taken_lines(data: dict) -> tuple[list[str], bool]:
+    """(the status refresh's log lines, for `ship-ctl logs resume`, for the entries run
+    left unstarted because their folder is taken; whether to run autostart again at the
+    next refresh). Once the agent in the folder runs, that holds for the boot; while it
+    is still being started again, the next refresh asks again, so an entry whose taker
+    the record gives up on starts then. Its line is logged once it holds."""
+    taken = [s for s in data.get("skipped", []) if s.get("reason") == "folder-taken"]
+    lines = [f"autostart: {s['name']} not started: '{s['agent']}' already works in its "
+             "folder (folder-taken)" for s in taken if s.get("agent_running")]
+    return lines, any(not s.get("agent_running") for s in taken)
 
 
 def folder_attention(ctx: Context, ship: ShipToml, block: dict, found: dict[str, dict],
