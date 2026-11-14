@@ -368,7 +368,7 @@ Following Jupyter's model, adapted to "one person, one computer":
   `devices.json` (0600, in a 0700 folder) keeps its name, the login that paired
   it, its origin and times, and only a SHA-256 of its session id; its CSRF token
   is derived from the id, so the file opens nothing and a restart signs nobody
-  out. Every request must carry the same login. A device lapses after 12 hours
+  out. Every request must carry the same login. A device lapses after 7 days
   unused or 30 days after pairing, and on Revoke, which the running UI sees at its
   next request. Danger actions (`devices.FRESH_ONLY`: destroy, forget, rollback,
   deleting a snapshot, accepting a new host key, trusting, untrusting or

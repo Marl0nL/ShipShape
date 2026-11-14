@@ -46,7 +46,7 @@ from fleetledger import paths
 from fleetledger.errors import FleetError
 
 PAIR_TTL = 15 * 60
-IDLE = 12 * 3600
+IDLE = 7 * 24 * 3600
 ABSOLUTE = 30 * 24 * 3600
 FRESH = 4 * 3600
 SEEN_EVERY = 5 * 60  # how often a device's last request is written down

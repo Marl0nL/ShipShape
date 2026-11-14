@@ -170,7 +170,7 @@ def test_a_request_from_another_login_does_not_keep_a_device_alive(web):
     cookie = {"Cookie": f"{COOKIE}={web.remote.cookies[COOKIE]}"}
     web.wall.now += devices_mod.IDLE - 60
     assert web.client(OTHER).get("/", headers=cookie).status_code == 401
-    web.wall.now += devices_mod.IDLE - 60  # its own last use: nearly 24 hours ago
+    web.wall.now += devices_mod.IDLE - 60  # its own last use: nearly 14 days ago
     assert web.client(LOGIN).get("/", headers=cookie).status_code == 401
 
 
@@ -366,6 +366,45 @@ def test_a_device_lapses_when_idle_and_after_30_days(web):
     assert web.remote.get("/").status_code == 401
 
 
+def test_the_limits_are_7_days_unused_30_days_paired_and_4_hours_fresh():
+    hour, day = 3600, 24 * 3600
+    assert devices_mod.IDLE == 7 * day
+    assert devices_mod.ABSOLUTE == 30 * day
+    assert devices_mod.FRESH == 4 * hour
+
+
+def test_a_device_unused_just_under_7_days_stays_signed_in_and_just_over_is_signed_out(web):
+    day = 24 * 3600
+    web.pair()
+    web.wall.now += 7 * day - 60
+    assert web.remote.get("/").status_code == 200
+    web.wall.now += 7 * day + 1
+    response = web.remote.get("/")
+    assert response.status_code == 401 and "Pair it once" in response.text
+    assert web.devices.all() == []
+
+
+def test_a_device_in_daily_use_still_lapses_30_days_after_pairing(web):
+    day = 24 * 3600
+    web.pair()
+    for _ in range(29):
+        web.wall.now += day
+        assert web.remote.get("/").status_code == 200
+    web.wall.now += day - 60
+    assert web.remote.get("/").status_code == 200  # just under 30 days
+    web.wall.now += 61
+    assert web.remote.get("/").status_code == 401  # just over
+
+
+def test_a_device_paired_just_over_4_hours_ago_is_refused_danger_actions(web):
+    path = "/ships/ship-01/destroy"
+    csrf = web.pair()
+    web.wall.now += 4 * 3600 - 60
+    assert web.remote.post(path, data={"csrf": csrf}, headers=REMOTE_ORIGIN).status_code == 303
+    web.wall.now += 61
+    assert web.remote.post(path, data={"csrf": csrf}, headers=REMOTE_ORIGIN).status_code == 403
+
+
 def test_last_use_is_written_down_so_a_restart_keeps_the_idle_clock(web):
     web.pair()
     cookie = {"Cookie": f"{COOKIE}={web.remote.cookies[COOKIE]}"}
@@ -518,6 +557,7 @@ def test_settings_lists_the_devices_and_marks_this_browser(web):
     here = web.sign_in_here()
     assert here and "this computer, and your devices" in web.local.get("/settings").text
     assert "Sign out every device" in web.local.get("/settings").text
+    assert "until it is unused for 7 days," in page and "12 hours" not in page
 
 
 def test_settings_says_how_to_turn_it_on_when_it_is_off(web):

@@ -108,6 +108,7 @@ def section_context(ui: Any, session: Any) -> dict[str, Any]:
         "devices": rows,
         "on_remote": session.device is not None,
         "fresh_hours": devices_mod.FRESH // 3600,
+        "idle_days": devices_mod.IDLE // (24 * 3600),
         "pair_minutes": devices_mod.PAIR_TTL // 60,
         "machine_choices": machine_choices(inv),
     }
