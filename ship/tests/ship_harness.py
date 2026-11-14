@@ -65,6 +65,9 @@ ZONES = ("UTC", "Etc/UTC", "Europe/Berlin", "America/New_York")  # tzdata in the
 BOOT_ID = "0b6f7e0e-0000-4000-8000-000000000001"
 LEDGER = "/home/agent/.local/state/shipshape/modes.json"
 LAUNCHER = "/opt/shipshape/bin/agent-launch"
+# The last argument of every Claude launch a Ship makes while Remote Control is on
+# (claude.remote_control "on", the default): only the Ship's own agents get it.
+RC = "--remote-control"
 RUNTIME_LINE = re.compile(r"^[ \t]*runtime[ \t]*=.*\n", re.M)  # ship.toml's top-level key
 
 BASIC_TOML = """\

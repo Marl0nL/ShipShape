@@ -24,6 +24,7 @@ from . import (
     inbox,
     languard,
     logs,
+    naming,
     net,
     notice,
     overlay,
@@ -69,7 +70,8 @@ RC_CHANGE_NOTE = (
     "Remote Control changes reach running Claude sessions only when they restart: "
     "`ship-fleet agent restart {ship} --all` restarts them, continuing their conversations "
     "(on the Ship: `ship-ctl agent restart --all`; a reboot restarts them too). The Claude "
-    "app can take a few minutes to show or drop them."
+    "app can take a few minutes to show or drop them. Sessions the Ship did not start "
+    "(by hand, or by an agent) keep what they had until they end."
 )
 PREFIX_CHANGE_NOTE = (
     "Running sessions keep their names, even across a restart; send /rename <name>, or "
@@ -119,8 +121,9 @@ def build_parser() -> Parser:
     st.add_argument("--file", metavar="-", help="read a complete replacement ship.toml from stdin")
     cmd("autostart", "Start the [[autostart]] agents that are not running.")
     ag = cmd("agent", "Restart Claude agents in place (in a new permission mode), forget "
-                      "stopped ones, or mark the primary agent.")
-    ag.add_argument("action", choices=["restart", "forget", "primary"])
+                      "stopped ones, mark the primary agent, or give recorded agents Remote "
+                      "Control.")
+    ag.add_argument("action", choices=["restart", "forget", "primary", "remote-control"])
     ag.add_argument("names", nargs="*", metavar="NAME", help="agent names (the agent record's)")
     ag.add_argument("--all", dest="everyone", action="store_true",
                     help="every named Claude agent")
@@ -133,6 +136,8 @@ def build_parser() -> Parser:
                     help="also restart an agent that is working (interrupts its turn)")
     ag.add_argument("--clear", action="store_true",
                     help="primary: unmark it (the first autostart agent is the primary)")
+    ag.add_argument("--off", action="store_true",
+                    help="remote-control: start these agents without Remote Control")
     rs = cmd("runtime", "Move this Ship's agents to herdr-core, rolling back on any failure. "
                         "Classic herdr is deprecated: a switch back to it is refused (a Ship "
                         "already on herdr can still be put right with switch herdr).")
@@ -304,11 +309,17 @@ def cmd_set(ctx: Context, args) -> dict:
     new_ship = shiptoml.ShipToml(new)
     applied, messages = apply.apply(ctx, new_ship)
     messages = messages or ["Saved and applied."]
-    if (current.claude["remote_control"] == "on") != (new_ship.claude["remote_control"] == "on"):
+    if _rc_effect(current) != _rc_effect(new_ship):
         messages.append(RC_CHANGE_NOTE.format(ship=new_ship.name))
     if current.claude["session_prefix"] != new_ship.claude["session_prefix"]:
         messages.append(PREFIX_CHANGE_NOTE.format(ship=new_ship.name))
     return result("set", changed=changed + applied, messages=messages)
+
+
+def _rc_effect(ship: shiptoml.ShipToml) -> str:
+    """claude.remote_control as it acts ("blocked" is "off")."""
+    value = ship.claude["remote_control"]
+    return "off" if value in naming.RC_OFF else value
 
 
 def _check_listen(ctx: Context, current: shiptoml.ShipToml, new: dict) -> None:
@@ -391,7 +402,7 @@ def cmd_autostart(ctx: Context, args) -> dict:
 def cmd_agent(ctx: Context, args) -> dict:
     ship = shiptoml.load(ctx.paths)
     if args.action == "primary":
-        if args.everyone or args.mode or args.fresh or args.force:
+        if args.everyone or args.mode or args.fresh or args.force or args.off:
             raise CtlError("usage", "agent primary takes one name, or --clear")
         if args.clear == bool(args.names) or len(args.names) > 1:
             raise CtlError("usage", "agent primary takes one name, or --clear")
@@ -400,6 +411,14 @@ def cmd_agent(ctx: Context, args) -> dict:
         return result("agent", changed=changed, messages=messages, data=data)
     if args.clear:
         raise CtlError("usage", "--clear goes with agent primary")
+    if args.action == "remote-control":
+        if args.everyone or args.mode or args.fresh or args.force or not args.names:
+            raise CtlError("usage", "agent remote-control takes names, and --off to turn it off")
+        data, changed, messages = agent_record.set_remote_control(
+            ctx, ship, list(dict.fromkeys(args.names)), not args.off)
+        return result("agent", changed=changed, messages=messages, data=data)
+    if args.off:
+        raise CtlError("usage", "--off goes with agent remote-control")
     if args.action == "forget":
         if args.everyone or args.mode or args.fresh or args.force:
             raise CtlError("usage", "agent forget takes only names")

@@ -111,6 +111,7 @@ class SimShip:
         self.calls = []
         self.allow_bypass = True
         self.working = set()  # agents herdr reports as working
+        self.remote_control: dict[str, bool] = {}  # agent remote-control, as last set
         self.ctl_version = 1  # 0: tooling from before `ship-ctl agent`
         self.recorded = False  # tooling with the agent record (status agent_record)
         self.relaunching = {}  # recorded agents not running now; they come back at boot
@@ -251,6 +252,19 @@ class SimShip:
         if not self.ctl_version:
             return 2, json.dumps(ctl_result("status", ok=False, error={
                 "code": "usage", "message": "argument COMMAND: invalid choice: 'agent'"})), ""
+        if argv[0] == "remote-control":
+            names = [a for a in argv[1:] if not a.startswith("--")]
+            if any(n not in self.agents for n in names):
+                return 1, json.dumps(ctl_result("agent", ok=False, error={
+                    "code": "invalid-input", "message": "not in the agent record"})), ""
+            on = "--off" not in argv
+            self.remote_control.update(dict.fromkeys(names, on))
+            doc = ctl_result("agent", data={"remote_control": dict.fromkeys(names, on)},
+                             changed=[f"remote_control {'on' if on else 'off'}: {n}"
+                                      for n in names])
+            doc["messages"] = [f"{', '.join(names)} gets Remote Control from the next time "
+                               "the Ship starts it."]
+            return 0, json.dumps(doc), ""
         assert argv[0] == "restart"
         mode = argv[argv.index("--mode") + 1] if "--mode" in argv else None
         names = [a for a in argv[1:] if not a.startswith("--") and a != mode]
@@ -1636,3 +1650,44 @@ def test_cli_runtime(app, world):
     code, out, _ = app.run("runtime", "ship-01", "herdr", "--json")
     assert code == 1 and json.loads(out)[0]["data"]["outcome"] == "refused"
     assert world.sims["ship-01"].runtime == "core"
+
+
+def test_agent_remote_control_asks_the_ship_and_reports_it(world):
+    sim = world.sims["ship-01"]
+    outcome = ops.set_agent_remote_control(world.fleet, world.ship("ship-01"), ["main"], True)
+    assert outcome.ok and outcome.summary == "Remote Control on for main"
+    assert outcome.data == {"remote_control": {"main": True}}
+    call = next(c for c in sim.calls if c[3:4] == ["agent"])
+    assert call[3:] == ["agent", "remote-control", "main", "--json"]
+    outcome = ops.set_agent_remote_control(world.fleet, world.ship("ship-01"), ["main"], False)
+    assert outcome.ok and sim.remote_control == {"main": False}
+    assert [c for c in sim.calls if c[3:4] == ["agent"]][-1][3:] == [
+        "agent", "remote-control", "main", "--off", "--json"]
+    bad = ops.set_agent_remote_control(world.fleet, world.ship("ship-01"), ["nobody"], True)
+    assert not bad.ok and "not in the agent record" in bad.summary
+
+
+@pytest.mark.parametrize("agents,why", [([], "Which agents"), (["Main!"], "not an agent name")])
+def test_agent_remote_control_checks_its_arguments_first(world, agents, why):
+    with pytest.raises(FleetError, match=why):
+        ops.set_agent_remote_control(world.fleet, world.ship("ship-01"), agents, True)
+    assert not world.sims["ship-01"].calls
+
+
+def test_agent_remote_control_on_older_tooling_says_to_update(world):
+    world.sims["ship-01"].ctl_version = 0
+    with pytest.raises(FleetError) as exc:
+        ops.set_agent_remote_control(world.fleet, world.ship("ship-01"), ["main"], True)
+    assert "cannot choose Remote Control per agent yet" in exc.value.message
+    assert exc.value.hint == "Update it first: ship-fleet update ship-01"
+
+
+def test_cli_agent_remote_control(app, world):
+    code, out, err = app.run("agent", "remote-control", "ship-01", "main", "--off")
+    assert code == 0, err
+    assert "ship-01: Remote Control off for main" in out
+    assert world.sims["ship-01"].remote_control == {"main": False}
+    code, _, err = app.run("agent", "remote-control", "ship-01", "main", "--fresh")
+    assert code == 1 and "takes agent names" in err
+    code, _, err = app.run("agent", "restart", "ship-01", "main", "--off")
+    assert code == 1 and "--off goes with agent remote-control" in err

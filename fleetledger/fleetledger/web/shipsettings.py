@@ -43,7 +43,8 @@ def _modes() -> tuple[tuple[str, str], ...]:
 GROUPS: tuple[tuple[str, tuple[Field, ...]], ...] = (
     ("Claude Code", (
         Field("remote_control", "Remote Control",
-              (("on", "on"), ("off", "off"), ("blocked", "blocked"))),
+              (("on", "on: autostart agents, and agents you turn on"),
+               ("all", "all: every Claude session"), ("off", "off"), ("blocked", "blocked"))),
         Field("default_mode", "Default permission mode", _modes()),
         Field("allow_bypass", "Allow bypassPermissions", BOOL),
         Field("update_channel", "Update channel", (("latest", "latest"), ("stable", "stable"))),
@@ -144,6 +145,15 @@ def start_mode(view: Any, name: str) -> str | None:
             return entry["mode"]
     default = (reported.get("claude") or {}).get("default_mode")
     return default or ((doc or {}).get("claude") or {}).get("default_mode")
+
+
+def agent_remote_control(view: Any) -> dict[str, bool]:
+    """{agent name: whether the Ship's agent record gives it Remote Control} for the
+    recorded agents of a Ship that reports it (older tooling: empty)."""
+    doc = view.status if view is not None else None
+    return {a["name"]: a["remote_control"]
+            for a in ((doc or {}).get("agent_record") or {}).get("agents") or []
+            if isinstance(a.get("remote_control"), bool)}
 
 
 def recorded_not_running(view: Any) -> list[dict[str, Any]]:

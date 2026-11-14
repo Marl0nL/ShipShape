@@ -46,7 +46,13 @@ test("home view lists other agents, sign-ins by account name, tools and attentio
     state: "ok",
     account: "example-work",
   });
-  assert.deepEqual(view.claude, { remote_control: "on", default_mode: "auto", bypass_allowed: false });
+  assert.deepEqual(view.claude, {
+    remote_control: "on (autostart agents and agents turned on; not Claude sessions they start)",
+    default_mode: "auto",
+    bypass_allowed: false,
+  });
+  assert.equal(homeView({ ...running, claude: { ...running.claude, remote_control: "off" } },
+    undefined, {}).claude.remote_control, "off");
   assert.deepEqual(view.attention, ["Agent 'main' is waiting for you."]);
   assert.equal(view.tools[0].id, "example-cli");
 });

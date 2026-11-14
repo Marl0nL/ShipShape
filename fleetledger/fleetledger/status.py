@@ -45,6 +45,24 @@ def runtime_of(doc: dict[str, Any] | None) -> str:
     return ((doc or {}).get("herdr") or {}).get("runtime") or "herdr"
 
 
+def remote_control_agents(doc: dict[str, Any] | None) -> int:
+    """How many running Claude agents the Ship gives Remote Control: "all", every one;
+    "on", the running agents its agent record gives it to (tooling that does not report
+    that per agent gave it to every session); "off", none."""
+    doc = doc or {}
+    value = (doc.get("claude") or {}).get("remote_control")
+    running = [a for a in (doc.get("herdr") or {}).get("agents") or []
+               if a.get("kind") == "claude"]
+    if value == "all":
+        return len(running)
+    if value != "on":
+        return 0
+    recorded = ((doc.get("agent_record") or {}).get("agents")) or []
+    if not any("remote_control" in a for a in recorded):
+        return len(running)
+    return sum(1 for a in recorded if a.get("remote_control") and a.get("state") == "running")
+
+
 def herdr_restart_pending(doc: dict[str, Any] | None) -> bool:
     """True when the Ship reports herdr-restart-pending and herdr runs its agents: a new
     herdr takes over only after a reboot. A herdr-core Ship's tooling from before

@@ -269,7 +269,7 @@
       "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
       "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
     },
-    "remoteControl": { "enum": ["on", "off", "blocked"] },
+    "remoteControl": { "enum": ["on", "all", "off", "blocked"] },
     "updateChannel": { "enum": ["latest", "stable"] },
     "githubScope": {
       "enum": ["workflow", "project", "write:packages"],
@@ -282,7 +282,7 @@
         "remote_control": {
           "$ref": "#/$defs/remoteControl",
           "default": "on",
-          "description": "on: remoteControlAtStartup true. off: remoteControlAtStartup false and disableRemoteControl true, which also keeps resumed sessions from reconnecting. blocked: an older name for off, identical to it; still accepted."
+          "description": "on: Remote Control only for the agents the Ship starts that its agent record gives it to (each launched with --remote-control): autostart agents, and others turned on with ship-ctl agent remote-control; remoteControlAtStartup false, so other sessions, such as those an agent starts, do not get it. all: every Claude session on the Ship (remoteControlAtStartup true), which is what on meant before. off: remoteControlAtStartup false and disableRemoteControl true, which also keeps resumed sessions from reconnecting. blocked: an older name for off, identical to it; still accepted."
         },
         "default_mode": { "$ref": "#/$defs/permissionMode", "default": "auto" },
         "allow_bypass": {

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from ship_harness import LEDGER, assert_valid
+from ship_harness import LEDGER, RC, assert_valid
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def test_restart_continues_the_conversation_in_the_new_default_mode(running):
     main = ship.agent("main")
     new = main["address"]
     assert new != old and main["cwd"] == "/home/agent/work/main"
-    assert main["claude_args"] == ["--dangerously-skip-permissions", "--resume", session]
+    assert main["claude_args"] == ["--dangerously-skip-permissions", "--resume", session, RC]
     # It was asked to exit, after a Ctrl+C that clears a half-typed line.
     h = hc(ship)
     assert [old, "ctrl+c"] in h["keys"] and [old, "/exit"] in h["sent"]
@@ -93,7 +93,7 @@ def test_restart_continues_the_conversation_in_the_new_default_mode(running):
     # ...so the next boot resumes it in that mode, in its new kept terminal.
     ship.reboot()
     ship.ctl("refresh")
-    assert args(ship, "main") == ["--dangerously-skip-permissions", "--resume", session]
+    assert args(ship, "main") == ["--dangerously-skip-permissions", "--resume", session, RC]
     assert ship.place("main") == new
 
 
@@ -102,11 +102,11 @@ def test_restart_in_a_chosen_mode_comes_back_in_it_after_a_reboot(running):
     session = sid(ship, "grinder")
     rc, doc, _ = ship.ctl("agent", "restart", "grinder", "--mode", "plan", "--json")
     assert rc == 0, doc
-    assert args(ship, "grinder") == ["--permission-mode", "plan", "--resume", session]
+    assert args(ship, "grinder") == ["--permission-mode", "plan", "--resume", session, RC]
     assert status_modes(ship)["grinder"] == "plan"
     ship.reboot()
     ship.ctl("refresh")
-    assert args(ship, "grinder") == ["--permission-mode", "plan", "--resume", session]
+    assert args(ship, "grinder") == ["--permission-mode", "plan", "--resume", session, RC]
     assert status_modes(ship)["grinder"] == "plan"
 
 
@@ -155,7 +155,7 @@ def test_a_waiting_agent_has_its_question_dismissed_and_says_so(running):
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 0, doc
     assert any("its open question was dismissed" in m for m in doc["messages"])
-    assert args(ship, "main") == ["--permission-mode", "auto", "--resume", sid(ship, "main")]
+    assert args(ship, "main") == ["--permission-mode", "auto", "--resume", sid(ship, "main"), RC]
 
 
 def test_fresh_starts_a_new_conversation_with_the_same_name(running):
@@ -165,7 +165,7 @@ def test_fresh_starts_a_new_conversation_with_the_same_name(running):
     assert rc == 0, doc
     new = ship.session("main")
     assert args(ship, "main") == ["--permission-mode", "plan", "--name", "ship-01-main",
-                                  "--session-id", new]
+                                  "--session-id", new, RC]
     assert new != old
     assert ledger(ship)[new] == "plan"
     assert ship.record()["agents"]["main"]["session"] == new
@@ -224,7 +224,7 @@ def test_ctrl_c_twice_is_the_fallback_when_exit_is_ignored(running):
     calls = ship.calls("hc")
     assert ["hc", "keys", "--json", old, "ctrl+c"] in calls
     assert ["hc", "keys", "--json", old, "ctrl+c", "ctrl+c"] in calls
-    assert args(ship, "main") == ["--permission-mode", "auto", "--resume", sid(ship, "main")]
+    assert args(ship, "main") == ["--permission-mode", "auto", "--resume", sid(ship, "main"), RC]
 
 
 def test_unknown_names_and_bad_arguments(running):
@@ -263,7 +263,7 @@ def test_the_session_comes_from_the_record_when_the_core_does_not_report_it(runn
     forget_core_session(ship, "main")
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 0, doc
-    assert args(ship, "main") == ["--permission-mode", "auto", "--resume", session]
+    assert args(ship, "main") == ["--permission-mode", "auto", "--resume", session, RC]
 
 
 def test_without_a_known_session_only_a_fresh_start_works(running):
@@ -331,7 +331,7 @@ def test_an_agent_that_stops_but_does_not_start_again_says_how_to_start_it(runni
     assert doc["data"]["skipped"] == [{"name": "main", "reason": (
         "stopped, but did not start again: spawn_failed")}]
     assert any(m.endswith("Start it in its pane with: claude --permission-mode plan "
-                          f"--resume {session}") for m in doc["messages"])
+                          f"--resume {session} --remote-control") for m in doc["messages"])
     assert len(runs(ship)) == 3  # two autostart launches, then one try (no retry on core)
 
 

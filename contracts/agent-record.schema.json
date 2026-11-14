@@ -204,6 +204,10 @@
           ],
           "description": "The name it was launched with (claude --name)."
         },
+        "remote_control": {
+          "type": ["boolean", "null"],
+          "description": "The choice made with ship-ctl agent remote-control: whether its launches carry --remote-control while claude.remote_control is \"on\". null (and absent, in records written before it existed): the default, which is on for an agent in ship.toml [[autostart]] and off for any other (an adopted one)."
+        },
         "origin": {
           "enum": [
             "autostart",

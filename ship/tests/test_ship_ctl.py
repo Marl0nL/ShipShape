@@ -196,7 +196,7 @@ def test_apply_writes_settings_and_is_idempotent(ship):
     assert "/etc/claude-code/managed-settings.json" in doc["changed"]
     managed = ship.json("/etc/claude-code/managed-settings.json")
     assert managed == {
-        "remoteControlAtStartup": True,
+        "remoteControlAtStartup": False,
         "permissions": {"defaultMode": "auto"},
         "autoUpdatesChannel": "latest",
         "minimumVersion": "2.1.284",
@@ -289,7 +289,10 @@ def test_set_changes_and_applies(ship):
 @pytest.mark.parametrize(
     "value,expected",
     [
-        ("on", {"remoteControlAtStartup": True}),
+        # on: only the Ship's own agents, launched with --remote-control; no session
+        # starts with it, and nothing disables it (that would refuse the flag too).
+        ("on", {"remoteControlAtStartup": False}),
+        ("all", {"remoteControlAtStartup": True}),
         # Phase 0: startup false alone lets resumed sessions reconnect, so off must
         # also disable Remote Control. blocked is the older name for the same thing.
         ("off", {"remoteControlAtStartup": False, "disableRemoteControl": True}),
@@ -304,6 +307,24 @@ def test_remote_control_managed_settings(ship, value, expected):
     assert got == expected
     # The ship starts with "on": only a real change warns that sessions must restart.
     assert any("restart" in m for m in doc["messages"]) == (value != "on")
+
+
+def test_remote_control_off_is_written_as_before(ship):
+    """off: the managed settings, byte for byte, as before "on" was narrowed."""
+    rc, doc, _ = ship.ctl("set", "claude.remote_control=off", "--json")
+    assert rc == 0, doc
+    assert ship.p("/etc/claude-code/managed-settings.json").read_text() == (
+        '{\n  "remoteControlAtStartup": false,\n  "disableRemoteControl": true,\n'
+        '  "permissions": {\n    "defaultMode": "auto"\n  },\n'
+        '  "autoUpdatesChannel": "latest",\n  "minimumVersion": "2.1.284",\n'
+        '  "env": {\n    "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": "ship-01"\n  }\n}\n')
+
+
+def test_remote_control_on_to_all_says_how_it_reaches_sessions(ship):
+    rc, doc, _ = ship.ctl("set", "claude.remote_control=all", "--json")
+    assert rc == 0, doc
+    note = next(m for m in doc["messages"] if "restart" in m)
+    assert "Sessions the Ship did not start" in note
 
 
 def test_remote_control_off_to_blocked_is_no_change(ship):

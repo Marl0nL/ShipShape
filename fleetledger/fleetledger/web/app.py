@@ -170,6 +170,7 @@ def make_env() -> Environment:
         setting_now=shipsettings.current,
         setting_older=shipsettings.older_hint,
         restartable=shipsettings.restartable,
+        agent_remote_control=shipsettings.agent_remote_control,
         restartable_by_name=lambda view: {r["name"]: r for r in [
             *shipsettings.restartable(view), *shipsettings.recorded_not_running(view)]},
         human_bytes=net.human_bytes,
@@ -178,6 +179,7 @@ def make_env() -> Environment:
         RANGE_LABELS=dashboard.RANGE_LABELS,
         op_confirm=dashboard.op_confirm,
         runtime_of=status_mod.runtime_of,
+        remote_control_agents=status_mod.remote_control_agents,
         RUNTIME_LABELS=status_mod.RUNTIME_LABELS,
         waiting_reason=status_mod.waiting_reason,
         ago=signinlist.ago,
@@ -639,6 +641,21 @@ async def ship_agents(request: Request) -> Response:
         ui.flash(session, "bad", exc.message)
         return back(f"/ships/{name}")
     outcome = await run_in_threadpool(actions.set_settings, ui.app, name, [pair])
+    _flash_outcome(ui, session, outcome)
+    await run_in_threadpool(ui.fleet.poll, [name])
+    return back(f"/ships/{name}")
+
+
+async def ship_agent_remote_control(request: Request) -> Response:
+    """Give one recorded agent Remote Control from its next start by the Ship, or take
+    it away (ship-fleet agent remote-control), from its row in the agent list."""
+    ui, name, fields, session = await ship_form(request)
+    agent, value = one(fields, "agent"), one(fields, "remote_control")
+    if value not in ("on", "off") or not ops.AGENT_NAME_RE.match(agent or ""):
+        ui.flash(session, "bad", "Remote Control: not one of the choices.")
+        return back(f"/ships/{name}")
+    outcome = await run_in_threadpool(actions.set_agent_remote_control, ui.app, name, agent,
+                                      value == "on")
     _flash_outcome(ui, session, outcome)
     await run_in_threadpool(ui.fleet.poll, [name])
     return back(f"/ships/{name}")
@@ -1364,6 +1381,8 @@ def create_app(app: Any, gate: Gate, *, fleet: Fleet | None = None,
         Route("/ships/{name}/tags", ship_tags, methods=["POST"]),
         Route("/ships/{name}/agents", ship_agents, methods=["POST"]),
         Route("/ships/{name}/agents/restart", ship_agent_restart, methods=["POST"]),
+        Route("/ships/{name}/agents/remote-control", ship_agent_remote_control,
+              methods=["POST"]),
         Route("/ships/{name}/tools", ship_tools, methods=["POST"]),
         Route("/ships/{name}/size", ship_size, methods=["POST"]),
         Route("/ships/{name}/signins", ship_signins, methods=["POST"]),

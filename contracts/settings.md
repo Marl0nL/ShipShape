@@ -22,13 +22,52 @@ Schemas: `ship.toml.schema.json`, `ships.toml.schema.json`. Examples:
 
 | ship.toml | Managed setting |
 |---|---|
-| `claude.remote_control = "on"` | `"remoteControlAtStartup": true` |
+| `claude.remote_control = "on"` (the default) | `"remoteControlAtStartup": false`; the agents the agent record gives it to get `--remote-control` at launch (see "Remote Control") |
+| `claude.remote_control = "all"` | `"remoteControlAtStartup": true` (every session, as "on" was before) |
 | `claude.remote_control = "off"` | `"remoteControlAtStartup": false` and `"disableRemoteControl": true` |
 | `claude.remote_control = "blocked"` | the same as `"off"` (an older name, still accepted) |
 | `claude.default_mode` | `"permissions": { "defaultMode": ... }` |
 | `claude.allow_bypass = false` | `"permissions": { "disableBypassPermissionsMode": "disable" }` |
 | `claude.update_channel` | `"autoUpdatesChannel"`, plus `"minimumVersion"` from `versions.toml` `[claude].minimum_version` |
 | `claude.session_prefix` (default: the Ship's name) | `"env": { "CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX": ... }` (a fallback only; see "Session names") |
+
+#### Remote Control
+
+"on" gives Remote Control to the agents the Ship starts and that its agent record
+gives it to, and to no other session. The managed `remoteControlAtStartup` false
+keeps it off for every session (a user `true`, from `/config`, cannot override a
+managed value), and a launch ship-ctl makes (autostart, the resume at boot, a
+restart after a crash, `agent restart`, `runtime switch`) ends with
+`--remote-control` when the record's `remote_control` is true for that agent
+(`ship/lib/shipctl/naming.py`). Claude Code documents the flag as turning it on
+for one session even when `remoteControlAtStartup` is false; with `--resume` it
+reattaches the session's saved Remote Control session. "on" must not set
+`disableRemoteControl`: it refuses the flag too.
+
+Which agents the record gives it to:
+
+- By default, the agents in ship.toml `[[autostart]]`, from their first start
+  (an adopted agent later added there gets it too).
+- Not by default: adopted agents (started some other way, by a person or by
+  another agent, then picked up from the runtime). The Ship cannot tell reliably
+  whether a session it picks up has Remote Control: a person can turn it on or
+  off inside the session at any time (`/remote-control`), which leaves no trace
+  the Ship can read, so it does not guess.
+- `ship-ctl agent remote-control NAME` (`ship-fleet agent remote-control SHIP
+  NAME`, or the agent list in the web UI) records a choice for one agent that
+  overrides the default; `--off` turns it off. An adopted agent that exits on
+  purpose leaves the record, and its choice with it: started by hand again, it is
+  adopted afresh, without Remote Control.
+- Records written before this setting existed hold no choice: the default
+  applies.
+
+The change reaches an agent the next time the Ship starts it (`agent restart`
+brings it now, continuing the conversation). A session that had Remote Control
+and is resumed by hand reconnects to it. Workers an agent runs as its own child
+processes are never recorded and never get it. Updating from a version where "on"
+meant every session: running sessions keep theirs until they end; an adopted
+agent the Ship starts again comes back without it until it is turned on; "all" is
+the old behaviour.
 
 "off" needs `disableRemoteControl`: `remoteControlAtStartup` governs only new
 sessions, and a resumed session reconnects to the Remote Control session saved

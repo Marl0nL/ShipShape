@@ -12,7 +12,8 @@
 
 - **Ships** are Ubuntu VMs, created from Ubuntu's own cloud image plus a small
   seed. They boot herdr, resume their Claude Code agents on their own after a
-  reboot, and can make every Claude session available through Remote Control.
+  reboot, and make their agents available through Remote Control (or every
+  Claude session on the Ship, if you choose).
 - **FleetLedger** (`ship-fleet`) runs on your computer. It creates Ships, shows
   their state, and signs them in to Claude Code, gcloud and GitHub by relaying
   each tool's no-browser sign-in, so tokens never leave the Ship.

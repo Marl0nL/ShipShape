@@ -49,7 +49,7 @@ PREFIX_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 # `ship-fleet set` short keys -> ship-ctl set keys, with allowed values (None: free,
 # checked by a pattern below or by the Ship's schema).
 SET_KEYS: dict[str, tuple[str, tuple[str, ...] | None]] = {
-    "remote_control": ("claude.remote_control", ("on", "off", "blocked")),
+    "remote_control": ("claude.remote_control", ("on", "all", "off", "blocked")),
     "default_mode": ("claude.default_mode", MODES),
     "allow_bypass": ("claude.allow_bypass", ("true", "false")),
     "update_channel": ("claude.update_channel", ("latest", "stable")),
@@ -933,6 +933,35 @@ def restart_agents(
     details += [f"{s['name']}: {s['reason']}" for s in data.get("skipped") or []
                 if not any(d.startswith(f"{s['name']} ") for d in details)]
     return Outcome(ship.name, result.ok, summary, details, data)
+
+
+def set_agent_remote_control(fleet: Fleet, ship: Ship, agents: Sequence[str], on: bool
+                             ) -> Outcome:
+    """Give recorded agents on one Ship Remote Control from their next start by the
+    Ship, or take it away (ship-ctl agent remote-control). With remote_control "on"
+    only the agents the record gives it to are launched with it: autostart agents
+    from the start, an adopted one once this turns it on."""
+    agents = list(dict.fromkeys(agents))
+    if not agents:
+        raise FleetError("Which agents? Give their names.")
+    bad = [a for a in agents if not AGENT_NAME_RE.match(a)]
+    if bad:
+        raise FleetError(f"'{bad[0]}' is not an agent name.")
+    ctl = ShipCtl(fleet.ssh(), ship)
+    try:
+        result = ctl.call("agent", "remote-control", *agents, *([] if on else ["--off"]),
+                          partial=True)
+    except ShipCtlError as exc:
+        if exc.code == "usage" and "invalid choice" in exc.message:
+            raise FleetError(f"{ship.name}'s tooling cannot choose Remote Control per agent "
+                             "yet.", hint=f"Update it first: ship-fleet update {ship.name}"
+                             ) from exc
+        raise
+    if not result.ok:
+        return Outcome(ship.name, False, (result.error or {}).get("message", "failed"),
+                       list(result.messages), result.data or {})
+    summary = f"Remote Control {'on' if on else 'off'} for {', '.join(agents)}"
+    return Outcome(ship.name, True, summary, list(result.messages), result.data or {})
 
 
 # --- runtime switch ---------------------------------------------------------------
