@@ -1,0 +1,130 @@
+{
+  "id": "root",
+  "type": "column",
+  "titlebar": "none",
+  "traffic_lights": [
+    14,
+    13
+  ],
+  "theme": "shipshape",
+  "background": "canvas",
+  "terminal_padding": [
+    10,
+    6
+  ],
+  "preview": "layouts/shipshape.svg",
+  "children": [
+    {
+      "id": "helm",
+      "type": "block",
+      "size": {
+        "px": 40
+      },
+      "window_drag": true,
+      "content": {
+        "mod": "shipshape",
+        "props": {
+          "role": "helm"
+        }
+      }
+    },
+    {
+      "id": "sea",
+      "type": "row",
+      "children": [
+        {
+          "id": "chartroom",
+          "type": "column",
+          "size": {
+            "px": 460
+          },
+          "min": 220,
+          "max": 1600,
+          "divider": {
+            "width": 1,
+            "color": "border"
+          },
+          "children": [
+            {
+              "id": "chart",
+              "type": "block",
+              "content": {
+                "mod": "shipshape",
+                "props": {
+                  "role": "chart"
+                }
+              }
+            },
+            {
+              "id": "muster",
+              "type": "block",
+              "size": {
+                "px": 210
+              },
+              "min": 60,
+              "content": {
+                "mod": "shipshape",
+                "props": {
+                  "role": "muster"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "console",
+          "type": "stack",
+          "active": "main",
+          "children": [
+            {
+              "id": "main",
+              "type": "block",
+              "padding": [
+                0,
+                6
+              ],
+              "content": {
+                "tab": "active",
+                "pane": {
+                  "header": {
+                    "content": {
+                      "mod": "shipshape",
+                      "props": {
+                        "role": "pane"
+                      }
+                    },
+                    "height": 30,
+                    "position": "top",
+                    "reveal": "always"
+                  },
+                  "background": "background",
+                  "border": {
+                    "width": 1,
+                    "color": "border"
+                  },
+                  "focus": {
+                    "width": 1,
+                    "color": "accent"
+                  },
+                  "radius": 8,
+                  "gap": 6,
+                  "lone": true
+                }
+              }
+            },
+            {
+              "id": "overview",
+              "type": "block",
+              "content": {
+                "mod": "shipshape",
+                "props": {
+                  "role": "overview"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
