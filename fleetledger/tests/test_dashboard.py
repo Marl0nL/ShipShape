@@ -259,6 +259,11 @@ def test_summary_counts(store):
     assert s["working"] != s["waiting"]  # the fixture can tell them apart
     assert s["remote_control"] == (len(agents) if RUNNING["claude"]["remote_control"] == "on"
                                    else 0)
+    # "all" (every session) counts too; "off" and its older name "blocked" do not.
+    for value, count in (("all", len(agents)), ("off", 0), ("blocked", 0)):
+        doc["claude"]["remote_control"] = value
+        views[0] = view(store, "ship-01", doc)
+        assert dashboard.summary(views, alerts, store.load())["remote_control"] == count
     assert s["reboots"] == 1 and (s["os_updates"], s["os_update_ships"]) == (4, 1)
     assert s["levels"]["critical"] >= 1
     assert s["overlay"] is None
@@ -464,3 +469,21 @@ def test_a_pending_core_restart_offers_a_reboot_that_is_not_urgent(store):
     assert "herdr saves" not in action.confirm.text
     herdr = dashboard.action_for("herdr-restart-pending", "ship-01", view(store), None)
     assert "herdr saves" in herdr.confirm.text  # a herdr Ship: as before
+
+
+def test_remote_control_agents_counts_only_those_given_it():
+    from fleetledger.status import remote_control_agents
+
+    doc = copy.deepcopy(RUNNING)
+    running = sum(a["kind"] == "claude" for a in doc["herdr"]["agents"])
+    assert remote_control_agents(doc) == running  # "on", tooling without per-agent records
+    doc["agent_record"] = {"runtime": "herdr", "resume": None, "agents": [
+        {"name": "main", "state": "running", "remote_control": True},
+        {"name": "builder", "state": "running", "remote_control": False},
+        {"name": "old", "state": "stopped", "remote_control": True}]}
+    assert remote_control_agents(doc) == 1
+    doc["claude"]["remote_control"] = "all"
+    assert remote_control_agents(doc) == running
+    for value in ("off", "blocked"):
+        doc["claude"]["remote_control"] = value
+        assert remote_control_agents(doc) == 0

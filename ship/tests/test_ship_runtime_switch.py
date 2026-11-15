@@ -14,7 +14,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ship_harness import LEDGER, assert_valid
+from ship_harness import LEDGER, RC, assert_valid
 
 LAUNCHER = "/opt/shipshape/bin/agent-launch"
 
@@ -76,7 +76,7 @@ def intact(ship, runtime: str, expect: dict[str, tuple[str, str]],
             assert c[name][0]["session"] == session
             args = c[name][0]["claude_args"]
         if name not in never_stopped:
-            assert args[-2:] == ["--resume", session], args
+            assert args[-3:] == ["--resume", session, RC], args
         flag = (["--dangerously-skip-permissions"] if mode == "bypassPermissions"
                 else ["--permission-mode", mode])
         assert args[:len(flag)] == flag, args
@@ -407,7 +407,7 @@ def test_an_agent_not_running_is_carried_over(herdr_ship):
     assert [a["name"] for a in doc["data"]["agents"]] == ["main"]
     assert ship.record()["agents"]["grinder"]["place"] is None
     ship.ctl("refresh")
-    assert core_agents(ship)["grinder"][0]["claude_args"][-2:] == ["--resume", session]
+    assert core_agents(ship)["grinder"][0]["claude_args"][-3:] == ["--resume", session, RC]
     assert len(core_agents(ship)["grinder"]) == 1 and "grinder" not in herdr_agents(ship)
 
 
@@ -519,7 +519,8 @@ def test_an_agent_stuck_on_the_target_is_never_started_twice(herdr_ship):
     assert rc != 0 and doc["data"]["outcome"] == "rollback-failed", out
     assert "grinder is still on core" in doc["data"]["problems"]
     assert "grinder" not in herdr_agents(ship) and len(core_agents(ship)["grinder"]) == 1
-    assert herdr_agents(ship)["main"]["args"][-2:] == ["--resume", expect["main"][0]]
+    assert herdr_agents(ship)["main"]["args"][-3:] == ["--resume", expect["main"][0],
+                                                     RC]
     assert not ship.scenario()["hc"].get("forbidden")
     doc = ship.status()
     assert doc["agent_record"]["last_switch"]["outcome"] == "rollback-failed"
@@ -687,7 +688,8 @@ def test_a_start_still_on_its_way_on_the_core_is_not_doubled(herdr_ship):
     assert "grinder is still on core" in doc["data"]["problems"]
     assert any("grinder's start on core had been typed" in m for m in doc["messages"])
     assert "grinder" not in herdr_agents(ship)
-    assert herdr_agents(ship)["main"]["args"][-2:] == ["--resume", expect["main"][0]]
+    assert herdr_agents(ship)["main"]["args"][-3:] == ["--resume", expect["main"][0],
+                                                     RC]
     assert not ship.scenario()["hc"].get("forbidden")
 
 
@@ -713,3 +715,27 @@ def test_refuses_an_agent_whose_folder_is_gone(herdr_ship):
     assert rc != 0 and doc["error"]["code"] == "agent-failed"
     assert f"grinder: its folder {cwd} is not there" in doc["error"]["message"]
     untouched(ship, before)
+
+
+def test_the_switch_starts_each_agent_with_remote_control_as_its_record_says(herdr_ship):
+    """Autostart agents (main on, grinder turned off), an adopted agent turned on (lead)
+    and one left at its default, off (worker)."""
+    from test_ship_herdr_legacy import herdr_add_live
+
+    ship = herdr_ship
+    for name, pane in (("lead", "w5:p1"), ("worker", "w6:p1")):
+        ship.p(f"/home/agent/work/{name}").mkdir(parents=True)
+        herdr_add_live(ship, name, f"sess-{name}", f"/home/agent/work/{name}", pane, "auto")
+    ship.ctl("refresh")
+    assert {n: e["origin"] for n, e in ship.record()["agents"].items()} == {
+        "main": "autostart", "grinder": "autostart", "lead": "adopted", "worker": "adopted"}
+    for argv in (["grinder", "--off"], ["lead"]):
+        rc, doc, _ = ship.ctl("agent", "remote-control", *argv, "--json")
+        assert rc == 0, doc
+    rc, doc, out = switch(ship, "core")
+    assert rc == 0 and doc["data"]["outcome"] == "switched", out
+    args = {n: ts[0]["claude_args"] for n, ts in core_agents(ship).items()}
+    assert args["main"][-1] == RC and args["lead"] == ["--permission-mode", "auto",
+                                                        "--resume", "sess-lead", RC]
+    assert RC not in args["grinder"]
+    assert args["worker"] == ["--permission-mode", "auto", "--resume", "sess-worker"]

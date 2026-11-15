@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from ship_harness import LEDGER, RUNTIME_LINE, SHIP, assert_valid, provision
+from ship_harness import LEDGER, RC, RUNTIME_LINE, SHIP, assert_valid, provision
 from test_ship_converge import pack
 
 sys.path.insert(0, str(SHIP / "lib"))
@@ -150,7 +150,7 @@ def test_the_session_comes_from_the_record_when_herdr_does_not_report_it(agents_
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 0, doc
     assert agents_agent(ship, "main")["args"] == ["--permission-mode", "auto",
-                                                  "--resume", "sess-main"]
+                                                  "--resume", "sess-main", RC]
 
 
 def test_without_a_known_session_only_a_fresh_start_works(agents_running):
@@ -248,7 +248,7 @@ def test_a_restored_pane_that_is_gone_gets_a_new_workspace(herdr_started):
     ship.set(herdr=s["herdr"])  # herdr lost main's pane (its layout was not saved)
     ship.ctl("refresh")
     main = ship.agent("main")
-    assert main["args"] == ["--permission-mode", "auto", "--resume", "sess-main"]
+    assert main["args"] == ["--permission-mode", "auto", "--resume", "sess-main", RC]
     assert main["pane_id"] == "w3:p1" and main["cwd"] == "/home/agent/work/main"
     assert ship.agent("grinder")["pane_id"] == "w2:p1"
 
@@ -268,7 +268,7 @@ def test_another_agent_in_its_old_pane_never_becomes_it(herdr_started):
     assert record["main"]["session"] == "sess-main" and record["main"]["mode"] == "auto"
     assert record["other"]["session"] == "sess-other"
     main = ship.agent("main")
-    assert main["args"] == ["--permission-mode", "auto", "--resume", "sess-main"]
+    assert main["args"] == ["--permission-mode", "auto", "--resume", "sess-main", RC]
     assert main["pane_id"] == "w3:p1"  # a new workspace, not the busy pane
     assert not [c for c in herdr_starts(ship) if "sess-other" in c]
     ship.ctl("refresh")
@@ -294,8 +294,9 @@ def test_an_unnamed_agent_in_its_pane_but_another_folder_never_becomes_it(herdr_
     ship.p("/home/agent/work/elsewhere").mkdir(parents=True)
     ship.reboot()
     ship.ctl("refresh")
+    # Adopted: no Remote Control until it is turned on.
     assert herdr_args(ship)["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x"]
-    assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--name", "ship-01-main"]
+    assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--name", "ship-01-main", RC]
     assert not [c for c in herdr_starts(ship) if c[3] == "main" and "sess-x" in c]
 
 
@@ -407,9 +408,9 @@ def test_an_update_records_what_runs_and_a_reboot_brings_it_back_in_its_modes(sh
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert herdr_args(ship) == {
-        "main": ["--permission-mode", "auto", "--resume", "sess-main"],
-        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder"],
-        "helper": ["--dangerously-skip-permissions", "--resume", "sess-helper"],
+        "main": ["--permission-mode", "auto", "--resume", "sess-main", RC],
+        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder", RC],
+        "helper": ["--dangerously-skip-permissions", "--resume", "sess-helper"],  # adopted
     }
     assert not [c for c in ship.calls("herdr") if c[1:3] == ["workspace", "create"]]
     doc = ship.status()
@@ -439,12 +440,12 @@ def test_before_the_first_reboot_an_old_agent_that_stops_is_not_started_again(sh
     assert "it started before the Ship could tell an exit from a crash" in out
     ship.reboot()
     ship.ctl("refresh")
-    assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--resume", "sess-main"]
+    assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--resume", "sess-main", RC]
     assert herdr_args(ship)["grinder"] == ["--dangerously-skip-permissions", "--name",
-                                     "ship-01-grinder"]  # afresh, as autostart did
+                                     "ship-01-grinder", RC]  # afresh, as autostart did
     ship.crash("main")  # resumed under the new hooks: now a crash is one
     ship.ctl("refresh")
-    assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--resume", "sess-main"]
+    assert herdr_args(ship)["main"] == ["--permission-mode", "auto", "--resume", "sess-main", RC]
     assert len([c for c in herdr_starts(ship) if c[3] == "main"]) == 2
 
 
@@ -764,7 +765,7 @@ def test_restart_continues_the_conversation_in_the_new_default_mode(agents_runni
     # The same pane and name, the same session, with the mode flag in front.
     main = agents_agent(ship, "main")
     assert main["pane_id"] == pane
-    assert main["args"] == ["--dangerously-skip-permissions", "--resume", "sess-main"]
+    assert main["args"] == ["--dangerously-skip-permissions", "--resume", "sess-main", RC]
     # It was asked to exit, after a Ctrl+C that clears a half-typed line.
     h = ship.scenario()["herdr"]
     assert [pane, "ctrl+c"] in h["keys"] and [pane, "/exit"] in h["prompts"]
@@ -781,7 +782,7 @@ def test_restart_continues_the_conversation_in_the_new_default_mode(agents_runni
     ship.reboot()
     ship.ctl("refresh")
     assert agents_agent(ship, "main")["args"] == ["--dangerously-skip-permissions",
-                                           "--resume", "sess-main"]
+                                           "--resume", "sess-main", RC]
     assert agents_agent(ship, "main")["pane_id"] == pane
 
 
@@ -828,7 +829,7 @@ def test_an_agent_that_stops_but_does_not_start_again_says_how_to_start_it(agent
     assert doc["data"]["skipped"] == [{"name": "main", "reason": (
         "stopped, but did not start again: agent_not_ready")}]
     assert any(m.endswith("Start it in its pane with: claude --permission-mode plan "
-                          "--resume sess-main") for m in doc["messages"])
+                          "--resume sess-main --remote-control") for m in doc["messages"])
     starts = [c for c in ship.calls("herdr") if c[1:3] == ["agent", "start"]]
     assert len(starts) == 4  # two autostart launches, then a try and one retry
 
@@ -989,8 +990,8 @@ def test_after_a_reboot_the_refresh_resumes_every_agent_in_its_folder_and_mode(h
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert herdr_args(ship) == {
-        "main": ["--permission-mode", "auto", "--resume", "sess-main"],
-        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder"],
+        "main": ["--permission-mode", "auto", "--resume", "sess-main", RC],
+        "grinder": ["--dangerously-skip-permissions", "--resume", "sess-grinder", RC],
     }
     # In the panes herdr restored, under their names: no new workspace, no first prompt.
     assert {a["name"]: a["pane_id"] for a in ship.scenario()["herdr"]["agents"]} == panes
@@ -1014,7 +1015,7 @@ def test_an_agent_that_crashed_is_started_again_in_its_pane(herdr_started):
     assert herdr_recorded(ship)["grinder"]["state"] == "starting"
     ship.ctl("refresh")
     grinder = ship.agent("grinder")
-    assert grinder["args"] == ["--dangerously-skip-permissions", "--resume", "sess-grinder"]
+    assert grinder["args"] == ["--dangerously-skip-permissions", "--resume", "sess-grinder", RC]
     assert grinder["pane_id"] == "w2:p1"
     assert herdr_recorded(ship)["grinder"]["state"] == "running"
 
@@ -1044,7 +1045,7 @@ def test_after_three_failed_tries_it_is_left_alone_with_attention(herdr_started)
     assert doc["data"]["restarted"][0]["was"] == "failed"
     assert doc["data"]["restarted"][0]["previous_mode"] == "bypassPermissions"
     assert ship.agent("grinder")["args"] == ["--permission-mode", "dontAsk",
-                                             "--resume", "sess-grinder"]
+                                             "--resume", "sess-grinder", RC]
     assert ship.record()["agents"]["grinder"]["mode"] == "dontAsk"
     assert "agent-relaunch-failed" not in {a["code"] for a in ship.status()["attention"]}
 
@@ -1062,7 +1063,7 @@ def test_a_lost_conversation_counts_as_a_failed_start(herdr_started):
         "failed": 1}
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
     assert rc == 0, doc
-    assert ship.agent("main")["args"] == ["--permission-mode", "auto", "--name", "ship-01-main"]
+    assert ship.agent("main")["args"] == ["--permission-mode", "auto", "--name", "ship-01-main", RC]
     assert ["main", "Get oriented."] in ship.scenario()["herdr"]["prompts"]
 
 

@@ -5,7 +5,7 @@ The sandbox Ship is a herdr-core Ship: agents are terminals of the fake `hc`.
 
 from __future__ import annotations
 
-from ship_harness import LAUNCHER, assert_valid
+from ship_harness import LAUNCHER, RC, assert_valid
 
 
 def started_args(ship) -> dict[str, list[str]]:
@@ -35,9 +35,9 @@ def test_autostart_starts_each_agent_in_its_mode(ship):
     assert doc["data"] == {"started": ["main", "grinder"], "skipped": []}
     assert started_args(ship) == {
         "main": ["--permission-mode", "auto", "--name", "ship-01-main",
-                 "--session-id", sid(ship, "main")],
+                 "--session-id", sid(ship, "main"), RC],
         "grinder": ["--dangerously-skip-permissions", "--name", "ship-01-grinder",
-                    "--session-id", sid(ship, "grinder")],
+                    "--session-id", sid(ship, "grinder"), RC],
     }
     first = runs(ship)[0]
     assert run_opt(first, "--cwd") == "/home/agent/work/main"
@@ -73,8 +73,8 @@ def test_after_a_boot_autostart_resumes_its_agents_instead_of_starting_new_ones(
     assert doc["data"] == {"started": [], "skipped": [{"name": "main", "reason": "running"},
                                                       {"name": "grinder", "reason": "running"}]}
     assert started_args(ship) == {
-        "main": ["--permission-mode", "auto", "--resume", sid(ship, "main")],
-        "grinder": ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder")],
+        "main": ["--permission-mode", "auto", "--resume", sid(ship, "main"), RC],
+        "grinder": ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder"), RC],
     }
     # Back in their own kept terminals: no new one.
     assert len(runs(ship)) == 2
@@ -127,8 +127,8 @@ def test_a_boot_while_signed_out_resumes_once_claude_signs_in(ship):
     ship.set(claude={"logged_in": True, "email": "work@example.com"})
     ship.ctl("refresh")
     assert started_args(ship) == {  # resumed, not started afresh
-        "main": ["--permission-mode", "auto", "--resume", sid(ship, "main")],
-        "grinder": ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder")],
+        "main": ["--permission-mode", "auto", "--resume", sid(ship, "main"), RC],
+        "grinder": ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder"), RC],
     }
     assert ship.prompts() == [
         ["main", "Get oriented."], ["grinder", "Get oriented and ready to work."]]  # once
@@ -162,7 +162,7 @@ def test_autostart_without_name_flag(ship):
     ship.set(claude={"logged_in": True, "email": "work@example.com", "name_flag": False})
     ship.ctl("autostart", "--json")
     assert started_args(ship)["main"] == ["--permission-mode", "auto",
-                                          "--session-id", sid(ship, "main")]
+                                          "--session-id", sid(ship, "main"), RC]
 
 
 # --- an agent that works in a GitHub repo -------------------------------------------

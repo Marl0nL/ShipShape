@@ -29,7 +29,7 @@ from typing import Any
 from fleetledger import attach, net, trustcmd
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory
-from fleetledger.status import ShipView, runtime_of
+from fleetledger.status import ShipView, remote_control_agents, runtime_of
 from fleetledger.web import charts
 from fleetledger.web.fleet import Item
 
@@ -325,8 +325,7 @@ def summary(views: Sequence[ShipView], alerts_: Sequence[Alert],
         "agents": len(agents),
         "working": sum(1 for _, a in agents if a["state"] == "working"),
         "waiting": sum(1 for _, a in agents if a["state"] == "blocked"),
-        "remote_control": sum(1 for v, _ in agents
-                              if v.status["claude"]["remote_control"] == "on"),
+        "remote_control": sum(remote_control_agents(v.status) for v in up),
         "levels": {level: sum(1 for a in alerts_ if a.level == level) for level in LEVELS},
         "signin_expired": codes.count("signin-expired") + codes.count("signin-wrong-account"),
         "signin_missing": codes.count("signin-missing"),

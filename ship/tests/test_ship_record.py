@@ -20,7 +20,7 @@ import sys
 import time
 
 import pytest
-from ship_harness import LAUNCHER, LEDGER, SHIP, assert_valid
+from ship_harness import LAUNCHER, LEDGER, RC, SHIP, assert_valid
 
 RECORD = "/var/lib/shipshape/agents.json"
 
@@ -152,7 +152,8 @@ def test_autostart_writes_the_record(started):
     assert oct(ship.p(RECORD).stat().st_mode & 0o777) == "0o644"
     assert recorded(ship)["main"] == {
         "name": "main", "cwd": "/home/agent/work/main", "mode": "auto", "autostart": True,
-        "state": "running", "relaunch_failures": 0, "created_at": main["created_at"],
+        "remote_control": True, "state": "running", "relaunch_failures": 0,
+        "created_at": main["created_at"],
         "updated_at": main["updated_at"]}
 
 
@@ -170,8 +171,8 @@ def test_after_a_reboot_the_refresh_resumes_every_agent_in_its_folder_and_mode(s
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
     assert ship.args() == {
-        "main": ["--permission-mode", "auto", "--resume", sid(ship, "main")],
-        "grinder": ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder")],
+        "main": ["--permission-mode", "auto", "--resume", sid(ship, "main"), RC],
+        "grinder": ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder"), RC],
     }
     # In the kept terminals the core restored, under their names: no new terminal, no
     # first prompt.
@@ -198,7 +199,7 @@ def test_a_kept_terminal_that_is_gone_gets_a_new_one(started):
     ship.set(hc=s["hc"])  # the core lost main's terminal (its state was not saved)
     ship.ctl("refresh")
     main = ship.agent("main")
-    assert main["claude_args"] == ["--permission-mode", "auto", "--resume", sid(ship, "main")]
+    assert main["claude_args"] == ["--permission-mode", "auto", "--resume", sid(ship, "main"), RC]
     assert main["address"] == "t3" and main["cwd"] == "/home/agent/work/main"
     assert ship.place("grinder") == "t2"
 
@@ -219,7 +220,7 @@ def test_another_agent_in_its_old_terminal_never_becomes_it(started):
     assert record["main"]["session"] == main_sid and record["main"]["mode"] == "auto"
     assert record["other"]["session"] == "sess-other"
     main = ship.agent("main")
-    assert main["claude_args"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert main["claude_args"] == ["--permission-mode", "auto", "--resume", main_sid, RC]
     assert main["address"] == "t3"  # a new terminal, not the busy one
     assert not typed(ship, "t1")
     assert not [c for c in runs(ship) if "sess-other" in c]
@@ -247,7 +248,7 @@ def test_an_unnamed_agent_in_its_terminal_but_another_folder_never_becomes_it(st
     ship.ctl("refresh")
     assert ship.args()["elsewhere"] == ["--permission-mode", "plan", "--resume", "sess-x"]
     assert ship.args()["main"] == ["--permission-mode", "auto", "--name", "ship-01-main",
-                                   "--session-id", sid(ship, "main")]
+                                   "--session-id", sid(ship, "main"), RC]
     assert sid(ship, "main") not in (main_sid, "sess-x")
 
 
@@ -280,7 +281,7 @@ def test_the_crashed_agent_resumes_its_own_session_once_its_terminal_is_free(sta
     # main, back by hand, resumes its own conversation in its kept terminal.
     rc, _, out = ship.ctl("agent", "restart", "main", "--json")
     assert rc == 0, out
-    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid, RC]
     assert ship.place("main") == "t1" and ship.agent("main")["cwd"] == "/home/agent/work/main"
     ship.ctl("refresh")
     record = ship.record()["agents"]
@@ -360,7 +361,7 @@ def test_a_relaunch_in_its_own_terminal_and_folder_is_still_it(started):
     main_sid = sid(ship, "main")
     ship.crash("main")
     ship.ctl("refresh")
-    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid, RC]
     assert ship.place("main") == "t1"
     ship.ctl("refresh")
     record = ship.record()["agents"]
@@ -398,7 +399,7 @@ def test_a_kept_terminal_in_another_folder_resumes_in_the_agents_folder(started)
     main = ship.agent("main")
     assert main["address"] == "t1" and main["cwd"] == "/home/agent/work/main"
     assert typed(ship, "t1") == [f"cd -- /home/agent/work/main && exec {LAUNCHER} "
-                                 f"--permission-mode auto --resume {sid(ship, 'main')}"]
+                                 f"--permission-mode auto --resume {sid(ship, 'main')} {RC}"]
     assert len(runs(ship)) == 2
 
 
@@ -421,7 +422,7 @@ def test_bypass_is_not_resumed_where_it_is_no_longer_allowed(started):
     ship.reboot()
     ship.ctl("refresh")
     assert ship.args()["grinder"] == ["--permission-mode", "auto",
-                                      "--resume", sid(ship, "grinder")]
+                                      "--resume", sid(ship, "grinder"), RC]
     assert ship.record()["agents"]["grinder"]["mode"] == "auto"
 
 
@@ -441,7 +442,7 @@ def test_an_agent_that_crashed_is_started_again_in_its_terminal(started):
     assert recorded(ship)["grinder"]["state"] == "starting"
     ship.ctl("refresh")
     assert ship.args()["grinder"] == ["--dangerously-skip-permissions",
-                                      "--resume", sid(ship, "grinder")]
+                                      "--resume", sid(ship, "grinder"), RC]
     assert ship.place("grinder") == "t2"
     assert recorded(ship)["grinder"]["state"] == "running"
 
@@ -469,7 +470,7 @@ def test_after_three_failed_tries_it_is_left_alone_with_attention(started):
     assert rc == 0, doc
     assert doc["data"]["restarted"][0]["was"] == "failed"
     assert doc["data"]["restarted"][0]["previous_mode"] == "bypassPermissions"
-    assert ship.args()["grinder"] == ["--permission-mode", "dontAsk", "--resume", grinder_sid]
+    assert ship.args()["grinder"] == ["--permission-mode", "dontAsk", "--resume", grinder_sid, RC]
     assert ship.record()["agents"]["grinder"]["mode"] == "dontAsk"
     assert "agent-relaunch-failed" not in {a["code"] for a in ship.status()["attention"]}
 
@@ -498,7 +499,7 @@ def test_an_agent_killed_again_soon_after_it_came_back_is_started_again_after_th
     it nor count a try; the first one after it starts it again, once, and counts one.
     A third early stop leaves it alone."""
     ship = started
-    want = ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder")]
+    want = ["--dangerously-skip-permissions", "--resume", sid(ship, "grinder"), RC]
     ship.crash("grinder")
     ship.ctl("refresh")
     assert recorded(ship)["grinder"]["relaunch_failures"] == 1
@@ -579,7 +580,7 @@ def test_a_crashed_agent_comes_back_in_the_mode_it_was_switched_to_in_claude(sta
     ship.p(LEDGER).write_text(json.dumps(doc))
     ship.crash("main")
     ship.ctl("refresh")
-    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume", main_sid]
+    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume", main_sid, RC]
 
 
 def age_typed_launches(ship, seconds: int) -> None:
@@ -624,7 +625,7 @@ def test_a_reboot_gives_a_failed_agent_new_tries(started):
     lose_sessions(ship)
     ship.reboot()
     ship.ctl("refresh")
-    assert ship.args()["grinder"][-2:] == ["--resume", grinder_sid]
+    assert ship.args()["grinder"][-3:] == ["--resume", grinder_sid, RC]
 
 
 def test_a_lost_conversation_counts_as_a_failed_start(started):
@@ -639,7 +640,7 @@ def test_a_lost_conversation_counts_as_a_failed_start(started):
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
     assert rc == 0, doc
     assert ship.args()["main"] == ["--permission-mode", "auto", "--name", "ship-01-main",
-                                   "--session-id", sid(ship, "main")]
+                                   "--session-id", sid(ship, "main"), RC]
     assert [ship.place("main"), "Get oriented."] in hc(ship)["sent"]
 
 
@@ -653,7 +654,7 @@ def test_a_restart_that_did_not_start_again_is_started_by_the_next_refresh(start
     fail_run(ship)
     ship.ctl("refresh")  # its /exit was the restart's own, not someone's: a crash
     assert recorded(ship)["main"]["relaunch_failures"] == 1  # it stopped at once
-    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume", main_sid]
+    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume", main_sid, RC]
     # /exit finished its terminal: it runs in a new one, and the finished one goes.
     assert ship.place("main") == "t3" and hc(ship)["removed"] == ["t1"]
 
@@ -670,9 +671,9 @@ def test_an_agent_someone_exited_is_not_started_again(started):
     ship.ctl("refresh")
     assert sid(ship, "grinder") != grinder_sid
     assert ship.args() == {
-        "main": ["--permission-mode", "auto", "--resume", main_sid],
+        "main": ["--permission-mode", "auto", "--resume", main_sid, RC],
         "grinder": ["--dangerously-skip-permissions", "--name", "ship-01-grinder",
-                    "--session-id", sid(ship, "grinder")],
+                    "--session-id", sid(ship, "grinder"), RC],
     }
 
 
@@ -687,7 +688,7 @@ def test_an_exit_in_an_earlier_boot_does_not_stop_the_resume(started):
     s["sessions"][main_sid]["ended"]["at"] = "2026-01-01T00:00:00Z"  # before this boot
     ship.p(LEDGER).write_text(json.dumps(s))
     ship.ctl("refresh")
-    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid]
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", main_sid, RC]
 
 
 def test_a_closed_terminal_is_a_stopped_agent(started):
@@ -726,6 +727,7 @@ def test_an_agent_started_by_hand_is_recorded_and_resumed(started):
     assert recorded(ship)["helper"]["autostart"] is False
     ship.reboot()
     ship.ctl("refresh")
+    # Adopted: no Remote Control until it is turned on.
     assert ship.args()["helper"] == ["--permission-mode", "plan", "--resume", "sess-helper"]
     assert ship.place("helper") == "t7"
 
@@ -777,7 +779,7 @@ def test_the_record_follows_a_new_session_and_mode(started):
     ship.reboot()
     ship.ctl("refresh")
     assert ship.args()["main"] == ["--permission-mode", "acceptEdits",
-                                   "--resume", "sess-main-2"]
+                                   "--resume", "sess-main-2", RC]
 
 
 # --- the lock, and agents leaving -------------------------------------------------------------
@@ -817,7 +819,7 @@ def test_restarting_an_agent_that_is_not_running_brings_it_back_in_its_mode(star
     ship.ctl("refresh")
     rc, doc, _ = ship.ctl("agent", "restart", "main", "--json")  # no --mode
     assert rc == 0, doc
-    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume", main_sid]
+    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume", main_sid, RC]
     assert doc["data"]["restarted"][0]["mode"] == "plan"
 
 
@@ -846,3 +848,147 @@ def test_forget_refuses_while_the_core_does_not_answer(started):
     rc, doc, _ = ship.ctl("agent", "forget", "main", "--json")
     assert rc == 1 and doc["error"]["code"] == "herdr-unavailable"
     assert "main" in ship.record()["agents"]
+
+
+# --- Remote Control: every launch the Ship makes carries it, unless it is off -----------
+@pytest.mark.parametrize("value,flag", [("on", [RC]), ("all", [RC]), ("off", []),
+                                        ("blocked", [])])
+def test_each_start_path_carries_remote_control_unless_it_is_off(ship, value, flag):
+    ship.env["SHIPCTL_TEST_WAIT_S"] = "0"
+    rc, doc, _ = ship.ctl("set", f"claude.remote_control={value}", "--json")
+    assert rc == 0, doc
+    ship.ctl("refresh")  # autostart, once Claude is signed in
+    assert ship.args() == {
+        "main": ["--permission-mode", "auto", "--name", "ship-01-main",
+                 "--session-id", sid(ship, "main"), *flag],
+        "grinder": ["--dangerously-skip-permissions", "--name", "ship-01-grinder",
+                    "--session-id", sid(ship, "grinder"), *flag]}
+    ship.crash("grinder")
+    ship.ctl("refresh")  # a restart after a crash
+    assert ship.args()["grinder"] == ["--dangerously-skip-permissions", "--resume",
+                                      sid(ship, "grinder"), *flag]
+    ship.reboot()
+    ship.ctl("refresh")  # the resume after a boot
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume",
+                                   sid(ship, "main"), *flag]
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--mode", "plan", "--json")
+    assert rc == 0, doc
+    assert ship.args()["main"] == ["--permission-mode", "plan", "--resume",
+                                   sid(ship, "main"), *flag]
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--fresh", "--json")
+    assert rc == 0, doc
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--name", "ship-01-main",
+                                   "--session-id", sid(ship, "main"), *flag]
+
+
+def remote_control(ship, *argv: str) -> tuple[int, dict]:
+    rc, doc, _ = ship.ctl("agent", "remote-control", *argv, "--json")
+    assert_valid("ship-ctl-result", doc)
+    return rc, doc
+
+
+def test_an_adopted_agent_gets_remote_control_only_once_it_is_turned_on(started):
+    ship = started
+    add_live(ship, "helper", "sess-helper", "/home/agent/work/side", "t7", mode="plan",
+             keep=True)
+    ship.p("/home/agent/work/side").mkdir(parents=True)
+    ship.ctl("refresh")
+    assert ship.record()["agents"]["helper"]["remote_control"] is None  # no choice made
+    assert {a["name"]: a["remote_control"] for a in recorded(ship).values()} == {
+        "main": True, "grinder": True, "helper": False}
+    off = ["--permission-mode", "plan", "--resume", "sess-helper"]
+    ship.crash("helper")
+    ship.ctl("refresh")  # a restart after a crash
+    assert ship.args()["helper"] == off
+    assert ship.ctl("agent", "restart", "helper", "--json")[0] == 0  # now in the default mode
+    assert ship.args()["helper"][-2:] == ["--resume", "sess-helper"]
+    assert ship.ctl("agent", "restart", "helper", "--fresh", "--json")[0] == 0
+    assert RC not in ship.args()["helper"]
+    fresh_sid = sid(ship, "helper")
+    # Turned on: from its next start by the Ship, on every path.
+    rc, doc = remote_control(ship, "helper")
+    assert rc == 0 and doc["data"] == {"remote_control": {"helper": True}}
+    assert doc["changed"] == ["remote_control on: helper"]
+    assert "from the next time the Ship starts it" in doc["messages"][0]
+    assert RC not in ship.args()["helper"]  # the running agent is not touched
+    assert recorded(ship)["helper"]["remote_control"] is True
+    assert ship.ctl("agent", "restart", "helper", "--json")[0] == 0
+    assert ship.args()["helper"][-3:] == ["--resume", fresh_sid, RC]
+    assert ship.ctl("agent", "restart", "helper", "--fresh", "--json")[0] == 0
+    assert ship.args()["helper"][-1] == RC
+    ship.crash("helper")
+    ship.ctl("refresh")
+    assert ship.args()["helper"][-3:] == ["--resume", sid(ship, "helper"), RC]
+    # And off again for an autostart agent: the next boot resumes it without.
+    rc, doc = remote_control(ship, "main", "--off")
+    assert rc == 0 and doc["changed"] == ["remote_control off: main"]
+    ship.reboot()
+    ship.ctl("refresh")
+    assert ship.args()["main"] == ["--permission-mode", "auto", "--resume", sid(ship, "main")]
+    # helper's launch is typed into its kept terminal, with the flag.
+    place = ship.record()["agents"]["helper"]["place"]["id"]
+    assert typed(ship, place)[-1].endswith(f"--resume {sid(ship, 'helper')} {RC}")
+    assert_valid("agent-record", ship.record())
+
+
+def test_remote_control_for_an_agent_not_recorded_or_with_bad_usage_is_refused(started):
+    ship = started
+    rc, doc = remote_control(ship, "nobody")
+    assert rc != 0 and doc["error"]["code"] == "invalid-input"
+    assert "not in the agent record: nobody" in doc["error"]["message"]
+    rc, doc = remote_control(ship)
+    assert rc != 0 and doc["error"]["code"] == "usage"
+    rc, doc, _ = ship.ctl("agent", "restart", "main", "--off", "--json")
+    assert rc != 0 and doc["error"]["code"] == "usage"
+    rc, doc = remote_control(ship, "main")  # on by default; now a recorded choice
+    assert rc == 0 and doc["changed"] == ["remote_control on: main"]
+    rc, doc = remote_control(ship, "main")  # chosen already: nothing changes
+    assert rc == 0 and doc["changed"] == []
+
+
+@pytest.mark.parametrize("value,words", [("all", "every session gets Remote Control anyway"),
+                                         ("off", "no effect while Remote Control is off")])
+def test_the_per_agent_setting_is_kept_but_idle_unless_remote_control_is_on(started, value,
+                                                                              words):
+    ship = started
+    assert ship.ctl("set", f"claude.remote_control={value}", "--json")[0] == 0
+    rc, doc = remote_control(ship, "main", "--off")
+    assert rc == 0 and words in doc["messages"][0]
+    ship.reboot()
+    ship.ctl("refresh")
+    assert (RC in ship.args()["main"]) == (value == "all")
+
+
+def test_a_record_written_before_the_setting_gives_it_to_autostart_agents_only(started):
+    """Records from earlier tooling have no remote_control: autostart agents read as
+    on, adopted ones as off, as the Ship gives them now."""
+    ship = started
+    add_live(ship, "helper", "sess-helper", "/home/agent/work/side", "t7", mode="plan",
+             keep=True)
+    ship.p("/home/agent/work/side").mkdir(parents=True)
+    ship.ctl("refresh")
+    doc = ship.record()
+    for e in doc["agents"].values():
+        del e["remote_control"]
+    ship.p(RECORD).write_text(json.dumps(doc))
+    assert {n: a["remote_control"] for n, a in recorded(ship).items()} == {
+        "main": True, "grinder": True, "helper": False}
+    ship.reboot()
+    ship.ctl("refresh")
+    assert ship.args()["main"][-1] == RC and ship.args()["grinder"][-1] == RC
+    assert ship.args()["helper"] == ["--permission-mode", "plan", "--resume", "sess-helper"]
+
+
+def test_an_adopted_agent_added_to_autostart_gets_remote_control_by_default(started):
+    ship = started
+    add_live(ship, "helper", "sess-helper", "/home/agent/work/side", "t7", mode="plan",
+             keep=True)
+    ship.p("/home/agent/work/side").mkdir(parents=True)
+    ship.ctl("refresh")
+    assert recorded(ship)["helper"]["remote_control"] is False
+    toml = ship.p("/etc/shipshape/ship.toml").read_text()
+    ship.write_toml(toml + '\n[[autostart]]\nname = "helper"\ncwd = "~/work/side"\n')
+    assert recorded(ship)["helper"]["remote_control"] is True
+    ship.crash("helper")
+    ship.ctl("refresh")
+    assert ship.args()["helper"][-3:] == ["--resume", "sess-helper", RC]

@@ -17,7 +17,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from ship_harness import assert_valid
+from ship_harness import RC, assert_valid
 
 LAUNCHER = "/opt/shipshape/bin/agent-launch"
 SHIP_FILES = Path(__file__).resolve().parents[1] / "files"
@@ -82,7 +82,7 @@ def test_autostart_runs_each_agent_through_the_launcher_with_a_chosen_session(co
                    "--label", f"shipshape.session={sid}", "--label", "herdr.space=shipshape",
                    "--label", "herdr.tab=main",
                    "--", LAUNCHER, "--permission-mode", "auto", "--name", "ship-01-main",
-                   "--session-id", sid]
+                   "--session-id", sid, RC]
     assert launched(ship, "grinder")[:1] == ["--dangerously-skip-permissions"]
     # The record had the session before the agent started.
     assert hc(ship)["recorded_at_run"] == {"main": sid,
@@ -183,10 +183,10 @@ def test_after_a_reboot_each_kept_terminal_gets_its_agent_back(core):
     assert rc == 0, out
     assert "agent record: main started again, continuing its session." in out
     line = (f"cd -- /home/agent/work/main && exec {LAUNCHER} --permission-mode auto "
-            f"--resume {sids['main']}")
+            f"--resume {sids['main']} --remote-control")
     assert [before["main"], line] in hc(ship)["sent"]
     assert launched(ship, "grinder") == ["--dangerously-skip-permissions",
-                                         "--resume", sids["grinder"]]
+                                         "--resume", sids["grinder"], RC]
     # The same terminals, under the same addresses (an app pane on one stays put).
     assert {t["name"]: t["address"] for t in ship.terminals()} == before
     assert len(runs(ship)) == 2  # only the first boot's
@@ -208,7 +208,7 @@ def test_a_terminal_that_did_not_come_back_is_run_again(core):
     ship.set(hc=s["hc"])
     ship.ctl("refresh")
     main = ship.terminal("main")
-    assert main["argv"] == [LAUNCHER, "--permission-mode", "auto", "--resume", sid]
+    assert main["argv"] == [LAUNCHER, "--permission-mode", "auto", "--resume", sid, RC]
     assert main["keep"] and main["labels"] == {
         "shipshape.session": sid, "herdr.space": "shipshape", "herdr.tab": "main"}
     assert ship.record()["agents"]["main"]["place"]["id"] == main["address"]
@@ -243,8 +243,8 @@ def test_a_ship_moved_from_herdr_resumes_its_agents_on_core(ship):
     ship.use_core()
     rc, _, out = ship.ctl("refresh")
     assert rc == 0, out
-    assert launched(ship, "main") == ["--permission-mode", "auto", "--resume", "sess-main"]
-    assert launched(ship, "grinder")[-2:] == ["--resume", "sess-grinder"]
+    assert launched(ship, "main") == ["--permission-mode", "auto", "--resume", "sess-main", RC]
+    assert launched(ship, "grinder")[-3:] == ["--resume", "sess-grinder", RC]
     record = ship.record()
     assert record["runtime"] == "core"
     assert {e["place"]["runtime"] for e in record["agents"].values()} == {"core"}
@@ -260,9 +260,9 @@ def test_an_agent_killed_by_a_signal_comes_back_in_its_kept_terminal(core):
     assert rc == 0, out
     assert "main started again, continuing its session (it had stopped)." in out
     assert [address, f"cd -- /home/agent/work/main && exec {LAUNCHER} --permission-mode auto "
-            f"--resume {sid}"] in hc(ship)["sent"]
+            f"--resume {sid} --remote-control"] in hc(ship)["sent"]
     assert ship.terminal("main")["address"] == address
-    assert launched(ship, "main")[-2:] == ["--resume", sid]
+    assert launched(ship, "main")[-3:] == ["--resume", sid, RC]
     never_killed(ship)
 
 
@@ -337,7 +337,7 @@ def test_restart_is_graceful_and_never_kills(core):
     assert [old, "ctrl+c"] in hc(ship)["keys"] and [old, "/exit"] in hc(ship)["sent"]
     main = ship.terminal("main")
     assert main["address"] != old  # /exit finished the old terminal
-    assert main["claude_args"] == ["--permission-mode", "acceptEdits", "--resume", sid]
+    assert main["claude_args"] == ["--permission-mode", "acceptEdits", "--resume", sid, RC]
     assert {a["name"]: a["mode"] for a in ship.status()["herdr"]["agents"]} == {
         "main": "acceptEdits", "grinder": "bypassPermissions"}
     never_killed(ship)
@@ -361,7 +361,7 @@ def test_restart_fresh_gives_a_new_session_id(core):
     assert rc == 0, out
     new = ship.record()["agents"]["main"]["session"]
     assert new != old and len(new) == 36
-    assert launched(ship, "main")[-2:] == ["--session-id", new]
+    assert launched(ship, "main")[-3:] == ["--session-id", new, RC]
     assert ship.terminal("main")["labels"]["shipshape.session"] == new
     assert hc(ship)["recorded_at_run"]["main"] == new
 
@@ -419,7 +419,7 @@ def test_the_launch_typed_into_a_shell_is_one_quoted_line(core):
     ship.ctl("refresh")
     [line] = [text for _, text in hc(ship)["sent"] if "exec " in text]
     assert shlex.split(line) == ["cd", "--", "/home/agent/work/main", "&&", "exec", LAUNCHER,
-                                 "--permission-mode", "auto", "--resume", sid]
+                                 "--permission-mode", "auto", "--resume", sid, RC]
 
 
 def test_the_core_unit_only_starts_the_core():
@@ -506,7 +506,8 @@ def test_the_record_follows_clear_and_resumes_in_the_new_sessions_mode(core):
     assert ship.record()["agents"]["grinder"]["mode"] == "plan"
     ship.core_crash("grinder")
     ship.ctl("refresh")
-    assert launched(ship, "grinder") == ["--permission-mode", "plan", "--resume", "sess-cleared"]
+    assert launched(ship, "grinder") == ["--permission-mode", "plan", "--resume", "sess-cleared",
+                                         RC]
     assert old not in launched(ship, "grinder")
 
 
@@ -572,7 +573,7 @@ def test_switching_a_live_herdr_ship_to_core_starts_nothing_twice(ship):
     assert rc != 0 and runs(ship) == []
     ship.reboot()
     ship.ctl("refresh")
-    assert launched(ship, "main")[-2:] == ["--resume", "sess-main"]
+    assert launched(ship, "main")[-3:] == ["--resume", "sess-main", RC]
 
 
 # Classic herdr only (a Ship moving between herdr and core): classic_herdr in
@@ -643,7 +644,8 @@ def test_a_terminal_with_no_program_is_lost_whatever_its_last_word(core):
             t.update(foreground=None, recover_in=1)  # status left as Claude last said
     ship.set(hc=s["hc"])
     ship.ctl("refresh")
-    assert launched(ship, "main")[-2:] == ["--resume", ship.record()["agents"]["main"]["session"]]
+    assert launched(ship, "main")[-3:] == ["--resume", ship.record()["agents"]["main"]["session"],
+                                           RC]
 
 
 # --- core-restart-pending and ship-ctl logs core -------------------------------------
@@ -857,7 +859,7 @@ def test_a_failed_restart_on_core_is_recorded_as_a_crash(core):
     assert after["relaunch"]["last_error"]
     _fail_run(ship)
     ship.ctl("refresh")
-    assert launched(ship, "main") == ["--permission-mode", "plan", "--resume", sid]
+    assert launched(ship, "main") == ["--permission-mode", "plan", "--resume", sid, RC]
     never_killed(ship)
 
 

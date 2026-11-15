@@ -461,6 +461,7 @@
                 "description": "The mode it runs in and is resumed in; null if not known."
               },
               "autostart": { "type": "boolean", "description": "It is an [[autostart]] agent." },
+              "remote_control": { "type": "boolean", "description": "The agent record gives it Remote Control: its launches carry --remote-control while claude.remote_control is \"on\". The choice made with ship-ctl agent remote-control, else on for an [[autostart]] agent and off for any other. Optional: Ships with older tooling leave it out." },
               "state": {
                 "enum": ["running", "starting", "failed", "stopped", "unknown"],
                 "description": "running: live now. starting: it should run and is not live; the next status refresh starts it (after a boot, every agent until it is resumed). failed: 3 failed tries this boot (a start that failed, or it stopped within 10 minutes of starting; attention agent-relaunch-failed). stopped: exited on purpose; an [[autostart]] agent starts afresh at the next boot, unless another agent the record keeps running works in its folder (autostart-folder-taken). unknown: the runtime is not answering."
@@ -551,7 +552,7 @@
       "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
       "description": "Claude Code permission modes; \"default\" is the mode Claude Code calls Manual."
     },
-    "remoteControl": { "enum": ["on", "off", "blocked"] },
+    "remoteControl": { "enum": ["on", "all", "off", "blocked"] },
     "updateChannel": { "enum": ["latest", "stable"] },
     "timestamp": {
       "type": "string",

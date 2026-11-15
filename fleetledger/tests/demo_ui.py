@@ -66,6 +66,7 @@ LEFT: set[str] = set()  # Ships taken off the overlay in this demo run
 MODES_NOW: dict[tuple[str, str], str] = {}  # (Ship, agent) -> mode after a demo restart
 CORE: set[str] = set()  # Ships whose agents run in herdr-core (--core: ship-01)
 CLAUDE_SET: dict[str, dict] = {}  # Ship -> claude settings changed in this demo run
+DEMO_RC: dict[tuple[str, str], bool] = {}  # (Ship, agent) -> agent remote-control in this run
 # Extra GitHub scopes: chosen in ship.toml, and on each Ship's token (ghscopes). ship-02
 # chose write:packages after it signed in, so its token lacks it: scopes differ.
 GITHUB_CHOSEN: dict[str, list[str]] = {"ship-01": ["workflow"],
@@ -374,6 +375,9 @@ def status_doc(name: str, tags: list[str], index: int, now: float) -> dict:
         doc["agent_record"] = {"runtime": "herdr", "resume": {
             "at": boot, "method": "ship-ctl", "resumed": 3, "failed": 0}, "agents": [
             {"name": n, "cwd": f"/home/agent/work/{n}", "mode": m, "autostart": n == "main",
+             # Remote Control: main as an autostart agent, builder turned on by hand
+             # (ship-fleet agent remote-control), the others adopted and so off.
+             "remote_control": DEMO_RC.get((name, n), n in ("main", "builder")),
              "state": st, "relaunch_failures": tries, "created_at": boot, "updated_at": boot,
              **({"last_error": "claude exited: No conversation found"} if tries else {})}
             for n, m, st, tries in (("builder", "bypassPermissions", "running", 0),
@@ -529,6 +533,17 @@ def make_ssh(inventory):
                 doc = status_doc(ship.name, tags, names.index(ship.name) + 1, time.time())
                 answer = ctl_result("overlay")
                 answer["data"] = {"overlay": doc["overlay"]}
+                return Result(0, json.dumps(answer).encode(), "", ship.names[0])
+            if verb == "agent" and command[4:5] == ["remote-control"]:
+                agents = [a for a in command[5:-1] if not a.startswith("--")]
+                on = "--off" not in command
+                for agent in agents:
+                    DEMO_RC[(ship.name, agent)] = on
+                answer = ctl_result("agent", changed=[
+                    f"remote_control {'on' if on else 'off'}: {a}" for a in agents])
+                answer["data"] = {"remote_control": dict.fromkeys(agents, on)}
+                answer["messages"] = [f"{', '.join(agents)} gets Remote Control from the next "
+                                      "time the Ship starts it."]
                 return Result(0, json.dumps(answer).encode(), "", ship.names[0])
             if verb == "agent":  # restart: the agents come back in the mode asked for
                 return Result(*demo_restart(ship.name, command[5:-1]), ship.names[0])

@@ -9,6 +9,7 @@
       "prompt": "Get oriented.",
       "session_name": "ship-01-main",
       "origin": "autostart",
+      "remote_control": null,
       "want": "running",
       "place": {
         "runtime": "herdr",
@@ -35,6 +36,7 @@
       "prompt": null,
       "session_name": null,
       "origin": "adopted",
+      "remote_control": false,
       "want": "running",
       "place": {
         "runtime": "herdr",
@@ -61,6 +63,7 @@
       "prompt": "Get oriented and ready to work.",
       "session_name": "ship-01-grinder",
       "origin": "autostart",
+      "remote_control": true,
       "want": "stopped",
       "place": null,
       "relaunch": {

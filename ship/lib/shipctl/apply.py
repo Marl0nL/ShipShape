@@ -23,6 +23,7 @@ from .context import Context
 from .errors import CtlError
 from .fsutil import remove, write_atomic
 from .homefs import UnsafePath
+from .naming import RC_OFF
 from .paths import Paths
 from .shiptoml import ShipToml
 
@@ -57,12 +58,16 @@ def herdr_resume_off(ctx: Context) -> bool:
 
 def managed_settings(ship: ShipToml, versions: dict) -> dict:
     c = ship.claude
+    # "on": Remote Control only for the agents the Ship starts, which get
+    # `--remote-control` at launch (naming.remote_control_args); every other session
+    # (one a person or an agent starts) has it off, and a managed false keeps a user
+    # setting from turning it on. "all": every session, as "on" used to be.
     # "off" must also set disableRemoteControl: a resumed session reattaches to the
     # Remote Control session saved in its transcript whatever remoteControlAtStartup
     # says (phase 0). "blocked" is an older name for the same thing.
-    on = c["remote_control"] == "on"
-    doc: dict = {"remoteControlAtStartup": on}
-    if not on:
+    rc = c["remote_control"]
+    doc: dict = {"remoteControlAtStartup": rc == "all"}
+    if rc in RC_OFF:
         doc["disableRemoteControl"] = True
     permissions: dict = {"defaultMode": c["default_mode"]}
     if not c["allow_bypass"]:

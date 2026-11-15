@@ -1008,7 +1008,18 @@ def cmd_set(args, app) -> int:
 
 def cmd_agent(args, app) -> int:
     """`ship-fleet agent restart SHIP [AGENT ...|--all]`: swap running agents for ones in
-    a new mode, in place (ops.restart_agents)."""
+    a new mode, in place (ops.restart_agents). `ship-fleet agent remote-control SHIP
+    AGENT... [--off]`: which recorded agents get Remote Control
+    (ops.set_agent_remote_control)."""
+    if args.action == "remote-control":
+        if args.all or args.mode or args.fresh or args.force:
+            raise FleetError("agent remote-control takes agent names, and --off.")
+        fleet = _fleet(app)
+        ship = fleet.inventory.ship(args.ship)
+        outcome = ops.set_agent_remote_control(fleet, ship, args.agents, not args.off)
+        return _report(app, [outcome], args.json)
+    if args.off:
+        raise FleetError("--off goes with agent remote-control.")
     if args.all and args.agents:
         raise FleetError("Give agent names or --all, not both.")
     fleet = _fleet(app)
