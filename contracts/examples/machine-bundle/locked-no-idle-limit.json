@@ -1,0 +1,62 @@
+{
+  "schema": "shipshape.machine-bundle/1",
+  "machine": "desktop",
+  "at": "2026-01-05T09:00:00Z",
+  "certificate": {
+    "line": "ssh-ed25519-cert-v01@openssh.com ZXhhbXBsZSBjZXJ0aWZpY2F0ZSBmb3IgbGFwdG9wLCBub3QgYSByZWFsIG9uZQ== desktop",
+    "valid_before": "2026-01-07T21:00:00Z",
+    "renewed": false,
+    "not_renewed": {
+      "code": "vault-locked",
+      "why": "FleetLedger's vault is locked, so no certificate is signed until it is unlocked (ship-fleet unlock on the FleetLedger computer)."
+    }
+  },
+  "scope": [
+    "all"
+  ],
+  "logins": [
+    "agent",
+    "owner"
+  ],
+  "ssh": {
+    "user": "agent"
+  },
+  "known_hosts": [
+    "@cert-authority ship-01,ship-01.local,ship-01.tailnet.example,ship-02,ship-02.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0Y2FrZXlleGFtcGxlaG9zdGNha2V5ZXhh shipshape-host-ca",
+    "@revoked * ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVvbGRob3N0a2V5ZXhhbXBsZW9sZGhvc3Rr"
+  ],
+  "fleetledger": {
+    "name": "fleetledger",
+    "known_hosts": "fleetledger,fleetledger.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVmbGVldGxlZGdlcmhvc3RrZXlleGFtcGxlZmxl"
+  },
+  "ships": [
+    {
+      "name": "ship-01",
+      "tags": [
+        "work"
+      ],
+      "runtime": "core",
+      "host_names": {
+        "lan": "ship-01.local",
+        "overlay": "ship-01.tailnet.example"
+      },
+      "host_certificate": true
+    },
+    {
+      "name": "ship-02",
+      "tags": [
+        "personal"
+      ],
+      "runtime": "herdr",
+      "host_names": {
+        "lan": "ship-02.local",
+        "overlay": null
+      },
+      "host_certificate": false
+    }
+  ],
+  "idle_limit": {
+    "on": false,
+    "days": 30
+  }
+}

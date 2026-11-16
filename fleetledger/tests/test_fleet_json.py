@@ -229,8 +229,11 @@ def test_every_doctor_check_has_a_key_in_the_contract():
         given = {k.arg: k.value for k in node.keywords}
         if "key" in given:
             value = given["key"]
-            found.add(value.value if isinstance(value, ast.Constant)
-                      else getattr(firstrun, value.id))
+            if isinstance(value, ast.Subscript):  # MACHINE_KEYS[code]: every one it names
+                found.update(getattr(firstrun, value.value.id).values())
+            else:
+                found.add(value.value if isinstance(value, ast.Constant)
+                          else getattr(firstrun, value.id))
             continue
         area, name = node.args[:2]
         assert isinstance(name, ast.Constant), ast.unparse(node)  # else: give it key=
@@ -238,6 +241,11 @@ def test_every_doctor_check_has_a_key_in_the_contract():
     schema = json.loads((Path(__file__).resolve().parents[2] / "contracts"
                          / "fleetledger-doctor.schema.json").read_text())
     assert found == set(schema["$defs"]["item"]["properties"]["key"]["enum"])
+    # Every machine item attention can give has its doctor key.
+    attention = json.loads((Path(__file__).resolve().parents[2] / "contracts"
+                            / "fleetledger-attention.schema.json").read_text())
+    codes = {c for c in json.dumps(attention).split('"') if c.startswith("machine-")}
+    assert set(firstrun.MACHINE_KEYS) == codes
 
 
 def test_ca_show_json_has_each_machines_logins_and_finds_one_by_its_key(

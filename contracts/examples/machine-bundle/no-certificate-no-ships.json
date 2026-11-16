@@ -1,0 +1,30 @@
+{
+  "schema": "shipshape.machine-bundle/1",
+  "machine": "laptop",
+  "at": "2026-01-05T09:00:00Z",
+  "certificate": {
+    "line": null,
+    "valid_before": null,
+    "renewed": false,
+    "not_renewed": {
+      "code": "sign-failed",
+      "why": "ssh-keygen could not sign the certificate: Load key: incorrect passphrase supplied."
+    }
+  },
+  "scope": [
+    "tag:work"
+  ],
+  "logins": [
+    "agent"
+  ],
+  "ssh": {
+    "user": "agent"
+  },
+  "known_hosts": [],
+  "fleetledger": null,
+  "ships": [],
+  "idle_limit": {
+    "on": true,
+    "days": 30
+  }
+}

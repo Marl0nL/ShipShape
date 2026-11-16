@@ -51,6 +51,10 @@ HOST_CERT_DAYS = 90
 USER_CERT_HOURS = 168
 RENEW_WITHIN = timedelta(days=30)
 MACHINE_DUE_WITHIN = timedelta(hours=24)  # a machine's certificate is due in its last day
+# A machine that has not asked for its bundle (ship-fleet machine-bundle) for this long
+# is refused it until you allow it again (ship-fleet trust NAME --allow-again), unless
+# its idle limit is off (ship-fleet trust NAME --idle-limit off).
+IDLE_LIMIT = timedelta(days=30)
 BACKDATE = timedelta(minutes=5)  # tolerate clocks a little behind
 CERT_TYPE = "ssh-ed25519-cert-v01@openssh.com"
 ED25519_LINE = re.compile(r"^ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\n]*)?$")
@@ -149,6 +153,14 @@ class Machine:
     issued: tuple[dict[str, Any], ...] = ()
     logins: tuple[str, ...] = LOGINS  # absent in ships.toml: both, as before
     logins_recorded: bool = True
+    # ship-fleet machine-bundle: when it last got its bundle; when you last allowed it
+    # again; whether the idle limit applies (absent: it does); when it was refused for
+    # being idle (cleared when allowed again).
+    last_refreshed: str | None = None
+    last_cert_hours: int | None = None  # the lifetime its last certificate was given
+    refresh_allowed: str | None = None
+    idle_limit: bool = True
+    idle_refused: str | None = None
 
     @classmethod
     def from_entry(cls, name: str, entry: dict[str, Any]) -> Machine:
@@ -164,6 +176,11 @@ class Machine:
             issued=tuple(dict(i) for i in entry.get("issued", ())),
             logins=tuple(x for x in LOGINS if x in entry.get("logins", LOGINS)),
             logins_recorded="logins" in entry,
+            last_refreshed=entry.get("last_refreshed"),
+            last_cert_hours=entry.get("last_cert_hours"),
+            refresh_allowed=entry.get("refresh_allowed"),
+            idle_limit=entry.get("idle_limit", True) is not False,
+            idle_refused=entry.get("idle_refused"),
         )
 
     @property
@@ -225,6 +242,31 @@ def cert_due(m: Machine, now: datetime | None = None, *, renews_itself: bool = F
     if state == "lapsed" or (state == "expiring" and not renews_itself):
         return state
     return None
+
+
+def idle_since(m: Machine) -> datetime | None:
+    """When the machine's idle time started: its last bundle, or when you last allowed it
+    again, whichever is later. None: it has never asked and was never allowed again, so
+    its first ask starts the count (a machine trusted before the idle limit existed is
+    never locked out by it unasked)."""
+    found = []
+    for text in (m.last_refreshed, m.refresh_allowed):
+        try:
+            when = parse_stamp(text)
+        except ValueError:  # edited by hand: as if absent
+            when = None
+        if when is not None:
+            found.append(when)
+    return max(found) if found else None
+
+
+def idle_refused(m: Machine, now: datetime | None = None) -> bool:
+    """Is the machine refused its bundle for being idle (IDLE_LIMIT without asking, with
+    its idle limit on)? Never FleetLedger's own computer: the caller leaves it out."""
+    since = idle_since(m)
+    if not m.idle_limit or since is None:
+        return False
+    return (now or utc_now()) - since > IDLE_LIMIT
 
 
 def principal_for(scope: str, login: str = "agent") -> str:
@@ -362,6 +404,83 @@ class Signer:
         if not CERT_LINE.match(line):
             raise FleetError("ssh-keygen produced something that is not an ed25519 certificate.")
         return line
+
+
+@dataclass(frozen=True)
+class CertInfo:
+    """What an OpenSSH ed25519 certificate line says (read without ssh-keygen)."""
+
+    serial: int
+    key_blob: str  # the certified key, base64 as in a public key line
+    principals: tuple[str, ...]
+    valid_after: datetime
+    valid_before: datetime
+    signer_blob: str  # the CA key that signed it, base64
+
+
+def _read_string(raw: bytes, at: int) -> tuple[bytes, int]:
+    size = int.from_bytes(raw[at:at + 4], "big")
+    end = at + 4 + size
+    if size > len(raw) or end > len(raw):
+        raise ValueError("truncated")
+    return raw[at + 4:end], end
+
+
+def cert_info(line: str | None) -> CertInfo | None:
+    """The fields FleetLedger checks of an ed25519 user or host certificate line, or
+    None when it is not one (PROTOCOL.certkeys: type, nonce, key, serial, type, key id,
+    principals, valid after, valid before, options, extensions, reserved, CA key)."""
+    if not line or not CERT_LINE.match(line.strip()):
+        return None
+    try:
+        raw = base64.b64decode(line.split()[1], validate=True)
+        kind, at = _read_string(raw, 0)
+        if kind != CERT_TYPE.encode():
+            return None
+        _nonce, at = _read_string(raw, at)
+        key, at = _read_string(raw, at)
+        serial = int.from_bytes(raw[at:at + 8], "big")
+        at += 8 + 4  # serial, then the certificate type
+        _key_id, at = _read_string(raw, at)
+        packed, at = _read_string(raw, at)
+        after = int.from_bytes(raw[at:at + 8], "big")
+        before = int.from_bytes(raw[at + 8:at + 16], "big")
+        at += 16
+        for _ in range(3):  # critical options, extensions, reserved
+            _skipped, at = _read_string(raw, at)
+        signer, at = _read_string(raw, at)
+        names, i = [], 0
+        while i < len(packed):
+            name, i = _read_string(packed, i)
+            names.append(name.decode("utf-8"))
+
+        def wire(blob: bytes) -> str:  # a key blob as a public key line has it
+            return base64.b64encode(blob).decode("ascii")
+
+        ed = b"ssh-ed25519"
+        key_blob = wire(len(ed).to_bytes(4, "big") + ed + len(key).to_bytes(4, "big") + key)
+        last = 253402300799  # 9999-12-31T23:59:59Z: "forever" is read as that
+        return CertInfo(serial, key_blob, tuple(names),
+                        datetime.fromtimestamp(min(after, last), UTC),
+                        datetime.fromtimestamp(min(before, last), UTC), wire(signer))
+    except (ValueError, UnicodeDecodeError, OverflowError, OSError):
+        return None
+
+
+def renewal_hours(m: Machine, ca: CAConfig) -> int:
+    """The lifetime ship-fleet machine-bundle renews a machine's certificate for: what
+    `ship-fleet trust` gives it (cert_hours, else [ca] user_cert_hours), but never more
+    than its last certificate was given (`trust NAME --hours N` once: N), so renewing
+    by itself never stretches a short grant."""
+    hours = m.cert_hours or ca.user_cert_hours
+    return min(hours, m.last_cert_hours) if m.last_cert_hours else hours
+
+
+def half_life_passed(m: Machine, ca: CAConfig, until: datetime,
+                     now: datetime | None = None) -> bool:
+    """Is a machine's certificate past half the lifetime its renewal gets
+    (renewal_hours)? Then ship-fleet machine-bundle signs the next one."""
+    return until - (now or utc_now()) <= timedelta(hours=renewal_hours(m, ca)) / 2
 
 
 def new_serial() -> int:

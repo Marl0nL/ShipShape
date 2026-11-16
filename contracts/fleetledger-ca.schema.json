@@ -64,7 +64,19 @@
             "enum": ["ok", "expiring", "lapsed", "none", "revoked"],
             "description": "Its last certificate: ok; expiring (its last day, or the last half of a shorter lifetime); lapsed; none (never issued); revoked."
           },
-          "this_computer": { "type": "boolean", "description": "It is the FleetLedger computer itself (ship-fleet trust --this-computer), which renews its own certificate." }
+          "this_computer": { "type": "boolean", "description": "It is the FleetLedger computer itself (ship-fleet trust --this-computer), which renews its own certificate." },
+          "last_refreshed": {
+            "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
+            "description": "When it last got its own bundle (ship-fleet machine-bundle); null: it never asked, so it does not refresh itself."
+          },
+          "idle_limit": {
+            "type": "boolean",
+            "description": "true (the default): after 30 days without asking it is refused its bundle until allowed again (ship-fleet trust NAME --allow-again); false: it stays trusted until untrusted."
+          },
+          "idle_refused": {
+            "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
+            "description": "When ship-fleet machine-bundle first refused it for being idle; null unless it is refused now."
+          }
         }
       }
     }

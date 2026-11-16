@@ -234,6 +234,34 @@ A Ship it cannot reach gets the list at the next `ship-fleet ca sign`; until
 then the old certificate still works there. Install the new certificate on the
 machine afterwards (the bundle or `--print-cert`).
 
+### A machine that refreshes itself
+
+`ship-fleet machine-bundle laptop`, run on the FleetLedger computer, prints the
+laptop's own bundle as JSON (contracts/ship-fleet.md): its certificate, the CA lines,
+the Ships its scope reaches with their names, tags and runtime, and FleetLedger's own
+host key. It signs a new certificate only once the current one is past half its life,
+and nothing while the vault is locked (it then returns the current certificate while
+it lasts, and says why it is not new). It is meant to be the one command a key of the
+laptop's may run on the FleetLedger computer, so the laptop can keep itself current;
+the forced `authorized_keys` line and the laptop's refresher are not part of
+FleetLedger yet.
+
+A machine that has asked is watched: `ship-fleet attention` says
+`machine-refresh-stopped` when it has not asked for 4 days. Running the command by
+hand counts as that machine asking, so to look at what it prints, run it for
+FleetLedger's own computer (`ship-fleet ca show` marks it), which is never watched. A machine that has not
+asked for 30 days is refused (`machine-refresh-refused`) until you let it again:
+
+```sh
+ship-fleet trust laptop --allow-again    # it may ask again; signs nothing
+ship-fleet trust laptop --idle-limit off # it stays trusted until untrusted
+ship-fleet trust laptop --idle-limit on  # the default: refused after 30 days idle
+```
+
+A machine that has never asked (one trusted before this existed, say) starts its 30
+days at its first ask. FleetLedger's own computer has no idle limit. `ship-fleet ca
+show` says when each machine last asked.
+
 ## 5. Revoke
 
 ```sh

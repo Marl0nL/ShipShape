@@ -376,8 +376,9 @@ def overlay_items(app, inv) -> list[Item]:
 
 
 def machines_items(inv) -> list[Item]:
-    """Trusted machines whose certificate is in its last day or has lapsed (the same
-    items as ship-fleet attention, ops.machine_cert_attention). Reads ships.toml only."""
+    """Trusted machines whose certificate is in its last day or has lapsed, or that
+    stopped asking for their bundle or were refused it for being idle (the same items as
+    ship-fleet attention, ops.machine_cert_attention). Reads ships.toml only."""
     from fleetledger import ca, ops
 
     if ca.config(inv) is None:
@@ -389,11 +390,25 @@ def machines_items(inv) -> list[Item]:
     if not due:
         return [Item("fleet", "trusted machines", "ok",
                      f"{len(trusted)}, none to renew by hand now")]
-    here = ops.THIS_COMPUTER_COMMAND
-    return [Item("fleet", f"machine {i.subject}", "warn", i.message,
-                 here if i.fix == ops.THIS_COMPUTER_FIX
-                 else ops.MACHINE_CERT_COMMAND.format(name=i.subject),
-                 key="fleet.machine-certificate", subject=i.subject) for i in due]
+    def command(i) -> str:
+        if i.fix == ops.THIS_COMPUTER_FIX:
+            return ops.THIS_COMPUTER_COMMAND
+        if i.code == "machine-refresh-refused":
+            return ops.REFRESH_REFUSED_COMMAND.format(name=i.subject)
+        if i.code == "machine-refresh-stopped":
+            return "ship-fleet ca show   (when each machine last asked for its bundle)"
+        return ops.MACHINE_CERT_COMMAND.format(name=i.subject)
+
+    return [Item("fleet", f"machine {i.subject}", "warn", i.message, command(i),
+                 key=MACHINE_KEYS[i.code], subject=i.subject)
+            for i in due]
+
+
+# doctor --json's key for each of ops.machine_cert_attention's codes
+MACHINE_KEYS = {"machine-cert-expiring": "fleet.machine-certificate",
+                "machine-cert-lapsed": "fleet.machine-certificate",
+                "machine-refresh-refused": "fleet.machine-refresh-refused",
+                "machine-refresh-stopped": "fleet.machine-refresh-stopped"}
 
 
 def ships_items(inv) -> list[Item]:

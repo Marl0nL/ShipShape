@@ -38,7 +38,10 @@
       "revoked": null,
       "fingerprint": "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
       "state": "lapsed",
-      "this_computer": false
+      "this_computer": false,
+      "last_refreshed": "2025-12-28T09:00:00Z",
+      "idle_limit": true,
+      "idle_refused": null
     },
     {
       "machine": "fleetledger",
@@ -53,7 +56,10 @@
       "revoked": null,
       "fingerprint": "SHA256:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
       "state": "ok",
-      "this_computer": true
+      "this_computer": true,
+      "last_refreshed": null,
+      "idle_limit": true,
+      "idle_refused": null
     },
     {
       "machine": "old-laptop",
@@ -68,7 +74,10 @@
       "revoked": "2025-12-02T00:00:00Z",
       "fingerprint": "SHA256:OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
       "state": "revoked",
-      "this_computer": false
+      "this_computer": false,
+      "last_refreshed": null,
+      "idle_limit": true,
+      "idle_refused": null
     }
   ]
 }

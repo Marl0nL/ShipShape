@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "kind": "assistant",
+  "title": "Assistant",
+  "tags": [
+    "personal"
+  ],
+  "updated": "2026-11-12T09:40:00Z",
+  "summary": "Sorting out Thursday's conference trip and this week's admin",
+  "cards": [
+    {
+      "id": "flights",
+      "title": "Flights held",
+      "body": "Out Thu 7:05, back Fri 18:30. Hold expires 5pm today.",
+      "tone": "warn",
+      "link": "https://example.com/booking/ABC123"
+    },
+    {
+      "id": "dinner",
+      "title": "Dinner Thursday",
+      "body": "Booked for 4 at 7:30, near the venue.",
+      "tone": "good"
+    },
+    {
+      "id": "car",
+      "title": "Car registration due",
+      "body": "Renewal due 30 Nov.",
+      "tone": "info"
+    },
+    {
+      "id": "insurance",
+      "title": "Insurance claim",
+      "body": "Waiting on the assessor's report. Chased on Monday, no reply.",
+      "tone": "bad"
+    }
+  ],
+  "lists": [
+    {
+      "title": "Today",
+      "items": [
+        {
+          "text": "Confirm flights before 5pm",
+          "done": false
+        },
+        {
+          "text": "Reply to the landlord about the leak",
+          "done": true
+        },
+        {
+          "text": "Book a haircut",
+          "done": false
+        }
+      ]
+    },
+    {
+      "title": "This week",
+      "items": [
+        {
+          "text": "Draft the quarterly expenses",
+          "done": false
+        },
+        {
+          "text": "Gift for a friend's birthday (Sat)",
+          "done": false
+        }
+      ]
+    }
+  ],
+  "notes": "Prefers window seats, no checked bags. Hotel: use the corporate rate only for work trips.",
+  "links": [
+    {
+      "title": "Trip itinerary",
+      "url": "https://example.com/trip"
+    }
+  ]
+}

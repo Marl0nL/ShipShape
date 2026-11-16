@@ -27,6 +27,7 @@
             "fleet.this-copy", "fleet.inventory", "fleet.admin-key", "fleet.ssh-agent",
             "fleet.your-keys-for-ships", "fleet.certificate-authority", "fleet.managed-keys",
             "fleet.trusted-machines", "fleet.machine-certificate",
+            "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped",
             "hypervisor.driver", "hypervisor.proxmox", "hypervisor.proxmox-settings",
             "hypervisor.proxmox-token", "hypervisor.proxmox-api", "hypervisor.template",
             "hypervisor.fleetledgers-own-vm",
@@ -37,7 +38,7 @@
         },
         "subject": {
           "type": ["string", "null"],
-          "description": "fleet.machine-certificate: the trusted machine's name; ships.not-enrolled: the Ship's; fleet.managed-keys, when it fails: the key file's name (one item per key). null otherwise."
+          "description": "fleet.machine-certificate, fleet.machine-refresh-refused, fleet.machine-refresh-stopped: the trusted machine's name; ships.not-enrolled: the Ship's; fleet.managed-keys, when it fails: the key file's name (one item per key). null otherwise."
         },
         "area": { "enum": ["computer", "fleet", "hypervisor", "overlay", "ships"] },
         "title": { "type": "string", "minLength": 1, "description": "The check's name as the text form's CHECK column shows it." },
@@ -50,7 +51,7 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "key": { "enum": ["fleet.machine-certificate", "ships.not-enrolled"] } } },
+          "if": { "properties": { "key": { "enum": ["fleet.machine-certificate", "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped", "ships.not-enrolled"] } } },
           "then": { "properties": { "subject": { "$ref": "#/$defs/shipName" } } }
         },
         {
@@ -61,7 +62,7 @@
           "if": {
             "not": {
               "anyOf": [
-                { "properties": { "key": { "enum": ["fleet.machine-certificate", "ships.not-enrolled"] } } },
+                { "properties": { "key": { "enum": ["fleet.machine-certificate", "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped", "ships.not-enrolled"] } } },
                 { "properties": { "key": { "const": "fleet.managed-keys" }, "state": { "const": "fail" } } }
               ]
             }
