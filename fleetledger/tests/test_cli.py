@@ -1055,7 +1055,7 @@ def test_snapshot_commands(env):
     assert code != 0 and "--yes" in err
     assert env.run("snapshot", "rollback", "ship-04", "before", "--yes")[0] == 0
     assert env.driver.snaps[-1] == ("rollback", "ship-04", "before")
-    assert env.run("snapshot", "rm", "ship-04", "before")[0] == 0
+    assert env.run("snapshot", "rm", "ship-04", "before", "--yes")[0] == 0
     assert env.run("snapshot", "rm", "ship-04")[0] != 0
 
 
@@ -2246,6 +2246,36 @@ def test_rollback_asks_for_yes_in_a_terminal(env):
     env.app.confirm = lambda prompt: " YES "  # yes in any case
     assert env.run("snapshot", "rollback", "ship-04", "before")[0] == 0
     assert env.driver.snaps[-1] == ("rollback", "ship-04", "before")
+
+
+def test_snapshot_rm_asks_for_the_snapshots_name_or_takes_yes(env):
+    env.run("new", "ship-04", "--on", "proxmox")
+    deleted = lambda: [s for s in env.driver.snaps if s[0] == "rm"]  # noqa: E731
+    # Nobody to ask: refused, naming the Ship, the snapshot and --yes; nothing deleted.
+    code, _, err = env.run("snapshot", "rm", "ship-04", "before")
+    assert code == 1 and "Nothing deleted" in err and "cannot be undone" in err
+    assert "snapshot before of ship-04" in err
+    assert "ship-fleet snapshot rm ship-04 before --yes" in err
+    assert deleted() == []
+    # In a terminal: only the snapshot's name, as it is spelt.
+    asked = []
+    env.app.stdin_isatty = lambda: True
+    for wrong in ("", "yes", "Before", "ship-04"):
+        env.app.confirm = lambda prompt: asked.append(prompt) or wrong  # noqa: B023
+        code, _, err = env.run("snapshot", "rm", "ship-04", "before")
+        assert code == 1 and "Nothing deleted: snapshot before of ship-04 stays." in err
+    assert asked[0] == ("Deleting snapshot before of ship-04 means ship-04 can never be "
+                        "rolled back to it. This cannot be undone. Type before to delete it: ")
+    assert deleted() == []
+    env.app.confirm = lambda prompt: " before "
+    assert env.run("snapshot", "rm", "ship-04", "before")[0] == 0
+    assert deleted() == [("rm", "ship-04", "before")]
+    # --yes asks nothing, in a terminal or not.
+    env.app.confirm = lambda prompt: pytest.fail("asked despite --yes")
+    assert env.run("snapshot", "rm", "ship-04", "after", "--yes")[0] == 0
+    env.app.stdin_isatty = lambda: False
+    assert env.run("snapshot", "rm", "ship-04", "later", "--yes")[0] == 0
+    assert deleted()[1:] == [("rm", "ship-04", "after"), ("rm", "ship-04", "later")]
 
 
 def test_destroy_takes_the_name_exactly(env):

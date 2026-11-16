@@ -93,7 +93,8 @@ def test_delete_needs_the_tick(driven):
     assert driven.app_ui.jobs.recent() == []
     driven.post("/ships/ship-01/snapshots/delete", {"snapshot": "before-upgrade",
                                                     "confirm": "yes"})
-    assert finished(driven).ok and driven.fake.calls == [("rm", "ship-01", "before-upgrade")]
+    job = finished(driven)  # the tick is its confirmation: the job passes --yes
+    assert job.ok and driven.fake.calls == [("rm", "ship-01", "before-upgrade")]
 
 
 @pytest.mark.parametrize("bad", ["1st", "x", "current", "a b", "--yes"])
