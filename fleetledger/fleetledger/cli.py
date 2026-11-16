@@ -26,7 +26,7 @@ COMMANDS = (
     "signins", "owner", "set", "agent", "runtime", "tag", "tools", "toolkit", "update",
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
-    "unlock", "vault", "appliance", "backup", "self-update",
+    "unlock", "vault", "appliance", "backup", "self-update", "about",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -34,7 +34,8 @@ COMMANDS = (
 EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetledger.setupcmd",
                          "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service",
                          "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
-                         "fleetledger.selfupdate", "fleetledger.toolkitcmd")
+                         "fleetledger.selfupdate", "fleetledger.toolkitcmd",
+                         "fleetledger.about")
 
 
 @dataclass
@@ -717,6 +718,8 @@ def _in_use(args, app):
 
     if args.command == "migrate":
         return nullcontext()  # it takes the lock exclusively itself
+    if args.command == "about":
+        return nullcontext()  # it only reads, and must answer during a move too
     store = app.store_factory()
     path = getattr(store, "path", None)
     serves_ui = args.command == "ui" and getattr(args, "ui_command", None) is None
@@ -727,8 +730,8 @@ def _in_use(args, app):
 
 def _handed_over(args, app) -> None:
     """A copy on standby or retired (ship-fleet migrate) does not act on the fleet:
-    every command but migrate's own, doctor, service, unlock and vault refuses, the web
-    UI included."""
+    every command but migrate's own, doctor, service, unlock, vault and about refuses,
+    the web UI included."""
     from fleetledger import handover
 
     if args.command in handover.ALLOWED:
@@ -745,9 +748,10 @@ def _handed_over(args, app) -> None:
 # What still runs while FleetLedger's vault is locked (vault.py): unlocking it, the
 # vault itself, doctor, the web UI (read-only, with its Unlock page) and the service
 # that runs it, updating FleetLedger's own checkout, and backup (it reads the vault,
-# which refuses while locked, so its result, failed, is kept for doctor); and any read
-# from the caches alone (--offline).
-LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup")
+# which refuses while locked, so its result, failed, is kept for doctor); about, which
+# reads and says what it could not; and any read from the caches alone (--offline).
+LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup",
+                  "about")
 
 
 def _vault_locked(args, app) -> None:

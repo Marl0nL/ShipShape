@@ -14,11 +14,11 @@ revocation list un-revokes machines. So `ship-fleet migrate` hands over in steps
   Retiring first means a cut-over cut short leaves no copy active, never two.
 
 A copy on standby or retired refuses every command but migrate's own, doctor and
-service (which only manages the systemd unit) and its vault's (unlock, vault), the
-web UI included, saying why and what to do. The **epoch** ([fleet] epoch in
-ships.toml, 0 when absent) goes up at every activation. A retired copy remembers
-the epoch it handed over to, so a later receive refuses a fleet older than one this
-computer already handed on (an old backup, a forgotten copy).
+service (which only manages the systemd unit), its vault's (unlock, vault) and about
+(which only reads), the web UI included, saying why and what to do. The **epoch**
+([fleet] epoch in ships.toml, 0 when absent) goes up at every activation. A retired
+copy remembers the epoch it handed over to, so a later receive refuses a fleet older
+than one this computer already handed on (an old backup, a forgotten copy).
 
 Rollback within the window: `migrate retire` on the new copy, `migrate unretire` on
 the old one. After about two weeks, `migrate wipe` deletes a retired copy's keys,
@@ -48,8 +48,9 @@ WIPE_AFTER = timedelta(days=14)  # keep a retired copy this long, for a rollback
 # What a copy on standby or retired may still run (each checks for itself). service
 # only installs, shows or removes the systemd unit (the UI it runs refuses as ever);
 # unlock and vault act on no fleet, and a copy whose vault locked at a reboot must be
-# able to open it to be activated, unretired or wiped.
-ALLOWED = ("migrate", "doctor", "service", "unlock", "vault")
+# able to open it to be activated, unretired or wiped; about only reads, and says which
+# copy this is.
+ALLOWED = ("migrate", "doctor", "service", "unlock", "vault", "about")
 
 
 @dataclass(frozen=True)

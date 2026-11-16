@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-about.schema.json",
+  "title": "FleetLedger itself (ship-fleet about --json, version 1)",
+  "description": "Printed on stdout by `ship-fleet about --json` on the FleetLedger computer: its version and checkout, whether origin has a newer commit (only with --check), the web UI's addresses, the service, the vault, backups, which copy this is, and the command that updates it. It only reads, and is printed while the vault is locked or the service is down: what it could not read is listed in `unread`, and the fields it would have filled are null. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "checkout", "upstream", "ui", "service", "vault", "backup", "copy", "self_update", "unread"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-about/1" },
+    "version": { "type": "string", "minLength": 1, "maxLength": 100, "description": "FleetLedger's package version (ship-fleet --version)." },
+    "checkout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "commit", "branch", "dirty"],
+      "description": "The ShipShape checkout FleetLedger runs from (it is also the next Ship tooling).",
+      "properties": {
+        "path": { "type": ["string", "null"], "description": "Its folder; null when it cannot be found." },
+        "commit": { "oneOf": [{ "$ref": "#/$defs/gitCommit" }, { "type": "null" }] },
+        "branch": { "type": ["string", "null"], "description": "The branch checked out; null when detached (FleetLedger's own VM) or unknown." },
+        "dirty": { "type": ["boolean", "null"], "description": "Uncommitted changes to tracked files (self-update refuses them); null when unknown." }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checked", "ref", "commit", "newer", "behind"],
+      "description": "Whether origin has a newer commit. Only `ship-fleet about --check` looks: it runs one `git fetch` of origin, as self-update does. Without it, checked is false and the rest null.",
+      "properties": {
+        "checked": { "type": "boolean", "description": "true when the fetch and the comparison succeeded." },
+        "ref": { "type": "string", "description": "What self-update moves to by default: origin/main." },
+        "commit": { "oneOf": [{ "$ref": "#/$defs/gitCommit" }, { "type": "null" }] },
+        "newer": { "type": ["boolean", "null"], "description": "ref is ahead of the checkout (self-update would move to it)." },
+        "behind": { "type": ["integer", "null"], "minimum": 0, "description": "Commits on ref that the checkout does not have." }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["local", "remote", "running", "as_service", "jobs", "stopping"],
+      "properties": {
+        "local": { "type": ["string", "null"], "pattern": "^http://127\\.0\\.0\\.1:[0-9]{4,5}$", "description": "This computer's address: from the running UI, else the remote UI's port, else the service unit's; null when none is set." },
+        "remote": { "type": ["string", "null"], "pattern": "^https://[^\\s/]+$", "description": "The Tailscale Serve address (ship-fleet ui remote), when it is on." },
+        "running": { "type": "boolean", "description": "A ship-fleet ui (as this user) answers on its control socket." },
+        "as_service": { "type": ["boolean", "null"], "description": "The running UI is the service, not one in a terminal; null when none runs." },
+        "jobs": { "type": ["integer", "null"], "minimum": 0, "description": "Jobs the running UI is running; null when none runs." },
+        "stopping": { "type": ["boolean", "null"], "description": "The running UI is stopping, waiting for its jobs; null when none runs." }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["installed", "active", "enabled"],
+      "description": "The systemd user unit (ship-fleet service).",
+      "properties": {
+        "installed": { "type": "boolean" },
+        "active": { "type": ["string", "null"], "maxLength": 100, "description": "systemctl --user is-active: active, inactive, failed, activating, ...; null when not installed or systemd did not say." },
+        "enabled": { "type": ["string", "null"], "maxLength": 100, "description": "systemctl --user is-enabled: enabled, disabled, ...; null when not installed or systemd did not say." }
+      }
+    },
+    "vault": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {
+        "state": { "enum": ["off", "locked", "unlocked", null], "description": "off: no vault (secrets in the OS keyring or 0600 files). locked: on, and not unlocked since the last boot (FleetLedger is read-only). null: could not be read." }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheduled", "last", "last_made"],
+      "properties": {
+        "scheduled": { "type": "boolean", "description": "A daily backup timer is installed (ship-fleet backup schedule)." },
+        "last": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["at", "ok", "to", "why"],
+              "description": "The last ship-fleet backup now's result here: the last attempt, which may have failed.",
+              "properties": {
+                "at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+                "ok": { "type": "boolean" },
+                "to": { "type": ["string", "null"], "description": "The folder it was written to." },
+                "why": { "type": ["string", "null"], "description": "Why it failed." }
+              }
+            }
+          ]
+        },
+        "last_made": {
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
+          "description": "When the newest backup in last.to was made (from its file name), so a failed attempt does not hide the last good one; null when there is none, or the folder is not there just now."
+        }
+      }
+    },
+    "copy": { "enum": ["active", "standby", "retired", "unreadable", "none"], "description": "Which copy of the fleet this is (ship-fleet migrate). none: no fleet here yet." },
+    "self_update": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "ref"],
+      "properties": {
+        "command": { "const": "ship-fleet self-update", "description": "Run on the FleetLedger computer, as its user." },
+        "ref": { "type": "string", "description": "Where it moves to by default." }
+      }
+    },
+    "unread": {
+      "type": "array",
+      "description": "What could not be read, and why; the rest of the document is still true.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["what", "why"],
+        "properties": {
+          "what": { "enum": ["checkout", "upstream", "service", "remote ui", "vault", "backups", "copy"] },
+          "why": { "type": "string", "maxLength": 1000 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "gitCommit": {
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+      "description": "A full git commit id (SHA-1, or SHA-256 in a SHA-256 repository)."
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    }
+  }
+}

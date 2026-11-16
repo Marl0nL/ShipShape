@@ -73,6 +73,21 @@ def unit_path() -> Path:
     return unit_dir() / UNIT
 
 
+def unit_port() -> int | None:
+    """The port the installed unit runs the UI on (its ExecStart's --port), or None."""
+    try:
+        text = unit_path().read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        words = line.split()
+        if line.startswith("ExecStart=") and "--port" in words[:-1]:
+            value = words[words.index("--port") + 1]
+            if value.isdigit() and 1024 <= int(value) <= 65535:
+                return int(value)
+    return None
+
+
 def run_system(argv: list[str]) -> tuple[int, str, str]:
     """systemctl or loginctl: (exit code, stdout, stderr)."""
     try:

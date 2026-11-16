@@ -224,7 +224,7 @@ secret, the inventory) to another computer, so:
 
 Only one copy acts on the fleet: the new one waits on standby until it has checked
 every Ship, then the old one retires (it refuses every command but `migrate`,
-`doctor`, `service`, `unlock` and `vault`, the web UI included) before the new one activates, so a hand-over cut
+`doctor`, `service`, `unlock`, `vault` and the read-only `about`, the web UI included) before the new one activates, so a hand-over cut
 short leaves no copy acting, never two. An epoch in `ships.toml` goes up at every
 hand-over, and a computer that handed the fleet on refuses an older state (an old
 backup). The retired copy keeps its keys for a two-week rollback window, so until

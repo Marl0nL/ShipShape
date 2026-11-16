@@ -13,6 +13,30 @@ Cloud apt repos, and `ship-fleet update` only installs apt packages that are
 missing. A Ship keeps the gh and gcloud it was provisioned with until you
 [update them by hand](#gh-and-gcloud).
 
+## Updating FleetLedger itself
+
+FleetLedger runs from its ShipShape checkout, so updating it moves that checkout. On
+the FleetLedger computer (over ssh is fine: `ssh fleetledger@<its VM> ship-fleet ...`
+on [its own VM](fleetledger-vm.md#updates)):
+
+```sh
+ship-fleet about --check    # its version and commit, and whether origin/main is newer
+ship-fleet self-update      # to origin/main; --to v1.2 for a tag or another branch
+```
+
+`about` changes nothing; `--check` fetches from origin once to compare. `self-update`
+refuses uncommitted changes in the checkout and refuses going back unless `--force`,
+runs `fleetledger/install.sh` again only if the install itself changed, and restarts
+the service if FleetLedger runs as one (running jobs finish first). It works while the
+vault is locked.
+
+**No Ship changes.** The checkout is also the next Ship tooling: roll that out when you
+choose, with the steps below from [2. Try one Ship first](#2-try-one-ship-first) on.
+
+A developer's checkout (a branch with your own commits) can be updated by hand
+instead: `git pull`, `fleetledger/install.sh` if `fleetledger/pyproject.toml` or
+`install.sh` changed, then `ship-fleet service restart` if it runs as a service.
+
 ## 1. Change the checkout
 
 `ship-fleet update` sends exactly what is in the checkout FleetLedger runs from.

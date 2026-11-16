@@ -191,8 +191,9 @@ standby or active.
 ## A retired copy
 
 A retired copy refuses every command but `ship-fleet migrate`, `doctor`, `service`
-(which only installs or removes the systemd unit) and its vault's (`unlock`, `vault`:
-one that locked at a reboot must open to be unretired or wiped), the web UI included,
+(which only installs or removes the systemd unit), its vault's (`unlock`, `vault`:
+one that locked at a reboot must open to be unretired or wiped) and `about` (which only
+reads), the web UI included,
 with a line saying when it retired and where the fleet went. Its files
 stay as they were, so you can roll back. Until it is wiped, the old computer is as
 sensitive as before: it still holds the admin and CA keys.
@@ -269,7 +270,7 @@ same vault.
   included, and leaves nothing. One killed outright while writing (a power cut)
   cannot, but it marked the copy standby before it wrote anything else: the new
   computer then says **"This FleetLedger is incomplete"**, refuses every command
-  but `migrate`, `doctor`, `service`, `unlock` and `vault` (its web UI too), and
+  but `migrate`, `doctor`, `service`, `unlock`, `vault` and `about` (its web UI too), and
   `migrate activate` refuses it. Running the move again replaces that copy (it
   deletes what the cut short one wrote, as `migrate wipe` would, keeping the vault,
   then writes the fleet). To drop it instead, run `ship-fleet migrate wipe` there.
