@@ -215,7 +215,7 @@ alike.
   otherwise they are generic and work for any hypervisor.
 - **proxmox** uses only the scoped API token: it uploads the seed ISO (Proxmox checks a SHA-256 the
   client sends with it), full-clones the template into the pool, attaches the
-  seed on `ide2`, sets cores, memory and bridge, grows `scsi0`, starts the VM,
+  seed on `ide2`, sets the vCPUs (Proxmox cores, one socket), memory and bridge, grows `scsi0`, starts the VM,
   and waits for every Proxmox task. It reads addresses from the guest agent and
   destroys the VM again. If creation fails part-way, it removes what it made;
   what it cannot remove it names (`LeftBehind`), so `new` saves it with the failed
