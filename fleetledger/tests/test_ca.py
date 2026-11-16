@@ -451,6 +451,82 @@ def test_ca_show_says_a_ship_not_seen_yet(caenv):
     assert [r["seen"] for r in json.loads(out)["ships"]] == [True, False]
 
 
+def _certified_for(store, name, hours):
+    """Make the machine's last certificate end this many hours from now."""
+    with store.edit() as ed:
+        ed.set_machine_field(name, "last_valid_before",
+                             ca.stamp(ca.utc_now() + timedelta(hours=hours)))
+
+
+def _machine_items(e, *args):
+    code, out, err = e.run("attention", "--json", *args)
+    assert code == 0, err
+    return {i["subject"]: i for i in json.loads(out) if i["code"].startswith("machine-cert-")}
+
+
+def test_a_machines_certificate_in_its_last_day_or_lapsed_needs_attention(caenv, tmp_path):
+    for name in ("laptop", "desk", "tablet", "spare"):
+        keygen(tmp_path / name, name)
+        scope = "ship:ship-09" if name == "spare" else "tag:work"  # spare reaches no Ship
+        caenv.run("trust", name, "--key", str(tmp_path / f"{name}.pub"), "--scope", scope,
+                  "--out", str(tmp_path / f"b-{name}"))
+    assert _machine_items(caenv) == {}  # 7 days left each: nothing to say
+    _certified_for(caenv.store, "laptop", 5)
+    _certified_for(caenv.store, "desk", -1)
+    _certified_for(caenv.store, "spare", -1)
+    _certified_for(caenv.store, "tablet", 30)  # healthy
+    items = _machine_items(caenv)
+    assert set(items) == {"laptop", "desk"}
+    laptop, desk = items["laptop"], items["desk"]
+    assert (laptop["code"], laptop["severity"], laptop["ship"]) == (
+        "machine-cert-expiring", "medium", None)
+    assert (desk["code"], desk["severity"], desk["ship"]) == ("machine-cert-lapsed", "high", None)
+    assert "lapses at" in laptop["message"] and "lapsed at" in desk["message"]
+    for item in (laptop, desk):
+        # The fix runs where it can: a browser, or ship-fleet on the FleetLedger computer.
+        assert "Download bundle" in item["fix"] and "Trusted machines" in item["fix"]
+        assert f"ship-fleet trust {item['subject']} on the FleetLedger computer" in item["fix"]
+        assert "--print-cert" not in item["fix"]
+    code, out, _ = caenv.run("attention")
+    desk_line = next(x for x in out.splitlines() if "machine desk" in x)
+    assert "high" in desk_line and "machine-cert-lapsed" in desk_line
+    assert "Download bundle" in desk_line
+    # Ranked by severity with the Ships' items: lapsed (high) before expiring (medium).
+    codes = [i["code"] for i in json.loads(caenv.run("attention", "--json")[1])]
+    assert codes.index("machine-cert-lapsed") < codes.index("machine-cert-expiring")
+    # ca show: a state for each machine, in its text and its JSON.
+    code, out, err = caenv.run("ca", "show")
+    assert code == 0, err
+    said = {x.split()[0]: x for x in out.splitlines() if x.startswith("  ") and "until" in x}
+    assert said["laptop"].rstrip().endswith("expiring (within a day)")
+    assert said["desk"].rstrip().endswith("lapsed")
+    assert said["tablet"].rstrip().endswith("ok")
+    states = {m["machine"]: m["state"]
+              for m in json.loads(caenv.run("ca", "show", "--json")[1])["machines"]}
+    assert states == {"laptop": "expiring", "desk": "lapsed", "tablet": "ok", "spare": "lapsed"}
+    # doctor: one warning per machine, with its fix as the next step.
+    code, out, _ = caenv.run("doctor", "--offline")
+    desk_row = next(x for x in out.splitlines() if "machine desk" in x)
+    assert "lapsed at" in desk_row
+    assert "Download bundle in its row" in out.split("Next:", 1)[1]
+    assert "machine tablet" not in out and "machine spare" not in out
+
+
+def test_doctor_says_trusted_machines_are_current(caenv, tmp_path):
+    from fleetledger import firstrun
+
+    assert firstrun.machines_items(caenv.store.load()) == []  # none trusted yet
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"), "--out",
+              str(tmp_path / "b"))
+    [item] = firstrun.machines_items(caenv.store.load())
+    assert (item.name, item.state) == ("trusted machines", "ok")
+    _certified_for(caenv.store, "laptop", 2)
+    [item] = firstrun.machines_items(caenv.store.load())
+    assert (item.name, item.state) == ("machine laptop", "warn")
+    assert "Download bundle" in item.next
+
+
 def test_a_narrowing_whose_revocation_does_not_reach_every_ship_fails(caenv, tmp_path):
     keygen(tmp_path / "lap", "lap")
     caenv.run("trust", "lap", "--key", str(tmp_path / "lap.pub"), "--out", str(tmp_path / "b"))
@@ -740,6 +816,23 @@ def test_this_computers_certificate_is_renewed_in_its_last_day(here):
                              ca.stamp(ca.utc_now() + timedelta(hours=5)))
     assert trustcmd.renew_this_computer_if_due(here.app, here.store)
     assert ca.machine(here.store.load(), name).last_serial != serial
+
+
+def test_this_computer_needs_attention_only_once_its_certificate_lapsed(here):
+    from fleetledger import trustcmd
+
+    here.run("trust", "--this-computer")
+    name = trustcmd.this_computer()["machine"]
+    _certified_for(here.store, name, 5)  # its last day: it renews itself, no alarm
+    assert _machine_items(here) == {}
+    code, out, _ = here.run("ca", "show")
+    assert "expiring (within a day) (renews itself)" in out
+    _certified_for(here.store, name, -1)  # lapsed: nothing has renewed it
+    item = _machine_items(here)[name]
+    assert item["code"] == "machine-cert-lapsed"
+    assert "the FleetLedger computer" in item["message"]
+    assert "ship-fleet trust --this-computer" in item["fix"]
+    assert "Download bundle" not in item["fix"]  # the web UI refuses its own entry
 
 
 def test_a_linked_ssh_config_is_written_through_its_link(here, tmp_path):

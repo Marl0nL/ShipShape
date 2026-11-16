@@ -46,7 +46,7 @@ SIGNIN_CODES = ("signin-missing", "signin-expired", "signin-expiring", "signin-w
 class Item:
     """One line in Needs attention: ops.attention's item plus a sign-in offer."""
 
-    ship: str
+    ship: str | None  # None: about the fleet, not one Ship (ops.fleet_attention)
     code: str
     message: str
     level: str  # high | medium | low (ops.SEVERITY)
@@ -56,13 +56,15 @@ class Item:
     @property
     def key(self) -> str:
         """Stable identity, for browser notifications ("is this new?")."""
-        return f"{self.ship}/{self.code}/{self.subject or ''}"
+        return f"{self.ship or 'fleet'}/{self.code}/{self.subject or ''}"
 
 
-def attention_items(views: list[status.ShipView]) -> list[Item]:
-    """Needs attention, ranked by the shared ops.attention (as `ship-fleet attention`)."""
+def attention_items(views: list[status.ShipView],
+                    inventory: Inventory | None = None) -> list[Item]:
+    """Needs attention, ranked by the shared ops.attention (as `ship-fleet attention`);
+    with the inventory, its fleet-level items too (the Fleet page)."""
     items = []
-    for entry in ops.attention(views):
+    for entry in ops.attention(views, inventory):
         signin = None
         if entry.code in SIGNIN_CODES and entry.subject in SERVICE_PROVIDER:
             signin = SERVICE_PROVIDER[entry.subject]
@@ -210,9 +212,11 @@ class Fleet:
         from fleetledger import trustcmd
 
         try:
-            trustcmd.renew_this_computer_if_due(self.app, self.app.store_factory())
+            renewed = trustcmd.renew_this_computer_if_due(self.app, self.app.store_factory())
         except Exception:  # noqa: BLE001 - a renewal must never stop the poller
-            pass
+            return
+        if renewed:  # take the new date in (no Ship is asked): no stale lapsed alert
+            self.poll([])
 
     def _publish(self, snapshot: Snapshot) -> None:
         with self._lock:

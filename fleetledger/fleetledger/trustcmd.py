@@ -172,6 +172,7 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
     and the trusted machines. krl: the revocation list to judge Ships against (None: do
     not judge whether their trust is behind). Reads files only; runs no command."""
     cfg = ca.require(inv)
+    here = this_computer()
     rows = []
     for ship in inv.ships():
         doc = status.read_cache(ship.name)
@@ -191,13 +192,18 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
         })
     machines = [
         {"machine": m.name, "scope": list(m.scope), "valid_before": m.last_valid_before,
-         "revoked": m.revoked, "fingerprint": ca.fingerprint(m.public_key)}
+         "revoked": m.revoked, "fingerprint": ca.fingerprint(m.public_key),
+         "state": ca.cert_state(m), "this_computer": bool(here and here["machine"] == m.name)}
         for m in ca.machines(inv)
     ]
     return {"host_ca": ca.fingerprint(cfg.host_public),
             "user_ca": [ca.fingerprint(k) for k in cfg.user_ca_keys()],
             "host_cert_days": cfg.host_cert_days, "user_cert_hours": cfg.user_cert_hours,
             "ships": rows, "machines": machines}
+
+
+# ca show's word for a machine's certificate state (ca.cert_state); JSON has the state.
+MACHINE_STATE_SAID = {"expiring": "expiring (within a day)", "none": "no certificate yet"}
 
 
 def ca_show(args, app) -> int:
@@ -219,7 +225,13 @@ def ca_show(args, app) -> int:
         app.say(f"  {r['ship']:<14} until {until:<21} {state}{behind}")
     app.say("Machines:")
     for m in machines:
-        what = f"revoked {m['revoked']}" if m["revoked"] else f"until {m['valid_before'] or '-'}"
+        if m["revoked"]:
+            what = f"revoked {m['revoked']}"
+        else:
+            state = MACHINE_STATE_SAID.get(m["state"], m["state"])
+            if m["this_computer"] and m["state"] == "expiring":
+                state += " (renews itself)"
+            what = f"until {m['valid_before'] or '-':<21} {state}"
         app.say(f"  {m['machine']:<14} {','.join(m['scope']):<20} {what}")
     if not machines:
         app.say("  none (ship-fleet trust <machine> --key <its .pub>)")
@@ -499,7 +511,7 @@ def _plain_ssh(inv: Inventory, key_path: Path) -> tuple[bool, str | None]:
                    "--this-computer again.")
 
 
-RENEW_WITHIN_S = 24 * 3600
+RENEW_WITHIN_S = ca.MACHINE_DUE_WITHIN.total_seconds()  # its last day
 
 
 def renew_this_computer_if_due(app, store) -> bool:

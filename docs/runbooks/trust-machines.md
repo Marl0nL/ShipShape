@@ -186,7 +186,11 @@ On the laptop, two clients reach a herdr-core Ship:
 
 ## 4. Renew
 
-A certificate lapses at the end of its lifetime, and sshd then refuses it. To
+A certificate lapses at the end of its lifetime, and sshd then refuses it. In its last
+day `ship-fleet attention`, the web UI's Needs attention and `ship-fleet doctor` (Health)
+flag it as `machine-cert-expiring`, and once it has lapsed as `machine-cert-lapsed`;
+`ship-fleet ca show` gives each machine's state, and its row under Trusted machines a
+badge. Nothing renews another machine by itself. To
 renew it, run `ship-fleet trust laptop` again; it reuses the recorded key. To
 send only the new certificate, use:
 

@@ -1121,7 +1121,7 @@ def cmd_reboot(args, app) -> int:
 
 
 def _attention_rows(items: list[ops.AttentionItem]) -> str:
-    rows = [[i.severity, i.ship, i.code, i.message] for i in items]
+    rows = [[i.severity, i.where, i.code, f"{i.message} {i.fix}".strip()] for i in items]
     return table(rows, ["", "SHIP", "WHAT", "DETAIL"])
 
 
@@ -1133,7 +1133,7 @@ def cmd_attention(args, app) -> int:
         return 0
     seen: set[tuple[str, str, str | None]] = set()
     while True:
-        items = ops.attention(_views(app, inv, ships, offline=False))
+        items = ops.attention(_views(app, inv, ships, offline=False), inv)
         if args.json:
             app.say(json.dumps([i.as_dict() for i in items], indent=2))
         elif args.watch is None:
@@ -1142,7 +1142,7 @@ def cmd_attention(args, app) -> int:
             fresh = [i for i in items if (i.ship, i.code, i.subject) not in seen]
             stamp = time.strftime("%H:%M:%S")
             for item in fresh:
-                app.say(f"{stamp}  {item.severity:<6} {item.ship}: {item.message}")
+                app.say(f"{stamp}  {item.severity:<6} {item.where}: {item.message}")
             seen = {(i.ship, i.code, i.subject) for i in items}
         if args.watch is None:
             return 0
