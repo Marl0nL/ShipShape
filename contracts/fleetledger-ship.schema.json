@@ -22,7 +22,7 @@
     "host": { "type": ["string", "null"], "description": "The name it answered on; null offline or when nothing answered." },
     "attention": {
       "type": "array",
-      "description": "The Ship's own attention items and FleetLedger's about it (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind; offline: the first and last of those only). ship-fleet attention ranks them with the fleet's.",
+      "description": "The Ship's own attention items and FleetLedger's about it (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind; offline: signin-wrong-account and tags-differ only). ship-fleet attention ranks them with the fleet's.",
       "items": {
         "type": "object",
         "additionalProperties": false,

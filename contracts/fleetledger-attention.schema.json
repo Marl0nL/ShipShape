@@ -17,7 +17,7 @@
       "pattern": "^[a-z][a-z0-9-]{0,47}$",
       "description": "What it is: a Ship's attention code (ship-status.schema.json), FleetLedger's about a Ship, a problem word (unreachable, host-key, identity, invalid, error, unknown, not-enrolled), or one of the fleet's own. Show unknown codes as they are."
     },
-    "message": { "type": "string", "minLength": 1 },
+    "message": { "type": "string" },
     "subject": {
       "type": ["string", "null"],
       "description": "What it is about within the Ship (an agent, a service id, a unit); for a fleet item: vault, the machine's name, or the Proxmox token's id."

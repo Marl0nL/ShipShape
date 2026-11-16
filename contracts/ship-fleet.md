@@ -45,7 +45,7 @@ those with it) in its order, `status` prints one. Schema:
 | `name`, `tags` | The Ship and its tags in the inventory (`defaults.tags` counting). |
 | `state` | The status document's (`provisioning`, `needs-sign-in`, `ready`, `running`, `unknown`); `not-enrolled` (in the inventory, never enrolled, not answering); else the problem. |
 | `problem`, `message` | Why there is no status, and in words: `unreachable`, `host-key` (another host key answered), `identity` (it says it is another Ship), `invalid` (its status breaks the contract), `error` (ship-ctl failed), `unknown` (offline, never fetched). Both null when it answered. |
-| `host` | The name it answered on; null offline. |
+| `host` | The name it answered on; null offline, and when nothing answered or the host key did not match. |
 | `attention` | Its attention items (`code`, `message`, `subject`): the Ship's own and FleetLedger's about it. `attention --json` ranks them with the fleet's. |
 | `status` | The Ship's status document (`ship-status.schema.json`), fetched now or, offline, the last one; null with a problem. |
 | `cloud_init` | cloud-init's own status JSON while ship-ctl is not installed yet; else null. |
@@ -68,7 +68,9 @@ in `examples/fleetledger-attention/`.
 | `subject` | What it is about within the Ship (an agent, a service id, a unit), or the fleet item's subject. |
 | `severity` | `high`, `medium` or `low`. |
 
-The fleet's own items, read from FleetLedger's files only (nothing is issued or asked):
+The fleet's own items, read from FleetLedger's files only (nothing is issued or asked).
+`vault-locked` is listed whatever the Ships; the others only when at least one Ship is
+listed (with `--tag`, one with that tag): with none, an unlocked FleetLedger prints `[]`.
 
 | `code` | `subject` | When |
 |---|---|---|
