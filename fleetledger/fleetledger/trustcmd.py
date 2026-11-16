@@ -274,7 +274,7 @@ def cmd_trust(args, app) -> int:
         if logins is not None:
             raise FleetError("This computer gets both logins (it is yours); --logins is for "
                              "other machines.")
-        return 0 if trust_this_computer(app, store, app.say) else 1
+        return 0 if trust_this_computer(app, store, app.say, notes=True) else 1
     name = args.machine
     not_revoked = False  # a narrowing whose revocation list did not reach every Ship
     if not name:
@@ -343,7 +343,16 @@ def cmd_trust(args, app) -> int:
     if args.install:
         script = bundle.folder / "install.sh"
         argv = ["sh", str(script)] + (["--no-herdr"] if args.no_herdr else [])
-        proc = subprocess.run(argv, cwd=bundle.folder)
+        proc = subprocess.run(argv, cwd=bundle.folder, capture_output=True, text=True,
+                              check=False)
+        for line in install_notes(proc.stdout, proc.stderr):
+            app.say(line)
+        ready = [s.name for s in ships if has_cert(s)]
+        if proc.returncode == 0 and ready:
+            commands, missing = attach_here_commands(ready)
+            app.say(f"Attach from here: {', '.join([f'ssh {ready[0]}'] + commands)}.")
+            if missing:
+                app.say(attach.install_hint(missing, renew_command(name, args) + " --install"))
         return 1 if not_revoked else proc.returncode
     app.say("On that machine, copy the folder over and run:  sh install.sh")
     # One sentence, so the coming self-refresh can replace it alone.
@@ -366,6 +375,8 @@ def renew_command(name: str, args) -> str:
         words += ["--hostnames", args.hostnames]
     if args.out:
         words += ["--out", args.out]
+    if args.hours:
+        words += ["--hours", str(args.hours)]
     return " ".join(shlex.quote(w) for w in words)
 
 
@@ -557,7 +568,7 @@ def this_computer_until(inv: Inventory) -> str | None:
     return m.last_valid_before if m and not m.revoked else None
 
 
-def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
+def trust_this_computer(app, store, say, *, create: bool = True, notes: bool = False) -> bool:
     """Trust this computer (your own key, every Ship) and install its bundle here: an
     SSH config entry per Ship (HostName: the first of its names that resolves here),
     its certificate and the CA line, and herdr saved machines. With create=False, only
@@ -626,7 +637,7 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
         why = (proc.stderr or proc.stdout or "").strip().splitlines()
         say("Could not set this computer up for plain ssh" + (f": {why[-1]}" if why else "."))
         return False
-    if create:  # asked for: what install.sh added and skipped (a renewal stays quiet)
+    if notes:  # trust --this-computer: what install.sh added and skipped
         for line in install_notes(proc.stdout, proc.stderr):
             say(line)
     works, note = _plain_ssh(inv, paths.expand(here["identity"]))
@@ -639,7 +650,7 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
             f"(certificate until {ca.stamp(until)}; FleetLedger renews it in its last day "
             "whenever it runs: the web UI, or ship-fleet status).")
         if missing:
-            say(attach.install_hint(missing))
+            say(attach.install_hint(missing, "ship-fleet trust --this-computer"))
     unsigned = [s.name for s in ships if not has_cert(s)]
     if unsigned:
         say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign`.")

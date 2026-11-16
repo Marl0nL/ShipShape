@@ -74,8 +74,9 @@ def tool_here(runtime: str) -> bool:
     return shutil.which(TOOL[runtime]) is not None
 
 
-def install_hint(runtimes) -> str:
-    """One line: what to install here to attach to Ships of these runtimes."""
+def install_hint(runtimes, rerun: str) -> str:
+    """One line: what to install here to attach to Ships of these runtimes, and the
+    command that then gives it the Ships (it runs the bundle's install.sh again)."""
     said = [f"{INSTALL[r][0]} from {INSTALL[r][1]}" for r in (CORE, HERDR) if r in runtimes]
     return (f"To attach to the agents from here, install {' and '.join(said)}, then run "
-            "ship-fleet trust --this-computer again (it gives the Ships to them).")
+            f"{rerun} again (it gives the Ships to them).")

@@ -805,6 +805,8 @@ def test_trust_says_how_to_renew_where_it_works(caenv, tmp_path):
     assert "--print-cert" not in out and "(on that machine)" not in out
     code, out, _ = caenv.run("trust", "laptop")
     assert code == 0 and "run ship-fleet trust laptop again on the FleetLedger computer" in out
+    code, out, _ = caenv.run("trust", "laptop", "--hours", "2")
+    assert code == 0 and "run ship-fleet trust laptop --hours 2 again" in out
 
 
 def test_trust_writes_the_name_that_resolves_here(caenv, tmp_path):

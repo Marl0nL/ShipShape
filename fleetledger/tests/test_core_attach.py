@@ -444,6 +444,29 @@ def test_this_computer_passes_install_notes_through_and_names_what_is_on_path(
     assert "install hc" not in out
 
 
+def test_trust_name_install_names_only_what_is_installed_here(
+        here, tmp_path, monkeypatch):  # noqa: F811
+    status.write_cache("ship-01", core_doc())
+    status.write_cache("ship-02", RUNNING)  # herdr
+    monkeypatch.setattr(attach, "tool_here", lambda runtime: runtime != attach.CORE)
+    keygen(tmp_path / "laptop", "laptop")
+    code, out, err = here.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+                              "--identity", str(tmp_path / "laptop"), "--install",
+                              "--no-herdr")
+    assert code == 0, err
+    assert "Done. Try:" not in out and "hc attach" not in out
+    assert "Attach from here: ssh ship-01, herdr --remote ship-02." in out
+    assert ("install hc (herdr-core) from https://herdr.dev/core/, then run ship-fleet trust "
+            f"laptop --identity {tmp_path / 'laptop'} --install again") in out
+
+
+def test_the_web_ui_gets_no_install_notes(here):  # noqa: F811
+    said = []
+    assert trustcmd.trust_this_computer(here.app, here.store, said.append)
+    assert not any("to the top of ~/.ssh/config" in line for line in said)
+    assert any("can attach" in line for line in said)
+
+
 def test_a_slow_install_is_said_not_raised(here, monkeypatch):  # noqa: F811
     run = subprocess.run
 
