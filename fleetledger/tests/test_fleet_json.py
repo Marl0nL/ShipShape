@@ -279,17 +279,18 @@ def test_ca_show_json_has_each_machines_logins_and_finds_one_by_its_key(
 
 
 def test_doctor_json_names_each_managed_key_that_fails(tmp_path, monkeypatch):
-    """One fail item per managed key gone, each with the key file as its subject, so
+    """One fail item per managed key gone, each with the key file's path as its subject, so
     key and subject still name one item."""
     from fleetledger import keys
 
-    gone = [tmp_path / "shipshape_fleet_ed25519", tmp_path / "shipshape_agent_ed25519"]
+    # Two keys of one name in two folders, one with a space: each its own item.
+    gone = [tmp_path / "admin" / "id_ed25519", tmp_path / "ca key" / "id_ed25519"]
     monkeypatch.setattr(keys, "managed", lambda inv: (None, gone))
     doc = setupcmd.as_json(firstrun._managed_items(None))
     check("fleetledger-doctor", doc)
     assert [(i["key"], i["subject"], i["state"]) for i in doc["items"]] == [
-        ("fleet.managed-keys", "shipshape_fleet_ed25519", "fail"),
-        ("fleet.managed-keys", "shipshape_agent_ed25519", "fail")]
+        ("fleet.managed-keys", str(gone[0]), "fail"),
+        ("fleet.managed-keys", str(gone[1]), "fail")]
     monkeypatch.setattr(keys, "managed", lambda inv: (None, []))
     monkeypatch.setattr(keys, "describe", lambda store: "the keyring")
     [ok] = setupcmd.as_json(firstrun._managed_items(None))["items"]

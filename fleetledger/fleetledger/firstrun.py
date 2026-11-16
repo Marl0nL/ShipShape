@@ -203,14 +203,14 @@ def _managed_items(inv) -> list[Item]:
         if not key.exists():
             problems.append(Item("fleet", "managed keys", "fail", f"{key} is gone",
                                  "ship-fleet setup   (or restore it from a backup)",
-                                 subject=key.name))
+                                 subject=str(key)))
             continue
         try:
             keys.read_passphrase(key, store)
         except FleetError as exc:
             problems.append(Item("fleet", "managed keys", "fail",
                                  f"{key.name}: {exc.message}", exc.hint or "ship-fleet setup",
-                                 subject=key.name))
+                                 subject=str(key)))
     return problems or [Item("fleet", "managed keys", "ok",
                              f"{len(managed)} key(s); passphrases in {keys.describe(store)}; "
                              "loaded into ssh-agent when needed")]

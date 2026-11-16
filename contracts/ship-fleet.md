@@ -134,7 +134,7 @@ does, after printing: 1 when any item is `missing` or `fail`, else 0.
 | Field | What it is |
 |---|---|
 | `key` | Which check (below). |
-| `subject` | For a check made once per machine, Ship or key, its name (`fleet.machine-certificate`, `fleet.machine-refresh-refused`, `fleet.machine-refresh-stopped`: the machine; `ships.not-enrolled`: the Ship; `fleet.managed-keys` when it fails: the key file); else null. `key` and `subject` together name one item. |
+| `subject` | For a check made once per machine, Ship or key, its name (`fleet.machine-certificate`, `fleet.machine-refresh-refused`, `fleet.machine-refresh-stopped`: the machine; `ships.not-enrolled`: the Ship; `fleet.managed-keys` when it fails: the key file's path); else null. `key` and `subject` together name one item. |
 | `area`, `title` | The text form's AREA and CHECK columns. |
 | `state` | `ok`, `info` (fine, with a next step), `warn`, `missing`, `fail`, `skip` (not checked, or optional and not set up). |
 | `detail`, `fix` | What it found, and the exact command (or step) that fixes it, empty when none. The text form lists `fix` under Next for `info`, `warn`, `missing` and `fail`. |
