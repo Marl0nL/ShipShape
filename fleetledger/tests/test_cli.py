@@ -1089,7 +1089,7 @@ def test_image_ls_publish_use_rm(env, tmp_path):
     assert code != 0 and "pinned" in err
     assert env.run("image", "use", "stock")[0] == 0
     assert "image" not in env.store.load().defaults
-    code, out, err = env.run("image", "rm", IMG)
+    code, out, err = env.run("image", "rm", IMG, "--yes")
     assert code == 0, err
     assert env.driver.removed_images == [(IMG, {"template_vmid": 9181})]
     assert not qcow.exists() and IMG not in env.store.load().images
@@ -2276,6 +2276,52 @@ def test_snapshot_rm_asks_for_the_snapshots_name_or_takes_yes(env):
     env.app.stdin_isatty = lambda: False
     assert env.run("snapshot", "rm", "ship-04", "later", "--yes")[0] == 0
     assert deleted()[1:] == [("rm", "ship-04", "after"), ("rm", "ship-04", "later")]
+
+
+def test_image_rm_asks_for_the_images_id_or_takes_yes(env, tmp_path):
+    qcow = tmp_path / f"{IMG}.qcow2"
+    qcow.write_bytes(b"QCOW")
+    add_image(env, published={"proxmox": {"template_vmid": 9181}}, file=qcow)
+    assert env.run("new", "ship-04", "--on", "proxmox", "--image", IMG)[0] == 0
+    said = (f"Removing image {IMG} deletes it from proxmox (template 9181) and deletes "
+            "its local file, so no new Ship can start from it. This cannot be undone. "
+            "ship-04 was made from it and keeps running: Ships are full copies.")
+    # Nobody to ask: refused, saying what goes and naming --yes; nothing removed.
+    code, _, err = env.run("image", "rm", IMG)
+    assert code == 1 and f"Nothing removed. {said}" in err.replace("\n", " ")
+    assert f"ship-fleet image rm {IMG} --yes" in err
+    assert env.driver.removed_images == [] and qcow.exists()
+    # In a terminal: only the image's id, as it is spelt.
+    asked = []
+    env.app.stdin_isatty = lambda: True
+    for wrong in ("", "yes", IMG.upper(), "ship-04"):
+        env.app.confirm = lambda prompt: asked.append(prompt) or wrong  # noqa: B023
+        code, _, err = env.run("image", "rm", IMG)
+        assert code == 1 and f"Nothing removed: image {IMG} stays." in err
+    assert asked[0] == f"{said} Type {IMG} to remove it: "
+    assert env.driver.removed_images == [] and IMG in env.store.load().images
+    env.app.confirm = lambda prompt: f" {IMG} "
+    assert env.run("image", "rm", IMG)[0] == 0
+    assert env.driver.removed_images == [(IMG, {"template_vmid": 9181})]
+    assert not qcow.exists() and IMG not in env.store.load().images
+
+
+def test_image_rm_with_yes_asks_nothing_and_says_what_a_kept_file_means(env, tmp_path):
+    qcow = tmp_path / f"{IMG}.qcow2"
+    qcow.write_bytes(b"QCOW")
+    add_image(env, file=qcow)
+    code, _, err = env.run("image", "rm", IMG, "--keep-file")
+    assert code == 1 and "forgets it, so no new Ship" in err.replace("\n", " ")
+    assert f"ship-fleet image rm {IMG} --keep-file --yes" in err
+    env.app.confirm = lambda prompt: pytest.fail("asked despite --yes")
+    for tty in (True, False):
+        with env.store.edit() as ed:
+            ed.remove_image(IMG)
+        add_image(env, published={"proxmox": {"template_vmid": 9181}}, file=qcow)
+        env.app.stdin_isatty = lambda: tty  # noqa: B023
+        assert env.run("image", "rm", IMG, "--keep-file", "--yes")[0] == 0
+        assert IMG not in env.store.load().images and qcow.exists()
+    assert env.driver.removed_images == [(IMG, {"template_vmid": 9181})] * 2
 
 
 def test_destroy_takes_the_name_exactly(env):
