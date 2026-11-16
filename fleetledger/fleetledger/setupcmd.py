@@ -276,10 +276,17 @@ def _vault(s: _Setup) -> None:
     try:
         vaultcmd.vault_init(argparse.Namespace(), s.app, s.store)
     except FleetError as exc:
-        s.app.note(f"The vault is not on: {exc.message}" + (f" {exc.hint}" if exc.hint else ""))
-        s.app.note("Carrying on with files only you can read.")
-        s.later.append("ship-fleet vault init")
-        return
+        said = exc.message + (f" {exc.hint}" if exc.hint else "")
+        if not vault.is_on():  # taken back: every secret is where it was
+            s.app.note(f"The vault is not on: {said}")
+            s.app.note("Carrying on with files only you can read.")
+            s.later.append("ship-fleet vault init")
+            return
+        # Kept: ships.toml may already read from it, so it stays, unfinished, and its
+        # recovery code was never shown.
+        s.app.note(f"The vault is on, but moving the secrets into it did not finish: {said}")
+        s.later.append("ship-fleet vault init   (finishes moving the secrets in)")
+        s.later.append("ship-fleet vault recovery   (a recovery code: none was shown)")
     if s.managed is not None:
         s.managed = keys.default_store()  # the vault, now that it is on
 

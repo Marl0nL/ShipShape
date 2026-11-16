@@ -369,6 +369,25 @@ def test_a_vault_that_cannot_be_made_here_leaves_files_and_says_why(no_keyring, 
     assert not any("vault passphrase" in q for q in no_keyring.asked)
 
 
+def test_a_vault_kept_after_a_failed_move_is_said_and_used(no_keyring, monkeypatch):
+    """vault init keeps a vault ships.toml may already read from: setup says it is on,
+    what is left, and keeps nothing more in files."""
+    from fleetledger import vault, vaultcmd
+    from fleetledger.errors import FleetError
+
+    def half_move(app, store, progress=None):
+        progress.pointing = True
+        raise FleetError("a read-back differed")
+
+    monkeypatch.setattr(vaultcmd, "move_in", half_move)
+    code, out, err = no_keyring.run(answers=["yes", *MANUAL])
+    assert code == 0, err
+    assert vault.state() == "unlocked"
+    assert "The vault is on, but moving the secrets into it did not finish" in err
+    assert "ship-fleet vault init   (finishes" in out and "ship-fleet vault recovery" in out
+    assert "Carrying on with files" not in err
+
+
 def test_a_second_run_moves_files_already_kept_into_the_vault(no_keyring):
     from fleetledger import vault
 

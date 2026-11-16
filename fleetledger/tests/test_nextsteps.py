@@ -83,7 +83,19 @@ def test_right_after_setup_each_step_says_what_does_it(nx):
     found = states(nx)
     assert found["setup"][0] == "attention"  # no CA yet in the test inventory
     assert found["setup"][1] == "ship-fleet setup   (or: ship-fleet ca init)"
-    assert found["first-ship"] == ("blocked", "")
+    # The rest is still listed: the Ships are there, only trusting machines needs the CA.
+    assert found["first-ship"] == ("done", "")
+    assert found["signins"] == ("todo", "ship-fleet login ship-01 all")
+    assert found["this-computer"] == ("blocked", "") and found["laptop"] == ("blocked", "")
+
+
+def test_an_admin_key_out_of_ssh_agent_hides_no_ship(nx, cakeys, monkeypatch):  # noqa: F811
+    with_ca(nx, cakeys)
+    doctor_tools(nx, monkeypatch, loaded=False)  # after a reboot, say
+    found = states(nx)
+    assert found["setup"] == ("attention", "ssh-add " + str(nx.store.load().admin_key))
+    assert found["first-ship"] == ("done", "")
+    assert found["signins"][0] == "todo" and found["this-computer"][0] == "todo"
 
 
 def test_a_set_up_fleet_lists_what_is_left(nx, cakeys):  # noqa: F811

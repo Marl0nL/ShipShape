@@ -68,13 +68,13 @@ def steps(app) -> list[Step]:
     items, inv = firstrun._everything(app, offline=True)
     locked = vault.state() == "locked"
     out = [_setup(items, inv, locked)]
-    # Locked, the rest is still read from files (the inventory, the Ships).
-    ready = out[0].state == "done" or (locked and inv is not None)
-    out.append(_first_ship(items, inv, ready))
+    # The rest is read from the inventory and files beside it, so it needs an inventory,
+    # not a clean doctor: an admin key out of ssh-agent hides no Ship (setup says so).
+    out.append(_first_ship(items, inv))
     out.append(_signins(inv, out[-1].state == "done"))
-    out.append(_this_computer(items, inv, ready))
+    out.append(_this_computer(items, inv))
     out.append(_other_devices())
-    out.append(_laptop(items, inv, ready))
+    out.append(_laptop(items, inv))
     out.append(_always_on(inv))
     out.append(_vault(items))
     out.append(_backups(items, out[-1]))
@@ -107,9 +107,9 @@ def _setup(items, inv, locked: bool) -> Step:
     return Step("setup", title, "done", "ship-fleet doctor finds nothing missing", docs=GUIDE)
 
 
-def _first_ship(items, inv, ready: bool) -> Step:
+def _first_ship(items, inv) -> Step:
     title = "A first Ship"
-    if inv is None or not ready:
+    if inv is None:
         return Step("first-ship", title, "blocked", "needs FleetLedger set up",
                     docs="docs/runbooks/create-ship.md", after="setup")
     pending = [i for i in items if i.area == "ships" and i.state == "warn"]
@@ -158,7 +158,7 @@ def _machine_due(items, name: str):
     return _first(items, area="fleet", name=f"machine {name}")
 
 
-def _this_computer(items, inv, ready: bool) -> Step:
+def _this_computer(items, inv) -> Step:
     """Plain ssh, herdr --remote and hc from this computer (trust --this-computer)."""
     from fleetledger import ca, ops, trustcmd
 
@@ -167,9 +167,9 @@ def _this_computer(items, inv, ready: bool) -> Step:
         return Step("this-computer", title, "skip", "this is FleetLedger's own VM: attach "
                     "from your own computers (Another computer, below)", docs=TRUST_DOC,
                     optional=True)
-    if inv is None or not ready or ca.config(inv) is None:
-        return Step("this-computer", title, "blocked", "needs FleetLedger set up, with its "
-                    "certificate authority", docs=TRUST_DOC, optional=True, after="setup")
+    if inv is None or ca.config(inv) is None:
+        return Step("this-computer", title, "blocked", "needs FleetLedger's certificate "
+                    "authority (FleetLedger set up, above)", docs=TRUST_DOC, optional=True, after="setup")
     here = trustcmd.this_computer()
     m = ca.machine(inv, here["machine"]) if here else None
     if m is None or m.revoked:
@@ -201,13 +201,13 @@ def _other_devices() -> Step:
                 "with ship-fleet ui link", docs=REMOTE_DOC, optional=True)
 
 
-def _laptop(items, inv, ready: bool) -> Step:
+def _laptop(items, inv) -> Step:
     from fleetledger import ca, trustcmd
 
     title = "Another computer (a laptop)"
-    if inv is None or not ready or ca.config(inv) is None:
-        return Step("laptop", title, "blocked", "needs FleetLedger set up, with its "
-                    "certificate authority", docs=TRUST_DOC, optional=True, after="setup")
+    if inv is None or ca.config(inv) is None:
+        return Step("laptop", title, "blocked", "needs FleetLedger's certificate "
+                    "authority (FleetLedger set up, above)", docs=TRUST_DOC, optional=True, after="setup")
     here = trustcmd.this_computer()
     mine = here["machine"] if here else None
     others = [m for m in ca.machines(inv) if not m.revoked and m.name != mine]
