@@ -27,8 +27,13 @@ can reach from anywhere. Each step links to the runbook with the details.
    the token and finds the rest itself. Anything missing on the host comes back
    as the exact root commands to run there
    ([runbooks/proxmox-setup.md](../runbooks/proxmox-setup.md) explains each).
-   It then offers the overlay (step 6) and a first Ship (step 4). `ship-fleet
-   doctor` shows where things stand at any time. Put
+   It then offers the overlay (step 6) and a first Ship (step 4). On a computer
+   with no usable OS keyring it first recommends FleetLedger's vault
+   ([vault.md](../vault.md)), so no secret is left in a plain file. `ship-fleet
+   doctor` shows where things stand at any time, and `ship-fleet doctor --next`
+   what is left once setup stops: signing the Ship in, this computer and a laptop,
+   your other devices, always-on, the vault and backups, each with its command
+   (`--json` for programs: [contracts/next-steps.schema.json](../../contracts/next-steps.schema.json)). Put
    your tags and the accounts each tag should use in
    `~/.config/fleetledger/ships.toml`
    ([an example](../runbooks/create-ship.md#2-set-up-your-fleet-once)).

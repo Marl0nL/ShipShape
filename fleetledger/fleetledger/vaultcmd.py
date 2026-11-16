@@ -250,6 +250,22 @@ def move_in(app, store, progress: Progress | None = None) -> list[str]:
     return [p.secret.label for p, _ in pending]
 
 
+def unfinished(store) -> list[str]:
+    """While the vault is on and unlocked: the secrets ships.toml names that it still
+    reads from a file or that are not in the vault, and old copies left behind as the
+    vault has them: what an interrupted vault init left (vault init finishes it).
+    Empty when there is nothing left, or nothing to read (off, locked, no fleet)."""
+    if vault.state() != "unlocked" or not store.exists():
+        return []
+    inv = store.load()
+    names = set(vault.backend().item_names(secret_store.SERVICE))
+    left = [p.secret.label for p in named(inv)
+            if p.store == "file" or p.secret.item not in names]
+    old = leftovers(inv, secret_store.os_backend()[0])
+    left += [f"an old copy of {x.secret.label}" for x in old if x.same]
+    return left
+
+
 @dataclass
 class Leftover:
     """An old copy of a secret the vault holds and ships.toml reads from it: a 0600

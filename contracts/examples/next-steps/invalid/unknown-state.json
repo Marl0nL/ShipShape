@@ -1,0 +1,97 @@
+{
+  "schema": "fleetledger.next-steps/1",
+  "left": 6,
+  "left_required": 2,
+  "steps": [
+    {
+      "key": "setup",
+      "title": "FleetLedger set up",
+      "state": "done",
+      "detail": "ship-fleet doctor finds nothing missing",
+      "command": "",
+      "docs": "docs/guide/your-own-fleet.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "first-ship",
+      "title": "A first Ship",
+      "state": "done",
+      "detail": "ship-01",
+      "command": "",
+      "docs": "docs/runbooks/create-ship.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "signins",
+      "title": "Sign the first Ship in",
+      "state": "maybe",
+      "detail": "ship-01: not signed in to github",
+      "command": "ship-fleet login ship-01 all",
+      "docs": "docs/runbooks/sign-in.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "this-computer",
+      "title": "Attach from this computer",
+      "state": "done",
+      "detail": "trusted as desktop",
+      "command": "",
+      "docs": "docs/runbooks/trust-machines.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "other-devices",
+      "title": "Your other devices (the web UI from anywhere)",
+      "state": "todo",
+      "detail": "off: the web UI answers on this computer only",
+      "command": "ship-fleet ui remote https://NAME.TAILNET.ts.net --port 8765 --login LOGIN",
+      "docs": "docs/runbooks/remote-ui.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "laptop",
+      "title": "Another computer (a laptop)",
+      "state": "todo",
+      "detail": "none trusted yet",
+      "command": "ship-fleet trust laptop --key laptop.pub --scope all",
+      "docs": "docs/runbooks/trust-machines.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "always-on",
+      "title": "Always on",
+      "state": "todo",
+      "detail": "FleetLedger runs only while you run it",
+      "command": "ship-fleet service install",
+      "docs": "docs/runbooks/fleetledger-service.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "vault",
+      "title": "The vault",
+      "state": "todo",
+      "detail": "off, and no usable OS keyring here: FleetLedger's secrets are in files only you can read. Recommended",
+      "command": "ship-fleet vault init",
+      "docs": "docs/vault.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "backups",
+      "title": "Backups",
+      "state": "blocked",
+      "detail": "backups are sealed with the vault",
+      "command": "",
+      "docs": "docs/runbooks/fleetledger-vm.md",
+      "optional": true,
+      "after": "vault"
+    }
+  ]
+}

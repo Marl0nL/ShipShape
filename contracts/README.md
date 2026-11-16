@@ -23,6 +23,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | SSH certificates for a Ship (`ship-ctl ssh-trust` stdin) | `ssh-trust.schema.json` | Fleet: the certificate authority (phase 3) | Ship: ship-ctl |
 | Network visibility summary (`ship-ctl net --json` data) | `net-summary.schema.json` | Ship: ship-netwatch and ship-ctl (phase 3) | Fleet: Network tab, first-seen destinations, who-talked search |
 | Baked image manifest | `image-manifest.schema.json` | Ship: `ship/image/bake` (phase 4) | Fleet: `ship-fleet image` (phase 4) |
+| Next steps after setup (`ship-fleet doctor --next --json`) | `next-steps.schema.json` | Fleet: `nextsteps.py` | programs that draw it (a Herdr Fleet panel) |
 | Agent record (`/var/lib/shipshape/agents.json`) | `agent-record.schema.json` | Ship: ship-ctl | Ship: ship-ctl (resume, restart, notices, status); Fleet sees it only through the status document's `agent_record` |
 | FleetLedger itself (`ship-fleet about --json`) | `fleetledger-about.schema.json` | Fleet: `ship-fleet about` | other programs on your computers (a Fleet panel, over ssh) |
 

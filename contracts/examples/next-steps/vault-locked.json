@@ -1,0 +1,97 @@
+{
+  "schema": "fleetledger.next-steps/1",
+  "left": 6,
+  "left_required": 3,
+  "steps": [
+    {
+      "key": "setup",
+      "title": "FleetLedger set up",
+      "state": "blocked",
+      "detail": "the vault is locked, so its secrets cannot be checked until it is unlocked",
+      "command": "",
+      "docs": "docs/guide/your-own-fleet.md",
+      "optional": false,
+      "after": "vault"
+    },
+    {
+      "key": "first-ship",
+      "title": "A first Ship",
+      "state": "done",
+      "detail": "ship-01",
+      "command": "",
+      "docs": "docs/runbooks/create-ship.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "signins",
+      "title": "Sign the first Ship in",
+      "state": "todo",
+      "detail": "ship-01: not signed in to github",
+      "command": "ship-fleet login ship-01 all",
+      "docs": "docs/runbooks/sign-in.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "this-computer",
+      "title": "Attach from this computer",
+      "state": "done",
+      "detail": "trusted as desktop",
+      "command": "",
+      "docs": "docs/runbooks/trust-machines.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "other-devices",
+      "title": "Your other devices (the web UI from anywhere)",
+      "state": "todo",
+      "detail": "off: the web UI answers on this computer only",
+      "command": "ship-fleet ui remote https://NAME.TAILNET.ts.net --port 8765 --login LOGIN",
+      "docs": "docs/runbooks/remote-ui.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "laptop",
+      "title": "Another computer (a laptop)",
+      "state": "todo",
+      "detail": "none trusted yet",
+      "command": "ship-fleet trust laptop --key laptop.pub --scope all",
+      "docs": "docs/runbooks/trust-machines.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "always-on",
+      "title": "Always on",
+      "state": "todo",
+      "detail": "FleetLedger runs only while you run it",
+      "command": "ship-fleet service install",
+      "docs": "docs/runbooks/fleetledger-service.md",
+      "optional": true,
+      "after": ""
+    },
+    {
+      "key": "vault",
+      "title": "The vault",
+      "state": "attention",
+      "detail": "locked (it locks at every boot): FleetLedger is read-only until it is unlocked",
+      "command": "ship-fleet unlock",
+      "docs": "docs/vault.md",
+      "optional": false,
+      "after": ""
+    },
+    {
+      "key": "backups",
+      "title": "Backups",
+      "state": "done",
+      "detail": "last one 2026-01-01 03:30 UTC, to /mnt/backups",
+      "command": "",
+      "docs": "docs/runbooks/fleetledger-vm.md",
+      "optional": true,
+      "after": ""
+    }
+  ]
+}

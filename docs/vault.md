@@ -19,7 +19,12 @@ your Ships keep running. One unlock opens every secret: there is never one unloc
 per key.
 
 It is off unless you turn it on. On a desktop with a keyring, nothing changes unless
-you choose it.
+you choose it. On a computer with no usable keyring, `ship-fleet setup --text`
+recommends it and, on a yes, makes it there and then (the same as `vault init`: the
+passphrase is typed in the terminal, never passed as an argument); the setup page
+recommends it and gives the command. If a vault init stopped part way (an interrupt, a
+full disk), setup finishes it before it makes anything else, or stops and says so, so
+new secrets never go to the vault while ships.toml still names files.
 
 ```sh
 ship-fleet vault init          # make it (you choose the passphrase), move every secret in

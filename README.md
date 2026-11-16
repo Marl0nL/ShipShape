@@ -44,6 +44,7 @@ ship-fleet login ship-02 all           # Claude Code, gcloud + ADC, GitHub
 ship-fleet ls
 ship-fleet ui                          # the same in your browser (this computer only)
 ship-fleet doctor                      # what is set up, what is missing, the next command
+ship-fleet doctor --next               # what is left after setup, step by step (--json too)
 ```
 
 Runbooks: [set up Proxmox](docs/runbooks/proxmox-setup.md) (once),
