@@ -1128,7 +1128,7 @@ def _attention_rows(items: list[ops.AttentionItem]) -> str:
 def cmd_attention(args, app) -> int:
     inv = app.store_factory().load()
     ships = inv.ships(args.tag)
-    if not ships:
+    if not ships and not ops.vault_attention():  # locked: the fleet's own item still
         app.say("No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
         return 0
     seen: set[tuple[str, str, str | None]] = set()

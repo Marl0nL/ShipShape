@@ -1414,8 +1414,24 @@ def test_cli_attention_while_locked_says_it_once_for_the_fleet(app, world, locke
     locked_vault.unlock("correct horse battery staple")
     assert {(i["ship"], i["code"]) for i in _offline_attention(app)} == {
         ("ship-01", "herdr-restart-pending"), ("ship-02", "unknown")}
+    code, out, _ = app.run("attention", "--offline")
+    assert code == 0 and "vault-locked" not in out and "ship-02" in out
     code, out, _ = app.run("attention", "--json")
     assert code == 0 and "vault-locked" not in out
+
+
+def test_cli_attention_locked_with_no_ship_listed_still_says_so(app, world, locked_vault):
+    [item] = _offline_attention_tag(app, "nosuchtag")
+    assert (item["ship"], item["code"]) == (None, "vault-locked")
+    locked_vault.unlock("correct horse battery staple")
+    code, out, _ = app.run("attention", "--offline", "--tag", "nosuchtag")
+    assert code == 0 and out.strip() == "No Ships with tag nosuchtag."
+
+
+def _offline_attention_tag(app, tag):
+    code, out, err = app.run("attention", "--offline", "--json", "--tag", tag)
+    assert code == 0, err
+    return json.loads(out)
 
 
 @pytest.mark.parametrize("argv,expected", [
