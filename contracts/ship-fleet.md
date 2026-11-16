@@ -214,7 +214,9 @@ patterns before writing a file from it. The bundle a person installs by hand
   stdout. So does a name that is not a machine name.
 - It signs a new certificate only once the current one is past half its life (with
   the default 7-day certificates, in its last 84 hours), with the code, lifetime and
-  record `ship-fleet trust` uses, ships.toml locked throughout, so two calls at once
+  record `ship-fleet trust` uses, but never for longer than the machine's last
+  certificate was given (`last_cert_hours`: after `ship-fleet trust NAME --hours 2`,
+  2 hours again, until a `trust NAME` without `--hours`), ships.toml locked throughout, so two calls at once
   sign one. Otherwise it returns the current one again. A certificate FleetLedger does
   not hold (signed by `trust --print-cert` since), or one for more than the machine may
   have now (its scope or logins narrowed since), counts as none: a new one is signed.
@@ -222,7 +224,10 @@ patterns before writing a file from it. The bundle a person installs by hand
   document comes with the current certificate while it is valid (null once lapsed),
   `not_renewed.code` `vault-locked`, and the rest as ever. Signing never prompts
   (stdin closed, no terminal); a CA key that would need a passphrase gives
-  `sign-failed`.
+  `sign-failed`. Its `why` is a fixed sentence: the reason (ssh-keygen's words, a
+  key's path) goes only to the audit log on the FleetLedger computer. So does the
+  reason for any other failure (a broken `ships.toml`, say), which the caller sees as
+  one fixed line on stderr, exit 1.
 - **The idle limit.** It records when the machine asked (`last_refreshed` in
   `ships.toml`, to within five minutes). A machine whose last ask, or the last time
   you allowed it again, is more than 30 days ago is refused, saying so and the one
@@ -234,8 +239,9 @@ patterns before writing a file from it. The bundle a person installs by hand
   computer (`trust --this-computer`) has no idle limit. Certificate lifetimes do not
   change.
 - Every call it answers writes one line to the audit log: the machine, and
-  `returned`, `renewed`, `returned, not renewed: <code>`, `refused: <why>` (unknown,
-  untrusted, not a machine name, idle since ...) or `failed`.
+  `returned`, `renewed`, `returned, not renewed: <code>` (with the reason for
+  `sign-failed`), `refused: <why>` (unknown, untrusted, not a machine name, idle since
+  ...) or `failed: <why>`.
 - On a copy on standby or retired (`ship-fleet migrate`) it refuses, as every command
   but a few does, saying where the fleet is; that copy writes nothing, not even an
   audit line. During a move it refuses until the move ends.
@@ -245,7 +251,7 @@ nothing from stdin, never looks at `SSH_ORIGINAL_COMMAND`, runs no shell, and ha
 option, so a key whose `authorized_keys` line forces `ship-fleet machine-bundle NAME`
 gets NAME's bundle and nothing else: no other machine's, no secret, no Ship outside
 NAME's scope. It writes only NAME's record in `ships.toml` (`last_refreshed`; a new
-certificate's serial, date and `issued` entry; `idle_refused`), the new certificate
+certificate's serial, date, lifetime and `issued` entry; `idle_refused`), the new certificate
 beside NAME's bundle (`~/.local/share/fleetledger/trust/NAME/NAME-cert.pub`), and its
 audit line; asked again within five minutes it does not rewrite `ships.toml`.
 

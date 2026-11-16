@@ -279,6 +279,12 @@
             "$ref": "#/$defs/timestamp",
             "description": "When it last got its bundle from `ship-fleet machine-bundle` (kept to within a few minutes). Written by ship-fleet. A machine that has one refreshes itself: it needs attention when it stops asking."
           },
+          "last_cert_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2160,
+            "description": "The lifetime its last certificate was given (ship-fleet trust, --hours included, or ship-fleet machine-bundle). Written by ship-fleet. machine-bundle renews for this or cert_hours (else ca.user_cert_hours), whichever is shorter, so a short one-off grant is never stretched."
+          },
           "refresh_allowed": {
             "$ref": "#/$defs/timestamp",
             "description": "When you last allowed it to ask again (`ship-fleet trust NAME --allow-again`). Its idle time runs from this or last_refreshed, whichever is later; with neither, from its first ask."

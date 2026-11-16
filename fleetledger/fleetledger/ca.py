@@ -157,6 +157,7 @@ class Machine:
     # again; whether the idle limit applies (absent: it does); when it was refused for
     # being idle (cleared when allowed again).
     last_refreshed: str | None = None
+    last_cert_hours: int | None = None  # the lifetime its last certificate was given
     refresh_allowed: str | None = None
     idle_limit: bool = True
     idle_refused: str | None = None
@@ -176,6 +177,7 @@ class Machine:
             logins=tuple(x for x in LOGINS if x in entry.get("logins", LOGINS)),
             logins_recorded="logins" in entry,
             last_refreshed=entry.get("last_refreshed"),
+            last_cert_hours=entry.get("last_cert_hours"),
             refresh_allowed=entry.get("refresh_allowed"),
             idle_limit=entry.get("idle_limit", True) is not False,
             idle_refused=entry.get("idle_refused"),
@@ -465,12 +467,20 @@ def cert_info(line: str | None) -> CertInfo | None:
         return None
 
 
+def renewal_hours(m: Machine, ca: CAConfig) -> int:
+    """The lifetime ship-fleet machine-bundle renews a machine's certificate for: what
+    `ship-fleet trust` gives it (cert_hours, else [ca] user_cert_hours), but never more
+    than its last certificate was given (`trust NAME --hours N` once: N), so renewing
+    by itself never stretches a short grant."""
+    hours = m.cert_hours or ca.user_cert_hours
+    return min(hours, m.last_cert_hours) if m.last_cert_hours else hours
+
+
 def half_life_passed(m: Machine, ca: CAConfig, until: datetime,
                      now: datetime | None = None) -> bool:
-    """Is a machine's certificate past half the lifetime its renewal gets (cert_hours,
-    else [ca] user_cert_hours)? Then ship-fleet machine-bundle signs the next one."""
-    hours = m.cert_hours or ca.user_cert_hours
-    return until - (now or utc_now()) <= timedelta(hours=hours) / 2
+    """Is a machine's certificate past half the lifetime its renewal gets
+    (renewal_hours)? Then ship-fleet machine-bundle signs the next one."""
+    return until - (now or utc_now()) <= timedelta(hours=renewal_hours(m, ca)) / 2
 
 
 def new_serial() -> int:

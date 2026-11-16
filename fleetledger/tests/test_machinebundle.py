@@ -167,11 +167,10 @@ def test_a_renewal_checks_again_once_ships_toml_is_locked(
     until = ca.parse_stamp(field(caenv, "laptop", "last_valid_before"))
     now = until - timedelta(hours=10)
     at(monkeypatch, now)
-    cfg = ca.config(caenv.store.load())
-    assert machinebundle._renew(caenv.app, caenv.store, "laptop", now, cfg) is True
+    assert machinebundle._renew(caenv.app, caenv.store, "laptop", now) is True
     issued = field(caenv, "laptop", "issued")
     caenv.app.signer = NoSigning()
-    assert machinebundle._renew(caenv.app, caenv.store, "laptop", now, cfg) is False
+    assert machinebundle._renew(caenv.app, caenv.store, "laptop", now) is False
     assert field(caenv, "laptop", "issued") == issued
 
 
@@ -254,7 +253,12 @@ def test_a_ca_key_that_needs_a_passphrase_is_never_asked_for(
     assert doc["certificate"]["renewed"] is False and doc["certificate"]["line"]
     assert doc["certificate"]["not_renewed"]["code"] == "sign-failed"
     assert sys.stdin.read() == "secret-passphrase\n"  # nothing read it
-    assert audited()[-1] == ("laptop", "returned, not renewed: sign-failed")
+    # Why stays here: the caller is not told the CA key's path or ssh-keygen's words.
+    assert doc["certificate"]["not_renewed"]["why"] == machinebundle.SIGN_FAILED_WHY
+    assert str(caenv.cakeys.user_key) not in json.dumps(doc)
+    service, outcome = audited()[-1]
+    assert service == "laptop" and outcome.startswith("returned, not renewed: sign-failed (")
+    assert "ssh-keygen" in outcome
 
 
 def test_renewal_through_the_real_signer_with_an_ssh_agent_set(caenv, tmp_path,  # noqa: F811
@@ -288,15 +292,52 @@ def test_a_signer_that_hangs_or_cannot_run_still_returns_the_bundle(caenv, tmp_p
         assert code == 0, err
         assert doc["certificate"]["not_renewed"]["code"] == "sign-failed"
         assert doc["certificate"]["line"]
-    assert [o for _, o in audited()][-2:] == ["returned, not renewed: sign-failed"] * 2
+    assert [o for _, o in audited()][-2:] == [
+        "returned, not renewed: sign-failed (ssh-keygen or ssh-add did not finish in time)",
+        "returned, not renewed: sign-failed (could not run ssh-keygen (No such file or "
+        "directory))"]
 
 
 def test_anything_unexpected_is_still_audited(caenv, tmp_path, monkeypatch):  # noqa: F811
     trust(caenv, tmp_path)
     monkeypatch.setattr(machinebundle, "bundle", lambda *a, **kw: 1 / 0)
-    with pytest.raises(ZeroDivisionError):
-        caenv.run("machine-bundle", "laptop")
-    assert audited() == [("laptop", "failed")]
+    code, out, err = caenv.run("machine-bundle", "laptop")
+    assert code == 1 and out == "" and "Traceback" not in err
+    assert machinebundle.FAILED in err
+    assert audited() == [("laptop", "failed: ZeroDivisionError")]
+
+
+def test_a_broken_ships_toml_is_not_described_to_the_caller(caenv, tmp_path):  # noqa: F811
+    trust(caenv, tmp_path)
+    text = caenv.store.path.read_text()
+    caenv.store.path.write_text(text.replace('[ship.ship-02]\n', '[ship.ship-02]\nbogus = 1\n'))
+    code, out, err = caenv.run("machine-bundle", "laptop")
+    assert code == 1 and out == ""
+    assert "ship-02" not in err and str(caenv.store.path) not in err
+    service, outcome = audited()[-1]
+    assert service == "laptop" and outcome.startswith("failed: ") and "ship-02" in outcome
+
+
+def test_a_short_one_off_certificate_is_never_stretched(caenv, tmp_path, monkeypatch):  # noqa: F811
+    trust(caenv, tmp_path)
+    code, _, err = caenv.run("trust", "laptop", "--hours", "2")  # once, for this machine
+    assert code == 0, err
+    assert field(caenv, "laptop", "last_cert_hours") == 2
+    until = ca.parse_stamp(field(caenv, "laptop", "last_valid_before"))
+    at(monkeypatch, until - timedelta(minutes=61))  # more than half of its 2 hours left
+    _, doc, _ = ask(caenv)
+    assert doc["certificate"]["renewed"] is False
+    now = until - timedelta(minutes=59)
+    at(monkeypatch, now)
+    _, doc, _ = ask(caenv)
+    info = ca.cert_info(doc["certificate"]["line"])
+    assert doc["certificate"]["renewed"] is True
+    assert info.valid_before == now + timedelta(hours=2)  # 2 hours again, not 7 days
+    assert field(caenv, "laptop", "last_cert_hours") == 2
+    # ship-fleet trust laptop without --hours gives it its own lifetime back.
+    monkeypatch.setattr(ca, "utc_now", lambda: now)
+    assert caenv.run("trust", "laptop")[0] == 0
+    assert field(caenv, "laptop", "last_cert_hours") == 168
 
 
 def test_no_prompt_run_closes_stdin_and_has_no_terminal(monkeypatch):
@@ -558,3 +599,25 @@ def test_the_bundle_is_never_written_to_a_script_or_a_file_but_its_certificate(c
     assert changed == {"laptop-cert.pub"}
     assert after["laptop-cert.pub"].decode().strip() == doc["certificate"]["line"]
     assert os.stat(folder / "laptop-cert.pub").st_mode & 0o777 == 0o600
+
+
+def test_a_renewal_between_trusts_load_and_its_write_stays_recorded(caenv, tmp_path,  # noqa: F811
+                                                                   monkeypatch):
+    """trust and a narrowing read the machine before they lock ships.toml: a certificate
+    machine-bundle issued in between must stay in `issued`, or a narrowing could not
+    revoke it."""
+    trust(caenv, tmp_path)
+    stale = ca.machine(caenv.store.load(), "laptop")
+    at(monkeypatch, ca.parse_stamp(field(caenv, "laptop", "last_valid_before")) - DAY)
+    assert machinebundle._renew(caenv.app, caenv.store, "laptop", ca.utc_now()) is True
+    renewed = field(caenv, "laptop", "last_serial")
+    trustcmd._sign_machine(caenv.app, caenv.store, caenv.store.load(), stale)
+    assert renewed in [i["serial"] for i in field(caenv, "laptop", "issued")]
+    stale = ca.machine(caenv.store.load(), "laptop")
+    assert machinebundle._renew(caenv.app, caenv.store, "laptop",
+                                ca.utc_now() + timedelta(days=6)) is True
+    renewed = field(caenv, "laptop", "last_serial")
+    trustcmd._change_scope(caenv.app, caenv.store, caenv.store.load(), stale, ["tag:work"],
+                           say=lambda line: None)
+    assert renewed in ca.revoked_serials(caenv.store.load()).get(
+        " ".join(caenv.cakeys.user_public.split()[:2]), [])

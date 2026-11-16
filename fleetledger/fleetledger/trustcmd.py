@@ -518,9 +518,15 @@ def _sign_machine(app, store, inv: Inventory, m: ca.Machine, *, hours=None):
     cfg = ca.require(inv)
     cert, serial, until = ca.sign_user(_signer(app, inv), cfg, m, hours=hours)
     with store.edit() as ed:
+        # As locked: one issued meanwhile (ship-fleet machine-bundle) stays recorded.
+        fresh = ca.machine(store.load(), m.name) or m
         ed.set_machine_field(m.name, "last_serial", serial)
         ed.set_machine_field(m.name, "last_valid_before", ca.stamp(until))
-        ed.set_machine_field(m.name, "issued", ca.issued_record(m, cfg, serial, until))
+        given = hours or fresh.cert_hours or cfg.user_cert_hours
+        # Longer than ships.toml can hold (--hours is not bounded): none recorded, so
+        # machine-bundle renews for the machine's own lifetime, which is shorter.
+        ed.set_machine_field(m.name, "last_cert_hours", given if given <= 2160 else None)
+        ed.set_machine_field(m.name, "issued", ca.issued_record(fresh, cfg, serial, until))
     return cert, until
 
 
@@ -761,14 +767,18 @@ def _change_scope(app, store, inv: Inventory, m: ca.Machine, scope: list[str], *
     for s in scope:
         ca.principal_for(s)
     cfg = ca.require(inv)
-    issued = ca.unlapsed(m.issued)
-    if not issued and m.last_serial and m.last_valid_before:
-        # Issued before certificates were recorded: the last one had the old scope.
-        issued = ca.unlapsed([{"serial": m.last_serial, "valid_before": m.last_valid_before,
-                               "principals": m.principals,
-                               "ca": ca.fingerprint(cfg.user_public)}])
     before = ca.revoked_serials(inv)
     with store.edit() as ed:
+        # As locked: a certificate issued meanwhile (ship-fleet machine-bundle renews by
+        # itself) is in `issued` too, so it is revoked with the rest if it is wider.
+        fresh = ca.machine(store.load(), m.name) or m
+        issued = ca.unlapsed(fresh.issued)
+        if not issued and fresh.last_serial and fresh.last_valid_before:
+            # Issued before certificates were recorded: the last one had the old scope.
+            issued = ca.unlapsed([{"serial": fresh.last_serial,
+                                   "valid_before": fresh.last_valid_before,
+                                   "principals": fresh.principals,
+                                   "ca": ca.fingerprint(cfg.user_public)}])
         ed.set_machine_field(m.name, "scope", scope)
         if logins is not None:
             ed.set_machine_field(m.name, "logins", logins)

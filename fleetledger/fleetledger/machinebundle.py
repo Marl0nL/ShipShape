@@ -148,21 +148,23 @@ def _refuse_if_idle(store, m: ca.Machine, now: datetime) -> None:
         hint=f"On the FleetLedger computer: ship-fleet trust {m.name} --allow-again")
 
 
-def _renew(app, store, name: str, now: datetime, cfg: ca.CAConfig) -> bool:
+def _renew(app, store, name: str, now: datetime) -> bool:
     """Sign and record a new certificate unless another ask did meanwhile, with
     ships.toml locked throughout, so two asks at once never lose a record of one
     issued (a narrower scope later revokes only what is recorded). True: signed."""
     signer = _signer(app, store.load())
     with store.edit() as ed:
         inv = store.load()  # as locked: what this edit changes
-        m = ca.machine(inv, name)
+        cfg = ca.config(inv)  # as locked too: a CA rotated meanwhile signs with the new key
+        m = ca.machine(inv, name) if cfg is not None else None
         if m is None or m.revoked:
             raise _not_trusted(name, "untrusted" if m else "unknown")
         found = current_cert(cfg, m, now)
         if found is not None and not ca.half_life_passed(m, cfg, found[1].valid_before, now):
             ed.set_machine_field(name, "last_refreshed", ca.stamp(now))
             return False
-        cert, serial, until = ca.sign_user(signer, cfg, m, now=now)
+        hours = ca.renewal_hours(m, cfg)
+        cert, serial, until = ca.sign_user(signer, cfg, m, hours=hours, now=now)
         try:
             paths.private_dir(cert_path(name).parent)
             paths.write_private(cert_path(name), (cert + "\n").encode("utf-8"))
@@ -171,6 +173,7 @@ def _renew(app, store, name: str, now: datetime, cfg: ca.CAConfig) -> bool:
                 from exc
         ed.set_machine_field(name, "last_serial", serial)
         ed.set_machine_field(name, "last_valid_before", ca.stamp(until))
+        ed.set_machine_field(name, "last_cert_hours", hours)
         ed.set_machine_field(name, "issued", ca.issued_record(m, cfg, serial, until, now=now))
         ed.set_machine_field(name, "last_refreshed", ca.stamp(now))
     return True
@@ -248,47 +251,59 @@ LOCKED_WHY = ("FleetLedger's vault is locked, so no certificate is signed until 
               "unlocked (ship-fleet unlock on the FleetLedger computer).")
 
 
-def serve(app, name: str) -> dict[str, Any]:
-    """The bundle for machine `name`, or _Refused. Audits nothing: cmd_ does."""
+# What the caller is told when signing failed, or the bundle could not be made: the
+# reason itself (a key's path, a Ship's name from a broken ships.toml) stays on the
+# FleetLedger computer, in its audit log.
+SIGN_FAILED_WHY = ("FleetLedger's CA could not sign a new certificate; the reason is in "
+                   "FleetLedger's audit log, on the FleetLedger computer.")
+FAILED = ("FleetLedger could not make this machine's bundle; the reason is in its audit "
+          "log, on the FleetLedger computer.")
+
+
+def serve(app, name: str) -> tuple[dict[str, Any], str | None]:
+    """The bundle for machine `name`, and why a due certificate could not be signed
+    (for the audit log only); or _Refused. Audits nothing: cmd_ does."""
     store = app.store_factory()
     now = ca.utc_now()
     inv, cfg, m = _trusted(store, name)
     _refuse_if_idle(store, m, now)
     cert = current_cert(cfg, m, now)
     due = cert is None or ca.half_life_passed(m, cfg, cert[1].valid_before, now)
-    renewed, not_renewed = False, None
+    renewed, not_renewed, detail = False, None, None
     if due and vault.state() == "locked":
         not_renewed = {"code": "vault-locked", "why": LOCKED_WHY}
     elif due:
         try:
-            renewed = _renew(app, store, name, now, cfg)
+            renewed = _renew(app, store, name, now)
         except _Refused:
             raise
         except FleetError as exc:
-            not_renewed = {"code": "sign-failed", "why": exc.message[:1000]}
+            detail = exc.message
         except subprocess.TimeoutExpired:
-            not_renewed = {"code": "sign-failed",
-                           "why": "ssh-keygen or ssh-add did not finish in time."}
+            detail = "ssh-keygen or ssh-add did not finish in time"
         except OSError as exc:
-            not_renewed = {"code": "sign-failed",
-                           "why": f"Could not run ssh-keygen ({exc.strerror or exc})."[:1000]}
+            detail = f"could not run ssh-keygen ({exc.strerror or exc})"
+        if detail is not None:
+            not_renewed = {"code": "sign-failed", "why": SIGN_FAILED_WHY}
     if not renewed:
         _note_asked(store, name, now)
     inv = store.load()
-    m = ca.machine(inv, name)
+    cfg = ca.config(inv)
+    m = ca.machine(inv, name) if cfg is not None else None
     if m is None or m.revoked:  # untrusted meanwhile
         raise _not_trusted(name, "untrusted")
     cert = current_cert(cfg, m, now)
     return bundle(app, inv, cfg, m, now=now, cert=cert, renewed=renewed,
-                  not_renewed=not_renewed)
+                  not_renewed=not_renewed), detail
 
 
-def _outcome(doc: dict[str, Any]) -> str:
+def _outcome(doc: dict[str, Any], detail: str | None) -> str:
     cert = doc["certificate"]
     if cert["renewed"]:
         return "renewed"
     if cert["not_renewed"]:
-        return f"returned, not renewed: {cert['not_renewed']['code']}"
+        said = f"returned, not renewed: {cert['not_renewed']['code']}"
+        return f"{said} ({detail[:300]})" if detail else said
     return "returned"
 
 
@@ -296,14 +311,20 @@ def cmd_machine_bundle(args, app) -> int:
     name = args.machine
     shown = name if trustcmd.MACHINE_RE.fullmatch(name) else "-"
     try:
-        doc = serve(app, name)
+        doc, detail = serve(app, name)
     except _Refused as exc:
         audit.record("-", ACTION, shown, f"refused: {exc.reason}")
         raise
-    except BaseException:  # a traceback too: every call leaves its line
+    except FleetError as exc:  # a broken ships.toml, say: its words stay here
+        audit.record("-", ACTION, shown, f"failed: {exc.message[:300]}")
+        raise FleetError(FAILED) from None
+    except Exception as exc:  # no traceback for the caller either
+        audit.record("-", ACTION, shown, f"failed: {type(exc).__name__}")
+        raise FleetError(FAILED) from None
+    except BaseException:
         audit.record("-", ACTION, shown, "failed")
         raise
-    audit.record("-", ACTION, shown, _outcome(doc))
+    audit.record("-", ACTION, shown, _outcome(doc, detail))
     app.say(json.dumps(doc, indent=2))
     return 0
 
