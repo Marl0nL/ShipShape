@@ -29,6 +29,7 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `ca show --json` | one document | `shipshape.fleetledger-ca/1` |
 | `doctor [--offline] --json` | one document | `shipshape.fleetledger-doctor/1` |
 | `doctor --next --json` | one document | `shipshape.next-steps/1` |
+| `snapshot ls NAME --json` | a list | `shipshape.fleetledger-snapshot/1` |
 | `about [--check] --json` | one document | `shipshape.fleetledger-about/1` |
 | `machine-bundle NAME` (always JSON) | one document | `shipshape.machine-bundle/1` |
 
@@ -152,6 +153,26 @@ does, after printing: 1 when any item is `missing` or `fail`, else 0.
 | `hypervisor.driver`, `hypervisor.proxmox`, `hypervisor.proxmox-settings`, `hypervisor.proxmox-token`, `hypervisor.proxmox-api`, `hypervisor.template`, `hypervisor.fleetledgers-own-vm` | Where Ships run. |
 | `overlay.overlay`, `overlay.oauth-secret` | The overlay network. |
 | `ships.ships`, `ships.not-enrolled` | The Ships: how many, and one `warn` per Ship (`subject`) not enrolled yet. |
+
+## `ship-fleet snapshot ls NAME --json`
+
+The Ship's disk snapshots as its driver lists them, in the text form's order (Proxmox:
+oldest first); `[]` when it has none. Each entry is what the text form shows, nothing
+more. Schema: `fleetledger-snapshot.schema.json`; examples in
+`examples/fleetledger-snapshot/`.
+
+| Field | What it is |
+|---|---|
+| `ship` | The Ship named. |
+| `name` | The snapshot's name, as `snapshot rollback` and `snapshot rm` take it. One made outside FleetLedger is listed as the hypervisor names it; those two refuse a name that is not a letter followed by 1 to 39 letters, digits, `-` or `_` (or is `current`). |
+| `taken` | When it was taken (UTC, RFC 3339, Z); null when the hypervisor does not say. |
+| `note` | The description stored with it (`snapshot take --note`); empty when none. |
+
+It asks the hypervisor, never the Ship. A driver that cannot list snapshots (`manual`)
+or a hypervisor that fails: nothing on stdout, one line on stderr (`ship-fleet: ...`,
+and a hint on the next where there is one), exit 1; a Ship not in the inventory the
+same, exit 2. `--json` belongs to `ls` only: `take`, `rollback` and `rm` refuse it,
+exit 1.
 
 ## `ship-fleet doctor --next --json`
 

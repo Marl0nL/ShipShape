@@ -6,6 +6,7 @@ here knows which hypervisor a Ship runs on.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from datetime import UTC, datetime
@@ -22,6 +23,9 @@ SNAPSHOT_WARNING = (
     "A snapshot holds the Ship's sign-ins (Claude, gcloud, GitHub) as they were: "
     "treat it like the Ship itself."
 )
+
+# snapshot ls --json: one entry per snapshot (contracts/ship-fleet.md).
+SNAPSHOT_SCHEMA = "shipshape.fleetledger-snapshot/1"
 
 
 def add_parsers(sub, add) -> None:
@@ -63,7 +67,7 @@ def add_parsers(sub, add) -> None:
                    help="only record the size in ships.toml (you changed the VM by hand)")
 
     p = add(sub, "snapshot", "take, list, roll back or delete a Ship's disk snapshots",
-            "  ship-fleet snapshot ls ship-01\n"
+            "  ship-fleet snapshot ls ship-01 [--json]\n"
             "  ship-fleet snapshot take ship-01 [NAME] [--note TEXT]\n"
             "  ship-fleet snapshot rollback ship-01 NAME     (asks first)\n"
             "  ship-fleet snapshot rm ship-01 NAME           (asks you to type NAME)\n\n"
@@ -76,6 +80,7 @@ def add_parsers(sub, add) -> None:
     p.add_argument("--note", default="", help="description stored with the snapshot")
     p.add_argument("--yes", action="store_true",
                    help="rollback, rm: go on without asking (for scripts)")
+    p.add_argument("--json", action="store_true", help="ls: print JSON")
 
     p = add(sub, "image", "build, publish and pin baked base images",
             "  ship-fleet image build [--recipes ID,...] [--backend virt-customize|qemu]\n"
@@ -256,6 +261,8 @@ def cmd_resize(args, app) -> int:
 
 
 def cmd_snapshot(args, app) -> int:
+    if args.json and args.action != "ls":
+        raise FleetError(f"snapshot {args.action} has no --json; only snapshot ls does.")
     inv = app.store_factory().load()
     ship = inv.ship(args.name)
     driver = app.driver_factory(inv, ship.driver)
@@ -263,6 +270,11 @@ def cmd_snapshot(args, app) -> int:
         if args.snapshot:
             raise FleetError("snapshot ls takes only the Ship's name.")
         snaps = driver.snapshots(ship)
+        if args.json:
+            app.say(json.dumps([{"schema": SNAPSHOT_SCHEMA, "ship": ship.name, "name": s.name,
+                                 "taken": s.created, "note": s.description}
+                                for s in snaps], indent=2))
+            return 0
         if not snaps:
             app.say(f"{ship.name} has no snapshots.")
             return 0
