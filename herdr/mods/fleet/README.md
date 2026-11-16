@@ -72,7 +72,7 @@ match.
 
 | Where | Action | Runs on FleetLedger |
 |---|---|---|
-| **New Ship** | Create | `ship-fleet new NAME [--tag TAG] [--repo OWNER/NAME] [--cores N] [--memory-mb N] [--disk-gb N] [--signins A,B] && ship-fleet login NAME claude` (the login only when Claude is one of its sign-ins). Tags: buttons for the fleet's, or type one. Sign-ins: FleetLedger's list (`signins --accounts --json`), all by default. |
+| **New Ship** | Create | `ship-fleet new NAME [--tag TAG] [--repo OWNER/NAME] [--cores N] [--memory-mb N] [--disk-gb N] [--signins A,B] && ship-fleet login NAME claude` (the login only when Claude is one of its sign-ins; with the manual driver `new` only prints the steps, so that login fails until you have made the VM: sign in from the Ship's menu then). Tags: buttons for the fleet's, or type one. Sign-ins: FleetLedger's list (`signins --accounts --json`), all by default. |
 | A Ship's **⋯** | Sign in: SERVICE | `ship-fleet login NAME SERVICE`, one per sign-in the Ship uses (from `signins NAME --offline --json`), only while it answers |
 | | Update, Reboot | `ship-fleet update NAME`, `ship-fleet reboot NAME` |
 | | Snapshots, Take a snapshot | `ship-fleet snapshot ls NAME`, `ship-fleet snapshot take NAME` |

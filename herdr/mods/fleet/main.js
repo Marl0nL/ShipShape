@@ -73,11 +73,13 @@ function button(t, id, text, act, on = false) {
 
 const mono = (t, text) => div().w_full().text_size(11).font_family("JetBrains Mono").text_color(t.muted).child(text);
 const FORM = ["name", "tag", "repo", "cores", "memory_mb", "disk_gb"];
+// The FleetLedger menu's key in this.menu, beside Ship names: not one a Ship can have.
+const FLEETLEDGER = ":fleetledger";
 
 export default class FleetPanel extends View {
   init(_props, cx) {
     this.note = null;
-    this.menu = null; // the Ship whose menu is open, or "fleetledger"
+    this.menu = null; // the Ship whose menu is open, or FLEETLEDGER
     this.form = null; // the New Ship form while open: {tag, signins}
     const input = (placeholder) => {
       const s = InputState.new({ placeholder });
@@ -153,7 +155,7 @@ export default class FleetPanel extends View {
   toggleMenu(cx, name) {
     this.menu = this.menu === name ? null : name;
     this.inputs.snap.set_value("");
-    if (!this.menu || name === "fleetledger" || actionGate(fleet.state)) return;
+    if (!this.menu || name === FLEETLEDGER || actionGate(fleet.state)) return;
     cx.spawn(async (cx) => {
       const reading = fleet.loadSignins(name);
       cx.notify(); // "reading its sign-ins…"
@@ -347,10 +349,10 @@ export default class FleetPanel extends View {
           .child(div().flex_none().text_size(14).font_weight(600).child("Fleet"))
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(h.facts.join(" · ")))
           .child(button(t, "new", "New Ship", (_e, cx) => this.toggleForm(cx), Boolean(this.form)))
-          .child(button(t, "fleetledger", "FleetLedger", (_e, cx) => this.toggleMenu(cx, "fleetledger"), this.menu === "fleetledger"))
+          .child(button(t, "fleetledger-menu", "FleetLedger", (_e, cx) => this.toggleMenu(cx, FLEETLEDGER), this.menu === FLEETLEDGER))
           .child(button(t, "refresh", st.asking ? "Reading…" : "Refresh", (_e, cx) => this.refresh(cx))),
       )
-      .when(this.menu === "fleetledger", (el) => el.child(this.menuBox(t, "fleetledger", fleetLedgerMenu(st))))
+      .when(this.menu === FLEETLEDGER, (el) => el.child(this.menuBox(t, FLEETLEDGER, fleetLedgerMenu(st))))
       .when(Boolean(this.form), (el) => el.child(this.formView(t)))
       .when(h.locked, (el) => el.child(div().h(2).w_full().rounded(1).bg(t.blocked)))
       .children(h.notices.map(notice))

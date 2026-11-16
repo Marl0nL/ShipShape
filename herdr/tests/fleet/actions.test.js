@@ -254,6 +254,9 @@ test("actionGate: settings, an older FleetLedger, a locked vault, a copy on stan
   const oldLs = await readFleet({ ships: examples("fleetledger-ship").map((s) => ({ ...s, schema: undefined })) });
   assert.equal(oldLs.fleet.state.older, true);
   assert.match(actionGate(oldLs.fleet.state), /older than the panel's actions need/);
+  // a copy on standby refuses ls (offline too) but answers about: the copy is the reason given
+  const standby = await readFleet({ about: { ...example("fleetledger-about", "degraded.json"), copy: "standby" }, answers: { ls: { code: 1, stdout: "", stderr: "This copy is on standby.\n" } } });
+  assert.match(actionGate(standby.fleet.state), /acts on no Ship \(standby/);
   const unreachable = await readFleet({ answers: { about: { code: 1, stdout: "", stderr: "Traceback\n" } } });
   assert.match(actionGate(unreachable.fleet.state), /state is not known.*Refresh/);
 });
@@ -364,6 +367,17 @@ test("the web UI opens with the local opener, no ssh, and only an https address"
   assert.deepEqual(calls.slice(before).map((c) => [c.command, c.args]), [["xdg-open", ["https://fleetledger.example-tailnet.ts.net"]]]);
   for (const url of ["http://fleetledger.example.invalid", "file:///etc/passwd", "https://a b", "--help"]) assert.match((await fleet.openWebUi(url)).error, /Not a web UI address/);
   assert.equal(calls.length, before + 1);
+});
+
+test("no source file of the mod holds a flag that skips a question", () => {
+  const dir = join(ROOT, "herdr", "mods", "fleet");
+  const files = readdirSync(dir).filter((f) => f.endsWith(".js"));
+  assert.deepEqual(files.sort(), ["main.js", "model.js"]);
+  for (const f of files) {
+    const code = readFileSync(join(dir, f), "utf8");
+    for (const flag of SKIPPING.filter((x) => x !== "-y")) assert.ok(!code.includes(flag), `${f}: ${flag}`);
+    assert.ok(!/["'`]-y["'`]/.test(code), `${f}: -y`);
+  }
 });
 
 test("every command any menu or form can build skips no question", async () => {

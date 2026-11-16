@@ -826,10 +826,11 @@ const LOCAL_COPY = new Set(["standby", "retired", "unreadable", "none"]);
 export function actionGate(st) {
   if (!st.where) return "Say where FleetLedger is first (settings.json), then its actions are here.";
   if (st.older) return "This FleetLedger is older than the panel's actions need: update it first (FleetLedger ▸ Self-update).";
+  // A copy on standby refuses even an offline ls, but answers about: say so before "not read".
+  if (st.about?.copy && st.about.copy !== "active") return `This FleetLedger is a copy that acts on no Ship (${st.about.copy}; ship-fleet migrate).`;
+  if (st.about?.vault === "locked") return "FleetLedger's vault is locked, so it changes nothing: unlock it first (FleetLedger ▸ Unlock).";
   if (st.shipsFrom !== "FleetLedger") return "FleetLedger has not been read yet: Refresh.";
   if (!st.about) return `FleetLedger's state is not known (${st.aboutError ? firstLine(st.aboutError) : "ship-fleet about not read yet"}): Refresh.`;
-  if (st.about.copy && st.about.copy !== "active") return `This FleetLedger is a copy that acts on no Ship (${st.about.copy}; ship-fleet migrate).`;
-  if (st.about.vault === "locked") return "FleetLedger's vault is locked, so it changes nothing: unlock it first (FleetLedger ▸ Unlock).";
   return null;
 }
 
