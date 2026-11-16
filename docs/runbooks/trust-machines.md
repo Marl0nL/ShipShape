@@ -116,7 +116,11 @@ If the machine is the FleetLedger computer itself, `ship-fleet trust
 does it after the first Ship, and the Ship page offers it. Once this computer is
 trusted, every Ship that enrols refreshes its bundle (a new certificate, the new
 Ship in its SSH config and in herdr). Which machine entry is this computer is
-kept in `~/.config/fleetledger/this-computer.json`.
+kept in `~/.config/fleetledger/this-computer.json`. `ship-fleet trust
+--this-computer` shows what `install.sh` added and skipped, and its closing
+"can attach" line names `hc` or `herdr --remote` only when that program is
+installed here; without it, it says what to install (hc:
+<https://herdr.dev/core/>) and to run the command again.
 
 Its certificate is valid for 7 days, like any machine's; FleetLedger renews it (and
 rewrites its bundle) in its last day whenever it runs: the web UI's poll, or
@@ -168,8 +172,9 @@ herdr and hc.
 
 On the laptop, two clients reach a herdr-core Ship:
 
-- **`hc` in a terminal** (herdr-core, installed the way its docs say; the Ship's
-  version may differ, as long as both speak the same protocol generation):
+- **`hc` in a terminal** (herdr-core, installed the way its docs say:
+  <https://herdr.dev/core/>; the Ship's version may differ, as long as both speak
+  the same protocol generation):
 
   ```sh
   hc ls                             # every machine's terminals: ship-01/t3 main idle
@@ -288,7 +293,8 @@ or `ca sign` (or the web UI starting) after upgrading records `logins = ["agent"
 once. Their next certificate carries both principals; until a machine renews, a
 Ship already updated (`ship-fleet update`) lets its current certificate log in as
 the agent only. This computer renews within a day by itself; for another machine,
-`ship-fleet trust NAME --print-cert > ~/.ssh/shipshape/NAME-cert.pub` on it.
+run `ship-fleet trust NAME` on the FleetLedger computer (or Download bundle), then
+`sh install.sh` from the new bundle on that machine.
 
 **Update every Ship before relying on "the agent only".** A Ship still running the
 previous tooling lets any `agent:*` certificate log in as you, whatever the machine's

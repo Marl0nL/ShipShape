@@ -1756,7 +1756,8 @@ def test_switch_runtime_moves_the_ship_and_checks_its_agents(world):
     call = next(c for c in sim.calls if c[3:4] == ["runtime"])
     assert call[3:] == ["runtime", "switch", "core", "--json"]
     assert outcome.data["runtime_after"] == "core"
-    assert any("trust bundle again" in d for d in outcome.details)
+    assert any("trust bundle again" in d and "on the FleetLedger computer" in d
+               for d in outcome.details)
     assert seen == [("ship-01", "moving 2 agent(s) from herdr to core")]
 
 
