@@ -1,0 +1,527 @@
+#!/usr/bin/env python3
+"""desk: keep this agent's desk in Herdr up to date.
+
+The Desk layout shows a panel beside whichever agent you focus. What it shows
+comes from two places, both owned by the agent:
+
+  labels on the agent's terminal   desk.kind, desk.tags, desk.file  (set with `hc label`)
+  one board file                   JSON, written whole and atomically, by this agent only
+
+This tool does both, so an agent never hand-writes JSON or labels. It works the
+same on any machine Herdr is connected to: the file stays on the agent's own
+machine and Herdr reads it from there.
+
+  desk init assistant --name assistant --tags personal     once, at the start
+  desk summary "Sorting out Thursday's travel"
+  desk card add flights --title "Flights" --body "Out Thu 7:05, held till 5pm" --tone warn
+  desk list add Today "Reply to the landlord"
+  desk list check Today 1
+  desk task add login-bug --title "Fix login redirect" --status doing --agent fix-login
+  desk task move login-bug review --note "PR #42 open"
+  desk show
+
+A crew (a worker another agent dispatched, e.g. a firstmate crewmate) gets a sheet
+over its terminal instead: what it's on, what it has found, what it'll do next.
+
+  desk init crew --name fm-fix-login --parent firstmate --tags work
+  desk summary "Reproducing the redirect loop"
+  desk finding add "The loop only happens with SSO on" --tone warn
+  desk next set "Write a failing test" "Carry return_to through state" "Open the PR"
+  desk next done 1
+
+Run `desk help` for every command. Kinds: assistant, manager, coder, crew.
+Card tones: info, good, warn, bad. Task statuses: todo, doing, review, blocked, done.
+"""
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+VERSION = 1
+KINDS = ("assistant", "manager", "coder", "crew")
+TONES = ("info", "good", "warn", "bad")
+STATUSES = ("todo", "doing", "review", "blocked", "done")
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "herdr-desk")
+
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def die(msg):
+    print(f"desk: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def terminal():
+    return os.environ.get("HC_TERMINAL_ID")
+
+
+def labels():
+    t = terminal()
+    if not t:
+        return {}
+    try:
+        out = subprocess.run(["hc", "get", t, "--json"], capture_output=True, text=True, timeout=10)
+        return json.loads(out.stdout).get("labels", {}) if out.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {}
+
+
+def label(**kv):
+    """Sets desk.* labels on this agent's own terminal (Herdr picks them up live)."""
+    t = terminal()
+    if not t:
+        print("desk: not in a Herdr terminal (no HC_TERMINAL_ID); labels not set", file=sys.stderr)
+        return
+    pairs = [f"desk.{k}={v}" for k, v in kv.items()]
+    subprocess.run(["hc", "label", t, *pairs], capture_output=True, timeout=10)
+
+
+def board_path(name=None):
+    """Where this agent's board lives: $DESK_FILE, its desk.file label, or a file named after it."""
+    if name:
+        return os.path.join(STATE, f"{slug(name)}.json")
+    if os.environ.get("DESK_FILE"):
+        return os.path.abspath(os.path.expanduser(os.environ["DESK_FILE"]))
+    got = labels().get("desk.file")
+    if got:
+        return got
+    t = terminal()
+    if not t:
+        die("not in a Herdr terminal: run `desk init <kind> --name <name>` or set DESK_FILE")
+    return os.path.join(STATE, f"{t}.json")
+
+
+def slug(s):
+    s = re.sub(r"[^a-z0-9._-]+", "-", s.lower()).strip("-")
+    return s or "item"
+
+
+def load(path):
+    try:
+        with open(path) as fh:
+            b = json.load(fh)
+    except FileNotFoundError:
+        b = {}
+    except ValueError as e:
+        die(f"{path} is not valid JSON ({e}); fix it or run `desk clear`")
+    b.setdefault("version", VERSION)
+    for k in ("cards", "lists", "tasks", "links"):
+        b.setdefault(k, [])
+    if b.get("kind") == "crew":
+        b.setdefault("findings", [])
+        b.setdefault("next", [])
+    return b
+
+
+def save(path, b):
+    """Writes the whole board to a temp file and renames it over the old one,
+    so Herdr never reads half a file."""
+    b["version"] = VERSION
+    b["updated"] = now()
+    if terminal():
+        b["terminal"] = terminal()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".desk-", dir=os.path.dirname(path))
+    with os.fdopen(fd, "w") as fh:
+        json.dump(b, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
+class Locked:
+    """One writer at a time, even with sub-agents sharing a board."""
+
+    def __init__(self, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self.fh = open(path + ".lock", "w")
+
+    def __enter__(self):
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+
+
+def find(items, key, value):
+    for i, it in enumerate(items):
+        if str(it.get(key, "")).lower() == str(value).lower():
+            return i
+    return -1
+
+
+def put(item, args, fields):
+    for f in fields:
+        v = getattr(args, f, None)
+        if v is not None:
+            item[f] = [t for t in re.split(r"[,\s]+", v) if t] if f == "tags" else v
+
+
+def cmd_init(a):
+    path = board_path(a.name) if a.name else board_path()
+    with Locked(path):
+        b = load(path)
+        b["kind"] = a.kind
+        if a.title:
+            b["title"] = a.title
+        if a.tags is not None:
+            b["tags"] = [t for t in re.split(r"[,\s]+", a.tags) if t]
+        if a.parent or a.task:
+            crew = b.setdefault("crew", {})
+            crew.update({k: v for k, v in (("parent", a.parent), ("task", a.task)) if v})
+        save(path, b)
+    extra = {"tags": ",".join(b.get("tags", []))} if a.tags is not None else {}
+    if a.parent:
+        extra["parent"] = a.parent
+    label(kind=a.kind, file=path, **extra)
+    print(path)
+
+
+def cmd_kind(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        b["kind"] = a.kind
+        save(path, b)
+    label(kind=a.kind, file=path)
+
+
+def cmd_tags(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        tags = [t for t in b.get("tags", [])]
+        given = [t for t in re.split(r"[,\s]+", " ".join(a.tags)) if t]
+        if a.op == "set":
+            tags = given
+        elif a.op == "add":
+            tags += [t for t in given if t not in tags]
+        else:
+            tags = [t for t in tags if t not in given]
+        b["tags"] = tags
+        save(path, b)
+    label(tags=",".join(tags), file=path)
+    print(", ".join(tags) or "(no tags)")
+
+
+def cmd_summary(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        b["summary"] = " ".join(a.text)
+        save(path, b)
+
+
+def cmd_note(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        text = sys.stdin.read() if a.text == ["-"] else " ".join(a.text)
+        b["notes"] = text.rstrip()
+        save(path, b)
+
+
+def cmd_card(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        cards = b["cards"]
+        i = find(cards, "id", slug(a.id))
+        if a.op == "rm":
+            if i < 0:
+                die(f"no card {a.id}")
+            cards.pop(i)
+        else:
+            if a.tone and a.tone not in TONES:
+                die(f"tone must be one of {', '.join(TONES)}")
+            card = cards[i] if i >= 0 else {"id": slug(a.id)}
+            if i < 0 and not a.title:
+                die("a new card needs --title")
+            put(card, a, ("title", "body", "tone", "link", "tags"))
+            card["updated"] = now()
+            if i < 0:
+                cards.insert(0, card) if a.top else cards.append(card)
+        save(path, b)
+
+
+def cmd_list(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        lists = b["lists"]
+        i = find(lists, "title", a.list)
+        if a.op == "add":
+            if i < 0:
+                lists.append({"title": a.list, "items": []})
+                i = len(lists) - 1
+            lists[i]["items"].append({"text": " ".join(a.item), "done": False})
+        else:
+            if i < 0:
+                die(f"no list {a.list}")
+            items = lists[i]["items"]
+            if a.op == "rm" and not a.item:
+                lists.pop(i)
+            else:
+                which = " ".join(a.item)
+                j = int(which) - 1 if which.isdigit() else find(items, "text", which)
+                if not 0 <= j < len(items):
+                    die(f"no item {which} in {a.list}")
+                if a.op == "rm":
+                    items.pop(j)
+                else:
+                    items[j]["done"] = a.op == "check"
+        save(path, b)
+
+
+def cmd_task(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        tasks = b["tasks"]
+        i = find(tasks, "id", slug(a.id))
+        if a.op == "rm":
+            if i < 0:
+                die(f"no task {a.id}")
+            tasks.pop(i)
+        else:
+            status = a.status if a.op != "move" else a.to
+            if status and status not in STATUSES:
+                die(f"status must be one of {', '.join(STATUSES)}")
+            if a.op == "move" and i < 0:
+                die(f"no task {a.id}")
+            if i < 0 and not a.title:
+                die("a new task needs --title")
+            task = tasks[i] if i >= 0 else {"id": slug(a.id), "status": "todo"}
+            put(task, a, ("title", "note", "agent", "link", "tags"))
+            if status:
+                task["status"] = status
+            task["updated"] = now()
+            if i < 0:
+                tasks.append(task)
+        save(path, b)
+
+
+def item_index(items, which):
+    j = int(which) - 1 if which.isdigit() else find(items, "text", which)
+    if not 0 <= j < len(items):
+        die(f"no item {which}")
+    return j
+
+
+def cmd_finding(a):
+    """A crew's findings, newest first: what it has learned that its manager or the person should know."""
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        found = b.setdefault("findings", [])
+        text = " ".join(a.text)
+        if a.op == "add":
+            if not text:
+                die("finding add needs the text")
+            if a.tone and a.tone not in TONES:
+                die(f"tone must be one of {', '.join(TONES)}")
+            found.insert(0, {"text": text, "tone": a.tone, "at": now()})
+            del found[30:]
+        elif a.op == "rm":
+            found.pop(item_index(found, text))
+        else:
+            found.clear()
+        save(path, b)
+
+
+def cmd_next(a):
+    """A crew's next steps, in order: set replaces them all, done ticks one off."""
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        steps = b.setdefault("next", [])
+        if a.op == "set":
+            b["next"] = [{"text": t, "done": False} for t in a.items if t.strip()]
+        elif a.op == "add":
+            steps.append({"text": " ".join(a.items), "done": False})
+        elif a.op == "clear":
+            steps.clear()
+        else:
+            j = item_index(steps, " ".join(a.items))
+            if a.op == "rm":
+                steps.pop(j)
+            else:
+                steps[j]["done"] = a.op == "done"
+        save(path, b)
+
+
+def cmd_link(a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        links = b["links"]
+        i = find(links, "url", a.url)
+        if a.op == "rm":
+            if i >= 0:
+                links.pop(i)
+        elif i < 0:
+            links.append({"title": a.title or a.url, "url": a.url})
+        save(path, b)
+
+
+def cmd_show(a):
+    path = board_path()
+    b = load(path)
+    if a.json:
+        print(json.dumps(b, indent=2, ensure_ascii=False))
+        return
+    print(f"{path}\nkind: {b.get('kind', '?')}   tags: {', '.join(b.get('tags', [])) or '-'}   updated: {b.get('updated', '-')}")
+    if b.get("summary"):
+        print(f"now: {b['summary']}")
+    for c in b["cards"]:
+        print(f"  [card {c['id']}] {c.get('title', '')}{' (' + c['tone'] + ')' if c.get('tone') else ''}")
+    for lst in b["lists"]:
+        print(f"  [list {lst['title']}]")
+        for n, it in enumerate(lst["items"], 1):
+            print(f"     {n}. [{'x' if it.get('done') else ' '}] {it['text']}")
+    for t in b["tasks"]:
+        print(f"  [task {t['id']}] {t['status']:7} {t.get('title', '')}{'  -> ' + t['agent'] if t.get('agent') else ''}")
+    for n, f in enumerate(b.get("findings", []), 1):
+        print(f"  [finding {n}] {f.get('text', '')}{' (' + f['tone'] + ')' if f.get('tone') else ''}")
+    for n, st in enumerate(b.get("next", []), 1):
+        print(f"  [next {n}] [{'x' if st.get('done') else ' '}] {st.get('text', '')}")
+
+
+def cmd_path(_a):
+    print(board_path())
+
+
+def cmd_put(a):
+    """Replace the whole board from JSON (a file, or - for stdin), after checking it."""
+    text = sys.stdin.read() if a.file == "-" else open(a.file).read()
+    try:
+        new = json.loads(text)
+    except ValueError as e:
+        die(f"not valid JSON: {e}")
+    if not isinstance(new, dict):
+        die("the board must be a JSON object")
+    if new.get("kind") and new["kind"] not in KINDS:
+        die(f"kind must be one of {', '.join(KINDS)}")
+    for t in new.get("tasks", []):
+        if t.get("status", "todo") not in STATUSES:
+            die(f"task {t.get('id')}: status must be one of {', '.join(STATUSES)}")
+    path = board_path()
+    with Locked(path):
+        save(path, new)
+    if new.get("kind"):
+        label(kind=new["kind"], file=path)
+
+
+def cmd_clear(_a):
+    path = board_path()
+    with Locked(path):
+        b = load(path)
+        save(path, {k: b[k] for k in ("kind", "title", "tags", "crew") if k in b})
+
+
+def main():
+    p = argparse.ArgumentParser(prog="desk", description="Keep this agent's desk in Herdr up to date.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("init", help="say what kind of agent this is, and start its board")
+    s.add_argument("kind", choices=KINDS)
+    s.add_argument("--name", help="a lasting board name (kept across restarts), e.g. assistant")
+    s.add_argument("--title")
+    s.add_argument("--tags", help="comma-separated, e.g. work,project-x")
+    s.add_argument("--parent", help="crew: the agent that dispatched you (its tab or space name)")
+    s.add_argument("--task", help="crew: your task id as your manager knows it")
+    s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("kind", help="change this agent's kind")
+    s.add_argument("kind", choices=KINDS)
+    s.set_defaults(fn=cmd_kind)
+
+    s = sub.add_parser("tags", help="set, add or rm tags (work, personal, ...)")
+    s.add_argument("op", choices=("set", "add", "rm"))
+    s.add_argument("tags", nargs="+")
+    s.set_defaults(fn=cmd_tags)
+
+    s = sub.add_parser("summary", help="one line: what you're doing now")
+    s.add_argument("text", nargs="+")
+    s.set_defaults(fn=cmd_summary)
+
+    s = sub.add_parser("note", help="replace the notes (text, or - to read stdin)")
+    s.add_argument("text", nargs="+")
+    s.set_defaults(fn=cmd_note)
+
+    s = sub.add_parser("card", help="add, set or rm a card")
+    s.add_argument("op", choices=("add", "set", "rm"))
+    s.add_argument("id")
+    s.add_argument("--title")
+    s.add_argument("--body")
+    s.add_argument("--tone", help=", ".join(TONES))
+    s.add_argument("--link")
+    s.add_argument("--tags")
+    s.add_argument("--top", action="store_true", help="put a new card first")
+    s.set_defaults(fn=cmd_card)
+
+    s = sub.add_parser("list", help="checklists: add LIST TEXT, check|uncheck LIST N|TEXT, rm LIST [N|TEXT]")
+    s.add_argument("op", choices=("add", "check", "uncheck", "rm"))
+    s.add_argument("list")
+    s.add_argument("item", nargs="*")
+    s.set_defaults(fn=cmd_list)
+
+    s = sub.add_parser("task", help="kanban tasks: add|set ID --title.., move ID STATUS, rm ID")
+    s.add_argument("op", choices=("add", "set", "move", "rm"))
+    s.add_argument("id")
+    s.add_argument("to", nargs="?", help="for move: " + ", ".join(STATUSES))
+    s.add_argument("--title")
+    s.add_argument("--status", help=", ".join(STATUSES))
+    s.add_argument("--note")
+    s.add_argument("--agent", help="who's doing it: a tab name, an agent's title, or a terminal like t7")
+    s.add_argument("--link")
+    s.add_argument("--tags")
+    s.set_defaults(fn=cmd_task)
+
+    s = sub.add_parser("finding", help="crew: add TEXT [--tone], rm N|TEXT, or clear what you've found")
+    s.add_argument("op", choices=("add", "rm", "clear"))
+    s.add_argument("text", nargs="*")
+    s.add_argument("--tone", help=", ".join(TONES))
+    s.set_defaults(fn=cmd_finding)
+
+    s = sub.add_parser("next", help="crew: set STEP.. | add STEP | done|undo|rm N|TEXT | clear")
+    s.add_argument("op", choices=("set", "add", "done", "undo", "rm", "clear"))
+    s.add_argument("items", nargs="*")
+    s.set_defaults(fn=cmd_next)
+
+    s = sub.add_parser("link", help="add or rm a link")
+    s.add_argument("op", choices=("add", "rm"))
+    s.add_argument("url")
+    s.add_argument("--title")
+    s.set_defaults(fn=cmd_link)
+
+    s = sub.add_parser("show", help="print the board")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_show)
+
+    sub.add_parser("path", help="print the board file's path").set_defaults(fn=cmd_path)
+
+    s = sub.add_parser("put", help="replace the whole board from JSON (FILE or -)")
+    s.add_argument("file")
+    s.set_defaults(fn=cmd_put)
+
+    sub.add_parser("clear", help="empty the board, keeping kind and tags").set_defaults(fn=cmd_clear)
+    sub.add_parser("help", help="this help").set_defaults(fn=lambda _a: (print(__doc__), p.print_help()))
+
+    a = p.parse_args()
+    if a.cmd == "task" and a.op == "move" and not a.to:
+        die("task move needs a status: " + ", ".join(STATUSES))
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
