@@ -383,6 +383,12 @@ class Devices:
         kept = sorted([*kept, *new.values()], key=lambda r: r.lapsed)[-MAX_DEVICES:]
         self._write(self.lapsed_file, kept)
 
+    def forget_lapsed(self) -> None:
+        """Drop every lapse record (ship-fleet ui revoke --all forgets every device)."""
+        with self._locked():
+            if self.lapsed_file.exists():
+                self._write(self.lapsed_file, [])
+
     def lapsed_for(self, session_id: str, login: str) -> Lapsed | None:
         """The lapse record of the device this session id belonged to, if that login
         paired it and its cookie has not expired; else None. Only for a refusal page:
@@ -598,6 +604,7 @@ def cmd_revoke(args, app) -> int:
         if args.device:
             raise FleetError("Name a device or --all, not both.")
         count = revoke(store, store.all())
+        store.forget_lapsed()
         app.say(f"Signed out {count} device(s)." if count else "No device was paired.")
         return 0
     if not args.device:

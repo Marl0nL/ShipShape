@@ -627,6 +627,16 @@ def test_a_device_found_lapsed_while_another_pairs_keeps_its_record_too(web):
         "key", "name", "login", "machine", "paired", "seen", "lapsed"}
 
 
+def test_revoke_all_forgets_lapsed_devices_too(web):
+    web.pair(name="laptop")
+    web.wall.now += devices_mod.IDLE + 1
+    assert "laptop was signed out" in web.remote.get("/").text
+    out = io.StringIO()
+    assert cli.main(["ui", "revoke", "--all"], cli.App(out=out, err=out)) == 0
+    response = web.remote.get("/")
+    assert response.status_code == 401 and "laptop" not in response.text
+
+
 def test_a_revoked_device_is_told_its_pairing_ended_not_why(web):
     csrf = web.pair(name="laptop")
     [device] = web.devices.all()
