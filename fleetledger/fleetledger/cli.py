@@ -197,7 +197,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vmid", type=int, help="VM id to use (Proxmox)")
     p.add_argument("--host", action="append", default=[],
                    help="name to reach the Ship by (repeatable; default <name>.local)")
-    p.add_argument("--cores", type=int)
+    p.add_argument("--cores", type=int,
+                   help="vCPUs (each one host CPU thread); default: defaults.size, else 4")
     p.add_argument("--memory-mb", type=int)
     p.add_argument("--disk-gb", type=int)
     p.add_argument("--autostart", action="append", default=[], metavar="NAME:CWD[:MODE]",

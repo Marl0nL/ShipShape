@@ -285,7 +285,7 @@ class ProxmoxDriver(Driver):
                    if size.get(s) is not None}
         if changes:
             self._task(self.api.post(path + "/config", **changes))
-            said = ", ".join(f"{v} {'cores' if k == 'cores' else 'MB memory'}"
+            said = ", ".join(f"{v} {'vCPUs' if k == 'cores' else 'MB memory'}"
                              for k, v in changes.items())
             messages.append(f"Set {said}; this applies when the VM next restarts through "
                             "Proxmox (ship-fleet resize --restart, or a stop and start), not "

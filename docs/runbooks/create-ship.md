@@ -92,7 +92,7 @@ Useful options (`ship-fleet new --help` lists them all):
 | `--no-overlay` | with `[overlay]` set up, do not join it after enrolling (it joins by default) |
 | `--tools tasks-axi` | extra catalogue tools (`ship-fleet tools ls`); the defaults are kept unless `--no-default-tools` |
 | `--profile orchestrator` | a profile; its options come from `[profile_options]` |
-| `--cores 4 --memory-mb 8192 --disk-gb 40` | size (these are the defaults; for a supervisor and its workers, see [below](#size-it-for-a-supervisor-and-its-workers)); later `ship-fleet resize SHIP --cores 8 --restart` (cores and memory apply at a restart through the hypervisor; a disk only grows, at once, with the Ship's filesystem: ship-ctl grow-root) |
+| `--cores 4 --memory-mb 8192 --disk-gb 40` | size: `--cores` is vCPUs (each one host CPU thread) (these are the defaults; for a supervisor and its workers, see [below](#size-it-for-a-supervisor-and-its-workers)); later `ship-fleet resize SHIP --cores 8 --restart` (vCPUs and memory apply at a restart through the hypervisor; a disk only grows, at once, with the Ship's filesystem: ship-ctl grow-root) |
 | `--agent-sudo` | give the agent user sudo (off by default) |
 | `--on proxmox` | where to create it (the same as `--driver`; default `defaults.driver`) |
 | `--image <id>` | the base image (default: the pinned one, see [images.md](images.md)); `stock` for the plain cloud image |
@@ -143,18 +143,18 @@ systemd's in-memory `/tmp` and shows `tmp-reboot-pending` until its first reboot
 
 ## Size it for a supervisor and its workers
 
-The defaults (4 cores, 8 GB of memory, a 40 GB disk) suit a Ship with one agent;
+The defaults (4 vCPUs (each one host CPU thread), 8 GB of memory, a 40 GB disk) suit a Ship with one agent;
 keep them for those. A Ship where a supervising agent runs several workers at
 once, each in its own worktree with its own test runs, needs more. CPU runs out
 first.
 
 | | Plan for | Three workers |
 |---|---|---|
-| CPU | 2 cores (3 for comfort) per worker that runs the full check suite at the same time, plus 2 for the supervisor, the Claude processes and the Ship itself | 8 cores, 11 for comfort |
+| CPU | 2 vCPUs (3 for comfort) per worker that runs the full check suite at the same time, plus 2 for the supervisor, the Claude processes and the Ship itself | 8 vCPUs, 11 for comfort |
 | Memory | 3 GB per worker, plus 4 GB | 13 GB, so 16 GB |
 | Disk | 40 GB, plus 5 GB per worker running at once | 60–80 GB |
 
-- **CPU.** A full suite keeps cores busy for its whole run. On 6 cores, run at
+- **CPU.** A full suite keeps vCPUs busy for its whole run. On 6 vCPUs, run at
   most two full suites at once: with three running, one suite took over half an
   hour. Agents should run the full check in the background, never under a
   10-minute foreground tool limit, and prefer targeted tests while they work.
@@ -172,7 +172,7 @@ ship-fleet resize ship-01 --cores 8 --memory-mb 16384 --restart
 ship-fleet resize ship-01 --disk-gb 80
 ```
 
-`resize` changes cores and memory at the next restart through the hypervisor;
+`resize` changes vCPUs and memory at the next restart through the hypervisor;
 `--restart` does that now, which stops the Ship's agents, so resize while they are
 idle. A disk only grows, at once, with no restart.
 
@@ -198,7 +198,7 @@ ship-fleet start ship-01   # its agents resume in their modes as it boots
 Both go through the driver (the proxmox driver checks the VM's name first). With
 the manual driver they print the step to run by hand. A reboot from inside the
 Ship is `ship-fleet reboot`; stopping and starting through the hypervisor is what
-makes a new core count or memory size apply (`ship-fleet resize --restart` does
+makes a new vCPU count or memory size apply (`ship-fleet resize --restart` does
 it for you).
 
 ## Snapshots
