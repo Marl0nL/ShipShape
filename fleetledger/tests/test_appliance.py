@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import stat
 import subprocess
 
@@ -365,13 +366,20 @@ def test_doctor_on_the_vm_says_when_the_wrapper_cannot_be_run(store, monkeypatch
     wrapper.write_text(appliance.WRAPPER)
     wrapper.chmod(0o644)
     [item] = _wrapper_items(store, monkeypatch, tmp_path)
-    assert item.state == "fail" and "cannot run it" in item.detail
+    # A warning, not a failure: migrate verify must not refuse to make a copy active over it.
+    assert item.state == "missing" and "cannot run it" in item.detail
     assert item.next == appliance.WRAPPER_FIX
     assert stat.S_IMODE(wrapper.stat().st_mode) == 0o644  # left as it was
+    wrapper.chmod(0o711)  # executable but unreadable: sh cannot run it
+    monkeypatch.setattr(firstrun.os, "access",
+                        lambda p, mode: not (mode & os.R_OK) if str(p) == str(wrapper) else True)
+    [item] = _wrapper_items(store, monkeypatch, tmp_path)
+    assert item.state == "missing"
+    monkeypatch.undo()
     wrapper.unlink()
     wrapper.mkdir()
     [item] = _wrapper_items(store, monkeypatch, tmp_path)
-    assert item.state == "fail"
+    assert item.state == "missing"
 
 
 def test_doctor_off_the_vm_says_nothing_of_the_wrapper(store, monkeypatch, tmp_path):

@@ -320,8 +320,10 @@ def wrapper_items() -> list[Item]:
         return [Item("computer", "ship-fleet on ssh's PATH", "missing",
                      f"no {path} (this VM was seeded before it came in), {said}",
                      appliance.WRAPPER_FIX)]
-    if not path.is_file() or not os.access(path, os.X_OK):
-        return [Item("computer", "ship-fleet on ssh's PATH", "fail",
+    # A shell script runs only for a user who may read it as well as execute it. Not
+    # "fail": migrate verify would then refuse to make this copy active over it.
+    if not path.is_file() or not os.access(path, os.R_OK | os.X_OK):
+        return [Item("computer", "ship-fleet on ssh's PATH", "missing",
                      f"{path} is there but this user cannot run it, {said}",
                      appliance.WRAPPER_FIX)]
     return []
