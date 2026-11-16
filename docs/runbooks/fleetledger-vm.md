@@ -28,7 +28,7 @@ ssh fleetledger@fleetledger ship-fleet unlock    # once after each boot (or Unlo
 ## What it is, and what keeps it safe
 
 **The VM.** It runs the stock Ubuntu cloud image pinned in `versions.toml` for Ships,
-checked by its sha256, plus a seed that FleetLedger writes. 2 vCPUs, 4 GB of memory
+checked by its sha256, plus a seed that FleetLedger writes. 2 vCPUs (each one host CPU thread), 4 GB of memory
 and 40 GB of disk are plenty (more disk if you build images there). It has two users,
 and your keys are the only way in to either:
 

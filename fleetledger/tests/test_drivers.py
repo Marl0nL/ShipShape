@@ -603,6 +603,7 @@ def test_resize_grows_the_disk_and_sets_cores_and_memory():
     assert ("POST", "/nodes/pve/qemu/9101/config", {"cores": 8, "memory": 16384}) in api.calls
     text = " ".join(out.messages)
     assert "Grew ship-03's disk to 80 GB" in text and "restarts through Proxmox" in text
+    assert "Set 8 vCPUs, 16384 MB memory" in text
 
 
 def test_a_disk_never_shrinks():

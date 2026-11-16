@@ -922,6 +922,7 @@ def test_the_size_is_changed_from_the_ships_settings(web, monkeypatch):
     web.sign_in()
     text = web.client.get("/ships/ship-01/settings").text
     assert "never shrink" in text and 'name="disk_gb" type="number" min="40"' in text
+    assert "<label>vCPUs (each one host CPU thread) <input name=\"cores\"" in text
     web.post("/ships/ship-01/size", {"cores": "8", "memory_gb": "8", "disk_gb": "40",
                                      "restart": "yes"})
     assert calls == [("ship-01", {"cores": 8}, True)]  # only what changed
@@ -1696,6 +1697,7 @@ def test_the_new_ship_page_offers_every_option_under_the_field_cap(web):
                   "allow_bypass", "agent_sudo", "timezone", "tool", "profile"):
         assert field in names, field
     assert count < 100  # the gate's parse_qs(max_num_fields=100)
+    assert '<label>vCPUs (each one host CPU thread) <input name="cores"' in page
     assert 'href="/new"' in web.client.get("/").text  # the header's + New Ship
 
 

@@ -67,7 +67,7 @@
   <p>Manual: FleetLedger writes each Ship's first-boot ISO and prints the steps for your hypervisor.</p>
   {% endif %}
   {% set size = inv.effective_size() %}
-  <p>New Ships get {{ size.cores }} cores, {{ size.memory_mb }} MB of memory and a {{ size.disk_gb }} GB disk unless you choose otherwise.</p>
+  <p>New Ships get {{ size.cores }} vCPUs (each one host CPU thread), {{ size.memory_mb }} MB of memory and a {{ size.disk_gb }} GB disk unless you choose otherwise.</p>
   <p><a href="/setup#hypervisor">Change where Ships run in Setup</a></p>
 </section>
 

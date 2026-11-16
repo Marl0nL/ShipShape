@@ -76,7 +76,7 @@ Then, each step showing **done** or **next**:
    secret. Before saving, FleetLedger checks the client signs in, can make a
    `tag:ship` key (made and deleted at once, which shows the rules are in
    place), and has the scopes of the level. **Skip for now** is fine.
-3. **Your first Ship.** Name and tag; its size (cores, memory, disk, with the
+3. **Your first Ship.** Name and tag; its size (vCPUs (each one host CPU thread), memory, disk, with the
    defaults shown); the sign-ins it uses; and a Claude agent to start on it (on by
    default: `main`, working in `~/work`, or in a GitHub repo you name, which the
    Ship clones first so the repo's CLAUDE.md, skills and settings apply; a private
@@ -232,7 +232,7 @@ While the UI is open, every poll is also sampled into a small history:
 `history.sqlite3` in FleetLedger's data folder (`~/.local/share/fleetledger/`,
 mode 0600). One sample per Ship at most every 5 minutes, kept for 7 days and
 then pruned, so it stays at about 2,000 rows per Ship. A sample holds only
-numbers and the Ship's name: whether it answered, CPU (load per core), memory
+numbers and the Ship's name: whether it answered, CPU (load per vCPU), memory
 and disk use, and how many agents were working, waiting and idle. Nothing is
 sampled while the UI is closed, so charts show those hours as gaps. Delete the
 file to start again.
