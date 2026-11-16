@@ -434,6 +434,8 @@ def test_a_handed_over_copy_refuses_and_says_where_the_fleet_is(
 def _items(e):
     code, out, err = e.run("attention", "--json", "--offline")
     assert code == 0, err
+    for item in json.loads(out):
+        assert schemas.errors("fleetledger-attention", item) == []
     return {i["subject"]: i for i in json.loads(out) if i["ship"] is None
             and i["code"].startswith("machine-")}
 
@@ -494,8 +496,9 @@ def test_ca_show_says_when_each_machine_last_asked(caenv, tmp_path):  # noqa: F8
     lines = {x.split()[0]: x for x in out.splitlines() if x.startswith("  ") and "until" in x}
     assert f"last asked {doc['at'][:16].replace('T', ' ')} UTC" in lines["laptop"]
     assert "no idle limit" in lines["desk"] and "last asked" not in lines["desk"]
-    machines = {m["machine"]: m for m in json.loads(caenv.run("ca", "show", "--json")[1])
-                ["machines"]}
+    shown = json.loads(caenv.run("ca", "show", "--json")[1])
+    assert schemas.errors("fleetledger-ca", shown) == []
+    machines = {m["machine"]: m for m in shown["machines"]}
     assert machines["laptop"]["last_refreshed"] == doc["at"]
     assert machines["desk"]["idle_limit"] is False
 

@@ -29,10 +29,11 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `ca show --json` | one document | `shipshape.fleetledger-ca/1` |
 | `doctor --next --json` | one document | `shipshape.next-steps/1` |
 | `about [--check] --json` | one document | `shipshape.fleetledger-about/1` |
+| `machine-bundle NAME` (always JSON) | one document | `shipshape.machine-bundle/1` |
 
 `--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
-`about`, `doctor --next` and `signins --accounts`, answer while FleetLedger's vault is
-locked; the others are refused then (stderr says how to unlock, exit 1).
+`about`, `doctor --next`, `signins --accounts` and `machine-bundle` (which then signs
+nothing), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
 
 ## `ship-fleet ls --json` and `ship-fleet status NAME --json`
 
@@ -76,6 +77,8 @@ listed (with `--tag`, one with that tag): with none, an unlocked FleetLedger pri
 |---|---|---|
 | `vault-locked` (high) | `vault` | FleetLedger's vault is locked (after every boot, or `ship-fleet vault lock`). While it is, a Ship never fetched gets no item of its own. |
 | `machine-cert-expiring` (medium), `machine-cert-lapsed` (high) | the machine's name | A trusted machine that reaches one of the Ships listed is in its certificate's last day, or past it. The FleetLedger computer itself, which renews its own, only once lapsed. |
+| `machine-refresh-stopped` (medium) | the machine's name | A trusted machine that refreshes itself (it has asked `ship-fleet machine-bundle` at least once) and reaches one of the Ships listed has not asked for 4 days, while its certificate is not due yet. |
+| `machine-refresh-refused` (medium) | the machine's name | Such a machine was refused its bundle for 30 days without asking; in place of its certificate's item. |
 | `proxmox-token-expiring` (medium), `proxmox-token-lapsed` (high) | the token's id | FleetLedger's Proxmox API token is in its last 14 days, or past them (`token_expires` in `ships.toml`). |
 
 ## `ship-fleet signins --json`
@@ -110,7 +113,7 @@ init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.j
 |---|---|
 | `host_ca`, `user_ca` | Fingerprints of the key that signs Ships' host certificates and of the user CA keys Ships accept (the current one first). |
 | `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
-| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`) and `this_computer` (the FleetLedger computer, which renews its own). |
+| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null). |
 
 ## `ship-fleet doctor --next --json`
 
