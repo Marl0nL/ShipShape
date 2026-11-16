@@ -170,12 +170,17 @@ def read() -> File:
         st = os.lstat(p)
     except FileNotFoundError:
         f = File(p, None, [])
+    except OSError as exc:
+        raise FleetError(f"Cannot look at {p}: {exc.strerror}.") from exc
     else:
         if not os.path.isfile(p) or os.path.islink(p):
             f = File(p, None, [], symlink=os.path.islink(p), mode=st.st_mode, uid=st.st_uid)
             f.broken = f"{p} is not a plain file"
             return f
-        raw = p.read_bytes()
+        try:
+            raw = p.read_bytes()
+        except OSError as exc:
+            raise FleetError(f"Cannot read {p}: {exc.strerror}.") from exc
         f = File(p, raw, raw.decode("utf-8", "surrogateescape").split("\n"),
                  mode=st.st_mode & 0o7777, uid=st.st_uid, gid=st.st_gid)
     begins = [i for i, x in enumerate(f.lines) if _is(x, BEGIN)]
@@ -291,7 +296,8 @@ def review(store, inv, f: File | None = None) -> Review:
         if line is None:
             r.unfit.append(m.name)
         elif ed25519_blob(m.public_key) in f.outside:
-            r.own.append(m.name)
+            if r.adds:  # elsewhere no machine gets a line: nothing to say of yours
+                r.own.append(m.name)
         elif r.adds or m.name in r.present:
             r.wanted[m.name] = line
     return r
@@ -392,7 +398,8 @@ def sync(store, *, edit: bool = True) -> Synced:
     """Rewrite the block to what review says, if it differs. Refuses (FleetError) a
     file whose markers are broken, a line in the block that is not FleetLedger's, a
     file that is not a plain one of this user's. Then starts the idle clock
-    (refresh_allowed) of each machine whose line is new and that never asked (unless
+    (refresh_allowed) of each machine whose line is new and that never asked nor was
+    refused for being idle (unless
     edit is False: the caller holds ships.toml's lock)."""
     from fleetledger import ca
     from fleetledger.inventory import now_timestamp
@@ -436,14 +443,16 @@ def sync(store, *, edit: bool = True) -> Synced:
             sorted({*result.installed, *result.removed, *result.fixed})) or "-", "ok")
     if result.installed and edit:
         inv = store.load()
+        # Never asked (and never refused for it): its 30 days start now, whatever an
+        # older --allow-again said.
         start = [n for n in result.installed if (m := ca.machine(inv, n)) is not None
-                 and not m.last_refreshed and not m.refresh_allowed]
+                 and not m.last_refreshed and not m.idle_refused]
         if start:
             now = now_timestamp()
             with store.edit() as ed:
                 for n in start:
                     fresh = ca.machine(ed.snapshot(), n)
-                    if fresh and not fresh.last_refreshed and not fresh.refresh_allowed:
+                    if fresh and not fresh.last_refreshed and not fresh.idle_refused:
                         ed.set_machine_field(n, "refresh_allowed", now)
     return result
 
@@ -503,10 +512,10 @@ def check(store, inv) -> tuple[str, str, str] | None:
         return "fail", exc.message, exc.hint or ""
     f = r.file
     where = where_said()
+    if not r.adds and f.begin is None and not (f.broken and f.raw is not None):
+        return None  # not its own VM, and no block of FleetLedger's (a symlink included)
     if f.broken:
         return "fail", f.broken, hand_fix(f)
-    if not r.adds and f.begin is None:
-        return None
     active = handover_role(store) is None
     fix = SYNC if active else hand_fix(f)
     problems = []

@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="need
 
 VM = "fleetledger"
 OWNER_LINES = ('# my keys, from the seed\n'
-               'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl '
+               'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g '
                'you@desktop\n'
                'from="192.0.2.0/24",no-pty ssh-ed25519 '
                'AAAAC3NzaC1lZDI1NTE5AAAAIHNlbGZzZWxmc2VsZnNlbGZzZWxmc2VsZnNlbGZzZWxm  spaced\r\n')
@@ -138,6 +138,20 @@ def test_a_machine_that_never_asked_starts_its_idle_clock_when_its_line_goes_in(
     doc = vm.store.load().doc["machine"]["laptop"]
     assert block() and "refresh_allowed" not in doc and doc["last_refreshed"] == \
         "2026-01-01T00:00:00Z"
+    # Never asked, but allowed again long ago: its clock starts at its line all the same.
+    with vm.store.edit() as ed:
+        ed.set_machine_field("laptop", "last_refreshed", None)
+        ed.set_machine_field("laptop", "refresh_allowed", "2026-01-02T00:00:00Z")
+    ak().write_text("")
+    vm.run("trust", "--sync-keys")
+    assert vm.store.load().doc["machine"]["laptop"]["refresh_allowed"] > "2026-01-02T00:00:00Z"
+    # Refused for being idle: a new line does not let it in again.
+    with vm.store.edit() as ed:
+        ed.set_machine_field("laptop", "refresh_allowed", "2026-01-02T00:00:00Z")
+        ed.set_machine_field("laptop", "idle_refused", "2026-03-01T00:00:00Z")
+    ak().write_text("")
+    vm.run("trust", "--sync-keys")
+    assert vm.store.load().doc["machine"]["laptop"]["refresh_allowed"] == "2026-01-02T00:00:00Z"
 
 
 def test_a_rename_rekey_or_scope_change_keeps_the_line_right(vm):
@@ -154,7 +168,7 @@ def test_a_rename_rekey_or_scope_change_keeps_the_line_right(vm):
 
 
 def test_lines_outside_the_block_and_the_files_mode_are_never_changed(vm):
-    text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl x"
+    text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g x"
     seed(text, mode=0o640)  # no newline at its end
     blob, _ = trust(vm)
     assert ak().read_text().startswith(text + "\n" + authkeys.BEGIN + "\n")
@@ -288,7 +302,7 @@ def test_a_duplicated_line_is_one_again_after_sync(vm):
 def test_a_line_in_the_block_that_is_no_machines_is_never_removed(vm):
     seed("")
     trust(vm)
-    mine = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl me"
+    mine = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g me"
     ak().write_text(ak().read_text().replace(authkeys.END, mine + "\n" + authkeys.END))
     before = ak().read_bytes()
     item = doctor_item(vm)
@@ -334,8 +348,35 @@ def test_a_symlinked_file_on_a_desktop_stops_nothing(caenv, tmp_path, monkeypatc
     ak().unlink()
     ak().symlink_to(real)
     trust(caenv)
+    assert doctor_item(caenv) is None
     assert caenv.run("untrust", "laptop", "--yes")[0] == 0
     assert ak().is_symlink() and real.read_text() == "ssh-ed25519 AAAA mine\n"
+
+
+def test_on_a_desktop_your_own_keys_line_is_not_spoken_of(caenv, tmp_path,  # noqa: F811
+                                                         monkeypatch):
+    caenv.tmp = tmp_path
+    on_vm(caenv, monkeypatch, here=False)
+    key = keygen(tmp_path / "mine", "mine").with_name("mine.pub")
+    seed(key.read_text())
+    _, out = trust(caenv, "laptop", key=key)
+    assert "line of its own" not in out
+    code, out, _ = caenv.run("trust", "--sync-keys")
+    assert code == 0 and "line of its own" not in out
+
+
+def test_an_unreadable_file_is_said_not_a_crash(vm):
+    seed("")
+    ak().chmod(0)
+    if os.access(ak(), os.R_OK):
+        pytest.skip("running as root")
+    key = keygen(vm.tmp / "laptop", "laptop").with_name("laptop.pub")
+    code, out, err = vm.run("trust", "laptop", "--key", str(key))
+    assert code == 1 and "Cannot read" in err and "Certified laptop" in out
+    item = doctor_item(vm)
+    assert item.state == "fail" and "Cannot read" in item.detail
+    assert vm.run("ca", "show")[0] == 0
+    ak().chmod(0o600)
 
 
 def test_an_interrupted_write_leaves_the_file_as_it_was(vm, monkeypatch):
@@ -372,7 +413,7 @@ def test_a_change_made_while_it_writes_is_kept(vm, monkeypatch):
 
     monkeypatch.setattr(authkeys, "_write", meanwhile)
     blob, _ = trust(vm)
-    assert ak().read_text().startswith("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqq")
+    assert ak().read_text().startswith(OWNER_LINES.splitlines()[1] + "\n")
     assert block() == [line("laptop", blob)]
 
 
@@ -480,7 +521,7 @@ def test_the_wrappers_ship_fleet_is_what_lines_run():
 
 
 def test_a_path_with_anything_odd_in_it_makes_no_line(monkeypatch):
-    blob = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+    blob = "AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g"
     monkeypatch.setattr(authkeys, "SHIP_FLEET", '/bin/ship-fleet" ,x')
     assert authkeys.line_for("laptop", f"ssh-ed25519 {blob}") is None
 
