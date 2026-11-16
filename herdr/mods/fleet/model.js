@@ -17,9 +17,9 @@ export const SCHEMA = {
   ship: "shipshape.fleetledger-ship/1",
   attention: "shipshape.fleetledger-attention/1",
   about: "shipshape.fleetledger-about/1",
-  // What the panel expects in fleet.json, the file the coming refresher writes on this computer.
-  // Provisional: the refresher's change owns that contract, and this reader follows it.
-  machineFleet: "shipshape.machine-fleet/1",
+  // fleet.json, which the coming refresher leaves on this computer: this machine's own bundle
+  // from `ship-fleet machine-bundle NAME` (contracts/machine-bundle.schema.json).
+  machineBundle: "shipshape.machine-bundle/1",
 };
 
 /** A Ship's name, as ships.toml allows it. */
@@ -206,15 +206,20 @@ export function readSettings(text, home) {
   return { ssh: s.ssh, identity, warnings };
 }
 
-/** The refresher's fleet.json (null: there is none, which is normal today). */
+/** The FleetLedger VM's login (fleetledger/fleetledger/appliance.py USER). */
+export const VM_USER = "fleetledger";
+
+/** The refresher's fleet.json, a machine bundle (null: there is none, which is normal today).
+ *  Its Ships and their tags, and FleetLedger's own VM, reached as VM_USER@its name. */
 export function readFleetFile(text) {
   if (text === null || text === undefined) return { absent: true };
   const p = parse(text, "fleet.json");
   if (p.error) return { error: p.error };
-  const why = checkSchema(p.value, SCHEMA.machineFleet);
+  const why = checkSchema(p.value, SCHEMA.machineBundle);
   if (why) return { error: `fleet.json: ${why}` };
   const f = p.value;
-  const ssh = typeof f.ssh === "string" && !checkDestination(f.ssh) ? f.ssh : null;
+  const vm = typeof f.fleetledger?.name === "string" && NAME.test(f.fleetledger.name) ? f.fleetledger.name : null;
+  const ssh = vm ? `${VM_USER}@${vm}` : null;
   const ships = (Array.isArray(f.ships) ? f.ships : [])
     .filter((s) => s && typeof s.name === "string" && NAME.test(s.name))
     .map((s) => ({ name: s.name, tags: strings(s.tags) ? s.tags : [] }));

@@ -184,7 +184,9 @@ test("readAttention keeps the fleet's own items, from every example", () => {
   const all = examples("fleetledger-attention").map(([, d]) => d);
   const got = readAttention(JSON.stringify(all));
   assert.deepEqual(got.refused, []);
-  assert.deepEqual(got.fleet.map((i) => i.code).sort(), ["machine-cert-expiring", "proxmox-token-expiring", "vault-locked"]);
+  const want = all.filter((d) => d.ship === null).map((d) => d.code).sort();
+  assert.ok(want.includes("vault-locked") && want.length >= 3);
+  assert.deepEqual(got.fleet.map((i) => i.code).sort(), want);
   const locked = got.fleet.find((i) => i.code === "vault-locked");
   assert.equal(locked.severity, "high");
   assert.match(locked.fix, /ship-fleet unlock/);
@@ -218,12 +220,24 @@ test("readSettings: missing, good, a key path, and what it refuses", () => {
   assert.equal(readSettings(JSON.stringify({}), HOME).missing, true);
 });
 
-test("readFleetFile: absent is normal; the shape is checked", () => {
+test("readFleetFile reads every machine-bundle example", () => {
   assert.deepEqual(readFleetFile(null), { absent: true });
-  const doc = { schema: SCHEMA.machineFleet, ssh: DEST, ships: [{ name: "ship-01", tags: ["work"] }, { name: "Bad Name", tags: [] }, { name: "ship-02" }] };
-  assert.deepEqual(readFleetFile(JSON.stringify(doc)), { ssh: DEST, ships: [{ name: "ship-01", tags: ["work"] }, { name: "ship-02", tags: [] }] });
-  assert.equal(readFleetFile(JSON.stringify({ ...doc, ssh: "-oX" })).ssh, null);
-  assert.match(readFleetFile(JSON.stringify({ ...doc, schema: "shipshape.machine-fleet/2" })).error, /fleet.json: shape .* newer/);
+  for (const [name, doc] of examples("machine-bundle")) {
+    const got = readFleetFile(JSON.stringify(doc));
+    assert.equal(got.error, undefined, name);
+    assert.deepEqual(got.ships, doc.ships.map((s) => ({ name: s.name, tags: s.tags })), name);
+    assert.equal(got.ssh, doc.fleetledger ? `fleetledger@${doc.fleetledger.name}` : null, name);
+  }
+});
+
+test("readFleetFile: the shape is checked; names it would send are too", () => {
+  const doc = example("machine-bundle", "renewed.json");
+  assert.match(readFleetFile(JSON.stringify({ ...doc, schema: "shipshape.machine-bundle/2" })).error, /fleet.json: shape .* newer/);
+  assert.match(readFleetFile(JSON.stringify({ ...doc, schema: undefined })).error, /fleet.json: no "schema" field/);
+  const odd = { ...doc, fleetledger: { ...doc.fleetledger, name: "-oProxyCommand=x" }, ships: [...doc.ships, { name: "Bad Name", tags: [] }] };
+  const got = readFleetFile(JSON.stringify(odd));
+  assert.equal(got.ssh, null);
+  assert.deepEqual(got.ships.map((s) => s.name), ["ship-01"]);
 });
 
 test("readMachines: by name, without temporary ones", () => {
@@ -384,18 +398,20 @@ test("the key file goes to ssh with IdentitiesOnly", async () => {
   for (const c of sshCalls(calls)) assert.deepEqual(c.args.slice(4, 8), ["-i", `${HOME}/.ssh/id_fleet`, "-o", "IdentitiesOnly=yes"]);
 });
 
+const bundle = (over = {}) => ({ ...example("machine-bundle", "renewed.json"), ...over });
+
 test("fleet.json: FleetLedger's address when settings give none", async () => {
-  const doc = { schema: SCHEMA.machineFleet, ssh: DEST, ships: [{ name: "ship-01", tags: ["work"] }] };
+  const doc = bundle();
   const { fleet, calls } = stand({ files: { [FLEET_FILE]: JSON.stringify(doc) }, answers: answersFor(ships()) });
   await fleet.refresh();
-  assert.equal(sshCalls(calls)[0].args[5], DEST);
+  assert.equal(sshCalls(calls)[0].args[5], "fleetledger@fleetledger");
   assert.equal(fleet.state.where.from, "fleet.json");
   assert.equal(fleet.state.shipsFrom, "FleetLedger");
   assert.match(header(fleet.state, 1_000_000, paths).facts[0], /\(from fleet.json\)/);
 });
 
 test("fleet.json: its Ships when FleetLedger cannot be read", async () => {
-  const doc = { schema: SCHEMA.machineFleet, ships: [{ name: "ship-01", tags: ["work"] }] };
+  const doc = bundle({ fleetledger: null });
   const { fleet, calls } = stand({ files: { [FLEET_FILE]: JSON.stringify(doc) } });
   await fleet.refresh();
   assert.deepEqual(sshCalls(calls), []);

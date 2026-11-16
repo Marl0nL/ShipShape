@@ -44,11 +44,11 @@ Nothing else goes in the file, and nothing secret: no password or passphrase is 
 the panel. Saving the file reloads the panel.
 
 Without `ssh`, the panel says where to put it. If the refresher has left
-`~/.ssh/shipshape/fleet.json` on this computer, the panel takes FleetLedger's address from it when
-`settings.json` gives none, and shows its Ships (name and tags) when it cannot read FleetLedger
-itself. The file is not there today, which is normal. What the panel expects in it for now:
-`{"schema": "shipshape.machine-fleet/1", "ssh": "...", "ships": [{"name": "ship-01", "tags": ["work"]}]}`;
-the refresher's change will make that a contract.
+`~/.ssh/shipshape/fleet.json` on this computer (this machine's own bundle from `ship-fleet
+machine-bundle NAME`, `contracts/machine-bundle.schema.json`), the panel takes FleetLedger's
+address from it when `settings.json` gives none (`fleetledger@` the bundle's `fleetledger.name`,
+the FleetLedger VM's login), and shows its Ships (name and tags) when it cannot read FleetLedger
+itself. The file is not there today, which is normal.
 
 ## What it runs, and where
 
