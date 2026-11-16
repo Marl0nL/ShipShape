@@ -240,10 +240,12 @@ Always JSON; there is no text form and no option.
 | `fleetledger` | FleetLedger's own VM (`[fleet] self`): `name`, and its host key as a `known_hosts` line, so the machine keeps the pin of the computer it asks. Null when FleetLedger records no VM of its own. |
 | `ships` | Every Ship the machine's scope reaches, and only those: `name` (its `Host` alias and `hc` machine name), `tags`, `runtime` (`core` or `herdr`, from its last status), `host_names` (`lan`: the first of its non-overlay names that resolves on the FleetLedger computer; `overlay`: its overlay name, or null) and `host_certificate` (its last status shows one). |
 | `idle_limit` | `on`: after `days` without asking, the machine is refused until allowed again. |
+| `refresher` | The refresher script, base64 (optional: absent from a FleetLedger older than it). Only the first-install line `ship-fleet trust` prints decodes it; see "The refresher on a trusted machine" below. |
 
-It is data, never a script, and the machine checks every field against the schema's
-patterns before writing a file from it. The bundle a person installs by hand
-(`ship-fleet trust`, `install.sh`) is unchanged.
+Everything but `refresher` is data, and the machine checks every field against the
+schema's patterns (and tighter) before writing a file from it. `refresher` is read only
+by the line a person pastes once; the refresher itself never reads it. The bundle a
+person installs by hand (`ship-fleet trust`, `install.sh`) is unchanged.
 
 **What it does.**
 
@@ -318,6 +320,41 @@ on standby or retired) it adds no line; it still removes lines of machines no lo
 trusted, and `migrate retire` (and a push's cut-over) empties the block, which
 `activate` and `unretire` fill again. `ship-fleet trust --sync-keys` rewrites the
 block to match; `ship-fleet doctor` checks it (`bundle keys`).
+
+**The refresher on a trusted machine.** On FleetLedger's own VM, `ship-fleet trust NAME`
+prints one line to paste on NAME (for a key with its own line too: your main machine
+uses the same refresher, which asks for its bundle by name through its shell). The line
+finds NAME's private key under `~/.ssh` by the `.pub` file that holds the trusted key,
+pins the VM's host key from `[fleet] self`, fetches the bundle with that key (`ssh -F
+none`, `BatchMode`, `IdentitiesOnly`), decodes `refresher` and runs its `install`, which:
+
+- copies it to `~/.ssh/shipshape/refresh` (mode 0700);
+- writes `~/.ssh/shipshape/machine.conf`, read line by line and never sourced:
+  `name` (the machine's name here), `key` (the private key's path), `user` and `hosts`
+  (how to reach FleetLedger, tried in turn), `host_key` (the pinned `ssh-ed25519` key),
+  `host_names` (`overlay`, the default: each Ship's overlay name when it has one; or
+  `lan`), `hc` (`on`/`off`) and `hc_path`;
+- puts `Include ~/.ssh/shipshape/config` at the top of `~/.ssh/config`, as `install.sh`
+  does;
+- leaves a timer that runs the refresher at login and hourly: a systemd user timer
+  (`shipshape-refresh.timer`) on Linux, a launchd agent (`local.shipshape.refresh`) on
+  macOS. `--no-timer` at the end of the line leaves none (also `--no-hc`, `--lan`);
+  `~/.ssh/shipshape/refresh remove-timer` removes it.
+
+Run with no arguments (the timer, the Fleet panel after a job), the refresher asks
+for `ship-fleet machine-bundle NAME` the same way, checks the whole document, and
+refuses it whole if any value is out of place. It then writes, each by rename, only
+`NAME-cert.pub`, `known_hosts`, `config` (from its own template: no text from the
+bundle becomes a directive), `fleet.json` (the bundle as checked, compact, without
+`refresher`), `hc-added` and `state.json`, all in `~/.ssh/shipshape`. It adds each
+herdr-core Ship with a host certificate to `hc` (when the bundle's login is `agent`)
+and removes only the `hc` machines it added itself, once their Ship has left the bundle
+or stopped running herdr-core. It never replaces itself. Exit 0: applied (a warning,
+such as hc missing, goes to stderr and `state.json`). Exit 1: nothing new applied, one
+sentence on stderr and in `state.json`: FleetLedger unreachable, the machine refused or
+untrusted, a certificate due and not signed (`vault-locked`, `sign-failed`), no
+certificate, or a document it refuses. Exit 2: wrong usage. `state.json`:
+`refresh-state.schema.json` (`"schema": "shipshape.refresh-state/1"`).
 
 **Attention.** A machine that has asked at least once refreshes itself, so FleetLedger
 says when it stops (fleet-level items in `ship-fleet attention`, the web UI and

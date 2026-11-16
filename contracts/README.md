@@ -32,6 +32,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | Every sign-in (`ship-fleet signins --json` entries) | `fleetledger-signin.schema.json` | Fleet: `ship-fleet signins` | other programs on your computers (a Fleet panel, over ssh) |
 | The CA and trusted machines (`ship-fleet ca show --json`) | `fleetledger-ca.schema.json` | Fleet: `ship-fleet ca show` | other programs on your computers (a Fleet panel, over ssh) |
 | A trusted machine's own bundle (`ship-fleet machine-bundle NAME`) | `machine-bundle.schema.json` | Fleet: `ship-fleet machine-bundle` | that machine's refresher, over ssh |
+| What a trusted machine's refresher last did (`~/.ssh/shipshape/state.json`) | `refresh-state.schema.json` | that machine's refresher (`fleetledger/fleetledger/refresher/refresh.sh`) | the Fleet panel on that machine |
 | Every doctor check (`ship-fleet doctor --json`) | `fleetledger-doctor.schema.json` | Fleet: `ship-fleet doctor` | other programs on your computers (a Fleet panel, over ssh) |
 
 Prose documents:

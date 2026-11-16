@@ -105,9 +105,12 @@ def test_trust_adds_one_forced_line_and_untrust_removes_it(vm):
     assert block() == [line("laptop", blob)]
     assert outside() == before  # your lines, byte for byte (the \r\n line too)
     assert "Bundle key added to" in out and "for laptop" in out
-    assert f"From laptop, ssh -i ~/.ssh/shipshape/id_ed25519 {getpass.getuser()}@<this VM> " \
-           "now returns its bundle as JSON" in out
-    assert out.index("now returns its bundle") < out.index("copy the folder over")
+    # The first-install line for its refresher (test_refresher.py runs it), in place of the
+    # copy-the-folder steps, which stay as the way without it.
+    assert "On laptop, paste this one line" in out
+    assert any(x.startswith("sh -c '") and "machine-bundle laptop" in x and blob in x
+               for x in out.splitlines())
+    assert out.index("paste this one line") < out.index("copy the folder over")
     code, out, err = vm.run("untrust", "laptop", "--yes")
     assert "Bundle key line(s) removed from" in out and "laptop" in out
     assert ak().read_bytes() == before  # the whole block goes with its last line
@@ -230,7 +233,9 @@ def test_a_key_with_its_own_line_gets_no_restricted_line_and_ca_show_says_so(vm)
     _, out = trust(vm, "desktop", key=key)
     assert ak().read_bytes() == before
     assert "desktop's key has a line of its own in" in out and "adds no bundle-only line" in out
-    assert "now returns its bundle" not in out
+    # Your own key fetches by name through its shell: the same line installs its refresher.
+    assert any(x.startswith("sh -c '") and "machine-bundle desktop" in x
+               for x in out.splitlines())
     code, out, _ = vm.run("ca", "show")
     assert "bundle key: its own line (one of your keys)" in out
     code, out, _ = vm.run("ca", "show", "--json")

@@ -270,7 +270,10 @@ same vault.
   machine's: `machine-cert-expiring` in its last day, `machine-cert-lapsed` after
   (`ship-fleet attention`, `ship-fleet doctor`).
 - **To keep using it for ssh, herdr and hc**, renew it from the new computer, as for
-  any machine ([trust-machines.md](trust-machines.md), "Renew"): there, run
+  any machine ([trust-machines.md](trust-machines.md), "Trust a machine"). When the new
+  computer is FleetLedger's own VM, `ship-fleet trust <machine>` there prints one line
+  to paste on the old computer, which installs the refresher: from then on it renews
+  itself and picks up new Ships. Elsewhere, there run
   `ship-fleet trust <machine> --identity '<key>'` (or **Download bundle** in its row
   under Settings ▸ Access ▸ Trusted machines in the new computer's web UI), copy the
   bundle to the old computer and run `sh install.sh` in it. `<key>` is the private

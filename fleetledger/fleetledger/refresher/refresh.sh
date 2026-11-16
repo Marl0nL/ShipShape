@@ -476,10 +476,12 @@ fetch() {
     } 3>&1 | head -c $((MAX_BUNDLE + 1)) >"$stage/out"
     rc=$(cat "$stage/rc" 2>/dev/null)
     [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 4 MiB; refused, and the files here are unchanged."
-    first=$(head -n 1 "$stage/err" 2>/dev/null | tr -cd ' -~' | cut -c 1-300)
+    # FleetLedger's refusal is its first line; ssh's own reason is its last (after any banner).
+    first=$(grep -v '^[[:space:]]*$' "$stage/err" 2>/dev/null | head -n 1 | tr -cd ' -~' | cut -c 1-300)
+    last=$(grep -v '^[[:space:]]*$' "$stage/err" 2>/dev/null | tail -n 1 | tr -cd ' -~' | cut -c 1-300)
     case $rc in
       0) return 0 ;;
-      255) said="ssh to $user@$h: ${first:-it gave no reason}" ;;
+      255) said="${said:+$said; }ssh to $user@$h: ${last:-it gave no reason}" ;;
       '') fail "FleetLedger's answer was cut off: more than 4 MiB, or ssh was stopped." ;;
       *) fail "FleetLedger refused this machine's bundle: ${first:-it gave no reason} (the files here are unchanged)." ;;
     esac
