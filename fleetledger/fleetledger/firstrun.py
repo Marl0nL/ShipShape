@@ -327,6 +327,26 @@ def overlay_items(app, inv) -> list[Item]:
     return out
 
 
+def machines_items(inv) -> list[Item]:
+    """Trusted machines whose certificate is in its last day or has lapsed (the same
+    items as ship-fleet attention, ops.machine_cert_attention). Reads ships.toml only."""
+    from fleetledger import ca, ops
+
+    if ca.config(inv) is None:
+        return []
+    trusted = [m for m in ca.machines(inv) if not m.revoked]
+    if not trusted:
+        return []
+    due = ops.machine_cert_attention(inv, inv.ships())
+    if not due:
+        return [Item("fleet", "trusted machines", "ok",
+                     f"{len(trusted)}, none to renew by hand now")]
+    here = ops.THIS_COMPUTER_COMMAND
+    return [Item("fleet", f"machine {i.subject}", "warn", i.message,
+                 here if i.fix == ops.THIS_COMPUTER_FIX
+                 else ops.MACHINE_CERT_COMMAND.format(name=i.subject)) for i in due]
+
+
 def ships_items(inv) -> list[Item]:
     ships = inv.ships()
     if not ships:
@@ -403,6 +423,7 @@ def everything(app, *, offline: bool = False) -> list[Item]:
     fleet_items, inv = fleet(app)
     items += fleet_items
     if inv is not None:
+        items += machines_items(inv)
         items += appliance_items(inv)
         items += hypervisor(app, inv, offline=offline)
         items += overlay_items(app, inv)

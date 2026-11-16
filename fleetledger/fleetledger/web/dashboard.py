@@ -143,12 +143,13 @@ def _operation(op: str, ship: str, label: str, command: str, runtime: str = "her
 @dataclass(frozen=True)
 class Alert:
     level: str  # critical | warning | notice
-    ship: str
+    ship: str | None  # None: about the fleet (a trusted machine), not one Ship
     code: str
     message: str
     action: Action
     key: str  # stable identity (browser notifications)
     waiting: bool = False  # an agent waits: the page may notify
+    subject: str | None = None  # a fleet-level alert's machine (ship None)
 
 
 def range_key(value: str | None) -> str:
@@ -167,15 +168,41 @@ CERT_CODES = {
 }
 
 
+MACHINE_CODES = ("machine-cert-expiring", "machine-cert-lapsed")
+
+
+def machine_action(machine: str, remote: bool) -> Action:
+    """A trusted machine's certificate is due: Download bundle renews it (web.trust; the
+    machine's own paired browser also has its banner). The FleetLedger computer's own
+    renews itself: Renew now. From a paired device, Trusted machines (its Download, for
+    its own machine), since other machines' bundles stay with the FleetLedger computer."""
+    here = trustcmd.this_computer()
+    if here and here["machine"] == machine:
+        if remote:
+            return Action("command", "Copy", "ship-fleet trust --this-computer",
+                          "On the FleetLedger computer:")
+        return Action("post", "Renew now", "/settings/machines/renew-here",
+                      title="ship-fleet trust --this-computer")
+    if remote:
+        return Action("link", "Trusted machines", "/settings?said=machines#machines",
+                      hint=f"From the FleetLedger computer's browser, or one on {machine}:")
+    return Action("post", "Download bundle", "/settings/machines/bundle",
+                  hint=f"Then on {machine}: sh install.sh from the bundle.",
+                  fields=(("machine", machine),), title=f"ship-fleet trust {machine}")
+
+
 def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
                attach_here: bool = False, *, remote: bool = False,
-               agent: str | None = None) -> Action:
+               agent: str | None = None, machine: str | None = None) -> Action:
     """The one action that fixes an attention code on a Ship. attach_here: the machine
     the browser is on reaches the Ship over plain ssh, so its attach command is the
     one offered for a waiting agent (herdr --remote, or hc attach <ship>/<agent> on a
     herdr-core Ship: attach.py); else ship-fleet ssh, which, from a paired device
-    (remote), is said to run on the FleetLedger computer. agent: the waiting one."""
+    (remote), is said to run on the FleetLedger computer. agent: the waiting one.
+    machine: the trusted machine a fleet-level machine-cert-* item is about."""
     on_fleetledger = " (on the FleetLedger computer)" if remote else ""
+    if code in MACHINE_CODES and machine:
+        return machine_action(machine, remote)
     if code == "signin-scopes-differ" and view is not None:
         from fleetledger import ghscopes
 
@@ -292,8 +319,10 @@ def alerts(views: Sequence[ShipView], items: Sequence[Item], flows_waiting: Sequ
             LEVEL_OF.get(item.level, "warning"), item.ship, item.code, item.message,
             action_for(item.code, item.ship, by_name.get(item.ship), item.signin,
                        item.code == "agent-waiting" and attaches_(item.ship), remote=remote,
-                       agent=item.subject if item.code == "agent-waiting" else None),
+                       agent=item.subject if item.code == "agent-waiting" else None,
+                       machine=item.subject if item.ship is None else None),
             item.key, waiting=item.code == "agent-waiting",
+            subject=item.subject if item.ship is None else None,
         ))
     order = {level: i for i, level in enumerate(LEVELS)}
     return sorted(found, key=lambda a: order[a.level])

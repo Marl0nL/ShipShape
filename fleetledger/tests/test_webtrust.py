@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from datetime import timedelta
 
 import pytest
 from fl_harness import finished, keygen
@@ -402,3 +403,93 @@ def test_this_computers_ships_are_not_changed_from_its_row(caweb):
     caweb.post("/settings/machines/scope", {"machine": "here", "scope": "tag:work",
                                             "confirm": "yes"})
     assert "reaches every Ship" in _settings(caweb) and caweb.app_ui.jobs.recent() == []
+
+
+def _machine_for(caweb, name, hours, scope=("all",)):
+    """A trusted machine whose certificate ends this many hours from now; the poller's
+    inventory takes it in (no Ship is asked)."""
+    pub = caweb.tmp / f"{name}.pub"
+    key = pub.read_text().strip() if pub.exists() else _key(caweb, name)
+    with caweb.store.edit() as ed:
+        ed.set_machine(name, {"public_key": key, "added": "2026-01-01T00:00:00Z",
+                              "scope": list(scope), "logins": ["agent"],
+                              "last_valid_before": ca.stamp(ca.utc_now()
+                                                            + timedelta(hours=hours))})
+    caweb.fleet.poll([])
+
+
+def _needs_attention(caweb):
+    page = caweb.client.get("/").text
+    return page[page.index("Needs attention"):]
+
+
+def _machine_row(page, name):
+    machines = page[page.index('id="machines"'):]
+    row = machines[machines.index(f"<td>{name}"):]
+    return row[:row.index("</tr>")]
+
+
+def test_a_machines_certificate_due_shows_in_needs_attention_and_on_its_row(caweb):
+    _machine_for(caweb, "lap", 5)
+    _machine_for(caweb, "desk", -1)
+    _machine_for(caweb, "notebook", 100)
+    alerts = _needs_attention(caweb)
+    assert "machine-cert-expiring" in alerts and "machine-cert-lapsed" in alerts
+    assert "The certificate of lap lapses at" in alerts
+    assert "The certificate of desk lapsed at" in alerts and "notebook" not in alerts
+    # Its fix: Download bundle, from this computer's browser, for that machine.
+    lapsed = alerts[alerts.index("The certificate of desk"):]
+    lapsed = lapsed[:lapsed.index("</li>")]
+    assert 'action="/settings/machines/bundle"' in lapsed
+    assert 'name="machine" value="desk"' in lapsed and "Download bundle" in lapsed
+    assert "ship-fleet" not in lapsed.replace('title="ship-fleet trust desk"', "")
+    page = _settings(caweb)
+    assert 'class="pill warn"' in _machine_row(page, "lap")
+    assert 'class="pill bad"' in _machine_row(page, "desk")
+    assert "pill" not in _machine_row(page, "notebook")
+    # Downloading its bundle renews it: the alert and the badge go.
+    response = caweb.post("/settings/machines/bundle", {"machine": "desk"})
+    assert response.headers["content-type"] == "application/gzip"
+    assert "machine-cert-lapsed" not in _needs_attention(caweb)
+    assert "pill" not in _machine_row(_settings(caweb), "desk")
+
+
+def test_a_healthy_machine_raises_nothing(caweb):
+    _machine_for(caweb, "lap", 100)
+    assert "machine-cert" not in caweb.client.get("/").text
+    assert "pill" not in _machine_row(_settings(caweb), "lap")
+
+
+def test_a_machine_reaching_no_ship_in_view_is_not_listed(caweb):
+    _machine_for(caweb, "spare", -1, scope=("ship:ship-09",))
+    assert "machine-cert-lapsed" not in caweb.client.get("/").text
+
+
+def test_this_computer_is_flagged_only_once_lapsed_with_renew_now(caweb):
+    from fleetledger import paths, trustcmd
+
+    _machine_for(caweb, "here", 5)
+    (paths.config_dir() / trustcmd.THIS_COMPUTER).write_text(
+        json.dumps({"machine": "here", "identity": "~/.ssh/id_ed25519"}))
+    assert "machine-cert" not in caweb.client.get("/").text  # it renews itself
+    assert "pill" not in _machine_row(_settings(caweb), "here")
+    _machine_for(caweb, "here", -1)
+    alerts = _needs_attention(caweb)
+    assert "machine-cert-lapsed" in alerts and "here (the FleetLedger computer)" in alerts
+    assert 'action="/settings/machines/renew-here"' in alerts
+    assert 'action="/settings/machines/bundle"' not in alerts
+
+
+def test_from_a_paired_device_a_due_machine_points_to_trusted_machines(monkeypatch):
+    from fleetledger import trustcmd
+
+    monkeypatch.setattr(trustcmd, "this_computer", lambda: {"machine": "here"})
+    other = dashboard.machine_action("lap", remote=True)
+    assert (other.kind, other.value) == ("link", "/settings?said=machines#machines")
+    assert "FleetLedger computer's browser" in other.hint
+    own = dashboard.machine_action("here", remote=True)
+    assert (own.kind, own.value) == ("command", "ship-fleet trust --this-computer")
+    assert own.hint == "On the FleetLedger computer:"
+    local = dashboard.machine_action("lap", remote=False)
+    assert (local.kind, local.value, local.fields) == (
+        "post", "/settings/machines/bundle", (("machine", "lap"),))
