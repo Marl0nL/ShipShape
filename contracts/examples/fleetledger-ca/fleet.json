@@ -31,6 +31,9 @@
       "scope": [
         "tag:work"
       ],
+      "logins": [
+        "agent"
+      ],
       "valid_before": "2026-01-01T03:00:00Z",
       "revoked": null,
       "fingerprint": "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
@@ -42,6 +45,10 @@
       "scope": [
         "all"
       ],
+      "logins": [
+        "agent",
+        "owner"
+      ],
       "valid_before": "2026-01-08T00:00:00Z",
       "revoked": null,
       "fingerprint": "SHA256:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
@@ -52,6 +59,10 @@
       "machine": "old-laptop",
       "scope": [
         "all"
+      ],
+      "logins": [
+        "agent",
+        "owner"
       ],
       "valid_before": "2025-12-01T00:00:00Z",
       "revoked": "2025-12-02T00:00:00Z",

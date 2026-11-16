@@ -61,6 +61,8 @@ def add_parsers(sub, add) -> None:
             "overlay and the Ships. Read-only: it changes nothing. Each missing piece\n"
             "comes with the exact command that fixes it.\n\n"
             "  ship-fleet doctor\n"
+            "  ship-fleet doctor --json          every check, for programs\n"
+            "                                    (contracts/fleetledger-doctor.schema.json)\n"
             "  ship-fleet doctor --next          what is left after setup, step by step\n"
             "  ship-fleet doctor --next --json   the same, for programs\n"
             "                                    (contracts/next-steps.schema.json)")
@@ -70,7 +72,7 @@ def add_parsers(sub, add) -> None:
                    help="the next steps after setup (first Ship signed in, this computer, "
                    "other devices, a laptop, always on, the vault, backups), each with its "
                    "state and command; contacts nothing")
-    p.add_argument("--json", action="store_true", help="with --next: as JSON")
+    p.add_argument("--json", action="store_true", help="as JSON (with --next: the next steps)")
 
 
 # --- doctor ---------------------------------------------------------------------------------
@@ -79,9 +81,13 @@ def add_parsers(sub, add) -> None:
 def cmd_doctor(args, app) -> int:
     if getattr(args, "next", False):
         return _next_steps(args, app)
-    if getattr(args, "json", False):
-        raise FleetError("--json is for the next steps: ship-fleet doctor --next --json.")
     items = firstrun.everything(app, offline=args.offline)
+    failed = 1 if any(i.state in ("missing", "fail") for i in items) else 0
+    if getattr(args, "json", False):
+        import json
+
+        app.say(json.dumps(as_json(items), indent=2))
+        return failed
     rows = [[MARK[i.state], i.area, i.name, i.detail] for i in items]
     app.say(table(rows, ["", "AREA", "CHECK", "DETAIL"]))
     todo = [i for i in items if i.state in ("missing", "fail", "warn", "info") and i.next]
@@ -91,7 +97,18 @@ def cmd_doctor(args, app) -> int:
             app.say(f"  {item}")
     if not any(i.state in ("missing", "fail", "warn") for i in items):
         app.say("\nEverything is in place.")
-    return 1 if any(i.state in ("missing", "fail") for i in items) else 0
+    return failed
+
+
+SCHEMA = "shipshape.fleetledger-doctor/1"  # doctor --json (contracts/ship-fleet.md)
+
+
+def as_json(items: list[firstrun.Item]) -> dict:
+    """doctor's items as contracts/fleetledger-doctor.schema.json has them."""
+    return {"schema": SCHEMA, "items": [
+        {"key": firstrun.key_of(i), "subject": i.subject or None, "area": i.area,
+         "title": i.name, "state": i.state, "detail": i.detail, "fix": i.next}
+        for i in items]}
 
 
 STEP_MARK = {"done": "done", "todo": "to do", "attention": "FIX", "blocked": "later",

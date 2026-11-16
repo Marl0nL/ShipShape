@@ -31,6 +31,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | What needs you (`ship-fleet attention --json` entries) | `fleetledger-attention.schema.json` | Fleet: `ship-fleet attention` | other programs on your computers (a Fleet panel, over ssh) |
 | Every sign-in (`ship-fleet signins --json` entries) | `fleetledger-signin.schema.json` | Fleet: `ship-fleet signins` | other programs on your computers (a Fleet panel, over ssh) |
 | The CA and trusted machines (`ship-fleet ca show --json`) | `fleetledger-ca.schema.json` | Fleet: `ship-fleet ca show` | other programs on your computers (a Fleet panel, over ssh) |
+| Every doctor check (`ship-fleet doctor --json`) | `fleetledger-doctor.schema.json` | Fleet: `ship-fleet doctor` | other programs on your computers (a Fleet panel, over ssh) |
 
 Prose documents:
 
@@ -38,7 +39,7 @@ Prose documents:
 - `ship-runtime.md`: the users, paths, units and sudo rules every Ship has, and how FleetLedger reaches them.
 - `ship-ctl.md`: every ship-ctl command, its output and exit codes, and how status is worked out.
 - `ship-fleet.md`: the `ship-fleet` output other programs may read (`ls`, `status`,
-  `attention`, `signins`, `ca show`, `doctor --next` and `about`, each `--json`), and the one
+  `attention`, `signins`, `ca show`, `doctor`, `doctor --next` and `about`, each `--json`), and the one
   `schema` field convention they share.
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
