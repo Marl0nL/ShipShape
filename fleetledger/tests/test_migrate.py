@@ -1859,7 +1859,7 @@ def test_push_ends_with_what_happens_to_this_computer(computers, monkeypatch):
     # keep using it, and not to untrust it.
     assert [end.index(s) for s in OLD_COMPUTER_SAID] == \
         sorted(end.index(s) for s in OLD_COMPUTER_SAID)
-    assert "runs only ship-fleet migrate, doctor, service, unlock and vault" in end
+    assert "runs only ship-fleet migrate, doctor, service, unlock, vault and about" in end
     assert "ship-fleet migrate retire on you@vm.example, then ship-fleet migrate unretire " \
         "here" in end and "ship-fleet migrate wipe" in end
     assert "This computer stays a trusted machine, desktop, like any other: nothing here " \
