@@ -492,7 +492,11 @@
           } else {
             item.state = "failed";
             item.bar.hidden = true;
-            say(item.li, "not uploaded: " + (answer.error || xhr.responseText || "error " + xhr.status), "failed");
+            // A 401 is the gate's refusal page (HTML): say so, not its source.
+            const why = xhr.status === 401
+              ? "this browser is no longer signed in (reload the page to see why)"
+              : answer.error || xhr.responseText || "error " + xhr.status;
+            say(item.li, "not uploaded: " + why, "failed");
           }
           resolve();
         });

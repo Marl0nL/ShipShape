@@ -354,7 +354,7 @@ def test_a_device_lapses_when_idle_and_after_30_days(web):
     assert web.remote.get("/").status_code == 200
     web.wall.now += devices_mod.IDLE + 1
     response = web.remote.get("/")
-    assert response.status_code == 401 and "Pair it once" in response.text
+    assert response.status_code == 401 and "Pairing lapsed" in response.text
     assert web.devices.all() == []
     # However busy, 30 days after pairing it lapses.
     web.pair()
@@ -380,7 +380,7 @@ def test_a_device_unused_just_under_7_days_stays_signed_in_and_just_over_is_sign
     assert web.remote.get("/").status_code == 200
     web.wall.now += 7 * day + 1
     response = web.remote.get("/")
-    assert response.status_code == 401 and "Pair it once" in response.text
+    assert response.status_code == 401 and "Pairing lapsed" in response.text
     assert web.devices.all() == []
 
 
@@ -540,6 +540,142 @@ def test_a_fresh_device_and_this_computer_pass_the_check(web):
     here = web.sign_in_here()
     web.wall.now += 30 * 24 * 3600
     assert web.local.post(path, data={"csrf": here}, headers=ORIGIN).status_code == 303
+
+
+# --- refusal pages: why, and the way back in (web/refusal.py) -----------------------------
+
+
+def _says(response, *texts):
+    assert response.headers["content-type"].startswith("text/html"), response.headers
+    for text in texts:
+        assert text in response.text, (text, response.text)
+
+
+def test_an_unpaired_browser_is_told_how_to_pair(web):
+    response = web.remote.get("/")
+    assert response.status_code == 401
+    _says(response, "This device is not signed in", "Pair it once",
+          '<code class="cmd">ship-fleet ui link</code>', 'data-copy="ship-fleet ui link"',
+          "paired in the last 4 hours", "Settings, Devices, Pair a device")
+    assert "<script>" not in response.text  # the strict CSP: Copy is app.js's
+
+
+def test_a_lapsed_device_is_told_which_when_and_why(web):
+    web.pair(name="work laptop")
+    [device] = web.devices.all()
+    cookie = {"Cookie": f"{COOKIE}={web.remote.cookies[COOKIE]}"}
+    web.wall.now += devices_mod.IDLE + 1
+    response = web.remote.get("/")
+    assert response.status_code == 401
+    when = devices_mod.when
+    _says(response, "Pairing lapsed", "work laptop was signed out at "
+          f"{when(device.seen + devices_mod.IDLE)}", "unused for 7 days",
+          f"last used {when(device.seen)}", "It keeps its name.",
+          "ship-fleet ui link --name &#x27;work laptop&#x27;")
+    assert web.devices.all() == []  # signed out as before: the record admits nobody
+    # Asked again, after a restart too: the record is on disk.
+    web.start()
+    again = web.client().get("/", headers=cookie)
+    assert again.status_code == 401 and "work laptop was signed out" in again.text
+    # Another login with that cookie, or another browser, learns nothing of it.
+    web.start(Remote(REMOTE, PORT, (LOGIN, OTHER)))
+    other = web.client(OTHER).get("/", headers=cookie)
+    assert other.status_code == 401 and "work laptop" not in other.text
+    assert "pairing with this FleetLedger has ended" in other.text
+    stranger = web.client().get("/")
+    assert stranger.status_code == 401 and "work laptop" not in stranger.text
+    # Pairing again lets it in, as always.
+    web.pair(name="work laptop")
+    assert web.remote.get("/").status_code == 200
+
+
+def test_a_device_lapsed_30_days_after_pairing_leaves_no_record(web):
+    # Its cookie (Max-Age: 30 days) runs out at the same moment, so nothing would ask.
+    web.pair(name="phone")
+    for _ in range(5):
+        web.wall.now += 6 * 24 * 3600
+        assert web.remote.get("/").status_code == 200
+    web.wall.now += 1
+    response = web.remote.get("/")
+    assert response.status_code == 401 and "phone" not in response.text
+    assert not web.devices.lapsed_file.exists()
+
+
+def test_a_lapse_record_is_kept_only_while_its_cookie_could_still_be_sent(web):
+    web.pair(name="laptop")
+    session = web.remote.cookies[COOKIE]
+    web.wall.now += devices_mod.IDLE + 1
+    assert "laptop was signed out" in web.remote.get("/").text
+    assert web.devices.lapsed_for(session, LOGIN) is not None
+    assert web.devices.lapsed_for(session, OTHER) is None
+    # Pairing anything later writes the file again, without what has run out.
+    web.wall.now = web.devices.lapsed_for(session, LOGIN).paired + devices_mod.ABSOLUTE + 1
+    assert web.devices.lapsed_for(session, LOGIN) is None
+    web.pair(web.client(), name="phone")
+    doc = json.loads(web.devices.lapsed_file.read_text())
+    assert doc == {"schema": 1, "items": []}
+
+
+def test_a_device_found_lapsed_while_another_pairs_keeps_its_record_too(web):
+    web.pair(name="laptop")
+    session = web.remote.cookies[COOKIE]
+    web.wall.now += devices_mod.IDLE + 1
+    web.pair(web.client(), name="phone")  # drops lapsed devices from devices.json
+    record = web.devices.lapsed_for(session, LOGIN)
+    assert record is not None and record.name == "laptop"
+    assert set(json.loads(web.devices.lapsed_file.read_text())["items"][0]) == {
+        "key", "name", "login", "machine", "paired", "seen", "lapsed"}
+
+
+def test_revoke_all_forgets_lapsed_devices_too(web):
+    web.pair(name="laptop")
+    web.wall.now += devices_mod.IDLE + 1
+    assert "laptop was signed out" in web.remote.get("/").text
+    out = io.StringIO()
+    assert cli.main(["ui", "revoke", "--all"], cli.App(out=out, err=out)) == 0
+    response = web.remote.get("/")
+    assert response.status_code == 401 and "laptop" not in response.text
+
+
+def test_a_revoked_device_is_told_its_pairing_ended_not_why(web):
+    csrf = web.pair(name="laptop")
+    [device] = web.devices.all()
+    web.remote.post("/settings/devices/revoke",
+                    data={"csrf": csrf, "device": device.key, "confirm": "yes"},
+                    headers=REMOTE_ORIGIN)
+    response = web.remote.get("/")
+    assert response.status_code == 401
+    _says(response, "pairing with this FleetLedger has ended", "ship-fleet ui link")
+    assert "laptop" not in response.text
+
+
+def test_a_danger_action_from_an_old_pairing_says_when_and_how_to_pair_again(web):
+    csrf = web.pair(name="laptop")
+    [device] = web.devices.all()
+    web.wall.now += devices_mod.FRESH + 1
+    response = web.remote.post("/ships/ship-01/destroy", data={"csrf": csrf},
+                               headers=REMOTE_ORIGIN)
+    assert response.status_code == 403
+    _says(response, "Pair again to do this",
+          f"laptop was paired at {devices_mod.when(device.paired)}, more than 4 hours ago",
+          "needs a fresh pairing", "ship-fleet ui link --name laptop",
+          "The new pairing replaces this device.", '<a href="/">Back to the fleet</a>')
+    assert web.remote.get("/").status_code == 200  # still signed in for everything else
+
+
+def test_the_command_keeps_a_devices_name_and_machine_quoted_for_a_shell():
+    from fleetledger.web import refusal
+
+    assert refusal.link_command() == "ship-fleet ui link"
+    assert refusal.link_command("Pat's laptop", "laptop") == \
+        "ship-fleet ui link --name 'Pat'\"'\"'s laptop' --machine laptop"
+    record = devices_mod.Lapsed("0" * 64, "laptop", LOGIN, "laptop", 0.0, 0.0, 1e9)
+    page = refusal.lapsed(record)
+    assert page.command == "ship-fleet ui link --name laptop --machine laptop"
+    assert "It keeps its name and the machine it runs on." in page.how
+    html = page.html().decode()
+    assert '<button type="button" class="ghost small" data-copy="ship-fleet ui link ' \
+           '--name laptop --machine laptop">Copy</button>' in html
 
 
 # --- Settings ▸ Devices ------------------------------------------------------------------------

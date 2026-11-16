@@ -173,6 +173,25 @@ def test_every_page_needs_a_session(web, path):
     assert "ship-fleet ui" in response.text
 
 
+def test_a_browser_here_without_a_session_is_told_how_to_sign_in(web):
+    response = web.client.get("/")
+    assert response.status_code == 401
+    assert response.headers["content-type"].startswith("text/html")
+    assert "This browser is not signed in" in response.text
+    assert 'data-copy="ship-fleet ui link --local"' in response.text
+    assert "terminal or as a service" in response.text
+    ended = web.client.get("/", headers={"Cookie": f"fleetledger-{PORT}=gone"})
+    assert ended.status_code == 401 and "sign-in here has ended" in ended.text
+    assert "unused for 12 hours" in ended.text
+
+
+def test_a_used_link_here_points_at_ship_fleet_ui_link_local(web):
+    token = web.gate.new_token()
+    assert web.client.get(f"/login?token={token}").status_code == 200
+    again = web.client.get(f"/login?token={token}")
+    assert again.status_code == 403 and "ship-fleet ui link --local" in again.text
+
+
 def test_static_files_need_no_session_but_still_a_local_host(web):
     assert web.client.get("/static/app.css").status_code == 200
     assert web.client.get("/static/app.css", headers={"Host": "evil.example"}).status_code == 400
