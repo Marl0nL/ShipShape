@@ -1,0 +1,367 @@
+{
+  "id": "root",
+  "cloned_from": {
+    "name": "main",
+    "version": "0.1.15"
+  },
+  "type": "row",
+  "children": [
+    {
+      "id": "sidebar",
+      "type": "column",
+      "children": [
+        {
+          "id": "brand",
+          "type": "block",
+          "content": {
+            "mod": "desk",
+            "props": {
+              "part": "brand"
+            }
+          },
+          "size": {
+            "px": 46
+          },
+          "window_drag": true
+        },
+        {
+          "id": "sidebar-lists",
+          "type": "column",
+          "children": [
+            {
+              "id": "spaces",
+              "type": "block",
+              "content": {
+                "mod": "desk-spaces"
+              },
+              "size": {
+                "weight": 1
+              },
+              "min": 90
+            },
+            {
+              "id": "agents",
+              "type": "block",
+              "content": {
+                "mod": "desk-agents"
+              },
+              "size": {
+                "weight": 1
+              },
+              "min": 90
+            }
+          ]
+        },
+        {
+          "id": "sidebar-footer",
+          "type": "block",
+          "content": {
+            "mod": "workspace-chrome",
+            "props": {
+              "footer": true
+            }
+          },
+          "size": {
+            "px": 69
+          }
+        }
+      ],
+      "size": {
+        "px": 268
+      },
+      "min": 44,
+      "max": 480,
+      "background": "chrome",
+      "resizable": false
+    },
+    {
+      "id": "work",
+      "type": "column",
+      "children": [
+        {
+          "id": "tabs",
+          "type": "block",
+          "content": {
+            "mod": "desk",
+            "props": {
+              "part": "bar"
+            }
+          },
+          "size": {
+            "px": 42
+          },
+          "window_drag": true
+        },
+        {
+          "id": "work-body",
+          "type": "row",
+          "children": [
+            {
+              "id": "main-stack",
+              "type": "stack",
+              "active": "main",
+              "children": [
+                {
+                  "id": "main",
+                  "type": "block",
+                  "content": {
+                    "tab": "active",
+                    "pane": {
+                      "header": {
+                        "content": {
+                          "mod": "pane"
+                        },
+                        "reveal": "hover",
+                        "height": 30,
+                        "position": "top"
+                      },
+                      "background": "background",
+                      "border": {
+                        "width": 1,
+                        "color": "border"
+                      },
+                      "focus": {
+                        "width": 1,
+                        "color": "accent"
+                      },
+                      "radius": 10,
+                      "gap": 8,
+                      "lone": true
+                    }
+                  }
+                },
+                {
+                  "id": "crew",
+                  "type": "column",
+                  "gap": 8,
+                  "children": [
+                    {
+                      "id": "crew-sheet",
+                      "type": "block",
+                      "min": 150,
+                      "radius": 10,
+                      "border": {
+                        "width": 1,
+                        "color": "border"
+                      },
+                      "background": "canvas",
+                      "content": {
+                        "mod": "desk",
+                        "props": {
+                          "part": "crew"
+                        }
+                      }
+                    },
+                    {
+                      "id": "crew-term",
+                      "type": "block",
+                      "content": {
+                        "tab": "active",
+                        "pane": {
+                          "header": {
+                            "content": {
+                              "mod": "pane"
+                            },
+                            "reveal": "hover",
+                            "height": 30,
+                            "position": "top"
+                          },
+                          "background": {
+                            "image": "mods/desk/brand/crew-caution.png",
+                            "fit": "contain"
+                          },
+                          "border": {
+                            "width": 1,
+                            "color": "#f0aa3c66"
+                          },
+                          "focus": {
+                            "width": 1,
+                            "color": "#f0aa3c"
+                          },
+                          "radius": 10,
+                          "gap": 8,
+                          "lone": true
+                        }
+                      },
+                      "size": {
+                        "px": 300
+                      },
+                      "min": 120,
+                      "max": 1000
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "panel",
+              "type": "column",
+              "children": [
+                {
+                  "id": "panel-body",
+                  "type": "stack",
+                  "children": [
+                    {
+                      "id": "files",
+                      "type": "block",
+                      "content": {
+                        "mod": "files"
+                      }
+                    },
+                    {
+                      "id": "changes",
+                      "type": "block",
+                      "content": {
+                        "mod": "changes"
+                      }
+                    }
+                  ],
+                  "active": "files"
+                }
+              ],
+              "size": {
+                "px": 368
+              },
+              "min": 280,
+              "max": 900,
+              "hidden": true
+            },
+            {
+              "id": "desk",
+              "type": "column",
+              "children": [
+                {
+                  "id": "desk-head",
+                  "type": "block",
+                  "content": {
+                    "mod": "desk",
+                    "props": {
+                      "part": "head"
+                    }
+                  },
+                  "size": {
+                    "px": 58
+                  }
+                },
+                {
+                  "id": "desk-body",
+                  "type": "stack",
+                  "children": [
+                    {
+                      "id": "desk-assistant",
+                      "type": "block",
+                      "content": {
+                        "mod": "desk",
+                        "props": {
+                          "part": "assistant"
+                        }
+                      }
+                    },
+                    {
+                      "id": "desk-manager",
+                      "type": "block",
+                      "content": {
+                        "mod": "desk",
+                        "props": {
+                          "part": "manager"
+                        }
+                      }
+                    },
+                    {
+                      "id": "desk-coder",
+                      "type": "column",
+                      "children": [
+                        {
+                          "id": "desk-code",
+                          "type": "block",
+                          "content": {
+                            "mod": "desk",
+                            "props": {
+                              "part": "coder"
+                            }
+                          },
+                          "size": {
+                            "weight": 1.6
+                          },
+                          "min": 120
+                        },
+                        {
+                          "id": "desk-changes",
+                          "type": "block",
+                          "content": {
+                            "mod": "changes"
+                          },
+                          "size": {
+                            "weight": 1
+                          },
+                          "min": 160
+                        }
+                      ],
+                      "divider": {
+                        "width": 1,
+                        "color": "border"
+                      }
+                    },
+                    {
+                      "id": "desk-none",
+                      "type": "block",
+                      "content": {
+                        "mod": "desk",
+                        "props": {
+                          "part": "none"
+                        }
+                      }
+                    }
+                  ],
+                  "active": "desk-none"
+                }
+              ],
+              "size": {
+                "px": 440
+              },
+              "min": 300,
+              "max": 1200,
+              "background": "canvas",
+              "border": {
+                "width": 1,
+                "color": "border"
+              },
+              "radius": 10
+            }
+          ],
+          "padding": 8,
+          "gap": 8
+        },
+        {
+          "id": "status",
+          "type": "block",
+          "content": {
+            "mod": "workspace-status"
+          },
+          "size": {
+            "px": 28
+          }
+        }
+      ],
+      "resizable": false
+    }
+  ],
+  "background": "canvas",
+  "theme": "graphite",
+  "ui_font": "Geist",
+  "terminal_padding": [
+    14,
+    12
+  ],
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
+  "titlebar": "none",
+  "traffic_lights": [
+    12,
+    16
+  ],
+  "preview": "layouts/desk.svg",
+  "terminal_opacity": 0.88
+}

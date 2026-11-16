@@ -1,0 +1,4 @@
+# Herdr's generated typings for the mods' editor support. gpui-shell rewrites this file on every
+# run, in every mod folder, from the runtime that runs the mod; a committed copy can only go stale.
+# Nothing loads it at run time. See "Editor support" in DESK.md.
+gpui-kit.d.ts

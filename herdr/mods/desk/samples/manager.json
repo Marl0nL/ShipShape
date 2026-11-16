@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "kind": "manager",
+  "title": "Release lead",
+  "tags": [
+    "work"
+  ],
+  "updated": "2026-11-12T09:52:00Z",
+  "summary": "Getting 2.4 out the door: 3 in flight, 1 waiting on you",
+  "tasks": [
+    {
+      "id": "login-redirect",
+      "title": "Fix login redirect loop",
+      "status": "review",
+      "note": "PR #412 open, CI green",
+      "agent": "fix-login",
+      "link": "https://example.com/pr/412"
+    },
+    {
+      "id": "search-api",
+      "title": "Search API pagination",
+      "status": "doing",
+      "note": "Halfway: cursor done, tests next",
+      "agent": "search"
+    },
+    {
+      "id": "flaky-e2e",
+      "title": "Quarantine the flaky e2e suite",
+      "status": "blocked",
+      "note": "Needs your call: skip in CI or fix now?",
+      "agent": "e2e"
+    },
+    {
+      "id": "docs-auth",
+      "title": "Document the new auth flow",
+      "status": "todo",
+      "note": "After the redirect fix lands"
+    },
+    {
+      "id": "bump-deps",
+      "title": "Bump minor dependencies",
+      "status": "todo"
+    },
+    {
+      "id": "metrics",
+      "title": "Add release metrics dashboard",
+      "status": "doing",
+      "agent": "metrics",
+      "note": "Draft panels up"
+    },
+    {
+      "id": "changelog",
+      "title": "Changelog for 2.3.1",
+      "status": "done",
+      "note": "Published"
+    },
+    {
+      "id": "pin-node",
+      "title": "Pin Node 22 in CI",
+      "status": "done"
+    }
+  ],
+  "cards": [
+    {
+      "id": "freeze",
+      "title": "Code freeze Fri 3pm",
+      "body": "Anything not in review by Thursday slips to 2.5.",
+      "tone": "warn"
+    }
+  ]
+}

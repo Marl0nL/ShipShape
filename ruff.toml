@@ -1,6 +1,13 @@
 # Lint settings for all Python in the repo (scripts, tests, ship/, fleetledger/).
 target-version = "py312"
 line-length = 100
+# Python without a .py name: the Herdr Desk's `desk` CLI.
+extend-include = ["herdr/mods/desk/bin/desk"]
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.per-file-ignores]
+# The `desk` CLI is copied as one file onto any machine Herdr reaches, whose Python may be
+# older than 3.11 (no datetime.UTC); its long lines are kept as written in the Desk.
+"herdr/mods/desk/bin/desk" = ["E501", "UP017"]

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "kind": "crew",
+  "title": "fm-fix-login-k3",
+  "tags": ["work"],
+  "crew": { "parent": "release-lead", "task": "fm-fix-login-k3" },
+  "updated": "2026-11-14T00:40:00Z",
+  "summary": "Carrying return_to through the OAuth state so SSO logins land where they started",
+  "findings": [
+    { "text": "The loop only happens with SSO on: the callback drops return_to and falls back to /login", "tone": "warn", "at": "2026-11-14T00:38:00Z" },
+    { "text": "Reproduced it in a test (auth/callback.test.ts), failing as expected", "tone": "good", "at": "2026-11-14T00:31:00Z" },
+    { "text": "Session cookie is fine; not a cookie-domain problem", "tone": null, "at": "2026-11-14T00:22:00Z" }
+  ],
+  "next": [
+    { "text": "Write the failing test", "done": true },
+    { "text": "Carry return_to in the signed state parameter", "done": false },
+    { "text": "Run the auth suite and open the PR", "done": false },
+    { "text": "Report the PR to release-lead", "done": false }
+  ],
+  "cards": [],
+  "lists": [],
+  "tasks": [],
+  "links": []
+}
