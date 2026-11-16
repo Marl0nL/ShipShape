@@ -8,7 +8,8 @@ Every action is the CLI's own `ship-fleet image` command:
   by hand) and Remove (`image rm ID [--keep-file]`) talk to the hypervisor: they
   are jobs (web.jobs), shown in the Images section. A by-hand driver's steps show
   on the job's card (jobs.RecordingApp, _outcome.html). Remove needs the dialog's
-  tick box; the CLI refuses to remove the pinned image.
+  tick box (its confirmation: the job passes --yes); the CLI refuses to remove the
+  pinned image.
 Building an image takes a while and needs local tools: it stays a command to copy.
 """
 
@@ -90,7 +91,9 @@ async def remove(request: Request) -> Response:
         flash(request, "bad", "Tick the box to confirm.")
     else:
         keep = one(fields, "keep_file") == "yes"
-        _start(request, image, ["image", "rm", image, *(["--keep-file"] if keep else [])],
+        # The tick is its confirmation: the job passes --yes.
+        _start(request, image,
+               ["image", "rm", image, *(["--keep-file"] if keep else []), "--yes"],
                f"Remove {image}")
     return _back()
 

@@ -84,8 +84,9 @@ def add_parsers(sub, add) -> None:
             "  ship-fleet image ls\n"
             "  ship-fleet image publish ID [--driver proxmox] [--template-vmid N]\n"
             "  ship-fleet image use ID|stock      pin the image new Ships start from\n"
-            "  ship-fleet image rm ID\n\n"
-            "Existing Ships are never re-imaged; update them in place.\n"
+            "  ship-fleet image rm ID             (asks you to type ID)\n\n"
+            "Existing Ships are never re-imaged; update them in place. rm cannot be\n"
+            "undone: in a terminal it asks first; elsewhere it needs --yes.\n"
             "See docs/runbooks/images.md.")
     p.add_argument("action", choices=("build", "ls", "publish", "use", "rm", "import"))
     p.add_argument("image", nargs="?", help="image id (or stock, for use)")
@@ -97,6 +98,8 @@ def add_parsers(sub, add) -> None:
                    help="publish: record a template you made by hand instead")
     p.add_argument("--keep-file", action="store_true",
                    help="rm: keep the local qcow2")
+    p.add_argument("--yes", action="store_true",
+                   help="rm: go on without asking (for scripts)")
     p.add_argument("--out", metavar="DIR",
                    help="build: write the image (and its .json) here and record it nowhere, "
                         "to import on FleetLedger's own VM (no fleet needed here)")
@@ -477,6 +480,8 @@ def _image_rm(args, app) -> int:
     if inv.pinned_image == args.image:
         raise FleetError(f"Image {args.image} is pinned for new Ships.",
                          hint="Pin another first: ship-fleet image use ID|stock")
+    if not args.yes:
+        confirm_image_rm(app, inv, args.image, keep_file=args.keep_file)
     remaining = dict(entry.get("published", {}))
     for driver_id, ref in sorted(entry.get("published", {}).items()):
         driver = app.driver_factory(inv, driver_id)
@@ -502,3 +507,35 @@ def _image_rm(args, app) -> int:
     if any(s.image == args.image for s in inv.ships()):
         app.say("Ships made from it keep running: they are full copies.")
     return 0
+
+
+def confirm_image_rm(app, inv, image_id: str, *, keep_file: bool) -> None:
+    """Remove an image only with its id typed in a terminal, or --yes where nobody can
+    be asked (as snapshot rm asks for the snapshot's name). The question says where it
+    is published, whether its local file goes too, and which Ships were made from it,
+    all from ships.toml. FleetError on a refusal."""
+    said = image_rm_said(inv, image_id, keep_file=keep_file)
+    hint = f"ship-fleet image rm {image_id}" + (" --keep-file" if keep_file else "") + " --yes"
+    prompts.typed(app, f"{said} Type {image_id} to remove it: ", image_id, exact=True,
+                  no_terminal=f"Nothing removed. {said} Run it in a terminal to type its "
+                  f"id, or: {hint}",
+                  refused=f"Nothing removed: image {image_id} stays.")
+
+
+def image_rm_said(inv, image_id: str, *, keep_file: bool) -> str:
+    entry = inv.image(image_id)
+    where = [d + (f" (template {ref['template_vmid']})" if "template_vmid" in ref else "")
+             for d, ref in sorted(entry.get("published", {}).items())]
+    gone = []
+    if where:
+        gone.append(f"deletes it from {', '.join(where)}")
+    if "file" in entry and not keep_file:
+        gone.append("deletes its local file")
+    said = (f"Removing image {image_id} " + (" and ".join(gone) or "forgets it")
+            + ", so no new Ship can start from it. This cannot be undone.")
+    made = sorted(s.name for s in inv.ships() if s.image == image_id)
+    if made:
+        said += (f" {', '.join(made)} {'was' if len(made) == 1 else 'were'} made from it "
+                 "and keep" + ("s" if len(made) == 1 else "") + " running: Ships are full "
+                 "copies.")
+    return said

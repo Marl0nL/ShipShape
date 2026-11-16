@@ -100,7 +100,20 @@ ship-fleet image rm 26.04-20261016-0a1b2c3d
 
 Refused while the image is pinned. It deletes the template through each driver it
 was published to (Proxmox checks the VM is the image's template by name first),
-then the local file. Ships made from it keep running: they are full copies.
+then the local file (`--keep-file` keeps it). Ships made from it keep running: they
+are full copies.
+
+This cannot be undone, so in a terminal it first says where the image is published,
+whether its file goes too and which Ships were made from it, and asks you to type the
+image's id. Where nobody can be asked (a script, cron, a pipe) it removes nothing
+unless you add `--yes`:
+
+```sh
+ship-fleet image rm 26.04-20261016-0a1b2c3d --yes
+```
+
+Scripts that removed images before this need `--yes` added. The web UI's Remove
+(Settings, Images) is unchanged: its tick box is the confirmation.
 
 ## Check on real hardware
 
