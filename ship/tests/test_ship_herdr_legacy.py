@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -517,17 +518,17 @@ def test_status_running_ship_validates(ship):
         )
     )
     rc, doc, _ = ship.ctl("status", "--json")
+    after = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     assert rc == 0
     assert_valid("ship-status", doc)
     assert doc["state"] == "running"
     assert [a["mode"] for a in doc["herdr"]["agents"]] == ["auto", "bypassPermissions"]
     assert doc["herdr"]["agents"][0]["name"] == "main"
-    assert doc["auth"]["claude"] == {
-        "state": "ok",
-        "account": "work@example.com",
-        "detail": "max",
-        "checked_at": doc["generated_at"],
-    }
+    claude = dict(doc["auth"]["claude"])
+    # Checked by this status run: the check is stamped a moment after the document,
+    # in whole seconds, so it may read a second later than generated_at.
+    assert doc["generated_at"] <= claude.pop("checked_at") <= after
+    assert claude == {"state": "ok", "account": "work@example.com", "detail": "max"}
     assert doc["auth"]["github"]["account"] == "example-user"
     assert doc["auth"]["gcloud_adc"]["state"] == "ok"
     assert doc["herdr"]["last_resume"] is None  # nothing resumed yet: no boot since
