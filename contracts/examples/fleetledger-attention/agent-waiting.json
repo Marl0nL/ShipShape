@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.fleetledger-attention/1",
+  "ship": "ship-01",
+  "code": "agent-waiting",
+  "message": "Agent 'main' is waiting for you.",
+  "subject": "main",
+  "severity": "medium",
+  "fix": ""
+}

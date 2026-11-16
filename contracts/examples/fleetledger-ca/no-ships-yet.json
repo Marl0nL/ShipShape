@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.fleetledger-ca/1",
+  "host_ca": "SHA256:HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",
+  "user_ca": [
+    "SHA256:UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU"
+  ],
+  "ships": [],
+  "machines": []
+}

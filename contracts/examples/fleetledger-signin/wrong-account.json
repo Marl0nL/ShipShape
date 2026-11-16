@@ -1,0 +1,25 @@
+{
+  "schema": "shipshape.fleetledger-signin/1",
+  "ship": "ship-02",
+  "service": "github",
+  "group": "action",
+  "state": "wrong account",
+  "level": "critical",
+  "message": "github is signed in as example-work, but its tags expect example-user.",
+  "since": "2026-01-01T00:00:00Z",
+  "account": "example-work",
+  "rank": 1,
+  "flow": null,
+  "batch": null,
+  "deadline": null,
+  "answers": true,
+  "tags": [
+    "personal"
+  ],
+  "expires_at": null,
+  "note": null,
+  "drops": [],
+  "keep": [],
+  "provider": "github",
+  "fix": "ship-fleet logout ship-02 github"
+}

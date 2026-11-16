@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-attention.schema.json",
+  "title": "One thing that needs you (ship-fleet attention --json entries, version 1)",
+  "description": "Each entry of `ship-fleet attention [--offline] --json`, a list ranked most urgent first: every Ship's items (its own, FleetLedger's about it, or why it has no status), then within each severity the fleet's own items, which are about FleetLedger rather than one Ship (ship null). With --offline it asks no Ship and answers while the vault is locked. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ship", "code", "message", "subject", "severity", "fix"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-attention/1" },
+    "ship": {
+      "oneOf": [{ "$ref": "#/$defs/shipName" }, { "type": "null" }],
+      "description": "The Ship it is about; null for an item about the fleet."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,47}$",
+      "description": "What it is: a Ship's attention code (ship-status.schema.json), FleetLedger's about a Ship, a problem word (unreachable, host-key, identity, invalid, error, unknown, not-enrolled), or one of the fleet's own. Show unknown codes as they are."
+    },
+    "message": { "type": "string" },
+    "subject": {
+      "type": ["string", "null"],
+      "description": "What it is about within the Ship (an agent, a service id, a unit); for a fleet item: vault, the machine's name, or the Proxmox token's id."
+    },
+    "severity": { "enum": ["high", "medium", "low"] },
+    "fix": { "type": "string", "description": "The next step, where the message does not say it; empty otherwise." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ship": { "type": "null" } } },
+      "then": {
+        "properties": {
+          "code": { "enum": ["vault-locked", "machine-cert-expiring", "machine-cert-lapsed", "proxmox-token-expiring", "proxmox-token-lapsed"] },
+          "subject": { "type": "string", "minLength": 1 },
+          "fix": { "minLength": 1 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "code": { "const": "vault-locked" } } },
+      "then": { "properties": { "ship": { "type": "null" }, "subject": { "const": "vault" }, "severity": { "const": "high" } } }
+    }
+  ],
+  "$defs": {
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    }
+  }
+}

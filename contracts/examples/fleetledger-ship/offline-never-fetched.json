@@ -1,0 +1,12 @@
+{
+  "schema": "shipshape.fleetledger-ship/1",
+  "name": "ship-03",
+  "tags": [],
+  "state": "unknown",
+  "problem": "unknown",
+  "message": "no cached status",
+  "host": null,
+  "attention": [],
+  "status": null,
+  "cloud_init": null
+}

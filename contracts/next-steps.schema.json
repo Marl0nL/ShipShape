@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["schema", "left", "left_required", "steps"],
   "properties": {
-    "schema": { "const": "fleetledger.next-steps/1" },
+    "schema": { "const": "shipshape.next-steps/1" },
     "left": {
       "type": "integer",
       "minimum": 0,

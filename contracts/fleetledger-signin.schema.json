@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-signin.schema.json",
+  "title": "One Ship's sign-in to one service (ship-fleet signins --json entries, version 1)",
+  "description": "Each entry of `ship-fleet signins [--offline] --json`, a list most urgent first: the rows the web UI's Sign-ins page shows, each with the command that fixes it. Account names and states only, never a credential. With --offline it reads each Ship's last fetched status and answers while the vault is locked. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "ship", "service", "provider", "group", "state", "level", "message", "since", "account", "rank", "flow", "batch", "deadline", "answers", "tags", "expires_at", "note", "drops", "keep", "fix"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-signin/1" },
+    "ship": { "$ref": "#/$defs/shipName" },
+    "service": { "$ref": "#/$defs/statusKey", "description": "The status document's auth key: claude, gcloud, gcloud_adc, github, or another sign-in's." },
+    "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "The service ship-fleet login SHIP SERVICE signs it in with (gcloud-adc for gcloud_adc)." },
+    "group": {
+      "enum": ["action", "underway", "degraded", "healthy", "off"],
+      "description": "action: needs you. underway: a sign-in is running. degraded: expiring, a failed check, not known, or not signed in while nothing needs it. healthy: signed in. off: the Ship does not use it."
+    },
+    "state": { "type": "string", "minLength": 1, "description": "A short word for people: ok, expiring, expired, wrong account, scopes differ, missing, error, unknown, off (and the web UI's waiting, failed, ...)." },
+    "level": { "enum": ["critical", "warning", "notice", null], "description": "For an icon and a word as well as a colour; null for healthy, off and under way." },
+    "message": { "type": "string", "minLength": 1 },
+    "since": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "Since when it has been as it is (or when it expired)." },
+    "account": { "type": ["string", "null"], "description": "The account it is signed in as, as the tool reports it." },
+    "rank": { "type": "integer", "minimum": 0, "description": "Urgency within the group, lowest first (the list is already in order)." },
+    "flow": { "type": ["string", "null"], "description": "The web UI's sign-in, when one is open: always null here." },
+    "batch": { "type": ["string", "null"], "description": "Always null here (the web UI's)." },
+    "deadline": { "type": ["number", "null"], "description": "Always null here (the web UI's)." },
+    "answers": { "type": "boolean", "description": "The Ship answered (or, offline, last answered), so signing in or out can work." },
+    "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" } },
+    "expires_at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "An expiring sign-in: when it goes." },
+    "note": { "type": ["string", "null"], "description": "A second line about the last attempt: always null here (the web UI's)." },
+    "drops": { "type": "array", "items": { "type": "string" }, "description": "scopes differ: the GitHub scopes signing in again would drop." },
+    "keep": { "type": "array", "items": { "type": "string" }, "description": "scopes differ: the choice that keeps them instead (the fix sets it)." },
+    "fix": { "type": "string", "description": "The ship-fleet command that resolves it; empty when healthy." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "group": { "const": "healthy" } } },
+      "then": { "properties": { "fix": { "const": "" }, "level": { "type": "null" } } },
+      "else": { "properties": { "fix": { "pattern": "^ship-fleet " } } }
+    }
+  ],
+  "$defs": {
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "statusKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    }
+  }
+}

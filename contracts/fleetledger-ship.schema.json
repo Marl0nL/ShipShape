@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-ship.schema.json",
+  "title": "One Ship as FleetLedger sees it (ship-fleet ls --json entries, status --json; version 1)",
+  "description": "Each entry of `ship-fleet ls --json` (a list, one per Ship in the inventory, in its order) and the document `ship-fleet status NAME --json` prints. `ls --offline` builds it from each Ship's last fetched status and asks no Ship. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "tags", "state", "problem", "message", "host", "attention", "status", "cloud_init"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-ship/1" },
+    "name": { "$ref": "#/$defs/shipName" },
+    "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" }, "description": "Its tags in the inventory (defaults.tags counting)." },
+    "state": {
+      "enum": ["provisioning", "needs-sign-in", "ready", "running", "unknown", "not-enrolled", "unreachable", "host-key", "identity", "invalid", "error"],
+      "description": "The status document's state when there is one; not-enrolled: in the inventory, never enrolled, and not answering; else the problem; provisioning: only cloud-init answered."
+    },
+    "problem": {
+      "enum": [null, "unreachable", "host-key", "identity", "invalid", "error", "unknown"],
+      "description": "Why there is no status: unreachable, host-key (it answered with another host key), identity (it says it is another Ship), invalid (its status breaks the contract), error (ship-ctl failed), unknown (offline, and no status was ever fetched)."
+    },
+    "message": { "type": ["string", "null"], "description": "The problem in words; null when there is none." },
+    "host": { "type": ["string", "null"], "description": "The name it answered on; null offline or when nothing answered." },
+    "attention": {
+      "type": "array",
+      "description": "The Ship's own attention items and FleetLedger's about it (signin-wrong-account, behind-tooling, tags-differ, host-cert-missing, ssh-trust-behind; offline: signin-wrong-account and tags-differ only). ship-fleet attention ranks them with the fleet's.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,47}$" },
+          "message": { "type": "string" },
+          "subject": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "status": {
+      "type": ["object", "null"],
+      "description": "The Ship's status document (ship-status.schema.json): just fetched, or with --offline the last one fetched. null when there is a problem or only cloud-init answered."
+    },
+    "cloud_init": {
+      "type": ["object", "null"],
+      "description": "cloud-init's own status JSON, when ship-ctl is not installed yet; null otherwise."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "problem": { "type": "string" } } },
+      "then": { "properties": { "message": { "type": "string" }, "status": { "type": "null" }, "attention": { "maxItems": 0 } } }
+    }
+  ],
+  "$defs": {
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    }
+  }
+}

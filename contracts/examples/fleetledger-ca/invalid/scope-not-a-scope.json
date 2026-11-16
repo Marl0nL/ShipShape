@@ -1,0 +1,21 @@
+{
+  "schema": "shipshape.fleetledger-ca/1",
+  "host_ca": "SHA256:HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",
+  "user_ca": [
+    "SHA256:UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU"
+  ],
+  "ships": [],
+  "machines": [
+    {
+      "machine": "desk",
+      "scope": [
+        "work"
+      ],
+      "valid_before": "2026-01-01T03:00:00Z",
+      "revoked": null,
+      "fingerprint": "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "state": "lapsed",
+      "this_computer": false
+    }
+  ]
+}

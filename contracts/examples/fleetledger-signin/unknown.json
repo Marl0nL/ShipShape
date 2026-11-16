@@ -1,0 +1,25 @@
+{
+  "schema": "shipshape.fleetledger-signin/1",
+  "ship": "ship-02",
+  "service": "gcloud_adc",
+  "group": "degraded",
+  "state": "unknown",
+  "level": "notice",
+  "message": "Not known: Cannot reach ship-02",
+  "since": null,
+  "account": null,
+  "rank": 3,
+  "flow": null,
+  "batch": null,
+  "deadline": null,
+  "answers": false,
+  "tags": [
+    "personal"
+  ],
+  "expires_at": null,
+  "note": null,
+  "drops": [],
+  "keep": [],
+  "provider": "gcloud-adc",
+  "fix": "ship-fleet status ship-02"
+}

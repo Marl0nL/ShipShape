@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-ca.schema.json",
+  "title": "The certificate authority and trusted machines (ship-fleet ca show --json, version 1)",
+  "description": "Printed by `ship-fleet ca show --json` on the FleetLedger computer: the CA keys' fingerprints, each Ship's host certificate from its last status poll, and the machines trusted to attach. Read from ships.toml and the status cache only: it asks no Ship and issues nothing. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "host_ca", "user_ca", "ships", "machines"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-ca/1" },
+    "host_ca": { "$ref": "#/$defs/sshFingerprint", "description": "The key that signs Ships' host certificates." },
+    "user_ca": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sshFingerprint" },
+      "description": "The user CA keys Ships accept, the current one first (then any kept during a rotation)."
+    },
+    "ships": {
+      "type": "array",
+      "description": "Every Ship in the inventory, in its order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ship", "certificate_valid_before", "principals", "needs", "trust_behind", "seen"],
+        "properties": {
+          "ship": { "$ref": "#/$defs/shipName" },
+          "certificate_valid_before": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "When its host certificate ends; null: none, or it never ends." },
+          "principals": { "type": "array", "items": { "type": "string" }, "description": "The names its host certificate is valid for." },
+          "needs": {
+            "enum": [null, "no host certificate", "signed by another CA", "names changed", "expires soon", "expired", "tooling update"],
+            "description": "Why ship-fleet ca sign would sign it again; tooling update: its tooling predates certificates, or it was never seen. null: nothing to do."
+          },
+          "trust_behind": { "type": "boolean", "description": "Its user CA keys or revocation list are not the current ones." },
+          "seen": { "type": "boolean", "description": "A status of it was ever fetched; false: the rest says nothing about it yet." }
+        }
+      }
+    },
+    "machines": {
+      "type": "array",
+      "description": "Every machine ever trusted (ship-fleet trust), untrusted ones included, by name.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["machine", "scope", "valid_before", "revoked", "fingerprint", "state", "this_computer"],
+        "properties": {
+          "machine": { "$ref": "#/$defs/shipName" },
+          "scope": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "pattern": "^(all|tag:[a-z0-9][a-z0-9-]{0,30}|ship:[a-z0-9][a-z0-9-]{0,30})$" },
+            "description": "Which Ships its certificates open: all, tag:<tag>, ship:<name>."
+          },
+          "valid_before": { "type": ["string", "null"], "description": "When its last certificate ends (UTC, RFC 3339, Z); null: none issued yet." },
+          "revoked": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "When ship-fleet untrust revoked it; it stays so." },
+          "fingerprint": { "$ref": "#/$defs/sshFingerprint", "description": "Its own public key's." },
+          "state": {
+            "enum": ["ok", "expiring", "lapsed", "none", "revoked"],
+            "description": "Its last certificate: ok; expiring (its last day, or the last half of a shorter lifetime); lapsed; none (never issued); revoked."
+          },
+          "this_computer": { "type": "boolean", "description": "It is the FleetLedger computer itself (ship-fleet trust --this-computer), which renews its own certificate." }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "sshFingerprint": {
+      "type": "string",
+      "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    }
+  }
+}

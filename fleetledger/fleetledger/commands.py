@@ -55,6 +55,12 @@ def _ssh(app, inventory: Inventory):
     return app.ssh_factory(inventory)
 
 
+# The --json documents other programs read (contracts/ship-fleet.md): each ls entry
+# and status, each attention item, each signins row names its shape.
+SHIP_SCHEMA = "shipshape.fleetledger-ship/1"
+ATTENTION_SCHEMA = "shipshape.fleetledger-attention/1"
+SIGNIN_SCHEMA = "shipshape.fleetledger-signin/1"
+
 AUTH_LABELS = {
     "ok": "OK",
     "missing": "Missing",
@@ -114,6 +120,7 @@ def notes_cell(view: status.ShipView) -> str:
 
 def view_json(view: status.ShipView, tags: tuple[str, ...]) -> dict[str, Any]:
     return {
+        "schema": SHIP_SCHEMA,
         "name": view.ship.name,
         "tags": list(tags),
         "state": view.state,
@@ -897,13 +904,14 @@ def _list_signins(args, app, inv: Inventory) -> int:
     if args.name is not None:
         ships = [s for s in ships if s.name == inv.ship(args.name).name]
     if not ships:
-        app.say("No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
+        app.say("[]" if args.json
+                else "No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
         return 0
     found = signinlist.rows(_views(app, inv, ships, args.offline), inv)
     found = signinlist.narrow(found, service=service, group=args.group)
     if args.json:
-        app.say(json.dumps([{**r.as_dict(), "fix": signinlist.fix_command(r)} for r in found],
-                           indent=2))
+        app.say(json.dumps([{"schema": SIGNIN_SCHEMA, **r.as_dict(),
+                             "fix": signinlist.fix_command(r)} for r in found], indent=2))
         return 0
     if not found:
         app.say("No sign-ins match.")
@@ -1189,13 +1197,15 @@ def cmd_attention(args, app) -> int:
     inv = app.store_factory().load()
     ships = inv.ships(args.tag)
     if not ships and not ops.vault_attention():  # locked: the fleet's own item still
-        app.say("No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
+        app.say("[]" if args.json
+                else "No Ships" + (f" with tag {args.tag}." if args.tag else " yet."))
         return 0
     seen: set[tuple[str, str, str | None]] = set()
     while True:
         items = ops.attention(_views(app, inv, ships, offline=args.offline), inv)
         if args.json:
-            app.say(json.dumps([i.as_dict() for i in items], indent=2))
+            app.say(json.dumps([{"schema": ATTENTION_SCHEMA, **i.as_dict()} for i in items],
+                               indent=2))
         elif args.watch is None:
             app.say(_attention_rows(items) if items else "Nothing needs attention.")
         else:

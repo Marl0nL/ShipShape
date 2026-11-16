@@ -204,6 +204,7 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
             "ships": rows, "machines": machines}
 
 
+CA_SCHEMA = "shipshape.fleetledger-ca/1"  # ca show --json (contracts/ship-fleet.md)
 # ca show's word for a machine's certificate state (ca.cert_state); JSON has the state.
 MACHINE_STATE_SAID = {"expiring": "expiring (within a day)", "none": "no certificate yet"}
 
@@ -214,8 +215,8 @@ def ca_show(args, app) -> int:
     found = ca_rows(inv, ca.build_krl(inv))
     rows, machines = found["ships"], found["machines"]
     if args.json:
-        app.say(json.dumps({key: found[key] for key in ("host_ca", "user_ca", "ships",
-                                                         "machines")}, indent=2))
+        app.say(json.dumps({"schema": CA_SCHEMA, **{key: found[key] for key in (
+            "host_ca", "user_ca", "ships", "machines")}}, indent=2))
         return 0
     app.say(f"Host CA {found['host_ca']}  ({found['host_cert_days']} days per certificate)")
     app.say(f"User CA {found['user_ca'][0]}  ({found['user_cert_hours']} h by default)")
