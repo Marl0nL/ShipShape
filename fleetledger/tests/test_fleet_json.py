@@ -2,10 +2,10 @@
 command output, from the sandbox fleets the other tests use, checked against its schema.
 
 ls and status (fleetledger-ship), attention (fleetledger-attention), signins
-(fleetledger-signin), ca show (fleetledger-ca) and doctor (fleetledger-doctor), online
-and --offline, with every fleet-level attention item at once: a machine's certificate
-lapsed and another in its last day, the Proxmox token about to expire, and the vault
-locked.
+(fleetledger-signin), ca show (fleetledger-ca), doctor (fleetledger-doctor) and
+snapshot ls (fleetledger-snapshot), online and --offline, with every fleet-level
+attention item at once: a machine's certificate lapsed and another in its last day,
+the Proxmox token about to expire, and the vault locked.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from fleetledger import (
     appliance,
     commands,
     firstrun,
+    lifecycle,
     nextsteps,
     schemas,
     setupcmd,
@@ -132,7 +133,8 @@ def test_one_version_convention():
                         ("fleetledger-signin", commands.SIGNIN_SCHEMA),
                         ("fleetledger-ca", trustcmd.CA_SCHEMA),
                         ("fleetledger-doctor", setupcmd.SCHEMA),
-                        ("next-steps", nextsteps.SCHEMA)):
+                        ("next-steps", nextsteps.SCHEMA),
+                        ("fleetledger-snapshot", lifecycle.SNAPSHOT_SCHEMA)):
         assert value == f"shipshape.{name}/1"
         assert schemas.errors(name, {"schema": value}) != []  # the rest is checked too
         assert any("schema" in e for e in schemas.errors(name, {"schema": "x/1"}))
@@ -297,3 +299,40 @@ def test_doctor_json_names_each_managed_key_that_fails(tmp_path, monkeypatch):
     assert ok["subject"] is None and ok["state"] == "ok"
     bad = {"schema": setupcmd.SCHEMA, "items": [dict(ok, subject="x")]}
     assert schemas.errors("fleetledger-doctor", bad) != []  # ok: no subject
+
+
+def test_snapshot_ls_json_lists_what_the_text_shows(env, monkeypatch):  # noqa: F811
+    from fleetledger.drivers import Snapshot
+
+    env.run("new", "ship-04", "--on", "proxmox")
+    taken = [Snapshot("before", "2026-11-01T00:00:00Z", "a note"),
+             Snapshot("snap-20261102-071500", None)]
+    monkeypatch.setattr(env.driver, "snapshots", lambda ship: taken)
+    snaps = check_each("fleetledger-snapshot",
+                       documents(env, "snapshot", "ls", "ship-04", "--json"))
+    assert snaps == [
+        {"schema": lifecycle.SNAPSHOT_SCHEMA, "ship": "ship-04", "name": "before",
+         "taken": "2026-11-01T00:00:00Z", "note": "a note"},
+        {"schema": lifecycle.SNAPSHOT_SCHEMA, "ship": "ship-04",
+         "name": "snap-20261102-071500", "taken": None, "note": ""}]
+    code, out, err = env.run("snapshot", "ls", "ship-04")  # the text is as it was
+    assert code == 0 and out.splitlines() == [
+        "SNAPSHOT              TAKEN                 NOTE",
+        "before                2026-11-01T00:00:00Z  a note",
+        "snap-20261102-071500  -"]
+    monkeypatch.setattr(env.driver, "snapshots", lambda ship: [])
+    assert documents(env, "snapshot", "ls", "ship-04", "--json") == []
+    assert env.run("snapshot", "ls", "ship-04")[1].strip() == "ship-04 has no snapshots."
+
+
+def test_snapshot_ls_json_errors_go_to_stderr(env):  # noqa: F811
+    env.run("new", "ship-04", "--on", "proxmox")
+    for argv, exits, said in ((("ship-01",), 1, "cannot list snapshots"),  # manual
+                              (("ship-09",), 2, "No Ship named 'ship-09'"),
+                              (("ship-04", "before"), 1, "takes only the Ship's name")):
+        code, out, err = env.run("snapshot", "ls", *argv, "--json")
+        assert (code, out) == (exits, "") and said in err
+    for action in ("take", "rollback", "rm"):
+        code, out, err = env.run("snapshot", action, "ship-04", "before", "--yes", "--json")
+        assert (code, out) == (1, "") and "only snapshot ls" in err
+    assert env.driver.snaps == []  # refused before the driver was asked anything

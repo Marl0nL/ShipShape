@@ -1,0 +1,8 @@
+{
+  "schema": "shipshape.fleetledger-snapshot/1",
+  "ship": "ship-01",
+  "name": "before-update",
+  "taken": "2026-11-01T09:30:00Z",
+  "note": "",
+  "size": 1024
+}
