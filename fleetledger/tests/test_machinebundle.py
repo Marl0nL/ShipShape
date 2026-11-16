@@ -523,6 +523,13 @@ def _items(e):
             and i["code"].startswith("machine-")}
 
 
+def _doctor_machines(e):
+    """doctor --json's machine items, (key, subject), checked against its schema."""
+    doc = json.loads(e.run("doctor", "--offline", "--json")[1])
+    assert schemas.errors("fleetledger-doctor", doc) == []
+    return {(i["key"], i["subject"]) for i in doc["items"] if i["key"].startswith("fleet.machine-")}
+
+
 def test_a_machine_that_stopped_asking_needs_attention_once(
         caenv, tmp_path, monkeypatch):  # noqa: F811
     trust(caenv, tmp_path, "laptop")
@@ -540,6 +547,7 @@ def test_a_machine_that_stopped_asking_needs_attention_once(
     assert "has not asked for it since" in item["message"] and "(4 days)" in item["message"]
     assert "refused its bundle until you allow it again" in item["message"]
     assert "ship-fleet machine-bundle laptop" in item["fix"]
+    assert _doctor_machines(caenv) == {("fleet.machine-refresh-stopped", "laptop")}
     # Its certificate in its last day too: one item, the certificate's, saying why.
     monkeypatch.setattr(ca, "utc_now", lambda: asked + timedelta(days=6, hours=12))
     items = _items(caenv)
@@ -564,6 +572,7 @@ def test_a_machine_refused_for_idleness_needs_attention_once(
     assert "ship-fleet trust laptop --allow-again" in items["laptop"]["fix"]
     code, out, _ = caenv.run("doctor", "--offline")
     assert "ship-fleet trust laptop --allow-again" in out
+    assert _doctor_machines(caenv) == {("fleet.machine-refresh-refused", "laptop")}
     code, out, _ = caenv.run("ca", "show")
     assert "refused its bundle since" in out
     caenv.run("trust", "laptop", "--allow-again")

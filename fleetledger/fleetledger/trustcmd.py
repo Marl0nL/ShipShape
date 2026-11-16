@@ -192,7 +192,8 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
             "seen": doc is not None,
         })
     machines = [
-        {"machine": m.name, "scope": list(m.scope), "valid_before": m.last_valid_before,
+        {"machine": m.name, "scope": list(m.scope), "logins": list(m.logins),
+         "valid_before": m.last_valid_before,
          "revoked": m.revoked, "fingerprint": ca.fingerprint(m.public_key),
          "state": ca.cert_state(m, default_hours=cfg.user_cert_hours),
          "this_computer": bool(here and here["machine"] == m.name),

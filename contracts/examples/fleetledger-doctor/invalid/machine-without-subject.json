@@ -1,0 +1,14 @@
+{
+  "schema": "shipshape.fleetledger-doctor/1",
+  "items": [
+    {
+      "key": "fleet.machine-certificate",
+      "subject": null,
+      "area": "fleet",
+      "title": "machine laptop",
+      "state": "warn",
+      "detail": "laptop's certificate lapsed.",
+      "fix": "ship-fleet trust laptop   (or Download bundle under Settings ▸ Access ▸ Trusted machines; then sh install.sh on laptop)"
+    }
+  ]
+}

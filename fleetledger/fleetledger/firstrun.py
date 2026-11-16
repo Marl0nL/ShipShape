@@ -10,6 +10,7 @@ missing, so a new user is never left guessing.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,17 @@ class Item:
     state: str  # ok | info | warn | missing | fail | skip (info: fine, with a next step)
     detail: str = ""
     next: str = ""  # the exact command (or step) that fixes it
+    key: str = ""  # doctor --json's key, when not the area and name (key_of)
+    subject: str = ""  # what a check made once per machine or Ship is about
+
+
+def key_of(item: Item) -> str:
+    """The item's key in ship-fleet doctor --json (contracts/fleetledger-doctor.schema.json
+    lists them): its own, else <area>.<name> in lowercase words joined by hyphens."""
+    if item.key:
+        return item.key
+    words = re.sub(r"[^a-z0-9]+", "-", item.name.lower().replace("'", "")).strip("-")
+    return f"{item.area}.{words}"
 
 
 Runner = Callable[..., subprocess.CompletedProcess]
@@ -190,13 +202,15 @@ def _managed_items(inv) -> list[Item]:
     for key in managed:
         if not key.exists():
             problems.append(Item("fleet", "managed keys", "fail", f"{key} is gone",
-                                 "ship-fleet setup   (or restore it from a backup)"))
+                                 "ship-fleet setup   (or restore it from a backup)",
+                                 subject=str(key)))
             continue
         try:
             keys.read_passphrase(key, store)
         except FleetError as exc:
             problems.append(Item("fleet", "managed keys", "fail",
-                                 f"{key.name}: {exc.message}", exc.hint or "ship-fleet setup"))
+                                 f"{key.name}: {exc.message}", exc.hint or "ship-fleet setup",
+                                 subject=str(key)))
     return problems or [Item("fleet", "managed keys", "ok",
                              f"{len(managed)} key(s); passphrases in {keys.describe(store)}; "
                              "loaded into ssh-agent when needed")]
@@ -311,6 +325,9 @@ def appliance_items(inv) -> list[Item]:
     return out + wrapper_items()
 
 
+WRAPPER_KEY = "computer.ship-fleet-wrapper"
+
+
 def wrapper_items() -> list[Item]:
     """FleetLedger's VM seeded before /usr/local/bin/ship-fleet came in: a plain
     `ssh fleetledger@<vm> ship-fleet ...` is "command not found". Only looks: the fix is
@@ -324,13 +341,13 @@ def wrapper_items() -> list[Item]:
     if not os.path.lexists(path):
         return [Item("computer", "ship-fleet on ssh's PATH", "missing",
                      f"no {path} (this VM was seeded before it came in), {said}",
-                     appliance.WRAPPER_FIX)]
+                     appliance.WRAPPER_FIX, key=WRAPPER_KEY)]
     # A shell script runs only for a user who may read it as well as execute it. Not
     # "fail": migrate verify would then refuse to make this copy active over it.
     if not path.is_file() or not os.access(path, os.R_OK | os.X_OK):
         return [Item("computer", "ship-fleet on ssh's PATH", "missing",
                      f"{path} is there but this user cannot run it, {said}",
-                     appliance.WRAPPER_FIX)]
+                     appliance.WRAPPER_FIX, key=WRAPPER_KEY)]
     return []
 
 
@@ -394,7 +411,16 @@ def machines_items(inv) -> list[Item]:
             return "ship-fleet ca show   (when each machine last asked for its bundle)"
         return ops.MACHINE_CERT_COMMAND.format(name=i.subject)
 
-    return [Item("fleet", f"machine {i.subject}", "warn", i.message, command(i)) for i in due]
+    return [Item("fleet", f"machine {i.subject}", "warn", i.message, command(i),
+                 key=MACHINE_KEYS[i.code], subject=i.subject)
+            for i in due]
+
+
+# doctor --json's key for each of ops.machine_cert_attention's codes
+MACHINE_KEYS = {"machine-cert-expiring": "fleet.machine-certificate",
+                "machine-cert-lapsed": "fleet.machine-certificate",
+                "machine-refresh-refused": "fleet.machine-refresh-refused",
+                "machine-refresh-stopped": "fleet.machine-refresh-stopped"}
 
 
 def ships_items(inv) -> list[Item]:
@@ -405,7 +431,8 @@ def ships_items(inv) -> list[Item]:
     out = [Item("ships", "Ships", "ok", f"{len(ships)} in the inventory")]
     for name in pending:
         out.append(Item("ships", name, "warn", "not enrolled yet",
-                        f"ship-fleet status {name} --wait"))
+                        f"ship-fleet status {name} --wait", key="ships.not-enrolled",
+                        subject=name))
     return out
 
 

@@ -27,12 +27,13 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `signins [--tag TAG] [--service S] [--group G] [--offline] --json` | a list | `shipshape.fleetledger-signin/1` |
 | `signins --accounts [--tag TAG] --json` | one document | `shipshape.fleetledger-tag-accounts/1` |
 | `ca show --json` | one document | `shipshape.fleetledger-ca/1` |
+| `doctor [--offline] --json` | one document | `shipshape.fleetledger-doctor/1` |
 | `doctor --next --json` | one document | `shipshape.next-steps/1` |
 | `about [--check] --json` | one document | `shipshape.fleetledger-about/1` |
 | `machine-bundle NAME` (always JSON) | one document | `shipshape.machine-bundle/1` |
 
 `--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
-`about`, `doctor --next`, `signins --accounts` and `machine-bundle` (which then signs
+`about`, `doctor` (with `--json` or `--next`), `signins --accounts` and `machine-bundle` (which then signs
 nothing), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
 
 ## `ship-fleet ls --json` and `ship-fleet status NAME --json`
@@ -113,7 +114,44 @@ init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.j
 |---|---|
 | `host_ca`, `user_ca` | Fingerprints of the key that signs Ships' host certificates and of the user CA keys Ships accept (the current one first). |
 | `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
-| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null); on FleetLedger's own VM only, `bundle_key` for a trusted machine: `installed`, `own-line` (its key has a line of yours in `authorized_keys`, so FleetLedger adds none) or `missing` (see "The bundle keys" under `machine-bundle`). |
+| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `logins` (what its certificates log in as: `agent`, `owner` or both; `ship-fleet trust NAME --logins`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null); on FleetLedger's own VM only, `bundle_key` for a trusted machine: `installed`, `own-line` (its key has a line of yours in `authorized_keys`, so FleetLedger adds none) or `missing` (see "The bundle keys" under `machine-bundle`). |
+
+No two entries that are not `revoked` share a key (`trust NAME --key` refuses one
+already listed; `trust --this-computer` reuses the live entry with its key, or adds a
+new one when only revoked entries have it). So a machine finds its own live entry, and
+the name it is trusted under, as the one entry with its key's `fingerprint` and
+`revoked` null: `ssh-keygen -lf <its .pub>` prints the same `SHA256:...`. Revoked
+entries with that fingerprint may be there too; none means it is not trusted now.
+
+## `ship-fleet doctor [--offline] --json`
+
+Every check `ship-fleet doctor` prints, in its order: `{"schema", "items"}`. Schema:
+`fleetledger-doctor.schema.json`; examples in `examples/fleetledger-doctor/`. It only
+reads, as the text form does: `--offline` skips the Proxmox API, and it answers while
+the vault is locked and on a copy on standby or retired. It exits as the text form
+does, after printing: 1 when any item is `missing` or `fail`, else 0.
+
+| Field | What it is |
+|---|---|
+| `key` | Which check (below). |
+| `subject` | For a check made once per machine, Ship or key, its name (`fleet.machine-certificate`, `fleet.machine-refresh-refused`, `fleet.machine-refresh-stopped`: the machine; `ships.not-enrolled`: the Ship; `fleet.managed-keys` when it fails: the key file's path); else null. `key` and `subject` together name one item. |
+| `area`, `title` | The text form's AREA and CHECK columns. |
+| `state` | `ok`, `info` (fine, with a next step), `warn`, `missing`, `fail`, `skip` (not checked, or optional and not set up). |
+| `detail`, `fix` | What it found, and the exact command (or step) that fixes it, empty when none. The text form lists `fix` under Next for `info`, `warn`, `missing` and `fail`. |
+
+| `key` | What it checks |
+|---|---|
+| `computer.python`, `computer.pythonpath`, `computer.openssh`, `computer.shipshape-checkout` | This computer: Python 3.12 or newer, no empty `PYTHONPATH` entry (listed only when there is one), OpenSSH's tools, the checkout FleetLedger runs from. |
+| `computer.vault`, `computer.vault-key-in-ram`, `computer.swap` | FleetLedger's vault, when it is on: locked or unlocked, its key's folder in RAM, swap. |
+| `computer.backups` | The last `ship-fleet backup`, when there has been one or one is scheduled. |
+| `computer.image-builds`, `computer.ship-fleet-wrapper` | On FleetLedger's own VM only: KVM for image builds, and the root-owned `/usr/local/bin/ship-fleet` a plain `ssh` command needs (listed only when it is missing or cannot be run). |
+| `fleet.this-copy` | Which copy of the fleet this is (`ship-fleet migrate`). |
+| `fleet.inventory`, `fleet.admin-key`, `fleet.ssh-agent`, `fleet.your-keys-for-ships`, `fleet.managed-keys`, `fleet.certificate-authority` | `ships.toml`, FleetLedger's keys and the CA. `fleet.managed-keys` is one `ok` item, or one `fail` per key FleetLedger looks after that is gone or whose passphrase it cannot read (`subject`). |
+| `fleet.trusted-machines`, `fleet.machine-certificate`, `fleet.machine-refresh-refused`, `fleet.machine-refresh-stopped` | Trusted machines: one `ok` item, or a `warn` per machine (`subject`) for each of `ship-fleet attention`'s machine items: its certificate in its last day or lapsed, its bundle refresh refused for being idle, or its refreshes stopped. |
+| `fleet.bundle-keys` | On FleetLedger's own VM, or wherever FleetLedger's block is in `~/.ssh/authorized_keys`: whether the block holds exactly one forced line per trusted machine ("The bundle keys" under `machine-bundle`). `fail` for a line edited by hand or duplicated, a stale line, a line that is no machine's, broken markers, or a file others may write; `missing` for a machine with no line yet. Fix: `ship-fleet trust --sync-keys` (or `chmod 600`, or a hand edit on a copy that is not the active one). Not listed elsewhere. |
+| `hypervisor.driver`, `hypervisor.proxmox`, `hypervisor.proxmox-settings`, `hypervisor.proxmox-token`, `hypervisor.proxmox-api`, `hypervisor.template`, `hypervisor.fleetledgers-own-vm` | Where Ships run. |
+| `overlay.overlay`, `overlay.oauth-secret` | The overlay network. |
+| `ships.ships`, `ships.not-enrolled` | The Ships: how many, and one `warn` per Ship (`subject`) not enrolled yet. |
 
 ## `ship-fleet doctor --next --json`
 

@@ -1,0 +1,14 @@
+{
+  "schema": "shipshape.fleetledger-doctor/1",
+  "items": [
+    {
+      "key": "fleet.inventory",
+      "subject": null,
+      "area": "fleet",
+      "title": "inventory",
+      "state": "error",
+      "detail": "~/.config/shipshape/ships.toml",
+      "fix": ""
+    }
+  ]
+}

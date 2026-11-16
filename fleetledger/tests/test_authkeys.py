@@ -273,6 +273,11 @@ def test_doctor_checks_the_block_matches_exactly(vm):
     code, out, err = vm.run("doctor", "--offline")
     assert "bundle keys" in out and "ship-fleet trust --sync-keys" in out
     assert ak().read_text() == text.replace("restrict,", "")  # doctor wrote nothing
+    code, out, _ = vm.run("doctor", "--offline", "--json")
+    doc = json.loads(out)
+    assert schemas.errors("fleetledger-doctor", doc) == []
+    (item_json,) = [i for i in doc["items"] if i["key"] == "fleet.bundle-keys"]
+    assert item_json["state"] == "fail" and item_json["fix"] == "ship-fleet trust --sync-keys"
     assert vm.run("trust", "--sync-keys")[0] == 0
     assert ak().read_text() == text
     ak().write_text(text.replace(line("laptop", blob) + "\n", ""))  # a missing line
