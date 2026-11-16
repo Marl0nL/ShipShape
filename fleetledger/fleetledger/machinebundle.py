@@ -73,8 +73,9 @@ def no_prompt_run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k not in ("SSH_ASKPASS", "DISPLAY")}
     env["SSH_ASKPASS_REQUIRE"] = "never"
     kw.pop("stdin", None)
+    kw.setdefault("timeout", 60)  # a caller's own (ssh-add -L gives 10) wins
     return subprocess.run(argv, stdin=subprocess.DEVNULL, start_new_session=True, env=env,
-                          timeout=60, **kw)
+                          **kw)
 
 
 def _signer(app, inv: Inventory) -> ca.Signer:
@@ -265,6 +266,12 @@ def serve(app, name: str) -> dict[str, Any]:
             raise
         except FleetError as exc:
             not_renewed = {"code": "sign-failed", "why": exc.message[:1000]}
+        except subprocess.TimeoutExpired:
+            not_renewed = {"code": "sign-failed",
+                           "why": "ssh-keygen or ssh-add did not finish in time."}
+        except OSError as exc:
+            not_renewed = {"code": "sign-failed",
+                           "why": f"Could not run ssh-keygen ({exc.strerror or exc})."[:1000]}
     if not renewed:
         _note_asked(store, name, now)
     inv = store.load()
@@ -293,7 +300,7 @@ def cmd_machine_bundle(args, app) -> int:
     except _Refused as exc:
         audit.record("-", ACTION, shown, f"refused: {exc.reason}")
         raise
-    except FleetError:
+    except BaseException:  # a traceback too: every call leaves its line
         audit.record("-", ACTION, shown, "failed")
         raise
     audit.record("-", ACTION, shown, _outcome(doc))

@@ -257,4 +257,5 @@ a certificate renewed at its last ask still has 3 days); `machine-refresh-refuse
 once it was refused for being idle, in place of its certificate's own item; and,
 when its certificate is in its last day or lapsed, the existing `machine-cert-*` item,
 whose fix then says when it last asked and, while the vault is locked, to unlock it.
-A machine that never asked has only the `machine-cert-*` items, as before.
+A machine that never asked has only the `machine-cert-*` items, as before. Any call
+counts as asking, one made by hand included: FleetLedger cannot tell who ran it.

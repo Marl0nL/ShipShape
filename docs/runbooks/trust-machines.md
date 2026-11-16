@@ -247,7 +247,9 @@ the forced `authorized_keys` line and the laptop's refresher are not part of
 FleetLedger yet.
 
 A machine that has asked is watched: `ship-fleet attention` says
-`machine-refresh-stopped` when it has not asked for 4 days. A machine that has not
+`machine-refresh-stopped` when it has not asked for 4 days. Running the command by
+hand counts as that machine asking, so to look at what it prints, run it for
+FleetLedger's own computer (`ship-fleet ca show` marks it), which is never watched. A machine that has not
 asked for 30 days is refused (`machine-refresh-refused`) until you let it again:
 
 ```sh

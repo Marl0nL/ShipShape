@@ -257,6 +257,48 @@ def test_a_ca_key_that_needs_a_passphrase_is_never_asked_for(
     assert audited()[-1] == ("laptop", "returned, not renewed: sign-failed")
 
 
+def test_renewal_through_the_real_signer_with_an_ssh_agent_set(caenv, tmp_path,  # noqa: F811
+                                                               monkeypatch):
+    """The signer FleetLedger builds asks ssh-agent first (ssh-add -L, with a timeout
+    of its own) through no_prompt_run, then signs with the CA key."""
+    trust(caenv, tmp_path)
+    caenv.app.signer = None  # machinebundle._signer builds the real one
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "no-agent.sock"))
+    at(monkeypatch, ca.parse_stamp(field(caenv, "laptop", "last_valid_before")) - DAY)
+    code, doc, err = ask(caenv)
+    assert code == 0, err
+    assert doc["certificate"]["renewed"] is True, doc["certificate"]
+
+
+def test_a_signer_that_hangs_or_cannot_run_still_returns_the_bundle(caenv, tmp_path,  # noqa: F811
+                                                                    monkeypatch):
+    trust(caenv, tmp_path)
+    at(monkeypatch, ca.parse_stamp(field(caenv, "laptop", "last_valid_before")) - DAY)
+    for error in (subprocess.TimeoutExpired(["ssh-keygen"], 60),
+                  FileNotFoundError(2, "No such file or directory")):
+        class Broken:
+            def __init__(self, error):
+                self.error = error
+
+            def sign(self, *a, **kw):
+                raise self.error
+
+        caenv.app.signer = Broken(error)
+        code, doc, err = ask(caenv)
+        assert code == 0, err
+        assert doc["certificate"]["not_renewed"]["code"] == "sign-failed"
+        assert doc["certificate"]["line"]
+    assert [o for _, o in audited()][-2:] == ["returned, not renewed: sign-failed"] * 2
+
+
+def test_anything_unexpected_is_still_audited(caenv, tmp_path, monkeypatch):  # noqa: F811
+    trust(caenv, tmp_path)
+    monkeypatch.setattr(machinebundle, "bundle", lambda *a, **kw: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        caenv.run("machine-bundle", "laptop")
+    assert audited() == [("laptop", "failed")]
+
+
 def test_no_prompt_run_closes_stdin_and_has_no_terminal(monkeypatch):
     monkeypatch.setenv("SSH_ASKPASS", "/bin/false")
     proc = machinebundle.no_prompt_run(
