@@ -80,6 +80,12 @@ rules beside the Ships':
 
 A `tests` entry proves a Ship cannot reach it. Ships still get no destinations at all.
 
+**Trusted machines' bundle keys.** Besides your keys, `fleetledger`'s
+`~/.ssh/authorized_keys` holds one line per machine you trust (`ship-fleet trust`),
+in a block FleetLedger writes, each forced to fetch that machine's own bundle and
+nothing else ([trust-machines.md](trust-machines.md), "A machine that refreshes
+itself"). FleetLedger never changes your lines. `ship-fleet doctor` checks the block.
+
 ## 1. On the desktop: the seed
 
 ```sh

@@ -533,7 +533,10 @@ def build_parser() -> argparse.ArgumentParser:
              "machines (herdr's; hc's for herdr-core Ships, which leave herdr's). Run it\n"
              "again to renew, and after a Ship changes runtime.\n\n"
              "  ship-fleet trust laptop --key laptop.pub --scope tag:work\n"
-             "  ship-fleet trust laptop --print-cert     renew: just the new certificate")
+             "  ship-fleet trust laptop --print-cert     renew: just the new certificate\n\n"
+             "On FleetLedger's own VM it also gives the machine's key one line in\n"
+             "~/.ssh/authorized_keys, limited to fetching its own bundle\n"
+             "(ship-fleet machine-bundle NAME); untrust removes it.")
     p.add_argument("machine", nargs="?", help="a name for the machine (e.g. laptop)")
     p.add_argument("--this-computer", action="store_true",
                    help="trust this computer with your own key and install it here, so "
@@ -566,6 +569,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="whether a machine that has not asked for its bundle in 30 days is "
                    "refused it (on, the default) or stays trusted until untrusted (off); "
                    "signs nothing")
+    p.add_argument("--sync-keys", action="store_true",
+                   help="on FleetLedger's own VM: rewrite FleetLedger's block in "
+                   "~/.ssh/authorized_keys (each trusted machine's key, forced to fetch its "
+                   "own bundle) to match the trusted machines; touches no other line")
 
     p = _add(sub, "untrust", "revoke a machine's certificates on every Ship",
              "Puts the machine's key in the revocation list on every Ship. This cannot be\n"

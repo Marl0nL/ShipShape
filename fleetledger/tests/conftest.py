@@ -91,6 +91,15 @@ def no_network(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_authorized_keys(tmp_path, monkeypatch):
+    """FleetLedger's block in authorized_keys (authkeys.py) is read and written in a
+    folder of the test's own, never your real ~/.ssh."""
+    from fleetledger import authkeys
+
+    monkeypatch.setattr(authkeys, "HOME", tmp_path / "ssh-home")
+
+
+@pytest.fixture(autouse=True)
 def no_real_keyring(monkeypatch):
     from fleetledger.overlay import secret_store
 

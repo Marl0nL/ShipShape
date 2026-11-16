@@ -28,6 +28,7 @@
             "fleet.your-keys-for-ships", "fleet.certificate-authority", "fleet.managed-keys",
             "fleet.trusted-machines", "fleet.machine-certificate",
             "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped",
+            "fleet.bundle-keys",
             "hypervisor.driver", "hypervisor.proxmox", "hypervisor.proxmox-settings",
             "hypervisor.proxmox-token", "hypervisor.proxmox-api", "hypervisor.template",
             "hypervisor.fleetledgers-own-vm",

@@ -241,10 +241,22 @@ laptop's own bundle as JSON (contracts/ship-fleet.md): its certificate, the CA l
 the Ships its scope reaches with their names, tags and runtime, and FleetLedger's own
 host key. It signs a new certificate only once the current one is past half its life,
 and nothing while the vault is locked (it then returns the current certificate while
-it lasts, and says why it is not new). It is meant to be the one command a key of the
-laptop's may run on the FleetLedger computer, so the laptop can keep itself current;
-the forced `authorized_keys` line and the laptop's refresher are not part of
-FleetLedger yet.
+it lasts, and says why it is not new). It is the one command a key of the
+laptop's may run on FleetLedger's own VM, so the laptop can keep itself current
+(the laptop's refresher, which applies it, is not part of FleetLedger yet).
+
+On FleetLedger's own VM, `ship-fleet trust laptop --key laptop.pub` also gives the
+laptop's key one line in the `fleetledger` user's `~/.ssh/authorized_keys`, in a
+marked block of FleetLedger's own, forced to `ship-fleet machine-bundle laptop` with
+`restrict` (no terminal, no forwarding). From the laptop, `ssh -i
+~/.ssh/shipshape/id_ed25519 fleetledger@<the VM>` then returns its bundle as JSON,
+whatever command it asks for, and nothing else. `untrust` removes the line. Your own
+lines in that file are never changed; a machine whose key is one of yours (it has a
+line of its own there) gets no restricted line, so that key keeps your line's shell
+and asks for its bundle by name (`ship-fleet machine-bundle NAME`). `ship-fleet
+doctor` checks the block (`bundle keys`) and `ship-fleet trust --sync-keys` rewrites
+it. On a desktop FleetLedger writes no line: there `authorized_keys` belongs to your
+own login.
 
 A machine that has asked is watched: `ship-fleet attention` says
 `machine-refresh-stopped` when it has not asked for 4 days. Running the command by
