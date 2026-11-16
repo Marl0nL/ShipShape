@@ -312,10 +312,11 @@ System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is nee
 (then unlock).
 
 **A VM seeded before `/usr/local/bin/ship-fleet` came in** answers `ship-fleet: command
-not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Add the file as
-`vmadmin`, from this page (the seed writes the same bytes). Never install it from the
-VM's own checkout: that is `fleetledger`'s, so it could change the file between your
-reading it and root copying it.
+not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. `ship-fleet doctor`
+on the VM (and Settings ▸ Health) says so ("ship-fleet on ssh's PATH") and gives the
+commands below; it only looks. Add the file as `vmadmin`, from this page (the seed
+writes the same bytes). Never install it from the VM's own checkout: that is
+`fleetledger`'s, so it could change the file between your reading it and root copying it.
 
 ```sh
 sudo tee /usr/local/bin/ship-fleet >/dev/null <<'EOF'
