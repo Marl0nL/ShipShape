@@ -43,13 +43,17 @@ def test_its_json_files_parse():
 
 
 def test_every_file_the_desk_names_is_here():
-    """Each desk palette looks.js offers has its theme, and every picture looks.js or the
-    layout names is in the repo, as is each of the three mods the layout places."""
+    """Each desk palette looks.js offers has its theme, and every picture the mods' JavaScript
+    or the layout names under mods/desk or layouts is in the repo, as is each of the three mods
+    the layout places."""
     looks = (DESK / "looks.js").read_text("utf-8")
     for theme in set(re.findall(r'"(desk-[a-z-]+)"', looks)):
         assert (HERDR / "themes" / f"{theme}.json").is_file(), theme
     layout = (HERDR / "layouts" / "desk.json").read_text("utf-8")
-    for path in re.findall(r'"((?:mods|layouts)/[^"]+\.(?:png|svg))"', looks + layout):
+    code = "".join(p.read_text("utf-8") for m in MODS for p in (HERDR / "mods" / m).glob("*.js"))
+    named = set(re.findall(r'"((?:mods/desk|layouts)/[^"]+\.(?:png|svg))"', code + layout))
+    assert "mods/desk/icons/caution.svg" in named
+    for path in named:
         assert (HERDR / path).is_file(), path
     for mod in MODS:
         assert f'"mod": "{mod}"' in layout, mod

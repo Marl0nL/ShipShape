@@ -13,5 +13,8 @@ agent, which agents on any machine, Ships included, fill in themselves with the 
   (<https://github.com/herdrdev/herdr-app>, `defaults/`), under the Apache License 2.0
   ([`LICENSE-herdr.txt`](LICENSE-herdr.txt)). The mods' changes are the lines marked `Desk:`;
   the layout's are the Desk's own parts, described in [`DESK.md`](DESK.md).
+- `mods/desk/icons/caution.svg` (and `mods/desk/brand/crew-caution.png`, drawn from it) is
+  Lucide's `triangle-alert` icon, under the ISC licence, derived from Feather's under MIT
+  ([`mods/desk/icons/LICENSE-Lucide.txt`](mods/desk/icons/LICENSE-Lucide.txt), as Herdr ships it).
 - `mods/desk/fonts/Urbanist-*.ttf` is Urbanist, under the SIL Open Font License 1.1
   ([`mods/desk/fonts/Urbanist-OFL.txt`](mods/desk/fonts/Urbanist-OFL.txt)).
