@@ -1902,8 +1902,8 @@ def test_push_ends_with_what_happens_to_this_computer(computers, monkeypatch):
     assert "This computer stays a trusted machine, desktop, like any other: nothing here " \
         f"renews its certificate (it lapses at {until})" in end
     assert "you@vm.example lists its certificate under attention" in end
-    renew = ("run ship-fleet trust desktop --identity '~/.ssh/shipshape_ed25519' there (or "
-             "Download bundle")
+    renew = ("run ship-fleet trust desktop --identity '~/.ssh/shipshape_ed25519' there. On "
+             "FleetLedger's own VM that prints one line to paste here")
     assert renew in end
     assert "Do not untrust desktop: its key is one of your keys for Ships" in end
 
