@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-doctor.schema.json",
+  "title": "Every doctor check (ship-fleet doctor [--offline] --json, version 1)",
+  "description": "Printed by `ship-fleet doctor [--offline] --json` on the FleetLedger computer: the checks the text form prints, in its order, each with its state and the command that fixes it. Read-only: it changes nothing; --offline skips the Proxmox API. It answers while the vault is locked, on a copy on standby or retired, as the text form does, and exits as it does: 1 when any check is missing or fail, else 0. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "items"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-doctor/1" },
+    "items": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/item" }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "subject", "area", "title", "state", "detail", "fix"],
+      "properties": {
+        "key": {
+          "enum": [
+            "computer.python", "computer.pythonpath", "computer.openssh", "computer.shipshape-checkout",
+            "computer.vault", "computer.vault-key-in-ram", "computer.swap", "computer.backups",
+            "computer.image-builds", "computer.ship-fleet-wrapper",
+            "fleet.this-copy", "fleet.inventory", "fleet.admin-key", "fleet.ssh-agent",
+            "fleet.your-keys-for-ships", "fleet.certificate-authority", "fleet.managed-keys",
+            "fleet.trusted-machines", "fleet.machine-certificate",
+            "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped",
+            "hypervisor.driver", "hypervisor.proxmox", "hypervisor.proxmox-settings",
+            "hypervisor.proxmox-token", "hypervisor.proxmox-api", "hypervisor.template",
+            "hypervisor.fleetledgers-own-vm",
+            "overlay.overlay", "overlay.oauth-secret",
+            "ships.ships", "ships.not-enrolled"
+          ],
+          "description": "Which check it is (contracts/ship-fleet.md lists them). With subject, it names the item: a check made once per machine or Ship appears once for each."
+        },
+        "subject": {
+          "type": ["string", "null"],
+          "description": "fleet.machine-certificate, fleet.machine-refresh-refused, fleet.machine-refresh-stopped: the trusted machine's name; ships.not-enrolled: the Ship's; fleet.managed-keys, when it fails: the key file's path, as FleetLedger records it (one item per key). null otherwise."
+        },
+        "area": { "enum": ["computer", "fleet", "hypervisor", "overlay", "ships"] },
+        "title": { "type": "string", "minLength": 1, "description": "The check's name as the text form's CHECK column shows it." },
+        "state": {
+          "enum": ["ok", "info", "warn", "missing", "fail", "skip"],
+          "description": "ok; info (fine, with a next step); warn; missing; fail; skip (not checked, or not set up and optional). missing and fail make the command exit 1."
+        },
+        "detail": { "type": "string" },
+        "fix": { "type": "string", "description": "The exact command (or step) that fixes it; empty when there is none. The text form's Next list shows it for info, warn, missing and fail." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "key": { "enum": ["fleet.machine-certificate", "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped", "ships.not-enrolled"] } } },
+          "then": { "properties": { "subject": { "$ref": "#/$defs/shipName" } } }
+        },
+        {
+          "if": { "properties": { "key": { "const": "fleet.managed-keys" }, "state": { "const": "fail" } } },
+          "then": { "properties": { "subject": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": {
+            "not": {
+              "anyOf": [
+                { "properties": { "key": { "enum": ["fleet.machine-certificate", "fleet.machine-refresh-refused", "fleet.machine-refresh-stopped", "ships.not-enrolled"] } } },
+                { "properties": { "key": { "const": "fleet.managed-keys" }, "state": { "const": "fail" } } }
+              ]
+            }
+          },
+          "then": { "properties": { "subject": { "type": "null" } } }
+        }
+      ]
+    },
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "schema": "shipshape.fleetledger-doctor/1",
+  "items": [
+    {
+      "key": "computer.python",
+      "subject": null,
+      "area": "computer",
+      "title": "Python",
+      "state": "ok",
+      "detail": "3.12.3",
+      "fix": ""
+    },
+    {
+      "key": "computer.openssh",
+      "subject": null,
+      "area": "computer",
+      "title": "OpenSSH",
+      "state": "ok",
+      "detail": "ssh, ssh-keygen, ssh-add",
+      "fix": ""
+    },
+    {
+      "key": "computer.shipshape-checkout",
+      "subject": null,
+      "area": "computer",
+      "title": "ShipShape checkout",
+      "state": "ok",
+      "detail": "/home/fleetledger/ShipShape",
+      "fix": ""
+    },
+    {
+      "key": "computer.vault",
+      "subject": null,
+      "area": "computer",
+      "title": "vault",
+      "state": "warn",
+      "detail": "FleetLedger's vault is locked: it is read-only until you unlock it.",
+      "fix": "ship-fleet unlock"
+    },
+    {
+      "key": "fleet.inventory",
+      "subject": null,
+      "area": "fleet",
+      "title": "inventory",
+      "state": "ok",
+      "detail": "/home/fleetledger/.config/shipshape/ships.toml",
+      "fix": ""
+    },
+    {
+      "key": "fleet.machine-certificate",
+      "subject": "laptop",
+      "area": "fleet",
+      "title": "machine laptop",
+      "state": "warn",
+      "detail": "laptop's certificate lapsed.",
+      "fix": "ship-fleet trust laptop   (or Download bundle under Settings ▸ Access ▸ Trusted machines; then sh install.sh on laptop)"
+    },
+    {
+      "key": "computer.image-builds",
+      "subject": null,
+      "area": "computer",
+      "title": "image builds",
+      "state": "ok",
+      "detail": "KVM here: ship-fleet image build is quick on this VM",
+      "fix": ""
+    },
+    {
+      "key": "computer.ship-fleet-wrapper",
+      "subject": null,
+      "area": "computer",
+      "title": "ship-fleet on ssh's PATH",
+      "state": "missing",
+      "detail": "no /usr/local/bin/ship-fleet (this VM was seeded before it came in), so a plain ssh fleetledger@<this VM> ship-fleet ... answers \"command not found\". Put it in place once as vmadmin, with sudo, as in docs/runbooks/fleetledger-vm.md (Updates)",
+      "fix": "sudo tee /usr/local/bin/ship-fleet >/dev/null <<'EOF'\n#!/bin/sh\n# /usr/local/bin/ship-fleet on FleetLedger's own VM (docs/runbooks/fleetledger-vm.md).\n#\n# pipx installs ship-fleet in ~/.local/bin, which only a login shell puts on PATH, so a\n# plain `ssh fleetledger@<vm> ship-fleet ...` would not find it. This root-owned file is\n# on the PATH ssh gives a command, and runs the fleetledger user's own install. Anyone\n# else is refused: vmadmin, who has sudo, never runs code the fleetledger user can change.\nif [ \"$(/usr/bin/id -un)\" != fleetledger ]; then\n  echo \"ship-fleet: on this VM, FleetLedger is the fleetledger user's: ssh fleetledger@<this VM> ship-fleet ...\" >&2\n  exit 126\nfi\nexec /home/fleetledger/.local/bin/ship-fleet \"$@\"\nEOF\nsudo chmod 0755 /usr/local/bin/ship-fleet"
+    },
+    {
+      "key": "hypervisor.proxmox-api",
+      "subject": null,
+      "area": "hypervisor",
+      "title": "Proxmox API",
+      "state": "skip",
+      "detail": "not checked (--offline)",
+      "fix": ""
+    },
+    {
+      "key": "overlay.overlay",
+      "subject": null,
+      "area": "overlay",
+      "title": "overlay",
+      "state": "skip",
+      "detail": "not set up (optional: access off the LAN)",
+      "fix": "ship-fleet overlay setup"
+    },
+    {
+      "key": "ships.ships",
+      "subject": null,
+      "area": "ships",
+      "title": "Ships",
+      "state": "ok",
+      "detail": "2 in the inventory",
+      "fix": ""
+    },
+    {
+      "key": "ships.not-enrolled",
+      "subject": "ship-02",
+      "area": "ships",
+      "title": "ship-02",
+      "state": "warn",
+      "detail": "not enrolled yet",
+      "fix": "ship-fleet status ship-02 --wait"
+    }
+  ]
+}

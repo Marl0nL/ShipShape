@@ -1,0 +1,41 @@
+{
+  "schema": "shipshape.fleetledger-doctor/1",
+  "items": [
+    {
+      "key": "computer.python",
+      "subject": null,
+      "area": "computer",
+      "title": "Python",
+      "state": "ok",
+      "detail": "3.12.3",
+      "fix": ""
+    },
+    {
+      "key": "computer.openssh",
+      "subject": null,
+      "area": "computer",
+      "title": "OpenSSH",
+      "state": "ok",
+      "detail": "ssh, ssh-keygen, ssh-add",
+      "fix": ""
+    },
+    {
+      "key": "computer.shipshape-checkout",
+      "subject": null,
+      "area": "computer",
+      "title": "ShipShape checkout",
+      "state": "ok",
+      "detail": "~/ShipShape",
+      "fix": ""
+    },
+    {
+      "key": "fleet.inventory",
+      "subject": null,
+      "area": "fleet",
+      "title": "inventory",
+      "state": "missing",
+      "detail": "no ~/.config/shipshape/ships.toml",
+      "fix": "ship-fleet setup"
+    }
+  ]
+}
