@@ -257,9 +257,10 @@ def test_it_reads_only_and_contacts_nothing(nx, cakeys, home):  # noqa: F811
     assert {tuple(c) for c in nx.commands} <= {("ssh-keygen", "-lf"), ("ssh-add", "-l")}
 
 
-def test_json_alone_is_refused(nx):
-    code, out, err = nx.run("doctor", "--json")
-    assert code != 0 and "--next" in err
+def test_json_alone_is_doctors_checks_not_the_next_steps(nx):
+    code, out, err = nx.run("doctor", "--offline", "--json")
+    doc = json.loads(out)
+    assert doc["schema"] == "shipshape.fleetledger-doctor/1" and doc["items"]
 
 
 def test_plain_doctor_is_unchanged(nx, cakeys):  # noqa: F811
