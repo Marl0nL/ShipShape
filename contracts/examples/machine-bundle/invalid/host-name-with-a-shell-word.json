@@ -1,0 +1,45 @@
+{
+  "schema": "shipshape.machine-bundle/1",
+  "machine": "laptop",
+  "at": "2026-01-05T09:00:00Z",
+  "certificate": {
+    "line": "ssh-ed25519-cert-v01@openssh.com ZXhhbXBsZSBjZXJ0aWZpY2F0ZSBmb3IgbGFwdG9wLCBub3QgYSByZWFsIG9uZQ== laptop",
+    "valid_before": "2026-01-12T09:00:00Z",
+    "renewed": true,
+    "not_renewed": null
+  },
+  "scope": [
+    "tag:work"
+  ],
+  "logins": [
+    "agent"
+  ],
+  "ssh": {
+    "user": "agent"
+  },
+  "known_hosts": [
+    "@cert-authority ship-01,ship-01.local,ship-01.tailnet.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0Y2FrZXlleGFtcGxlaG9zdGNha2V5ZXhh shipshape-host-ca"
+  ],
+  "fleetledger": {
+    "name": "fleetledger",
+    "known_hosts": "fleetledger,fleetledger.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVmbGVldGxlZGdlcmhvc3RrZXlleGFtcGxlZmxl"
+  },
+  "ships": [
+    {
+      "name": "ship-01",
+      "tags": [
+        "work"
+      ],
+      "runtime": "core",
+      "host_names": {
+        "lan": "ship-01.local; touch x",
+        "overlay": "ship-01.tailnet.example"
+      },
+      "host_certificate": true
+    }
+  ],
+  "idle_limit": {
+    "on": true,
+    "days": 30
+  }
+}

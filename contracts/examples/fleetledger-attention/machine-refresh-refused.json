@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.fleetledger-attention/1",
+  "ship": null,
+  "code": "machine-refresh-refused",
+  "message": "laptop was refused its bundle on 2026-02-09 08:00 UTC: it had not asked for one since 2026-01-08 09:00 UTC, over 30 days. ssh, herdr --remote and hc from it stop when its certificate lapses (2026-01-14 09:00 UTC).",
+  "subject": "laptop",
+  "severity": "medium",
+  "fix": "If laptop is still yours, allow it again on the FleetLedger computer: ship-fleet trust laptop --allow-again. If not, untrust it: ship-fleet untrust laptop."
+}

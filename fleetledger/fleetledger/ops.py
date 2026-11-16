@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fleetledger import inhibitors
@@ -95,6 +95,8 @@ SEVERITY = {
     "tmp-reboot-pending": "low",  # /tmp moves to the disk at the next reboot
     "host-cert-expiring": "medium",
     "machine-cert-expiring": "medium",  # in its last day (fleet-level)
+    "machine-refresh-stopped": "medium",  # a machine that refreshes itself stopped asking
+    "machine-refresh-refused": "medium",  # refused its bundle for being idle (fleet-level)
     "proxmox-token-expiring": "medium",  # in its last 14 days (fleet-level)
     "host-cert-missing": "medium",
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
@@ -1299,30 +1301,101 @@ THIS_COMPUTER_FIX = (
     "now: ship-fleet trust --this-computer on the FleetLedger computer.")
 
 
+# A machine that refreshes itself (it has asked ship-fleet machine-bundle at least once)
+# asks hourly and at login while it is on. Four days without asking is more than a long
+# weekend switched off, so it most likely means its timer is broken; and it is past half
+# the 7-day certificate's life, so a certificate renewed at its last ask still has three
+# days left: time to look before it lapses.
+REFRESH_STOPPED_AFTER = timedelta(days=4)
+MACHINE_REFRESH_CODES = ("machine-refresh-stopped", "machine-refresh-refused")
+REFRESH_STOPPED = ("{name} refreshes its bundle by itself, but has not asked for it since "
+                   "{since} ({days} days): its refresher may have stopped, or it is switched "
+                   "off. Its certificate lapses at {until}.")
+REFRESH_STOPPED_IDLE = (" After {limit} days without asking it is refused its bundle until "
+                        "you allow it again.")
+REFRESH_STOPPED_FIX = ("On {name}, check that its refresher runs (it asks ship-fleet "
+                       "machine-bundle {name} over ssh). If {name} is gone, untrust it: "
+                       "ship-fleet untrust {name}.")
+REFRESH_REFUSED = ("{name} was refused its bundle on {when}: it had not asked for one since "
+                   "{since}, over {limit} days. ssh, herdr --remote and hc from it stop when "
+                   "its certificate lapses ({until}).")
+REFRESH_REFUSED_COMMAND = "ship-fleet trust {name} --allow-again"
+REFRESH_REFUSED_FIX = ("If {name} is still yours, allow it again on the FleetLedger computer: "
+                       + REFRESH_REFUSED_COMMAND + ". If not, untrust it: ship-fleet untrust "
+                       "{name}.")
+REFRESHING_CERT_FIX = (
+    "{name} renews its certificate by asking for its bundle, and last asked at {since}. {why}")
+REFRESHING_LOCKED = ("FleetLedger's vault is locked, so nothing is signed: unlock it "
+                     "(ship-fleet unlock on the FleetLedger computer).")
+REFRESHING_ASK = ("Check that {name} is on and its refresher runs, or renew it by hand: "
+                  "ship-fleet trust {name} on the FleetLedger computer.")
+
+
+def _said(stamp: str | None) -> str:
+    return stamp.replace("T", " ")[:16] + " UTC" if stamp else "-"
+
+
 def machine_cert_attention(inventory: Inventory, ships: Sequence[Ship], *,
                            now: datetime | None = None) -> list[AttentionItem]:
-    """machine-cert-expiring (its last day) and machine-cert-lapsed, for each trusted
-    machine that reaches one of these Ships. A machine's certificate renews only when
-    someone downloads its bundle, so without these it lapses silently. FleetLedger's own
-    computer renews itself in its last day: it is named only once lapsed."""
-    from fleetledger import ca, trustcmd
+    """At most one item per trusted machine that reaches one of these Ships, for its one
+    cause: machine-cert-expiring (its last day) and machine-cert-lapsed; and for a
+    machine that refreshes itself (ship-fleet machine-bundle), machine-refresh-refused
+    (refused for being idle, in place of its certificate's item: that is why it
+    lapses) or machine-refresh-stopped (it stopped asking, while its certificate is not
+    due yet; once due, the certificate's item says when it last asked). Without these a
+    certificate lapses silently. FleetLedger's own computer renews itself in its last
+    day: it is named only once lapsed, and never for refreshing."""
+    from fleetledger import ca, trustcmd, vault
 
     cfg = ca.config(inventory)
     if cfg is None:
         return []
     here = trustcmd.this_computer()
+    now = now or ca.utc_now()
     items = []
     for m in ca.machines(inventory):
-        mine = bool(here and here["machine"] == m.name)
-        due = ca.cert_due(m, now, renews_itself=mine, default_hours=cfg.user_cert_hours)
-        if due is None or not any(m.reaches(inventory, s) for s in ships):
+        if m.revoked or not any(m.reaches(inventory, s) for s in ships):
             continue
-        code, text = MACHINE_CERT[due]
-        name = f"{m.name} (the FleetLedger computer)" if mine else m.name
-        until = m.last_valid_before.replace("T", " ")[:16] + " UTC"
-        items.append(AttentionItem(
-            None, code, text.format(name=name, until=until), m.name, SEVERITY[code],
-            THIS_COMPUTER_FIX if mine else MACHINE_CERT_FIX.format(name=m.name)))
+        mine = bool(here and here["machine"] == m.name)
+        until = _said(m.last_valid_before)
+        try:
+            asked = None if mine else ca.parse_stamp(m.last_refreshed)
+        except ValueError:  # edited by hand: as if it never asked
+            asked = None
+        if not mine and m.idle_refused and ca.idle_refused(m, now):
+            since = ca.idle_since(m)
+            code = "machine-refresh-refused"
+            items.append(AttentionItem(
+                None, code, REFRESH_REFUSED.format(
+                    name=m.name, when=_said(m.idle_refused), since=_said(ca.stamp(since)),
+                    limit=ca.IDLE_LIMIT.days, until=until),
+                m.name, SEVERITY[code], REFRESH_REFUSED_FIX.format(name=m.name)))
+            continue
+        due = ca.cert_due(m, now, renews_itself=mine, default_hours=cfg.user_cert_hours)
+        if due is not None:
+            code, text = MACHINE_CERT[due]
+            name = f"{m.name} (the FleetLedger computer)" if mine else m.name
+            if mine:
+                fix = THIS_COMPUTER_FIX
+            elif asked is not None:
+                why = (REFRESHING_LOCKED if vault.state() == "locked"
+                       else REFRESHING_ASK.format(name=m.name))
+                fix = REFRESHING_CERT_FIX.format(name=m.name, since=_said(m.last_refreshed),
+                                                 why=why)
+            else:
+                fix = MACHINE_CERT_FIX.format(name=m.name)
+            items.append(AttentionItem(
+                None, code, text.format(name=name, until=until), m.name, SEVERITY[code],
+                fix))
+            continue
+        if asked is not None and now - asked > REFRESH_STOPPED_AFTER:
+            code = "machine-refresh-stopped"
+            text = REFRESH_STOPPED.format(name=m.name, since=_said(m.last_refreshed),
+                                          days=(now - asked).days, until=until)
+            if m.idle_limit:
+                text += REFRESH_STOPPED_IDLE.format(limit=ca.IDLE_LIMIT.days)
+            items.append(AttentionItem(None, code, text, m.name, SEVERITY[code],
+                                       REFRESH_STOPPED_FIX.format(name=m.name)))
     return items
 
 

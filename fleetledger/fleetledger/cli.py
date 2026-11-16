@@ -26,7 +26,7 @@ COMMANDS = (
     "signins", "owner", "set", "agent", "runtime", "tag", "tools", "toolkit", "update",
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
-    "unlock", "vault", "appliance", "backup", "self-update", "about",
+    "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -35,7 +35,7 @@ EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetle
                          "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service",
                          "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
                          "fleetledger.selfupdate", "fleetledger.toolkitcmd",
-                         "fleetledger.about")
+                         "fleetledger.about", "fleetledger.machinebundle")
 
 
 @dataclass
@@ -559,6 +559,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also install the bundle here (this is the machine)")
     p.add_argument("--no-herdr", action="store_true",
                    help="install, --this-computer: skip herdr saved machines")
+    p.add_argument("--allow-again", action="store_true",
+                   help="let a machine refused for not asking for its bundle (ship-fleet "
+                   "machine-bundle) in 30 days ask again; signs nothing")
+    p.add_argument("--idle-limit", choices=("on", "off"),
+                   help="whether a machine that has not asked for its bundle in 30 days is "
+                   "refused it (on, the default) or stays trusted until untrusted (off); "
+                   "signs nothing")
 
     p = _add(sub, "untrust", "revoke a machine's certificates on every Ship",
              "Puts the machine's key in the revocation list on every Ship. This cannot be\n"
@@ -763,9 +770,11 @@ def _handed_over(args, app) -> None:
 # vault itself, doctor, the web UI (read-only, with its Unlock page) and the service
 # that runs it, updating FleetLedger's own checkout, and backup (it reads the vault,
 # which refuses while locked, so its result, failed, is kept for doctor); about, which
-# reads and says what it could not; and any read from the caches alone (--offline).
+# reads and says what it could not; machine-bundle, which then signs nothing and says so
+# (it writes only that machine's record of when it asked, and its audit line); and any
+# read from the caches alone (--offline).
 LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup",
-                  "about")
+                  "about", "machine-bundle")
 
 
 def _vault_locked(args, app) -> None:
