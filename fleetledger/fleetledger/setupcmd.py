@@ -254,19 +254,19 @@ def _vault(s: _Setup) -> None:
     """No usable OS keyring here and the vault off: every secret FleetLedger keeps would
     go to a 0600 file. Recommend the vault, and make it on a yes with ship-fleet vault
     init's own code (the passphrase is asked here, not shown; secrets already kept move
-    in). With a usable keyring, or the vault on, nothing is said."""
-    import argparse
-
+    in). With a usable keyring, or the vault on and holding every secret, nothing is
+    said. A vault an earlier run left unfinished is finished first (_vault_finish)."""
     from fleetledger import vault, vaultcmd
     from fleetledger.overlay import secret_store
 
     if vault.is_on():
+        _vault_finish(s)
         return
     usable, why = secret_store.keyring_usable()
     if usable:
         return
     s.app.say(f"There is no usable OS keyring here ({why}). Without one, FleetLedger keeps\n"
-              "its secrets (its keys' passphrases, the Proxmox token, the OAuth secret) in\n"
+              "new secrets (its keys' passphrases, the Proxmox token, the OAuth secret) in\n"
               "files only you can read, so any copy of this disk opens the fleet. Its vault\n"
               "keeps them in one encrypted file instead, unlocked once after each boot with a\n"
               f"passphrase you choose (ship-fleet unlock). See {vaultcmd.RUNBOOK}.")
@@ -275,20 +275,68 @@ def _vault(s: _Setup) -> None:
         return
     try:
         vaultcmd.vault_init(argparse.Namespace(), s.app, s.store)
-    except FleetError as exc:
-        said = exc.message + (f" {exc.hint}" if exc.hint else "")
+    except (FleetError, OSError) as exc:
+        said = (exc.message + (f" {exc.hint}" if exc.hint else "")
+                if isinstance(exc, FleetError) else type(exc).__name__)
         if not vault.is_on():  # taken back: every secret is where it was
             s.app.note(f"The vault is not on: {said}")
             s.app.note("Carrying on with files only you can read.")
             s.later.append("ship-fleet vault init")
             return
-        # Kept: ships.toml may already read from it, so it stays, unfinished, and its
-        # recovery code was never shown.
-        s.app.note(f"The vault is on, but moving the secrets into it did not finish: {said}")
-        s.later.append("ship-fleet vault init   (finishes moving the secrets in)")
+        # Kept: ships.toml may already read from it, so it stays; its recovery code was
+        # never shown. Finish the move now, or stop: setup must not carry on with secrets
+        # in two places (new keys would go to the vault, ships.toml still naming files).
+        s.app.note(f"The vault is on, but moving the secrets into it stopped: {said}")
         s.later.append("ship-fleet vault recovery   (a recovery code: none was shown)")
+        _vault_finish(s)
     if s.managed is not None:
         s.managed = keys.default_store()  # the vault, now that it is on
+
+
+def _vault_finish(s: _Setup) -> None:
+    """The vault is on: if a vault init stopped part way (an interrupt, a full disk),
+    some secret ships.toml names is still read from a file, or not in the vault. Finish
+    it as ship-fleet vault init does, or stop setup: carrying on would keep new secrets
+    in the vault while ships.toml still names files."""
+    from fleetledger import vaultcmd
+
+    left = vaultcmd.unfinished(s.store)
+    if not left:
+        return
+    s.app.say("The vault is on, but a vault init stopped before it moved every secret in ("
+              + ", ".join(left) + "). Finishing it now, as ship-fleet vault init does.")
+    stop = FleetError("The vault does not hold every secret ships.toml names yet, so setup "
+                      "stops here rather than keep new ones in two places.",
+                      hint="ship-fleet vault status shows where each one is; ship-fleet vault "
+                      "init finishes the move. Then run ship-fleet setup again.")
+    try:
+        vaultcmd.vault_init(argparse.Namespace(), s.app, s.store)  # on: it only finishes
+    except (FleetError, OSError):
+        raise stop from None
+    if vaultcmd.unfinished(s.store):
+        raise stop
+    s.later.append("ship-fleet vault recovery   (if its recovery code was never shown to you)")
+
+
+def _passphrase_kept_in(store: str, key: Path) -> None:
+    """A managed key an earlier, stopped run made: before ships.toml records its
+    passphrase as kept in store, make sure it is there. Made with a 0600 file before the
+    vault was turned on, it moves into the vault (read back, then the file goes)."""
+    found = keys.passphrase_file(key)
+    if store == "keyring" and found.exists():
+        value = keys.read_passphrase(key, "file")
+        keys.store_passphrase(key, value, "keyring")
+        if keys.read_passphrase(key, "keyring") != value:
+            raise FleetError(f"The passphrase for {key.name} did not read back from "
+                             f"{keys.describe(store)}; its file is kept.")
+        found.unlink()
+    try:
+        keys.read_passphrase(key, store)
+    except FleetError as exc:
+        raise FleetError(f"{key} was made by an earlier setup that stopped, and its "
+                         f"passphrase is not in {keys.describe(store)}.",
+                         hint="Move the key and its .pub aside, then run ship-fleet setup "
+                         "again: it makes a new one.") from exc
 
 
 def _your_key(s: _Setup) -> str:
@@ -303,6 +351,8 @@ def _your_key(s: _Setup) -> str:
         private = paths.expand(YOUR_NEW_KEY)
         if not private.exists():
             keys.make(private, "shipshape-you", s.managed)
+        else:  # made by an earlier run that stopped before ships.toml recorded it
+            _passphrase_kept_in(s.managed, private)
         s.made_yours = YOUR_NEW_KEY
         chosen = private.with_name(private.name + ".pub")
     elif not s.managed and s.yes(f"You have no {paths.tilde(default)}. Make one now (ssh-keygen "

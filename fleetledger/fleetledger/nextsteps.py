@@ -76,7 +76,7 @@ def steps(app) -> list[Step]:
     out.append(_other_devices())
     out.append(_laptop(items, inv))
     out.append(_always_on(inv))
-    out.append(_vault(items))
+    out.append(_vault(items, app.store_factory()))
     out.append(_backups(items, out[-1]))
     return out
 
@@ -241,7 +241,8 @@ def _always_on(inv) -> Step:
                 SERVICE_DOC, optional=True)
 
 
-def _vault(items) -> Step:
+def _vault(items, store) -> Step:
+    from fleetledger import vaultcmd
     from fleetledger.overlay import secret_store
 
     title = "The vault"
@@ -250,6 +251,14 @@ def _vault(items) -> Step:
     if bad is not None:
         return Step("vault", title, "attention", bad.detail, bad.next, VAULT_DOC)
     if _first(items, name="vault") is not None:
+        try:
+            left = vaultcmd.unfinished(store)
+        except FleetError:  # an unreadable ships.toml: the setup step says so
+            left = []
+        if left:
+            return Step("vault", title, "attention", "on, but a vault init stopped before "
+                        "it moved every secret in: " + ", ".join(left),
+                        "ship-fleet vault init", VAULT_DOC)
         return Step("vault", title, "done", "on and unlocked", docs=VAULT_DOC)
     usable, why = secret_store.keyring_usable()
     if usable:

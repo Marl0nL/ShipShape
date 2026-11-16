@@ -369,24 +369,103 @@ def test_a_vault_that_cannot_be_made_here_leaves_files_and_says_why(no_keyring, 
     assert not any("vault passphrase" in q for q in no_keyring.asked)
 
 
-def test_a_vault_kept_after_a_failed_move_is_said_and_used(no_keyring, monkeypatch):
-    """vault init keeps a vault ships.toml may already read from: setup says it is on,
-    what is left, and keeps nothing more in files."""
+def _a_fleet_with_the_token_in_a_file(s):
+    assert s.run(answers=["no", "", "yes", "no", "proxmox",
+                          *START, *FOUND, "", "", "skip"])[0] == 0
+    assert (s.home / "config" / "proxmox-token").exists()
+
+
+def test_a_move_that_stops_after_pointing_is_finished_in_the_same_run(no_keyring,
+                                                                      monkeypatch):
+    """A full disk (say) once ships.toml may name the vault: vault init keeps it, and
+    setup finishes the move before it makes anything else."""
+    from fleetledger import vault, vaultcmd
+
+    s = no_keyring
+    _a_fleet_with_the_token_in_a_file(s)
+    real, calls = vaultcmd.move_in, []
+
+    def stops_once(app, store, progress=None):
+        calls.append(1)
+        if len(calls) == 1:
+            progress.pointing = True
+            raise OSError(28, "No space left on device")
+        return real(app, store, progress)
+
+    monkeypatch.setattr(vaultcmd, "move_in", stops_once)
+    code, out, err = s.run(answers=["yes", "no", "", "skip"])  # vault, CA, overlay, Ship
+    assert code == 0, err
+    assert "moving the secrets into it stopped: OSError" in err
+    assert "Finishing it now" in out and vaultcmd.unfinished(s.store) == []
+    assert not (s.home / "config" / "proxmox-token").exists()
+    config = s.store.load().driver_config("proxmox")
+    assert vault.backend().get_password("fleetledger", config["keyring_item"]) == TOKEN
+    assert "ship-fleet vault recovery   (a recovery code: none was shown)" in out
+
+
+def test_a_vault_init_cut_short_in_an_earlier_run_is_finished_by_the_next(no_keyring):
+    from fleetledger import vault, vaultcmd
+
+    s = no_keyring
+    _a_fleet_with_the_token_in_a_file(s)
+    vault.create(VAULT_PASS)  # as an interrupted vault init leaves it: on, nothing moved
+    assert vaultcmd.unfinished(s.store) == ["the Proxmox token"]
+    code, out, err = s.run(answers=["no", "", "skip"])  # CA, overlay, Ship: no vault question
+    assert code == 0, err
+    assert "a vault init stopped before it moved every secret in" in out
+    assert vaultcmd.unfinished(s.store) == []
+    assert not (s.home / "config" / "proxmox-token").exists()
+    assert "ship-fleet vault recovery   (if its recovery code was never shown" in out
+    assert VAULT_PASS not in everything(s)
+
+
+def test_setup_stops_when_the_move_cannot_be_finished(no_keyring, monkeypatch):
+    """Nothing new is made while the vault holds only some secrets."""
     from fleetledger.errors import FleetError
 
     from fleetledger import vault, vaultcmd
 
-    def half_move(app, store, progress=None):
-        progress.pointing = True
+    s = no_keyring
+    _a_fleet_with_the_token_in_a_file(s)
+
+    def never(app, store, progress=None):
+        if progress is not None:
+            progress.pointing = True
         raise FleetError("a read-back differed")
 
-    monkeypatch.setattr(vaultcmd, "move_in", half_move)
-    code, out, err = no_keyring.run(answers=["yes", *MANUAL])
-    assert code == 0, err
+    monkeypatch.setattr(vaultcmd, "move_in", never)
+    code, out, err = s.run(answers=["yes"])
+    assert code != 0 and "setup stops here" in err and "ship-fleet vault status" in err
     assert vault.state() == "unlocked"
-    assert "The vault is on, but moving the secrets into it did not finish" in err
-    assert "ship-fleet vault init   (finishes" in out and "ship-fleet vault recovery" in out
-    assert "Carrying on with files" not in err
+    assert (s.home / "config" / "proxmox-token").exists()  # every secret is where it was
+    assert "ca" not in s.store.load().doc  # nothing made after it
+
+
+def test_a_key_left_by_a_stopped_run_moves_its_passphrase_into_the_vault(no_keyring):
+    """A run made your key with its passphrase in a file, then stopped before
+    ships.toml; the next one turns the vault on: the passphrase goes in with it."""
+    from fleetledger.web.setup import YOUR_NEW_KEY
+
+    from fleetledger import keys, setupcmd, vault
+
+    s = no_keyring
+    (s.user_home / ".ssh" / "id_ed25519.pub").unlink()
+    private = paths_expand(YOUR_NEW_KEY)
+    keys.make(private, "shipshape-you", "file")
+    value = keys.read_passphrase(private, "file")
+    vault.create(VAULT_PASS)
+    setup = setupcmd._Setup(cli.build_parser().parse_args(["setup", "--text"]), s.app)
+    assert setup.managed == "keyring"  # the vault
+    s.answers[:] = ["yes"]  # make (here: reuse) a key for you
+    assert setupcmd._your_key(setup) == str(private) + ".pub"
+    assert keys.read_passphrase(private, "keyring") == value
+    assert not keys.passphrase_file(private).exists()
+
+
+def paths_expand(text):
+    from fleetledger import paths
+
+    return paths.expand(text)
 
 
 def test_a_second_run_moves_files_already_kept_into_the_vault(no_keyring):

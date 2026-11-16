@@ -197,6 +197,22 @@ def test_the_vault_on_then_locked_and_backups(nx, cakeys):  # noqa: F811
     assert found["first-ship"] == ("done", "")  # the rest is still read from files
 
 
+def test_a_vault_init_cut_short_needs_attention(nx, cakeys, tmp_path):  # noqa: F811
+    with_ca(nx, cakeys)
+    token = tmp_path / "proxmox-token"
+    paths.write_private(token, b"a-token\n")
+    with nx.store.edit() as ed:
+        ed.set_default("driver", "proxmox")
+        ed.set_driver("proxmox", {"api_url": "https://pve.example.com:8006/api2/json",
+                                  "node": "pve", "pool": "shipshape", "template_vmid": 9000,
+                                  "seed_storage": "s", "disk_storage": "d", "bridge": "vmbr0",
+                                  "token_id": "shipshape@pve!build", "token_file": str(token),
+                                  "tls_fingerprint": ":".join(["5E"] * 32)})
+    vault.create("correct horse battery staple")  # on, nothing moved in yet
+    state, command = states(nx)["vault"]
+    assert (state, command) == ("attention", "ship-fleet vault init")
+
+
 def test_a_failed_backup_needs_attention(nx, cakeys):  # noqa: F811
     from fleetledger import backup
 
