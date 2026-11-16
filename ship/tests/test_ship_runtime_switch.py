@@ -459,6 +459,13 @@ def test_an_agent_already_on_the_target_is_never_started_twice(herdr_ship):
     ship = herdr_ship
     expect = as_running(ship)
     session = expect["main"][0]
+    # The mode ledger saw that start in the earlier try, long before this switch. (Left
+    # at main's start on herdr a moment ago, it could fall in the same second as the
+    # switch's launches, and the ledger's whole-second stamps would then count it.)
+    path = ship.p(LEDGER)
+    led = json.loads(path.read_text())
+    led["sessions"][session]["started_at"] = "2026-01-01T00:00:00Z"
+    path.write_text(json.dumps(led))
     s = ship.scenario()
     s["hc"] = {"server": True, "next": 2, "terminals": [{
         "address": "t1", "name": "main", "argv": [LAUNCHER, "--resume", session],
@@ -471,6 +478,7 @@ def test_an_agent_already_on_the_target_is_never_started_twice(herdr_ship):
     ship.set(hc=s["hc"])
     rc, doc, out = switch(ship, "core")
     assert rc != 0 and doc["data"]["outcome"] == "rolled-back", out
+    assert "main: its start on core was not seen by the mode ledger" in doc["error"]["message"]
     assert "main was already running on core; not started again" in doc["messages"]
     assert [c for c in hc_runs(ship) if "main" in c] == []
     intact(ship, "herdr", expect)
