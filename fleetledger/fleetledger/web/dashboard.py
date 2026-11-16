@@ -207,6 +207,12 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         return Action("link", "Unlock", "/unlock")
     from fleetledger import ops
 
+    if code == "machine-refresh-refused" and machine:  # fleet-level (machine-bundle)
+        return Action("command", "Copy", ops.REFRESH_REFUSED_COMMAND.format(name=machine),
+                      "If it is still yours, on the FleetLedger computer:")
+    if code == "machine-refresh-stopped" and machine:
+        return Action("link", "Trusted machines", "/settings?said=machines#machines",
+                      hint=f"Check that {machine}'s refresher runs; if {machine} is gone:")
     if code in ops.PROXMOX_TOKEN_CODES:  # fleet-level (ops.proxmox_token_attention)
         return Action("command", "Copy", ops.PROXMOX_TOKEN_COMMAND,
                       "With a new token made on the Proxmox host, on the FleetLedger computer:")

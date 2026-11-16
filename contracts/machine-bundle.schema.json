@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/machine-bundle.schema.json",
+  "title": "A trusted machine's own bundle (ship-fleet machine-bundle NAME, version 1)",
+  "description": "Printed on stdout by `ship-fleet machine-bundle NAME` on the FleetLedger computer, for the trusted machine NAME, which asks for it over ssh to keep its SSH setup current (its certificate, its known_hosts and SSH config, its hc machines, and a file of the fleet's Ships). Data only, never a script: the machine checks every field and writes its files from templates of its own. Only the Ships NAME's scope reaches are listed. A refusal prints nothing on stdout. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "machine", "at", "certificate", "scope", "logins", "ssh", "known_hosts", "fleetledger", "ships", "idle_limit"],
+  "properties": {
+    "schema": { "const": "shipshape.machine-bundle/1" },
+    "machine": { "$ref": "#/$defs/name", "description": "The trusted machine this bundle is for (its name in ships.toml)." },
+    "at": { "$ref": "#/$defs/timestamp", "description": "When FleetLedger made it." },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "valid_before", "renewed", "not_renewed"],
+      "description": "The machine's user certificate, for its own key. A new one is signed only once the current one is past half its life; otherwise the current one comes again.",
+      "properties": {
+        "line": {
+          "type": ["string", "null"],
+          "pattern": "^ssh-ed25519-cert-v01@openssh\\.com [A-Za-z0-9+/]+={0,2}( [^\\n]*)?$",
+          "description": "The certificate, as a <machine>-cert.pub file holds it. null: FleetLedger has none that is still valid and could not sign one (not_renewed says why)."
+        },
+        "valid_before": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "When line lapses; null with line." },
+        "renewed": { "type": "boolean", "description": "This ask signed line." },
+        "not_renewed": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "why"],
+              "description": "A new certificate was due and was not signed. line is the current one while it is still valid, else null. The machine asks again later; nothing is signed without the vault unlocked.",
+              "properties": {
+                "code": { "enum": ["vault-locked", "sign-failed"], "description": "vault-locked: FleetLedger's vault is locked (ship-fleet unlock). sign-failed: the CA could not sign (why)." },
+                "why": { "type": "string", "minLength": 1, "maxLength": 1000 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "scope": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^(all|tag:[a-z0-9][a-z0-9-]{0,30}|ship:[a-z0-9][a-z0-9-]{0,30})$" },
+      "description": "Which Ships the machine may reach (ships.toml machine.<name>.scope)."
+    },
+    "logins": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["agent", "owner"] },
+      "description": "What its certificate logs in as on those Ships."
+    },
+    "ssh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user"],
+      "properties": {
+        "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$", "description": "The login its SSH config uses on every Ship: agent when it may log in as the agent, else your own login." }
+      }
+    },
+    "known_hosts": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^@(cert-authority [A-Za-z0-9.,-]+|revoked \\*) ssh-ed25519 [A-Za-z0-9+/]+={0,2}( [^\\n]*)?$" },
+      "description": "The lines of its known_hosts for Ships: one @cert-authority line naming every name of every Ship listed (none while no Ship is), then an @revoked line per host key the CA revoked."
+    },
+    "fleetledger": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "known_hosts"],
+          "description": "FleetLedger's own VM (ships.toml fleet.self), so the machine can keep its pin of the computer it asks.",
+          "properties": {
+            "name": { "$ref": "#/$defs/name" },
+            "known_hosts": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.,-]* ssh-ed25519 [A-Za-z0-9+/]+={0,2}$", "description": "Its host key, as a known_hosts line naming every name it is reached by." }
+          }
+        }
+      ],
+      "description": "null when FleetLedger does not run on a VM of its own that it recorded (ship-fleet appliance)."
+    },
+    "ships": {
+      "type": "array",
+      "description": "Every Ship the machine's scope reaches, by name; none outside it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "tags", "runtime", "host_names", "host_certificate"],
+        "properties": {
+          "name": { "$ref": "#/$defs/name", "description": "Its SSH Host alias and hc machine name." },
+          "tags": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" }, "description": "Its tags (defaults.tags when it has none of its own)." },
+          "runtime": { "enum": ["core", "herdr"], "description": "From its last status: core (herdr-core: hc attaches) or herdr (classic: herdr --remote). core when not fetched yet, as a new Ship runs." },
+          "host_names": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lan", "overlay"],
+            "description": "What to put as its HostName. Both are among the names its host certificate names.",
+            "properties": {
+              "lan": { "$ref": "#/$defs/hostName", "description": "The first of its names other than the overlay one that resolves on the FleetLedger computer, else the first of them." },
+              "overlay": { "oneOf": [{ "$ref": "#/$defs/hostName" }, { "type": "null" }], "description": "Its overlay name, which works off the LAN; null when it is not on the overlay." }
+            }
+          },
+          "host_certificate": { "type": "boolean", "description": "Its last status shows a host certificate. Without one, ssh to it fails the CA check until ship-fleet ca sign." }
+        }
+      }
+    },
+    "idle_limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on", "days"],
+      "properties": {
+        "on": { "type": "boolean", "description": "true: after days without asking, the machine is refused its bundle until allowed again (ship-fleet trust NAME --allow-again). false: it stays trusted until untrusted." },
+        "days": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+    "hostName": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC, RFC 3339, with a Z suffix."
+    }
+  }
+}

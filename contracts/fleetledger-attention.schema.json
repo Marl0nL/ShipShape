@@ -30,7 +30,7 @@
       "if": { "properties": { "ship": { "type": "null" } } },
       "then": {
         "properties": {
-          "code": { "enum": ["vault-locked", "machine-cert-expiring", "machine-cert-lapsed", "proxmox-token-expiring", "proxmox-token-lapsed"] },
+          "code": { "enum": ["vault-locked", "machine-cert-expiring", "machine-cert-lapsed", "machine-refresh-stopped", "machine-refresh-refused", "proxmox-token-expiring", "proxmox-token-lapsed"] },
           "subject": { "type": "string", "minLength": 1 },
           "fix": { "minLength": 1 }
         }

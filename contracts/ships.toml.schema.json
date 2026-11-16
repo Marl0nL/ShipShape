@@ -274,6 +274,28 @@
           "revoked": {
             "$ref": "#/$defs/timestamp",
             "description": "When `ship-fleet untrust` revoked it. Its key is in the revocation list every Ship gets, and it is never certified again."
+          },
+          "last_refreshed": {
+            "$ref": "#/$defs/timestamp",
+            "description": "When it last got its bundle from `ship-fleet machine-bundle` (kept to within a few minutes). Written by ship-fleet. A machine that has one refreshes itself: it needs attention when it stops asking."
+          },
+          "last_cert_hours": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2160,
+            "description": "The lifetime its last certificate was given (ship-fleet trust, --hours included, or ship-fleet machine-bundle). Written by ship-fleet. machine-bundle renews for this or cert_hours (else ca.user_cert_hours), whichever is shorter, so a short one-off grant is never stretched."
+          },
+          "refresh_allowed": {
+            "$ref": "#/$defs/timestamp",
+            "description": "When you last allowed it to ask again (`ship-fleet trust NAME --allow-again`). Its idle time runs from this or last_refreshed, whichever is later; with neither, from its first ask."
+          },
+          "idle_limit": {
+            "type": "boolean",
+            "description": "false: it stays trusted until untrusted, however long it goes without asking (`ship-fleet trust NAME --idle-limit off`). Absent or true: after 30 days without asking, `ship-fleet machine-bundle` refuses it until you allow it again. Never applies to FleetLedger's own computer."
+          },
+          "idle_refused": {
+            "$ref": "#/$defs/timestamp",
+            "description": "When `ship-fleet machine-bundle` first refused it for being idle. Written by ship-fleet; cleared when you allow it again or turn its idle limit off."
           }
         }
       }

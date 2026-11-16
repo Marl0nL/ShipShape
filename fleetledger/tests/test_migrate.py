@@ -527,6 +527,39 @@ def test_ships_made_by_one_copy_keep_working_from_the_other_with_nothing_changed
     assert code == 1 and "retired" in err and world.state() == ships_before
 
 
+def test_a_move_carries_when_machines_last_asked_their_idle_limits_and_certificates(
+        computers, monkeypatch):
+    """ship-fleet machine-bundle's record (ships.toml) and the certificate it hands out
+    (beside the machine's bundle) move with the fleet: the new copy answers the same
+    machine with the same certificate, signing nothing, and keeps its idle limits."""
+    a, b, _world = computers
+    code, out, err = a.run("machine-bundle", "laptop")
+    assert code == 0, err
+    before = json.loads(out)["certificate"]
+    for argv in (("trust", "laptop", "--allow-again"), ("trust", "phone", "--idle-limit", "off")):
+        assert a.run(*argv)[0] == 0, argv
+    a_doc = tomllib.loads(a.store.path.read_text())["machine"]
+    assert a_doc["laptop"]["last_refreshed"] and a_doc["laptop"]["refresh_allowed"]
+    assert a_doc["phone"]["idle_limit"] is False
+    stream = send_bytes(a, monkeypatch)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    b_doc = tomllib.loads(b.store.path.read_text())["machine"]
+    for name in ("laptop", "phone"):
+        assert b_doc[name] == a_doc[name], name
+    code, out, err = b.run("machine-bundle", "laptop")
+    assert code == 1 and "on standby" in err and out == ""  # not until it is the active copy
+    a.use(monkeypatch)
+    assert a.run("migrate", "retire", "--to", "vm", "--yes")[0] == 0
+    code, out, err = a.run("machine-bundle", "laptop")
+    assert code == 1 and "retired" in err and "vm" in err and out == ""
+    b.use(monkeypatch)
+    assert b.run("migrate", "activate", "--yes")[0] == 0
+    code, out, err = b.run("machine-bundle", "laptop")
+    assert code == 0, err
+    after = json.loads(out)["certificate"]
+    assert after["line"] == before["line"] and after["renewed"] is False
+
+
 def test_the_file_store_keeps_every_secret_in_0600_files(computers, monkeypatch):
     a, b, world = computers
     code = receive(b, monkeypatch, send_bytes(a, monkeypatch), store_kind="file")
