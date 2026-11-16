@@ -480,16 +480,41 @@ def cmd_trust(args, app) -> int:
             if missing:
                 app.say(attach.install_hint(missing, renew_command(name, args) + " --install"))
         return 1 if not_revoked or unkeyed else proc.returncode
-    if keyed == "installed":
-        # One sentence, so the machine's refresher, when it comes, can replace it alone.
-        app.say(authkeys.first_fetch_said(name, args.identity))
+    line = first_install_line(store, inv, m) if keyed in ("installed", "own-line") else None
+    if line:
+        app.say(f"On {name}, paste this one line in a terminal. It finds {name}'s key by its "
+                "public half under ~/.ssh, pins this VM's host key, fetches the bundle with "
+                "that key, installs ~/.ssh/shipshape/refresh and leaves a timer that runs it "
+                "at login and hourly (add --no-timer at the end of the line for none):")
+        app.say(line)
+        app.say(f"From then on {name} renews its certificate (this one lasts until "
+                f"{ca.stamp(until)}) and picks up new and removed Ships by itself. Without "
+                "the refresher, copy the folder over and run sh install.sh, and again "
+                "before then.")
+        return 1 if not_revoked or unkeyed else 0
     app.say("On that machine, copy the folder over and run:  sh install.sh")
-    # One sentence, so the coming self-refresh can replace it alone.
     app.say(f"Renew it before {ca.stamp(until)}: run {renew_command(name, args)} again on "
             "the FleetLedger computer (or Download bundle in its row under Settings ▸ "
             f"Access ▸ Trusted machines), copy the new bundle to {name} and run sh install.sh "
             "in its folder there.")
     return 1 if not_revoked or unkeyed else 0
+
+
+def first_install_line(store, inv: Inventory, m: ca.Machine) -> str | None:
+    """The one line to paste on machine m to install its refresher (fleetledger/refresher):
+    only on FleetLedger's own VM, as the active copy, where m's key may fetch its bundle
+    (its forced line, or a line of your own) and the VM's host key is recorded; else None."""
+    import getpass
+
+    from fleetledger import appliance, refresher
+
+    me = appliance.fleet_self(inv)
+    if not me or not me.get("host_key") or not authkeys.adds_here(store, inv):
+        return None
+    hosts = [*me.get("names", []), me["name"]]
+    host_key = " ".join(str(me["host_key"]).split()[:2])
+    blob = (m.public_key.split() + [""])[1]
+    return refresher.first_install_line(m.name, blob, getpass.getuser(), hosts, host_key)
 
 
 IDENTITY_DEFAULT = "~/.ssh/shipshape/id_ed25519"  # trust --identity's default

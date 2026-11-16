@@ -1,0 +1,856 @@
+#!/bin/sh
+# ShipShape's refresher: keeps this computer's ShipShape SSH setup current by asking
+# FleetLedger for this machine's own bundle over ssh (ship-fleet machine-bundle NAME,
+# contracts/machine-bundle.schema.json) and applying it as data.
+#
+#   ~/.ssh/shipshape/refresh                 fetch the bundle and apply it (the timer runs this)
+#   ~/.ssh/shipshape/refresh remove-timer    stop and delete the timer the first install left
+#   sh refresh install NAME KEY USER HOSTS HOST_KEY [--no-timer] [--no-hc] [--lan]
+#                                            the first install (the line ship-fleet trust prints)
+#
+# What a refresh may change, and nothing else: in ~/.ssh/shipshape, the certificate
+# (NAME-cert.pub), known_hosts, config (written from the template below, never from text
+# in the bundle), fleet.json (the bundle as checked, without the refresher), state.json
+# and hc-added (the hc machines it added); and hc's machines, adding herdr-core Ships and
+# removing only those it added itself. It never runs, sources or writes as config any text
+# from the bundle: every value is checked against a tight pattern first, and a bundle with
+# one value out of place is refused whole. It never replaces itself, so a FleetLedger that
+# was taken over cannot run code here through a refresh. A refresh that fails or is refused
+# leaves the last good files as they were, says why in one sentence on stderr and in
+# state.json, and exits 1.
+#
+# Its settings are in ~/.ssh/shipshape/machine.conf, written by the first install: data,
+# read line by line, never sourced. See docs/runbooks/trust-machines.md.
+
+set -u
+umask 077
+LC_ALL=C
+export LC_ALL
+
+VERSION=1
+D="$HOME/.ssh/shipshape"
+CONF="$D/machine.conf"
+STATE="$D/state.json"
+ADDED="$D/hc-added"
+UNIT=shipshape-refresh
+LABEL=local.shipshape.refresh
+MAX_BUNDLE=4194304
+
+stage=
+locked=
+warning=
+
+# --- checks: every value from the bundle, the settings or the command line passes one ----------
+is_name() { # a Ship or machine name, a tag: a-z, 0-9 and -, up to 31
+  case $1 in '' | -* | *[!a-z0-9-]*) return 1 ;; esac
+  [ "${#1}" -le 31 ]
+}
+is_host() { # a host name or IPv4 address (no wildcard, no %, no space)
+  case $1 in '' | [!A-Za-z0-9]* | *[!A-Za-z0-9.-]*) return 1 ;; esac
+  [ "${#1}" -le 253 ]
+}
+is_user() {
+  case $1 in '' | [!a-z_]* | *[!a-z0-9_-]*) return 1 ;; esac
+  [ "${#1}" -le 32 ]
+}
+is_blob() { # an ed25519 key's base64
+  case $1 in AAAAC3NzaC1lZDI1NTE5* ) ;; *) return 1 ;; esac
+  case $1 in *[!A-Za-z0-9+/=]*) return 1 ;; esac
+  [ "${#1}" -le 120 ]
+}
+is_path() { # an absolute path, with characters ssh_config and a unit file take as they are
+  case $1 in /*) ;; *) return 1 ;; esac
+  case $1 in *[!A-Za-z0-9._/@+-]* | */../* | */.. ) return 1 ;; esac
+  [ "${#1}" -le 1024 ]
+}
+
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+json_str() { # a JSON string from a sentence of ours (printable ASCII only)
+  printf '"%s"' "$(printf '%s' "$1" | tr -cd ' -~' | sed 's/\\/\\\\/g; s/"/\\"/g')"
+}
+
+# The last success and certificate end from state.json (written only by this script).
+state_field() {
+  [ -f "$STATE" ] || return 0
+  sed -n "s/.*\"$1\":\"\\([0-9TZ:.-]*\\)\".*/\\1/p" "$STATE" | head -n 1
+}
+
+# state.json, for the Fleet panel: when it last tried and last worked, the certificate's end,
+# how many Ships, and the last error (null after a success) or a warning (hc).
+write_state() { # ok|failed, sentence
+  attempt=$(now)
+  if [ "$1" = ok ]; then
+    success=$attempt
+    until_=${cert_until:-}
+    count=${ship_count:-0}
+    err=null
+  else
+    success=$(state_field last_success)
+    until_=$(state_field certificate_valid_before)
+    count=$(sed -n 's/.*"ships":\([0-9]*\).*/\1/p' "$STATE" 2>/dev/null | head -n 1)
+    err=$(json_str "$2")
+  fi
+  [ -n "$success" ] && success="\"$success\"" || success=null
+  [ -n "$until_" ] && until_="\"$until_\"" || until_=null
+  [ -n "$count" ] || count=null
+  if [ -n "$warning" ]; then warn=$(json_str "$warning"); else warn=null; fi
+  if is_name "${name:-}"; then who="\"$name\""; else who=null; fi
+  tmp="$D/.state.$$"
+  printf '{"schema":"shipshape.refresh-state/1","refresher":%s,"machine":%s,"last_attempt":"%s","last_success":%s,"certificate_valid_before":%s,"ships":%s,"last_error":%s,"warning":%s}\n' \
+    "$VERSION" "$who" "$attempt" "$success" "$until_" "$count" "$err" "$warn" >"$tmp" \
+    && mv -f "$tmp" "$STATE"
+}
+
+cleanup() {
+  [ -n "$stage" ] && rm -rf "$stage"
+  [ -n "$locked" ] && rm -rf "$D/.lock"
+  stage=
+  locked=
+}
+
+# One plain sentence on stderr and in state.json; the last good files stay as they were.
+fail() {
+  printf '%s\n' "$1" >&2
+  [ -d "$D" ] && [ ! -L "$D" ] && write_state failed "$1"
+  cleanup
+  exit 1
+}
+
+usage() {
+  printf '%s\n' "$1" >&2
+  exit 2
+}
+
+# --- the settings -------------------------------------------------------------------------------
+read_conf() {
+  [ -f "$CONF" ] || fail "There is no $CONF: paste the line ship-fleet trust prints for this machine on the FleetLedger computer."
+  name='' key='' user='' hosts='' host_key='' hc=on host_names=overlay hc_path=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in '' | '#'*) continue ;; esac
+    k=${line%%=*}
+    v=${line#*=}
+    case $k in
+      name) name=$v ;;
+      key) key=$v ;;
+      user) user=$v ;;
+      hosts) hosts=$v ;;
+      host_key) host_key=$v ;;
+      hc) hc=$v ;;
+      hc_path) hc_path=$v ;;
+      host_names) host_names=$v ;;
+      *) fail "$CONF has a line this refresher does not know; paste the line from ship-fleet trust again." ;;
+    esac
+  done <"$CONF"
+  is_name "$name" || fail "$CONF: name is not a machine name."
+  is_path "$key" || fail "$CONF: key is not a path this refresher uses (absolute; letters, digits and ._/@+-)."
+  is_user "$user" || fail "$CONF: user is not a user name."
+  n=0
+  for h in $hosts; do
+    is_host "$h" || fail "$CONF: hosts has a name that is not a host name."
+    n=$((n + 1))
+  done
+  [ "$n" -ge 1 ] && [ "$n" -le 8 ] || fail "$CONF: hosts names 1 to 8 host names."
+  case $host_key in "ssh-ed25519 "*) ;; *) fail "$CONF: host_key is not an ed25519 host key." ;; esac
+  is_blob "${host_key#ssh-ed25519 }" || fail "$CONF: host_key is not an ed25519 host key."
+  case $hc in on | off) ;; *) fail "$CONF: hc is on or off." ;; esac
+  case $host_names in overlay | lan) ;; *) fail "$CONF: host_names is overlay or lan." ;; esac
+  [ -z "$hc_path" ] || is_path "$hc_path" || fail "$CONF: hc_path is not an absolute path."
+}
+
+# Only one refresh at a time (the timer and the Fleet panel may start one together).
+take_lock() {
+  tries=0
+  until mkdir "$D/.lock" 2>/dev/null; do
+    pid=$(cat "$D/.lock/pid" 2>/dev/null)
+    case $pid in '' | *[!0-9]*) pid= ;; esac
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      rm -rf "$D/.lock" # left by a refresh that is no longer running
+      continue
+    fi
+    tries=$((tries + 1))
+    [ "$tries" -le 90 ] || { printf '%s\n' "Another refresh is still running; this one gave up after 90 seconds." >&2; exit 1; }
+    sleep 1
+  done
+  locked=1
+  echo $$ >"$D/.lock/pid"
+}
+
+# --- reading the bundle -------------------------------------------------------------------------
+# A strict JSON reader: one value, objects with keys of a-z and _ (no key twice), no control
+# character in a string, nothing after the value, at most 8 levels deep. It prints each
+# value as PATH<tab>TYPE<tab>TEXT (strings as they were written, escapes and all), and
+# writes the document again, compact, without the top-level "refresher", to the file canon.
+# shellcheck disable=SC2016  # an awk program: its $ are awk's
+JSON_AWK='
+function fail(why) { print "! " why; failed = 1; exit 2 }
+function out(x) { if (!mute) cs = cs x }
+function emit(path, type, text) { if (!mute) printf "%s\t%s\t%s\n", path, type, text }
+function ws(   c) {
+  while (p <= n) {
+    c = substr(s, p, 1)
+    if (c == " " || c == "\t" || c == "\n" || c == "\r") p++
+    else break
+  }
+}
+function str(   c, start, h) {
+  p++
+  start = p
+  for (;;) {
+    if (p > n) fail("a string does not end")
+    c = substr(s, p, 1)
+    if (c == "\"") break
+    if (c == "\\") {
+      c = substr(s, p + 1, 1)
+      if (c == "\"" || c == "\\" || c == "/" || c == "b" || c == "f" || c == "n" || c == "r" || c == "t") { p += 2; continue }
+      if (c == "u") {
+        h = substr(s, p + 2, 4)
+        if (h !~ /^[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]$/) fail("a bad \\u escape")
+        p += 6
+        continue
+      }
+      fail("a bad escape")
+    }
+    if (c == "\t" || c == "\n" || c == "\r") fail("a control character in a string")
+    p++
+  }
+  tok = substr(s, start, p - start)
+  p++
+  out("\"" tok "\"")
+}
+function value(path, depth,   c, t) {
+  if (depth > 8) fail("too deep")
+  ws()
+  if (p > n) fail("it ends early")
+  c = substr(s, p, 1)
+  if (c == "{") { object(path, depth); return }
+  if (c == "[") { array(path, depth); return }
+  if (c == "\"") { str(); emit(path, "s", tok); return }
+  if (substr(s, p, 4) == "true") { p += 4; out("true"); emit(path, "b", "true"); return }
+  if (substr(s, p, 5) == "false") { p += 5; out("false"); emit(path, "b", "false"); return }
+  if (substr(s, p, 4) == "null") { p += 4; out("null"); emit(path, "z", "null"); return }
+  t = ""
+  while (p <= n && index("-+.eE0123456789", substr(s, p, 1)) > 0) { t = t substr(s, p, 1); p++ }
+  if (t !~ /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?$/) fail("not JSON")
+  out(t)
+  emit(path, "n", t)
+}
+function object(path, depth,   first, key, kp, skip, c, m) {
+  p++
+  out("{")
+  emit(path, "o", "")
+  first = 1
+  ws()
+  if (substr(s, p, 1) == "}") { p++; out("}"); return }
+  for (;;) {
+    ws()
+    if (substr(s, p, 1) != "\"") fail("a key is not a string")
+    m = mute
+    mute = 1
+    str()
+    mute = m
+    key = tok
+    if (key !~ /^[a-z_]+$/ || length(key) > 40) fail("a key that is not a-z and _")
+    kp = (path == "" ? key : path "." key)
+    if (kp in seen) fail("a key given twice")
+    seen[kp] = 1
+    ws()
+    if (substr(s, p, 1) != ":") fail("not JSON")
+    p++
+    skip = (path == "" && key == "refresher")
+    if (!skip) { out((first ? "" : ",") "\"" key "\":"); first = 0 }
+    if (skip) mute++
+    value(kp, depth + 1)
+    if (skip) mute--
+    ws()
+    c = substr(s, p, 1)
+    if (c == ",") { p++; continue }
+    if (c == "}") { p++; out("}"); return }
+    fail("not JSON")
+  }
+}
+function array(path, depth,   i, c) {
+  p++
+  out("[")
+  i = 0
+  ws()
+  if (substr(s, p, 1) == "]") { p++; out("]"); emit(path, "a", 0); return }
+  for (;;) {
+    if (i >= 1000) fail("a list that is too long")
+    if (i > 0) out(",")
+    value(path "." i, depth + 1)
+    i++
+    ws()
+    c = substr(s, p, 1)
+    if (c == ",") { p++; continue }
+    if (c == "]") { p++; out("]"); emit(path, "a", i); return }
+    fail("not JSON")
+  }
+}
+{ s = s $0 "\n" }
+END {
+  if (failed) exit 2
+  n = length(s)
+  p = 1
+  mute = 0
+  ws()
+  if (substr(s, p, 1) != "{") fail("not a JSON object")
+  value("", 0)
+  ws()
+  if (p <= n) fail("something after the document")
+  printf "%s\n", cs > ENVIRON["CANON"]
+}
+'
+
+# The bundle, field by field, against contracts/machine-bundle.schema.json and tighter: every
+# value this script writes anywhere is checked here. Prints what the shell applies, one record
+# a line, each word already checked (so none holds a space, a quote or a glob it should not):
+#   M machine | A at | C type blob valid_before (or C - - -) | N renewed code (or -)
+#   U user | K a known_hosts line | S name runtime lan overlay(-) host_cert tags(a,b or -)
+# shellcheck disable=SC2016  # an awk program: its $ are awk's
+CHECK_AWK='
+function bad(why) { print "! " why; failed = 1; exit 3 }
+function name_ok(x) { return x ~ /^[a-z0-9][a-z0-9-]*$/ && length(x) <= 31 }
+function host_ok(x) { return x ~ /^[A-Za-z0-9][A-Za-z0-9.-]*$/ && length(x) <= 253 }
+function stamp_ok(x) { return x ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?Z$/ }
+function blob_ok(x) { return x ~ /^AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+\/]*=?=?$/ && length(x) <= 120 }
+function certblob_ok(x) { return x ~ /^AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29t[A-Za-z0-9+\/]*=?=?$/ && length(x) <= 4000 }
+function fl_host(x) { return index(" " flhosts " ", " " x " ") > 0 }
+function need(path, type) { if (!(path in T)) bad("no " path); if (T[path] != type) bad(path " is not what it should be") }
+function names_ok(list,   k, i, a) {
+  k = split(list, a, ",")
+  if (k < 1 || k > 400) return 0
+  for (i = 1; i <= k; i++) if (!host_ok(a[i]) || fl_host(a[i])) return 0
+  return 1
+}
+BEGIN { FS = "\t" }
+/^! / { print; failed = 1; exit 3 }
+{
+  if (NF != 3) bad("an odd value")
+  path = $1; t = $2; v = $3
+  if (path in T) bad("a field given twice")
+  T[path] = t
+  V[path] = v
+}
+END {
+  if (failed) exit 3
+  # Every field, by where it is; anything else is refused.
+  for (path in T) {
+    k = split(path, a, ".")
+    t = T[path]; v = V[path]
+    if (path == "") { if (t != "o") bad("not an object"); continue }
+    top = a[1]
+    if (k == 1) {
+      if (top == "schema") { if (t != "s" || v != "shipshape.machine-bundle/1") bad("not a machine bundle (version 1)") }
+      else if (top == "machine") { if (t != "s" || v != me) bad("it is not this machine'"'"'s bundle") }
+      else if (top == "at") { if (t != "s" || !stamp_ok(v)) bad("at") }
+      else if (top == "certificate" || top == "ssh" || top == "idle_limit") { if (t != "o") bad(top) }
+      else if (top == "scope" || top == "logins" || top == "known_hosts" || top == "ships") { if (t != "a") bad(top) }
+      else if (top == "fleetledger") { if (t != "o" && t != "z") bad(top) }
+      else if (top == "refresher") { if (t != "s" || v !~ /^[A-Za-z0-9+\/=]*$/) bad(top) }
+      else bad("an unknown field, " path)
+      continue
+    }
+    if (top == "certificate") {
+      f = a[2]
+      if (k == 2 && f == "line") { if (t == "z") continue; if (t != "s") bad("certificate.line"); continue }
+      if (k == 2 && f == "valid_before") { if (t == "z") continue; if (t != "s" || !stamp_ok(v)) bad("certificate.valid_before"); continue }
+      if (k == 2 && f == "renewed") { if (t != "b") bad("certificate.renewed"); continue }
+      if (k == 2 && f == "not_renewed") { if (t != "z" && t != "o") bad("certificate.not_renewed"); continue }
+      if (k == 3 && a[2] == "not_renewed" && a[3] == "code") { if (t != "s" || (v != "vault-locked" && v != "sign-failed")) bad("not_renewed.code"); continue }
+      if (k == 3 && a[2] == "not_renewed" && a[3] == "why") { if (t != "s" || length(v) < 1 || length(v) > 6000) bad("not_renewed.why"); continue }
+      bad("an unknown field, " path)
+    }
+    if (top == "scope" && k == 2) { if (t != "s" || v !~ /^(all|tag:[a-z0-9][a-z0-9-]*|ship:[a-z0-9][a-z0-9-]*)$/ || length(v) > 36) bad("scope"); continue }
+    if (top == "logins" && k == 2) { if (t != "s" || (v != "agent" && v != "owner")) bad("logins"); continue }
+    if (top == "ssh" && k == 2 && a[2] == "user") { if (t != "s" || v !~ /^[a-z_][a-z0-9_-]*$/ || length(v) > 32) bad("ssh.user"); continue }
+    if (top == "known_hosts" && k == 2) { if (t != "s") bad("known_hosts"); continue }
+    if (top == "fleetledger" && k == 2) {
+      if (a[2] == "name") { if (t != "s" || !name_ok(v)) bad("fleetledger.name"); continue }
+      if (a[2] == "known_hosts") { if (t != "s" || v !~ /^[A-Za-z0-9][A-Za-z0-9.,-]* ssh-ed25519 [A-Za-z0-9+\/]+=?=?$/) bad("fleetledger.known_hosts"); continue }
+      bad("an unknown field, " path)
+    }
+    if (top == "idle_limit" && k == 2) {
+      if (a[2] == "on") { if (t != "b") bad("idle_limit.on"); continue }
+      if (a[2] == "days") { if (t != "n" || v !~ /^[1-9][0-9]*$/ || length(v) > 5) bad("idle_limit.days"); continue }
+      bad("an unknown field, " path)
+    }
+    if (top == "ships" && k >= 3) {
+      f = a[3]
+      if (k == 3 && f == "name") { if (t != "s" || !name_ok(v) || fl_host(v)) bad("a Ship name"); continue }
+      if (k == 3 && f == "tags") { if (t != "a") bad("a Ship'"'"'s tags"); continue }
+      if (k == 4 && f == "tags") { if (t != "s" || !name_ok(v)) bad("a Ship'"'"'s tag"); continue }
+      if (k == 3 && f == "runtime") { if (t != "s" || (v != "core" && v != "herdr")) bad("a Ship'"'"'s runtime"); continue }
+      if (k == 3 && f == "host_names") { if (t != "o") bad("a Ship'"'"'s host names"); continue }
+      if (k == 4 && f == "host_names" && a[4] == "lan") { if (t != "s" || !host_ok(v)) bad("a Ship'"'"'s host name"); continue }
+      if (k == 4 && f == "host_names" && a[4] == "overlay") { if (t == "z") continue; if (t != "s" || !host_ok(v)) bad("a Ship'"'"'s host name"); continue }
+      if (k == 3 && f == "host_certificate") { if (t != "b") bad("a Ship'"'"'s host_certificate"); continue }
+      bad("an unknown field, " path)
+    }
+    if (top == "ships" && k == 2) { if (t != "o") bad("a Ship"); continue }
+    bad("an unknown field, " path)
+  }
+  need("schema", "s"); need("machine", "s"); need("at", "s")
+  need("certificate", "o"); need("certificate.renewed", "b")
+  if (!("certificate.line" in T) || !("certificate.valid_before" in T) || !("certificate.not_renewed" in T)) bad("no certificate")
+  need("scope", "a"); need("logins", "a"); need("ssh", "o"); need("ssh.user", "s")
+  need("known_hosts", "a"); need("ships", "a"); need("idle_limit", "o")
+  need("idle_limit.on", "b"); need("idle_limit.days", "n")
+  if (!("fleetledger" in T)) bad("no fleetledger")
+  if (V["scope"] < 1 || V["logins"] < 1) bad("no scope")
+  if (T["certificate.not_renewed"] == "o") need("certificate.not_renewed.code", "s")
+  if (T["certificate.not_renewed"] == "o") need("certificate.not_renewed.why", "s")
+  if (T["fleetledger"] == "o") { need("fleetledger.name", "s"); need("fleetledger.known_hosts", "s") }
+
+  print "M " V["machine"]
+  print "A " V["at"]
+  if (T["certificate.line"] == "s") {
+    k = split(V["certificate.line"], c, " ")
+    if (k < 2 || c[1] != "ssh-ed25519-cert-v01@openssh.com" || !certblob_ok(c[2])) bad("certificate.line is not an ed25519 certificate")
+    if (T["certificate.valid_before"] != "s") bad("certificate.valid_before")
+    print "C " c[1] " " c[2] " " V["certificate.valid_before"]
+  } else {
+    if (T["certificate.valid_before"] != "z") bad("certificate.valid_before")
+    print "C - - -"
+  }
+  code = (T["certificate.not_renewed"] == "o") ? V["certificate.not_renewed.code"] : "-"
+  print "N " V["certificate.renewed"] " " code
+  print "U " V["ssh.user"]
+
+  cas = 0
+  for (i = 0; i < V["known_hosts"]; i++) {
+    x = V["known_hosts." i]
+    k = split(x, w, " ")
+    if (k < 4) bad("a known_hosts line")
+    if (w[1] == "@cert-authority" && names_ok(w[2]) && w[3] == "ssh-ed25519" && blob_ok(w[4])) {
+      if (++cas > 1) bad("more than one @cert-authority line")
+      print "K @cert-authority " w[2] " ssh-ed25519 " w[4]
+    } else if (w[1] == "@revoked" && w[2] == "*" && w[3] == "ssh-ed25519" && blob_ok(w[4])) {
+      print "K @revoked * ssh-ed25519 " w[4]
+    } else bad("a known_hosts line")
+  }
+
+  if (V["ships"] > 500) bad("too many Ships")
+  for (i = 0; i < V["ships"]; i++) {
+    b = "ships." i
+    need(b ".name", "s"); need(b ".tags", "a"); need(b ".runtime", "s"); need(b ".host_names", "o")
+    need(b ".host_names.lan", "s"); need(b ".host_certificate", "b")
+    if (!((b ".host_names.overlay") in T)) bad("a Ship'"'"'s host names")
+    nm = V[b ".name"]
+    if (nm in seenship) bad("a Ship listed twice")
+    seenship[nm] = 1
+    tags = ""
+    for (j = 0; j < V[b ".tags"]; j++) tags = tags (j ? "," : "") V[b ".tags." j]
+    if (tags == "") tags = "-"
+    ov = (T[b ".host_names.overlay"] == "s") ? V[b ".host_names.overlay"] : "-"
+    print "S " nm " " V[b ".runtime"] " " V[b ".host_names.lan"] " " ov " " V[b ".host_certificate"] " " tags
+  }
+}
+'
+
+# --- fetching -----------------------------------------------------------------------------------
+# ssh to FleetLedger with this machine's key alone, its host key pinned from machine.conf, and
+# no ssh_config (so nothing this script writes, and nothing in ~/.ssh/config, changes where it
+# connects or what it trusts). The command it asks for is fixed: a key whose authorized_keys
+# line forces ship-fleet machine-bundle NAME runs that whatever is asked; your own key, which
+# has a shell there, runs it as asked. Its output is cut off at 4 MiB, its stderr at 4 KiB.
+fetch() {
+  pin="$stage/pin"
+  printf '%s %s\n' "$(printf '%s' "$hosts" | tr -s ' ' ',')" "$host_key" >"$pin"
+  said=
+  for h in $hosts; do
+    rm -f "$stage/out" "$stage/err" "$stage/rc"
+    {
+      {
+        ssh -F none -T -x -a -i "$key" -l "$user" \
+          -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          -o UserKnownHostsFile="$pin" -o GlobalKnownHostsFile=/dev/null \
+          -o UpdateHostKeys=no -o HostKeyAlgorithms=ssh-ed25519 -o CheckHostIP=no \
+          -o VerifyHostKeyDNS=no -o ConnectTimeout=15 -o ServerAliveInterval=15 \
+          -o ServerAliveCountMax=2 -o ClearAllForwardings=yes -o ForwardAgent=no \
+          -o PermitLocalCommand=no -o ControlMaster=no -o ControlPath=none \
+          -o ProxyCommand=none -o RequestTTY=no -o LogLevel=ERROR \
+          -- "$h" ship-fleet machine-bundle "$name" </dev/null 2>&1 1>&3 3>&-
+        echo $? >"$stage/rc"
+      } | head -c 4096 >"$stage/err"
+    } 3>&1 | head -c $((MAX_BUNDLE + 1)) >"$stage/out"
+    rc=$(cat "$stage/rc" 2>/dev/null)
+    [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 4 MiB; refused, and the files here are unchanged."
+    first=$(head -n 1 "$stage/err" 2>/dev/null | tr -cd ' -~' | cut -c 1-300)
+    case $rc in
+      0) return 0 ;;
+      255) said="ssh to $user@$h: ${first:-it gave no reason}" ;;
+      '') fail "FleetLedger's answer was cut off: more than 4 MiB, or ssh was stopped." ;;
+      *) fail "FleetLedger refused this machine's bundle: ${first:-it gave no reason} (the files here are unchanged)." ;;
+    esac
+  done
+  fail "Could not reach FleetLedger ($said); the files here are unchanged."
+}
+
+check_bundle() {
+  [ -s "$stage/out" ] || fail "FleetLedger answered with nothing; the files here are unchanged."
+  [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 4 MiB; refused, and the files here are unchanged."
+  # Printable ASCII, tabs and line ends only (FleetLedger writes JSON with \u escapes).
+  [ "$(tr -d '\011\012\015 -~' <"$stage/out" | wc -c)" -eq 0 ] \
+    || fail "FleetLedger's answer holds bytes JSON from it never has; refused, and the files here are unchanged."
+  flhosts=$(printf '%s' "$hosts" | tr -s ' ' ' ')
+  CANON="$stage/fleet.json" awk "$JSON_AWK" <"$stage/out" >"$stage/flat"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    why=$(sed -n 's/^! //p' "$stage/flat" | head -n 1)
+    fail "FleetLedger's answer is not a document this refresher takes (${why:-unreadable}); refused, and the files here are unchanged."
+  fi
+  awk -v me="$name" -v flhosts="$flhosts" "$CHECK_AWK" <"$stage/flat" >"$stage/records"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    why=$(sed -n 's/^! //p' "$stage/records" | head -n 1)
+    fail "FleetLedger's bundle has a value out of place (${why:-unreadable}); refused, and the files here are unchanged."
+  fi
+}
+
+# --- writing ------------------------------------------------------------------------------------
+# ~ for this computer's home in the SSH config, so a home with odd characters still works.
+tilde() {
+  # shellcheck disable=SC2088  # ~ is for ssh_config, which expands it
+  case $1 in "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;; *) printf '%s' "$1" ;; esac
+}
+
+build_files() {
+  cert_type='' cert_blob='' cert_until='' renewed='' code='' bundle_user='' ship_count=0
+  : >"$stage/known_hosts.ca"
+  : >"$stage/ships"
+  while read -r kind a b c d e f; do
+    case $kind in
+      C) cert_type=$a cert_blob=$b cert_until=$c ;;
+      N) renewed=$a code=$b ;;
+      U) bundle_user=$a ;;
+      K) printf '%s %s %s %s\n' "$a" "$b" "$c" "$d" >>"$stage/known_hosts.ca" ;;
+      S) printf '%s %s %s %s %s %s\n' "$a" "$b" "$c" "$d" "$e" "$f" >>"$stage/ships"
+         ship_count=$((ship_count + 1)) ;;
+    esac
+  done <"$stage/records"
+  : "$renewed"
+  case $code in
+    vault-locked) fail "FleetLedger's vault is locked, so it signed no new certificate for $name; run ship-fleet unlock there. The files here are unchanged${cert_until_old:+ (the certificate here lasts until $cert_until_old)}." ;;
+    sign-failed) fail "FleetLedger could not sign a new certificate for $name (its audit log says why); the files here are unchanged." ;;
+  esac
+  [ "$cert_type" != - ] || fail "FleetLedger has no certificate for $name; the files here are unchanged."
+
+  printf '%s %s %s\n' "$cert_type" "$cert_blob" "$name" >"$stage/cert"
+  if [ -f "$key.pub" ]; then
+    want=$(ssh-keygen -l -f "$key.pub" 2>/dev/null | cut -d ' ' -f 2)
+    got=$(ssh-keygen -L -f "$stage/cert" 2>/dev/null | sed -n 's/^ *Public key: [A-Z0-9-]* //p' | head -n 1)
+    [ -n "$got" ] || fail "FleetLedger's certificate does not read as one; refused, and the files here are unchanged."
+    [ "$want" = "$got" ] || fail "FleetLedger's certificate is for another key than $key; refused, and the files here are unchanged."
+  fi
+
+  {
+    echo "# ShipShape: trust Ships' host certificates (written by ~/.ssh/shipshape/refresh)."
+    cat "$stage/known_hosts.ca"
+  } >"$stage/known_hosts"
+
+  ident=$(tilde "$key")
+  {
+    echo "# ShipShape Ships for $name (written by ~/.ssh/shipshape/refresh from FleetLedger's bundle)."
+    echo "# Rewritten at every refresh: change machine.conf, not this file."
+    while read -r s_name s_rt s_lan s_ov s_cert s_tags; do
+      host=$s_lan
+      [ "$host_names" = overlay ] && [ "$s_ov" != - ] && host=$s_ov
+      : "$s_rt" "$s_cert" "$s_tags"
+      printf '\nHost %s\n' "$s_name"
+      printf '  HostName %s\n' "$host"
+      printf '  User %s\n' "$bundle_user"
+      printf '  IdentityFile %s\n' "$ident"
+      printf '  CertificateFile ~/.ssh/shipshape/%s-cert.pub\n' "$name"
+      printf '  IdentitiesOnly yes\n'
+      printf '  UserKnownHostsFile ~/.ssh/shipshape/known_hosts\n'
+      printf '  GlobalKnownHostsFile /dev/null\n'
+      printf '  StrictHostKeyChecking yes\n'
+      printf '  HostKeyAlgorithms ssh-ed25519-cert-v01@openssh.com\n'
+      printf '  UpdateHostKeys no\n'
+      printf '  ForwardAgent no\n'
+      printf '  ForwardX11 no\n'
+    done <"$stage/ships"
+  } >"$stage/config"
+}
+
+put() { # stage file -> its place in ~/.ssh/shipshape, by rename
+  { chmod 600 "$stage/$1" && mv -f "$stage/$1" "$D/$2"; } || fail "Could not write $D/$2; the other files here may be from this refresh."
+}
+
+apply_files() {
+  put cert "$name-cert.pub"
+  put known_hosts known_hosts
+  put config config
+  put fleet.json fleet.json
+}
+
+# --- hc (herdr-core) ----------------------------------------------------------------------------
+# Adds each herdr-core Ship that has a host certificate and that hc does not have; removes
+# only the machines this script added (listed in hc-added) once their Ship has left the
+# bundle or no longer runs herdr-core. A machine you or install.sh added is never removed.
+find_hc() {
+  if [ -n "$hc_path" ] && [ -x "$hc_path" ]; then printf '%s' "$hc_path"; return; fi
+  command -v hc 2>/dev/null && return
+  [ -x "$HOME/.local/bin/hc" ] && printf '%s' "$HOME/.local/bin/hc"
+}
+
+has() { # word list
+  case " $2 " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+sync_hc() {
+  [ "$hc" = on ] || return 0
+  ours=
+  if [ -f "$ADDED" ]; then
+    while IFS= read -r x; do is_name "$x" && ours="$ours $x"; done <"$ADDED"
+  fi
+  wanted='' new=''
+  if [ "$bundle_user" = agent ]; then # hc attaches to the agent
+    while read -r s_name s_rt s_lan s_ov s_cert s_tags; do
+      : "$s_lan" "$s_ov" "$s_tags"
+      [ "$s_rt" = core ] || continue
+      wanted="$wanted $s_name"
+      [ "$s_cert" = true ] && new="$new $s_name"
+    done <"$stage/ships"
+  fi
+  bin=$(find_hc)
+  if [ -z "$bin" ]; then
+    [ -n "$wanted" ] && warning="hc (herdr-core) is not installed here, so no Ship was added to it."
+    return 0
+  fi
+  if ! known=$("$bin" machine ls --json </dev/null 2>/dev/null); then
+    warning="hc machine ls did not answer, so hc's machines were left as they were."
+    return 0
+  fi
+  inhc=$(printf '%s\n' "$known" | grep -oE '"name" *: *"[a-z0-9-]+"' | sed 's/.*"\([a-z0-9-]*\)"$/\1/' | tr '\n' ' ')
+  keep='' problems=''
+  for s in $new; do
+    if has "$s" "$inhc"; then
+      has "$s" "$ours" && keep="$keep $s"
+    elif "$bin" machine add "$s" --name "$s" </dev/null >/dev/null 2>&1; then
+      keep="$keep $s"
+      echo "hc added $s."
+    else
+      problems="$problems $s"
+    fi
+  done
+  for s in $ours; do
+    has "$s" "$keep" && continue
+    if has "$s" "$wanted"; then
+      keep="$keep $s" # still its Ship's, not added again yet (no host certificate)
+    elif has "$s" "$inhc"; then
+      if "$bin" machine rm "$s" </dev/null >/dev/null 2>&1; then
+        echo "hc removed $s: it has left this machine's Ships."
+      else
+        keep="$keep $s"
+        problems="$problems $s"
+      fi
+    fi
+  done
+  [ -n "$problems" ] && warning="hc could not add or remove:$problems (try ssh NAME true)."
+  tmp="$stage/hc-added"
+  : >"$tmp"
+  for s in $keep; do echo "$s" >>"$tmp"; done
+  mv -f "$tmp" "$ADDED"
+}
+
+# --- refresh ------------------------------------------------------------------------------------
+refresh() {
+  [ -n "${HOME:-}" ] && [ -d "$HOME" ] || { echo "HOME is not set." >&2; exit 1; }
+  [ -d "$D" ] && [ ! -L "$D" ] || { echo "There is no folder $D (or it is a link): paste the line ship-fleet trust prints for this machine." >&2; exit 1; }
+  read_conf
+  take_lock
+  trap 'cleanup; exit 1' HUP INT TERM
+  stage=$(mktemp -d "$D/.stage.XXXXXX") || fail "Could not make a folder in $D."
+  cert_until_old=$(state_field certificate_valid_before)
+  fetch
+  check_bundle
+  build_files
+  apply_files
+  sync_hc
+  write_state ok ""
+  cleanup
+  echo "Refreshed $name: $ship_count Ship(s), certificate until $cert_until."
+  [ -n "$warning" ] && printf '%s\n' "$warning" >&2
+  return 0
+}
+
+# --- the timer ----------------------------------------------------------------------------------
+units_dir() {
+  dir=${XDG_CONFIG_HOME:-$HOME/.config}
+  case $dir in /*) ;; *) dir=$HOME/.config ;; esac
+  printf '%s/systemd/user' "$dir"
+}
+
+SERVICE_TEXT='[Unit]
+Description=ShipShape: refresh this computer'"'"'s Ships from FleetLedger
+
+[Service]
+Type=oneshot
+ExecStart=%h/.ssh/shipshape/refresh
+TimeoutStartSec=5min
+'
+
+TIMER_TEXT='[Unit]
+Description=ShipShape: refresh this computer'"'"'s Ships hourly and at login
+
+[Timer]
+OnStartupSec=1min
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+'
+
+plist_text() {
+  cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$1/.ssh/shipshape/refresh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
+EOF
+}
+
+install_timer() {
+  case $(uname -s) in
+    Darwin)
+      is_path "$HOME" || { echo "No timer: launchd needs a home folder of letters, digits and ._/@+- ($HOME). Run $D/refresh hourly some other way."; return 0; }
+      agents="$HOME/Library/LaunchAgents"
+      mkdir -p "$agents"
+      plist_text "$HOME" >"$agents/$LABEL.plist.tmp" && chmod 644 "$agents/$LABEL.plist.tmp" \
+        && mv -f "$agents/$LABEL.plist.tmp" "$agents/$LABEL.plist"
+      uid=$(id -u)
+      launchctl bootout "gui/$uid/$LABEL" >/dev/null 2>&1
+      if launchctl bootstrap "gui/$uid" "$agents/$LABEL.plist" >/dev/null 2>&1; then
+        echo "A launchd agent ($LABEL) runs the refresher at login and hourly. To remove it: $D/refresh remove-timer"
+      else
+        echo "Wrote $agents/$LABEL.plist, but launchctl did not load it; it loads at your next login. To remove it: $D/refresh remove-timer"
+      fi ;;
+    Linux)
+      if ! command -v systemctl >/dev/null 2>&1; then
+        echo "No timer: this computer has no systemd. Run $D/refresh hourly some other way (cron, say)."
+        return 0
+      fi
+      units=$(units_dir)
+      mkdir -p "$units"
+      printf '%s' "$SERVICE_TEXT" >"$units/$UNIT.service.tmp" && mv -f "$units/$UNIT.service.tmp" "$units/$UNIT.service"
+      printf '%s' "$TIMER_TEXT" >"$units/$UNIT.timer.tmp" && mv -f "$units/$UNIT.timer.tmp" "$units/$UNIT.timer"
+      if systemctl --user daemon-reload >/dev/null 2>&1 \
+        && systemctl --user enable --now "$UNIT.timer" >/dev/null 2>&1; then
+        echo "A systemd user timer ($UNIT.timer) runs the refresher at login and hourly. To remove it: $D/refresh remove-timer"
+      else
+        echo "Wrote $units/$UNIT.timer, but systemd did not start it (no user session here?): run systemctl --user enable --now $UNIT.timer in your desktop session. To remove it: $D/refresh remove-timer"
+      fi ;;
+    *)
+      echo "No timer: this refresher knows systemd and launchd only. Run $D/refresh hourly some other way." ;;
+  esac
+}
+
+remove_timer() {
+  case $(uname -s) in
+    Darwin)
+      plist="$HOME/Library/LaunchAgents/$LABEL.plist"
+      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1
+      rm -f "$plist"
+      echo "Removed the launchd agent $LABEL; the refresher stays at $D/refresh, run by hand." ;;
+    *)
+      units=$(units_dir)
+      if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user disable --now "$UNIT.timer" >/dev/null 2>&1
+      fi
+      rm -f "$units/$UNIT.timer" "$units/$UNIT.service"
+      command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1
+      echo "Removed the systemd user timer $UNIT.timer; the refresher stays at $D/refresh, run by hand." ;;
+  esac
+}
+
+# --- the first install --------------------------------------------------------------------------
+# Run once, by the line ship-fleet trust prints, as `sh <this file> install ...`: it copies this
+# file to ~/.ssh/shipshape/refresh, writes machine.conf, puts the Include line at the top of
+# ~/.ssh/config as install.sh does, leaves the timer, and refreshes.
+first_install() {
+  [ "$#" -ge 5 ] || usage "Usage: sh refresh install NAME KEY USER HOSTS HOST_KEY [--no-timer] [--no-hc] [--lan]"
+  i_name=$1 i_key=$2 i_user=$3 i_hosts=$4 i_hostkey=$5
+  shift 5
+  timer=1 i_hc=on i_names=overlay
+  for opt in "$@"; do
+    case $opt in
+      --no-timer) timer=0 ;;
+      --no-hc) i_hc=off ;;
+      --lan) i_names=lan ;;
+      *) usage "Unknown option $opt (--no-timer, --no-hc, --lan)." ;;
+    esac
+  done
+  is_name "$i_name" || usage "Not a machine name: $i_name"
+  is_path "$i_key" || usage "The key's path must be absolute, of letters, digits and ._/@+-: $i_key"
+  [ -f "$i_key" ] || usage "No private key at $i_key."
+  is_user "$i_user" || usage "Not a user name: $i_user"
+  for h in $i_hosts; do is_host "$h" || usage "Not a host name: $h"; done
+  case $i_hostkey in "ssh-ed25519 "*) is_blob "${i_hostkey#ssh-ed25519 }" || usage "Not an ed25519 host key." ;; *) usage "Not an ed25519 host key." ;; esac
+  [ -n "${HOME:-}" ] && [ -d "$HOME" ] || usage "HOME is not set."
+  [ ! -L "$D" ] || usage "$D is a link; this refresher writes only into a real folder."
+  { mkdir -p "$HOME/.ssh" "$D" && chmod 700 "$HOME/.ssh" "$D"; } || usage "Could not make $D."
+
+  me=$0
+  if [ "$me" != "$D/refresh" ]; then
+    { cp "$me" "$D/.refresh.tmp" && chmod 700 "$D/.refresh.tmp" && mv -f "$D/.refresh.tmp" "$D/refresh"; } \
+      || usage "Could not install $D/refresh."
+  fi
+  rm -f "$D/.first-pin" "$D/.first-bundle" "$D/.first-refresh"
+  hcp=$(command -v hc 2>/dev/null)
+  is_path "$hcp" || hcp=
+  {
+    echo "# ShipShape refresher settings, written by its first install. Data, read line by line."
+    echo "name=$i_name"
+    echo "key=$i_key"
+    echo "user=$i_user"
+    echo "hosts=$i_hosts"
+    echo "host_key=$i_hostkey"
+    echo "host_names=$i_names"
+    echo "hc=$i_hc"
+    echo "hc_path=$hcp"
+  } >"$D/.machine.conf.tmp" || usage "Could not write $CONF."
+  mv -f "$D/.machine.conf.tmp" "$CONF" || usage "Could not write $CONF."
+  echo "This computer refreshes itself as $i_name, with the key $i_key, from $i_user@$(printf '%s' "$i_hosts" | sed 's/ / or /g')."
+
+  include="Include $D/config"
+  cfg="$HOME/.ssh/config"
+  if [ -L "$cfg" ]; then
+    cfg=$(readlink -f "$cfg") || usage "Cannot follow the link ~/.ssh/config."
+  fi
+  if [ ! -f "$cfg" ] || ! grep -qxF "$include" "$cfg"; then
+    tmp="$cfg.shipshape-tmp"
+    { echo "$include"; if [ -f "$cfg" ]; then cat "$cfg"; fi; } >"$tmp"
+    chmod 600 "$tmp" && mv "$tmp" "$cfg"
+    echo "Added '$include' to the top of ~/.ssh/config."
+  fi
+
+  if [ "$timer" = 1 ]; then install_timer; else echo "No timer (--no-timer): run $D/refresh when you want it current."; fi
+  "$D/refresh"
+}
+
+case ${1:-} in
+  '') refresh ;;
+  install) shift; first_install "$@" ;;
+  remove-timer) remove_timer ;;
+  --version) echo "ShipShape refresher $VERSION" ;;
+  *) usage "Usage: refresh [install ... | remove-timer | --version]" ;;
+esac

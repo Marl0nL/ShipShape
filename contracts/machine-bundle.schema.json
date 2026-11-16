@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.shipshape.invalid/machine-bundle.schema.json",
   "title": "A trusted machine's own bundle (ship-fleet machine-bundle NAME, version 1)",
-  "description": "Printed on stdout by `ship-fleet machine-bundle NAME` on the FleetLedger computer, for the trusted machine NAME, which asks for it over ssh to keep its SSH setup current (its certificate, its known_hosts and SSH config, its hc machines, and a file of the fleet's Ships). Data only, never a script: the machine checks every field and writes its files from templates of its own. Only the Ships NAME's scope reaches are listed. A refusal prints nothing on stdout. See contracts/ship-fleet.md.",
+  "description": "Printed on stdout by `ship-fleet machine-bundle NAME` on the FleetLedger computer, for the trusted machine NAME, which asks for it over ssh to keep its SSH setup current (its certificate, its known_hosts and SSH config, its hc machines, and a file of the fleet's Ships). Data: the machine checks every field and writes its files from templates of its own. The one exception, refresher, is read only by the first-install line a person pastes; the refresher never reads it. Only the Ships NAME's scope reaches are listed. A refusal prints nothing on stdout. See contracts/ship-fleet.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "machine", "at", "certificate", "scope", "logins", "ssh", "known_hosts", "fleetledger", "ships", "idle_limit"],
@@ -107,6 +107,12 @@
           "host_certificate": { "type": "boolean", "description": "Its last status shows a host certificate. Without one, ssh to it fails the CA check until ship-fleet ca sign." }
         }
       }
+    },
+    "refresher": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+      "maxLength": 1000000,
+      "description": "The refresher script (FleetLedger's fleetledger/refresher/refresh.sh), base64. Only the first-install line ship-fleet trust prints decodes it, once, when a person pastes that line on the machine; the refresher never reads this field and never replaces itself, so a refresh applies data only. Absent from a FleetLedger older than the refresher."
     },
     "idle_limit": {
       "type": "object",

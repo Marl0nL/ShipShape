@@ -924,12 +924,12 @@ def old_computer_said(inv, host: str) -> list[str]:
         "last day, and again once it has lapsed.")
     identity = here.get("identity") or TRUST_IDENTITY_DEFAULT
     flag = "" if identity == TRUST_IDENTITY_DEFAULT else f" --identity {shlex.quote(identity)}"
-    # One sentence, so the coming self-refresh can replace it alone.
     lines.append(
         f"To keep using ssh, herdr and hc here, renew it from {host}: run ship-fleet trust "
-        f"{m.name}{flag} there (or Download bundle in its row under Settings ▸ Access ▸ "
-        f"Trusted machines in {host}'s web UI), copy the bundle it makes to this computer, "
-        "and run sh install.sh in its folder.")
+        f"{m.name}{flag} there. On FleetLedger's own VM that prints one line to paste here, "
+        "and from then on this computer renews its certificate and picks up new Ships by "
+        "itself (docs/runbooks/trust-machines.md, \"Trust a machine\"); elsewhere, copy the "
+        "bundle it makes to this computer and run sh install.sh in its folder.")
     store_kind, managed = keys.managed(inv)
     if paths.expand(identity) in managed:
         lines.append(
