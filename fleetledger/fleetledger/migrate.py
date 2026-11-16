@@ -835,6 +835,7 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
     handover.retire(store, host, handed)  # first: never two active copies
     app.say(f"\nThis copy is now retired: it no longer acts on the fleet. Making {host} the "
             "active FleetLedger...")
+    bundle_keys(app, store, held=True)
     argv = ssh_argv(host, remote_command(ship_fleet, ["migrate", "activate", "--yes"]), options)
     try:
         code, _ = _session(app, host, argv)
@@ -857,6 +858,30 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
              f"copy acts on the fleet now. Fix that there, then run ship-fleet migrate activate "
              f"on {host}; or, to keep using this copy instead, ship-fleet migrate unretire here.")
     return NOT_ACTIVATED
+
+
+def bundle_keys(app, store, *, held: bool = False) -> None:
+    """After a hand-over step, the trusted machines' bundle keys in authorized_keys
+    (authkeys.py) follow this copy's new role: a retired copy's grant nothing, and an
+    active copy on FleetLedger's own VM gets one per trusted machine. Never fails the
+    step, which is done: what could not be done is said, with the fix. held: the caller
+    holds ships.toml's lock (push), which sync then leaves alone."""
+    from fleetledger import authkeys
+
+    try:
+        done = authkeys.sync(store, edit=not held)
+    except Exception as exc:  # noqa: BLE001 - the hand-over is done: say what is left
+        why = exc.message if isinstance(exc, FleetError) else type(exc).__name__
+        if handover.marker(store) is None:
+            app.note(f"Bundle keys in {authkeys.where_said()} not brought in step ({why}): "
+                     f"run {authkeys.SYNC} here.")
+        else:
+            app.note(f"This copy no longer acts, but its bundle keys in "
+                     f"{authkeys.where_said()} could not be removed ({why}); machine-bundle "
+                     f"refuses them all the same. {authkeys.hand_fix()}.")
+        return
+    for line in authkeys.synced_said(done):
+        app.say(line)
 
 
 # ship-fleet trust's own --identity default (cli.py): said only when this computer's differs.
@@ -2003,6 +2028,7 @@ def _activate(args, app) -> int:
                              "again.")
         epoch = handover.activate(store)
     app.say(f"\nThis FleetLedger is now the active one (epoch {epoch}).")
+    bundle_keys(app, store)
     return 0
 
 
@@ -2025,6 +2051,7 @@ def _retire(args, app) -> int:
     app.say("This FleetLedger is retired: it refuses to act on the fleet. To act again: "
             "ship-fleet migrate unretire. After two weeks, delete its keys and secrets: "
             "ship-fleet migrate wipe.")
+    bundle_keys(app, store)
     return 0
 
 
@@ -2046,6 +2073,7 @@ def _unretire(args, app) -> int:
             "instead.", "unretire", args.yes)
         epoch = handover.unretire(store)
     app.say(f"This FleetLedger acts on the fleet again (epoch {epoch}).")
+    bundle_keys(app, store)
     return 0
 
 

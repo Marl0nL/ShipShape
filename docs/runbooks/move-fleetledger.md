@@ -252,6 +252,13 @@ same vault.
 
 `push` ends by saying what follows for the old computer, as below.
 
+- **Bundle keys follow the active copy.** When the new computer is FleetLedger's own
+  VM, `migrate activate` there writes each trusted machine's forced line into its
+  `~/.ssh/authorized_keys` ([trust-machines.md](trust-machines.md), "A machine that
+  refreshes itself"); the old copy's block, if it had one, is emptied as it retires
+  (and filled again by `unretire`). If either step could not write the file, it says
+  so and names the fix; the hand-over itself stands.
+
 - **The old computer is a retired FleetLedger** (see "A retired copy" above).
 - **It stays a trusted machine like any other.** If it was "this computer"
   (trusted with your own key, so `ssh <ship>` worked there), its bundle in

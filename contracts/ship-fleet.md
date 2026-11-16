@@ -113,7 +113,7 @@ init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.j
 |---|---|
 | `host_ca`, `user_ca` | Fingerprints of the key that signs Ships' host certificates and of the user CA keys Ships accept (the current one first). |
 | `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
-| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null). |
+| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null); on FleetLedger's own VM only, `bundle_key` for a trusted machine: `installed`, `own-line` (its key has a line of yours in `authorized_keys`, so FleetLedger adds none) or `missing` (see "The bundle keys" under `machine-bundle`). |
 
 ## `ship-fleet doctor --next --json`
 
@@ -254,6 +254,32 @@ NAME's scope. It writes only NAME's record in `ships.toml` (`last_refreshed`; a 
 certificate's serial, date, lifetime and `issued` entry; `idle_refused`), the new certificate
 beside NAME's bundle (`~/.local/share/fleetledger/trust/NAME/NAME-cert.pub`), and its
 audit line; asked again within five minutes it does not rewrite `ships.toml`.
+
+**The bundle keys.** On FleetLedger's own VM (`[fleet] self` names the computer) and as
+the active copy, `ship-fleet trust NAME` gives the machine's key one line in the
+FleetLedger user's `~/.ssh/authorized_keys`, inside a block between two marker lines
+that FleetLedger alone writes:
+
+```
+# >>> FleetLedger: trusted machines' bundle keys (ship-fleet trust writes these) >>>
+restrict,command="/home/fleetledger/.local/bin/ship-fleet machine-bundle NAME" ssh-ed25519 AAAA... NAME
+# <<< FleetLedger: trusted machines' bundle keys <<<
+```
+
+`restrict` with nothing turned back on: no terminal, no forwarding of any kind, no
+`~/.ssh/rc`; `command=` runs that one command whatever the client asks for. The line
+holds the key's own bytes and the machine's name (a-z, 0-9 and -), nothing from the
+key's comment. `untrust` removes the line, and a new line starts the machine's idle
+clock (`refresh_allowed`) if it never asked. A key that has a line of its own outside
+the block (in `authorized_keys` or `authorized_keys2`: one of your keys) gets none,
+because sshd uses the first line that matches a key: your line decides what it may
+do, and `ship-fleet ca show` says `own-line`. FleetLedger never changes a line outside
+the block or the file's mode and owner, refuses a file with broken markers or a line
+in the block that is no machine's, and writes atomically. Elsewhere (a desktop, a copy
+on standby or retired) it adds no line; it still removes lines of machines no longer
+trusted, and `migrate retire` (and a push's cut-over) empties the block, which
+`activate` and `unretire` fill again. `ship-fleet trust --sync-keys` rewrites the
+block to match; `ship-fleet doctor` checks it (`bundle keys`).
 
 **Attention.** A machine that has asked at least once refreshes itself, so FleetLedger
 says when it stops (fleet-level items in `ship-fleet attention`, the web UI and

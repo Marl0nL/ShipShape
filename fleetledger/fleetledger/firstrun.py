@@ -334,6 +334,18 @@ def wrapper_items() -> list[Item]:
     return []
 
 
+def bundle_key_items(app, inv) -> list[Item]:
+    """On FleetLedger's own VM (or wherever its block is in authorized_keys): does the
+    block hold exactly one forced line per trusted machine (authkeys.py)? Read-only."""
+    from fleetledger import authkeys
+
+    found = authkeys.check(app.store_factory(), inv)
+    if found is None:
+        return []
+    state, detail, fix = found
+    return [Item("fleet", "bundle keys", state, detail, fix)]
+
+
 # --- the overlay and the Ships ------------------------------------------------------------
 
 
@@ -469,6 +481,7 @@ def _everything(app, *, offline: bool = False) -> tuple[list[Item], Any]:
     if inv is not None:
         items += machines_items(inv)
         items += appliance_items(inv)
+        items += bundle_key_items(app, inv)
         items += hypervisor(app, inv, offline=offline)
         items += overlay_items(app, inv)
         items += ships_items(inv)

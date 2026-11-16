@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from fleetledger import attach, ca, paths, prompts, sshkeys, status
+from fleetledger import attach, authkeys, ca, paths, prompts, sshkeys, status
 from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, now_timestamp
@@ -210,13 +210,21 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
 CA_SCHEMA = "shipshape.fleetledger-ca/1"  # ca show --json (contracts/ship-fleet.md)
 # ca show's word for a machine's certificate state (ca.cert_state); JSON has the state.
 MACHINE_STATE_SAID = {"expiring": "expiring (within a day)", "none": "no certificate yet"}
+BUNDLE_KEY_SAID = {"installed": "installed", "own-line": "its own line (one of your keys)",
+                   "missing": f"MISSING ({authkeys.SYNC})"}
 
 
 def ca_show(args, app) -> int:
-    inv = app.store_factory().load()
+    store = app.store_factory()
+    inv = store.load()
     ca.require(inv)
     found = ca_rows(inv, ca.build_krl(inv))
     rows, machines = found["ships"], found["machines"]
+    # On FleetLedger's own VM: each machine's bundle key line (authkeys.py).
+    keyed = authkeys.states(store, inv) or {}
+    for m in machines:
+        if keyed.get(m["machine"]):
+            m["bundle_key"] = keyed[m["machine"]]
     if args.json:
         app.say(json.dumps({"schema": CA_SCHEMA, **{key: found[key] for key in (
             "host_ca", "user_ca", "ships", "machines")}}, indent=2))
@@ -245,6 +253,8 @@ def ca_show(args, app) -> int:
                 what += f"; last asked {m['last_refreshed'][:16].replace('T', ' ')} UTC"
             if not m["idle_limit"]:
                 what += "; no idle limit"
+            if m.get("bundle_key"):
+                what += f"; bundle key: {BUNDLE_KEY_SAID[m['bundle_key']]}"
         app.say(f"  {m['machine']:<14} {','.join(m['scope']):<20} {what}")
     if not machines:
         app.say("  none (ship-fleet trust <machine> --key <its .pub>)")
@@ -318,8 +328,56 @@ def set_refresh(args, app, store) -> int:
     return 0
 
 
+def sync_keys(args, app, store) -> int:
+    """trust --sync-keys: FleetLedger's block in authorized_keys rewritten to match the
+    trusted machines (authkeys.py); nothing else."""
+    given = [f"--{o.replace('_', '-')}" for o in (*SIGNING_OPTIONS, "allow_again", "idle_limit")
+             if getattr(args, o, None)]
+    if args.machine or given or args.hostnames != "here":
+        raise FleetError("--sync-keys takes no machine and no other option: it rewrites only "
+                         "FleetLedger's block in authorized_keys.")
+    done = authkeys.sync(store)
+    for line in authkeys.synced_said(done):
+        app.say(line)
+    r = done.review
+    for name in r.own:
+        app.say(authkeys.own_line_said(name))
+    if not r.adds:
+        app.say("This computer is not FleetLedger's own VM (or this copy is not the active "
+                "one), so FleetLedger adds no bundle keys here; it only removes or repairs "
+                "its own lines.")
+    if not done.wrote:
+        app.say(f"{authkeys.where_said()} already matches the trusted machines"
+                f" ({len(r.wanted)} bundle key(s)).")
+    return 0
+
+
+def _keys_after_trust(app, store, name: str, say) -> str | None:
+    """The machine's bundle key line, after trust NAME (authkeys.py), said: its state
+    (authkeys.Review.state_of), or "failed" when authorized_keys could not be brought
+    in step (said why)."""
+    try:
+        done = authkeys.sync(store)
+    except FleetError as exc:
+        app.note(f"ship-fleet: no bundle key for {name} in {authkeys.where_said()}: "
+                 f"{exc.message}" + (f" {exc.hint}" if exc.hint else ""))
+        return "failed"
+    for line in authkeys.synced_said(done):
+        say(line)
+    state = done.review.state_of(name)
+    if state == "own-line":
+        say(authkeys.own_line_said(name))
+    elif state == "missing":
+        say(f"No bundle key for {name}: its name or key is not one FleetLedger puts in "
+            "authorized_keys (an ed25519 key, a name of a-z, 0-9 and -).")
+    return state
+
+
 def cmd_trust(args, app) -> int:
     store = app.store_factory()
+    if getattr(args, "sync_keys", False):
+        ca.require(store.load())
+        return sync_keys(args, app, store)
     if getattr(args, "allow_again", False) or getattr(args, "idle_limit", None):
         ca.require(store.load())
         return set_refresh(args, app, store)
@@ -342,6 +400,9 @@ def cmd_trust(args, app) -> int:
                          "--this-computer).")
     existing = ca.machine(inv, name)
     if existing is None:
+        if not MACHINE_RE.fullmatch(name):
+            raise FleetError("A machine's name is a-z, 0-9 and -, up to 31 characters "
+                             "(laptop, say).")
         if not args.key:
             raise FleetError(f"{name} is new: give its public key with --key PATH.pub.",
                              hint="Make one on that machine: ssh-keygen -t ed25519 "
@@ -383,6 +444,10 @@ def cmd_trust(args, app) -> int:
                 not_revoked = True
                 inv = store.load()
     m = ca.machine(inv, name)
+    # Its bundle key on FleetLedger's own VM, now it is trusted (with --print-cert,
+    # stdout is the certificate alone).
+    keyed = _keys_after_trust(app, store, name, app.note if args.print_cert else app.say)
+    unkeyed = keyed == "failed"
     cert, until = _sign_machine(app, store, inv, m, hours=args.hours)
     ships = [s for s in inv.ships() if m.reaches(inv, s)]
     if args.print_cert:
@@ -413,14 +478,17 @@ def cmd_trust(args, app) -> int:
             app.say(f"Attach from here: {', '.join([f'ssh {ready[0]}'] + commands)}.")
             if missing:
                 app.say(attach.install_hint(missing, renew_command(name, args) + " --install"))
-        return 1 if not_revoked else proc.returncode
+        return 1 if not_revoked or unkeyed else proc.returncode
+    if keyed == "installed":
+        # One sentence, so the machine's refresher, when it comes, can replace it alone.
+        app.say(authkeys.first_fetch_said(name, args.identity))
     app.say("On that machine, copy the folder over and run:  sh install.sh")
     # One sentence, so the coming self-refresh can replace it alone.
     app.say(f"Renew it before {ca.stamp(until)}: run {renew_command(name, args)} again on "
             "the FleetLedger computer (or Download bundle in its row under Settings ▸ "
             f"Access ▸ Trusted machines), copy the new bundle to {name} and run sh install.sh "
             "in its folder there.")
-    return 1 if not_revoked else 0
+    return 1 if not_revoked or unkeyed else 0
 
 
 IDENTITY_DEFAULT = "~/.ssh/shipshape/id_ed25519"  # trust --identity's default
@@ -953,13 +1021,23 @@ def cmd_untrust(args, app) -> int:
         inv = store.load()
         audit.record("-", "untrust", m.name, "ok")
         app.say(f"{m.name} is untrusted; its key is now in the revocation list.")
+    # Its bundle key line goes before the Ships are reached (that can take a while).
+    unkeyed = False
+    try:
+        for line in authkeys.synced_said(authkeys.sync(store)):
+            app.say(line)
+    except FleetError as exc:
+        unkeyed = True
+        app.note(f"ship-fleet: {m.name}'s bundle key may still be in "
+                 f"{authkeys.where_said()} (it is refused its bundle all the same): "
+                 f"{exc.message}" + (f" {exc.hint}" if exc.hint else ""))
     failed = _push_to_ships(app, inv)
     if failed:
         app.note(f"Not updated yet: {', '.join(failed)}. Until they are, {m.name}'s current "
                  f"certificate still works there (until {m.last_valid_before or 'it expires'}). "
                  "Run `ship-fleet ca sign` when they are back.")
         return 1
-    return 0
+    return 1 if unkeyed else 0
 
 
 def after_enrol(app, store, name: str, say) -> None:

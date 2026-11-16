@@ -49,7 +49,7 @@ from fleetledger.store import TomlFileStore
 from test_cli import RUNNING, result
 from test_secret_store import fake_backend
 
-from fleetledger import ca, cli, handover, inuse, keys, migrate, paths, schemas
+from fleetledger import authkeys, ca, cli, handover, inuse, keys, migrate, paths, schemas
 from fleetledger import repo as repo_mod
 
 pytestmark = pytest.mark.skipif(
@@ -260,6 +260,7 @@ class Computer:
         monkeypatch.setattr(secret_store, "get_keyring", lambda: self.ring)
         monkeypatch.setattr(keys, "_ADDED", {})
         monkeypatch.setattr(socket, "gethostname", lambda: self.name)
+        monkeypatch.setattr(authkeys, "HOME", self.home)
         return self
 
     def run(self, *argv):
@@ -2770,3 +2771,98 @@ def test_toolkit_folders_are_named_in_the_plan_and_never_copied(computers, monke
     handover.wipe(a.store, gone)
     assert (inside / "toolkit.toml").exists() and (inside / "files").is_dir()
     assert not a.store.path.exists()
+
+
+# --- the trusted machines' bundle keys (authkeys.py) ----------------------------------------
+
+
+def _bundle_keys(c: Computer) -> list[str]:
+    """The machines with a line in c's FleetLedger block in authorized_keys."""
+    f = c.home / ".ssh" / "authorized_keys"
+    lines = f.read_text().split("\n") if f.exists() else []
+    if authkeys.BEGIN not in lines:
+        return []
+    inside = lines[lines.index(authkeys.BEGIN) + 1:lines.index(authkeys.END)]
+    return [x.rsplit(" ", 1)[1] for x in inside]
+
+
+def _onto_its_own_vm(a: Computer, b: Computer) -> bytes:
+    """A records B ("vm") as FleetLedger's own VM; B's authorized_keys holds your key, as
+    its seed leaves it. Returns that file's bytes."""
+    import tomlkit
+
+    with a.store.edit() as ed:
+        entry = tomlkit.inline_table()
+        host = keygen(a.root / "vm-host", "vm").with_name("vm-host.pub").read_text().split()
+        entry.update({"name": "vm", "names": ["vm.example"], "host_key": " ".join(host[:2])})
+        ed.doc["fleet"]["self"] = entry
+    seeded = (a.home / ".ssh" / "shipshape_ed25519.pub").read_bytes()
+    (b.home / ".ssh").mkdir(parents=True, exist_ok=True)
+    (b.home / ".ssh" / "authorized_keys").write_bytes(seeded)
+    return seeded
+
+
+def test_the_active_copy_on_its_own_vm_has_the_bundle_keys_and_a_retired_one_none(
+        computers, monkeypatch):
+    a, b, world = computers
+    seeded = _onto_its_own_vm(a, b)
+    stream = send_bytes(a, monkeypatch)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    assert _bundle_keys(b) == []  # on standby: nothing granted yet
+    code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0, out + err
+    # desktop's key is your own (its line comes first); old-laptop is untrusted.
+    assert _bundle_keys(b) == ["laptop", "phone"]
+    assert "Bundle key added to" in out
+    ak = b.home / ".ssh" / "authorized_keys"
+    assert ak.read_bytes().startswith(seeded)
+    assert b.run("migrate", "retire", "--yes")[0] == 0
+    assert ak.read_bytes() == seeded  # a retired copy grants nothing
+    code, out, err = b.run("migrate", "unretire", "--yes")
+    assert code == 0 and _bundle_keys(b) == ["laptop", "phone"], out + err
+
+
+def test_an_activation_whose_keys_cannot_be_written_is_active_and_says_the_fix(
+        computers, monkeypatch):
+    a, b, world = computers
+    _onto_its_own_vm(a, b)
+    stream = send_bytes(a, monkeypatch)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED, b.out.getvalue()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(authkeys, "_write", lambda f, text: (_ for _ in ()).throw(OSError(28, "full")))
+        code, out, err = b.run("migrate", "activate", "--yes")
+    assert code == 0 and handover.marker(b.store) is None  # the hand-over stands
+    assert "not brought in step (OSError): run ship-fleet trust --sync-keys here" in err
+    assert _bundle_keys(b) == []
+    code, out, err = b.run("trust", "--sync-keys")
+    assert code == 0 and _bundle_keys(b) == ["laptop", "phone"], out + err
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_a_push_empties_the_old_copys_bundle_keys_after_it_retires(computers, monkeypatch,
+                                                                   fails):
+    a, b, world = computers
+    laptop = (a.root / "machines" / "laptop.pub").read_text()
+    ak = a.home / ".ssh" / "authorized_keys"
+    mine = (a.home / ".ssh" / "shipshape_ed25519.pub").read_text()
+    ak.write_text(mine + f"{authkeys.BEGIN}\n{authkeys.line_for('laptop', laptop)}\n"
+                  f"{authkeys.END}\n")
+    marker_then = []
+    real = authkeys.sync
+
+    def sync(store, **kw):
+        marker_then.append(handover.marker(store).role)
+        if fails:
+            raise OSError(5, "I/O error")
+        return real(store, **kw)
+
+    monkeypatch.setattr(authkeys, "sync", sync)
+    procs = []
+    code, out, err = _pushed(a, procs, [0, 0])
+    assert code == 0 and len(procs) == 2, out + err  # the new copy was still activated
+    assert marker_then == ["retired"]  # retired first, as ever
+    if fails:
+        assert _bundle_keys(a) == ["laptop"]
+        assert "could not be removed (OSError); machine-bundle refuses them all the same" in err
+    else:
+        assert ak.read_text() == mine and "removed from" in out
