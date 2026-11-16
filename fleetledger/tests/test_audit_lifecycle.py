@@ -45,10 +45,11 @@ def test_snapshot_rollback_and_delete_are_recorded_but_not_take(env):  # noqa: F
     env.run("new", "ship-10", "--driver", "proxmox")
     env.run("snapshot", "take", "ship-10", "before")
     env.run("snapshot", "rollback", "ship-10", "before", "--yes")
-    env.run("snapshot", "rm", "ship-10", "before")
+    env.run("snapshot", "rm", "ship-10", "before", "--yes")
     assert entries()[1:] == [("ship-10", "snapshot-rollback", "before", "ok"),
                              ("ship-10", "snapshot-delete", "before", "ok")]
     env.run("snapshot", "rollback", "ship-10", "before")  # refused: no --yes, no terminal
+    env.run("snapshot", "rm", "ship-10", "before")  # refused the same way
     assert len(entries()) == 3
 
 
@@ -91,7 +92,7 @@ def test_an_unusable_snapshot_name_is_refused_before_anything_is_recorded(env): 
 def test_the_manual_drivers_rollback_and_delete_record_steps(env):  # noqa: F811
     env.run("new", "ship-13")  # manual
     assert env.run("snapshot", "rollback", "ship-13", "before", "--yes")[0] == 0
-    assert env.run("snapshot", "rm", "ship-13", "before")[0] == 0
+    assert env.run("snapshot", "rm", "ship-13", "before", "--yes")[0] == 0
     assert entries()[1:] == [("ship-13", "snapshot-rollback", "before", "steps"),
                              ("ship-13", "snapshot-delete", "before", "steps")]
 

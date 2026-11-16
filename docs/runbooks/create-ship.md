@@ -210,8 +210,13 @@ With the proxmox driver (and the phase 4 rights in
 ship-fleet snapshot take ship-01 before-upgrade --note "before the big change"
 ship-fleet snapshot ls ship-01
 ship-fleet snapshot rollback ship-01 before-upgrade   # shuts down cleanly, rolls back, starts
-ship-fleet snapshot rm ship-01 before-upgrade
+ship-fleet snapshot rm ship-01 before-upgrade         # asks you to type the snapshot's name
 ```
+
+Rolling back and deleting cannot be undone, so both ask first: a rollback asks
+you to type `yes`, and `snapshot rm` names the Ship and the snapshot and asks you
+to type the snapshot's name. Where nobody can be asked (a script), add `--yes`.
+The web UI's Delete asks with its own tick box.
 
 Snapshots are of the disk only, never memory. A snapshot holds the Ship's
 sign-ins as they were, so treat it like the Ship itself; rolling back can bring

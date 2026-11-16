@@ -66,13 +66,16 @@ def add_parsers(sub, add) -> None:
             "  ship-fleet snapshot ls ship-01\n"
             "  ship-fleet snapshot take ship-01 [NAME] [--note TEXT]\n"
             "  ship-fleet snapshot rollback ship-01 NAME     (asks first)\n"
-            "  ship-fleet snapshot rm ship-01 NAME\n\n"
-            "Snapshots are of the disk only, never memory. " + SNAPSHOT_WARNING)
+            "  ship-fleet snapshot rm ship-01 NAME           (asks you to type NAME)\n\n"
+            "Snapshots are of the disk only, never memory. " + SNAPSHOT_WARNING + "\n"
+            "Rollback and rm cannot be undone: in a terminal they ask first; elsewhere\n"
+            "they need --yes.")
     p.add_argument("action", choices=("ls", "take", "rollback", "rm"))
     p.add_argument("name", help="the Ship")
     p.add_argument("snapshot", nargs="?", help="snapshot name (take: default snap-<time>)")
     p.add_argument("--note", default="", help="description stored with the snapshot")
-    p.add_argument("--yes", action="store_true", help="roll back without asking")
+    p.add_argument("--yes", action="store_true",
+                   help="rollback, rm: go on without asking (for scripts)")
 
     p = add(sub, "image", "build, publish and pin baked base images",
             "  ship-fleet image build [--recipes ID,...] [--backend virt-customize|qemu]\n"
@@ -283,11 +286,27 @@ def cmd_snapshot(args, app) -> int:
             audited["outcome"] = "ok" if outcome.done else "steps"
         _report(app, outcome)
         return 0
+    if not args.yes:
+        confirm_snapshot_rm(app, ship.name, args.snapshot)
     with audit.recorded(ship.name, "snapshot-delete", args.snapshot) as audited:
         outcome = driver.delete_snapshot(ship, args.snapshot)
         audited["outcome"] = "ok" if outcome.done else "steps"
     _report(app, outcome)
     return 0
+
+
+SNAPSHOT_RM_SAID = ("Deleting snapshot {snap} of {ship} means {ship} can never be rolled "
+                    "back to it. This cannot be undone.")
+
+
+def confirm_snapshot_rm(app, ship: str, snap: str) -> None:
+    """Delete a snapshot only with its name typed in a terminal, or --yes where nobody
+    can be asked (as untrust asks for the machine's name). FleetError on a refusal."""
+    said = SNAPSHOT_RM_SAID.format(snap=snap, ship=ship)
+    prompts.typed(app, f"{said} Type {snap} to delete it: ", snap, exact=True,
+                  no_terminal=f"Nothing deleted. {said} Run it in a terminal to type its "
+                  f"name, or: ship-fleet snapshot rm {ship} {snap} --yes",
+                  refused=f"Nothing deleted: snapshot {snap} of {ship} stays.")
 
 
 def _report(app, outcome) -> None:

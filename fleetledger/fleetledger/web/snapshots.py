@@ -104,7 +104,7 @@ async def delete(request: Request) -> Response:
     elif one(fields, "confirm") != "yes":
         flash(request, "bad", "Tick the box to confirm.")
     else:
-        _start(request, name, ["snapshot", "rm", name, snap], f"Delete {snap} of {name}")
+        _start(request, name, ["snapshot", "rm", name, snap, "--yes"], f"Delete {snap} of {name}")
     return back(f"/ships/{name}/snapshots")
 
 
