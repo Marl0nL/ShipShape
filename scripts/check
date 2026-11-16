@@ -3,7 +3,7 @@
 #   1. shellcheck on shell scripts
 #   2. ruff on Python
 #   3. pytest (contracts, scripts, ship/tests, fleetledger/tests)
-#   4. npm test in any package under ship/ or fleetledger/ that has one
+#   4. npm test in any package under ship/, fleetledger/ or herdr/ that has one
 #   5. the public-repo hygiene check (generic rules + your private deny-list)
 #
 # Environment:
@@ -89,7 +89,8 @@ else
 fi
 
 step "npm test"
-mapfile -t packages < <(git ls-files 'ship/**/package.json' 'fleetledger/**/package.json' |
+mapfile -t packages < <(git ls-files 'ship/**/package.json' 'fleetledger/**/package.json' \
+  'herdr/**/package.json' |
   grep -v node_modules || true)
 if [ "${#packages[@]}" -eq 0 ]; then
   echo "no npm packages yet"

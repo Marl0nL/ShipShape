@@ -72,7 +72,9 @@ migrate`: the Ships keep working, nothing adopted again),
 [retire the old stack](docs/runbooks/retire-old-stack.md).
 
 Watching the fleet from Herdr: [the Desk](herdr/DESK.md), a Herdr layout with a panel that follows
-the focused agent, on this computer or on a Ship (`herdr/install-desk.sh`).
+the focused agent, on this computer or on a Ship (`herdr/install-desk.sh`); and [the Fleet
+panel](herdr/mods/fleet/README.md), a Herdr tab listing your Ships over ssh from the FleetLedger
+computer (`herdr/install-fleet.sh`).
 
 ## Layout
 
@@ -81,7 +83,7 @@ the focused agent, on this computer or on a Ship (`herdr/install-desk.sh`).
 | `ship/` | everything that runs on a Ship |
 | `fleetledger/` | the `ship-fleet` manager (Python) |
 | `contracts/` | schemas, examples and docs both halves build against |
-| `herdr/` | Herdr layouts and mods: the Desk (`herdr/DESK.md`) |
+| `herdr/` | Herdr layouts and mods: the Desk (`herdr/DESK.md`) and the Fleet panel (`herdr/mods/fleet/`) |
 | `versions.toml` | pinned versions, checksums and signing keys |
 | `scripts/check` | lint, tests and the public-repo hygiene check (what CI runs) |
 | `docs/` | the first-fleet guide, web UI, architecture, security, network, runbooks, build tracks, hygiene, design and archived notes |
