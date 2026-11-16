@@ -32,9 +32,10 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `snapshot ls NAME --json` | a list | `shipshape.fleetledger-snapshot/1` |
 | `about [--check] --json` | one document | `shipshape.fleetledger-about/1` |
 | `machine-bundle NAME` (always JSON) | one document | `shipshape.machine-bundle/1` |
+| `keys ls --json` | a list, one per key line | `shipshape.fleetledger-key/1` |
 
 `--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
-`about`, `doctor` (with `--json` or `--next`), `signins --accounts` and `machine-bundle` (which then signs
+`about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls` and `machine-bundle` (which then signs
 nothing), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
 
 ## `ship-fleet ls --json` and `ship-fleet status NAME --json`
@@ -333,7 +334,8 @@ clock (`refresh_allowed`) if it never asked. A key that has a line of its own ou
 the block (in `authorized_keys` or `authorized_keys2`: one of your keys) gets none,
 because sshd uses the first line that matches a key: your line decides what it may
 do, and `ship-fleet ca show` says `own-line`. FleetLedger never changes a line outside
-the block or the file's mode and owner, refuses a file with broken markers or a line
+the block (unless you ask it to, with `ship-fleet keys`, below) or the file's mode and
+owner, refuses a file with broken markers or a line
 in the block that is no machine's, and writes atomically. Elsewhere (a desktop, a copy
 on standby or retired) it adds no line; it still removes lines of machines no longer
 trusted, and `migrate retire` (and a push's cut-over) empties the block, which
@@ -350,3 +352,52 @@ when its certificate is in its last day or lapsed, the existing `machine-cert-*`
 whose fix then says when it last asked and, while the vault is locked, to unlock it.
 A machine that never asked has only the `machine-cert-*` items, as before. Any call
 counts as asking, one made by hand included: FleetLedger cannot tell who ran it.
+
+## `ship-fleet keys ls --json`
+
+Every key that may log in to this computer as FleetLedger's user: each line with a key
+in `~/.ssh/authorized_keys`, then `~/.ssh/authorized_keys2` (sshd reads both by
+default), in the order sshd tries them. Comments and blank lines are left out. Schema:
+`fleetledger-key.schema.json`; examples in `examples/fleetledger-key/`. It only reads
+the two files (and the session's own `SSH_USER_AUTH` file): it reaches no Ship, runs
+anywhere, and answers while the vault is locked.
+
+| Field | What it is |
+|---|---|
+| `file`, `line` | Where the line is. |
+| `name` | The line's comment, as written (null: none). `keys name` sets it. Anything a hand edit put there: show it as text. |
+| `type`, `fingerprint` | The key's type, and its SHA256 fingerprint as `ssh-keygen -l` prints it (null for a key sshd cannot decode). Never the key itself. |
+| `access` | `shell` (no forced command: it may run anything, though options such as `no-pty` still apply), `command` (only `command`), `bundle` (a trusted machine's line in FleetLedger's block, only `machine-bundle <machine>`), `cert-authority` (a CA: any certificate it signs logs in). |
+| `machine`, `command` | For `bundle`, the machine; for `command`, the forced command. Null otherwise. |
+| `options` | The line's options as written; empty for none. |
+| `this_session` | The key the ssh session running the command logged in with, as sshd says (`ExposeAuthInfo yes`, which the appliance seed sets); null when sshd does not say. |
+| `changeable` | `keys name` and `keys revoke` may change it: on FleetLedger's own VM, in `authorized_keys`, outside FleetLedger's block, with the block's markers intact. |
+
+The same command changes them, on FleetLedger's own VM only (elsewhere
+`authorized_keys` is your own login's, and both refuse, saying so):
+
+```sh
+ship-fleet keys name SHA256:... desktop     # its comment only; KEY: a name or fingerprint
+ship-fleet keys revoke old-laptop           # removes its line, after you type its name
+```
+
+`name` takes letters, digits and `. _ @ + -` (no spaces, quotes or commas), so a name
+can never start a new line or add an option, and refuses one another line has. `revoke`
+asks for the key's name in a terminal (`--yes` skips that) and refuses, unless
+`--allow-lockout` is given: the last line that gets a shell; the key this session
+logged in with; and, over ssh when sshd does not say which key that is, any key. It
+refuses a key with more than one line (one removed would leave it able to log in).
+Neither touches a line in FleetLedger's block (`ship-fleet untrust NAME` removes a
+machine's), a line in `authorized_keys2`, or a file whose block markers are broken.
+Each changes exactly one line, keeps every other byte and the file's mode and owner,
+writes atomically under the lock `trust` takes, and gives up rather than write over a
+change made since it read the file. Each writes an audit line (`key-name`,
+`key-revoke`; service: the key's fingerprint).
+
+**Who ran a command.** Every audit line written by a command run in a terminal carries
+`actor_key` (the fingerprint of the one key the ssh session logged in with, from sshd's
+`SSH_USER_AUTH` file) and `actor` (the comment of the first line for that key), when
+sshd says which key that was; neither when it does not (no `ExposeAuthInfo`, a local
+login, a certificate, two keys), and never for the web UI, whatever session started it.
+A shell inside `tmux` or `screen` keeps the `SSH_USER_AUTH` of the session that started
+it while that session lasts. A `machine-bundle` call names its machine as before.

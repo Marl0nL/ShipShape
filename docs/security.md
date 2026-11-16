@@ -260,7 +260,10 @@ rotation and recovery: [vault.md](vault.md).
 - No terminal transcript is kept. On failure a few lines are shown with typed
   codes, URL query strings and long token-like strings removed.
 - The audit log (`~/.local/share/fleetledger/audit.log`, 0600) records time,
-  Ship, service, outcome and account, nothing else.
+  Ship, service, outcome and account, nothing else; for a command run over ssh, also
+  the name and fingerprint of the key the session logged in with, when sshd says
+  which (`ExposeAuthInfo`, which FleetLedger's VM seed sets). Anyone with a shell as
+  FleetLedger's user can edit that log: it records what happened, it is not proof.
 - After every sign-in, and on every status poll, the account is compared with
   the one the Ship's tags expect. A mismatch is reported as a wrong account.
 

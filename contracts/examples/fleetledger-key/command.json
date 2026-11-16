@@ -1,0 +1,14 @@
+{
+  "schema": "shipshape.fleetledger-key/1",
+  "file": "authorized_keys",
+  "line": 2,
+  "name": "backup-host",
+  "type": "ssh-rsa",
+  "fingerprint": "SHA256:Ln0sA6lQeuJl7PW1NWiFpTOTogKdJBOUmXJloaJa78Y",
+  "access": "command",
+  "machine": null,
+  "command": "/usr/bin/rrsync -ro /home/fleetledger/backups",
+  "options": "from=\"192.0.2.0/24\",command=\"/usr/bin/rrsync -ro /home/fleetledger/backups\",restrict",
+  "this_session": false,
+  "changeable": true
+}

@@ -14,7 +14,8 @@ command). Nothing is turned back on. The command is the ship-fleet the VM's wrap
 runs (appliance.WRAPPER), by its full path, and the machine's own name, so the key can
 fetch its own bundle (machinebundle.py) and nothing else.
 
-What FleetLedger never does here:
+What FleetLedger never does here (`ship-fleet keys`, loginkeys.py, names or removes one
+of your lines when you ask it to, with the same discipline):
 
 - touch a line outside the block, or change the file's mode or owner (a line of yours
   stays byte for byte; a last line with no newline gets one before the block);
@@ -129,27 +130,54 @@ def _same_key(text: str) -> str:
         return text
 
 
-def key_of(line: str) -> str | None:
-    """The key (base64, as _same_key gives it) a line of authorized_keys is for, read as
-    sshd reads it: up to a NUL; fields split on spaces and tabs; a key type first, or
-    else options (skipped as sshd skips them, quotes and \\" included) and then the key.
-    None: a comment, a blank line, or no key."""
-    s = line.split("\0", 1)[0].lstrip(" \t")
+@dataclass(frozen=True)
+class KeyLine:
+    """One line of authorized_keys, read as sshd reads it (parse)."""
+
+    options: str  # as written, "" for none
+    keytype: str
+    key: str  # its base64, as _same_key gives it
+    end: int  # the index in the line just past the key's base64 as written
+    comment: str  # what follows the key (spaces and tabs before it dropped), up to a NUL
+
+
+_TYPE_AND_KEY = re.compile(r"([^ \t]*)[ \t]+([^ \t]*)")
+
+
+def parse(line: str) -> KeyLine | None:
+    """A line of authorized_keys read as sshd reads it: up to a NUL; fields split on
+    spaces and tabs; a key type first, or else options (skipped as sshd skips them,
+    quotes and \\" included) and then the key. None: a comment, a blank line, or no
+    key."""
+    s = line.split("\0", 1)[0]
+    lead = len(s) - len(s.lstrip(" \t"))
+    s = s[lead:]
     if not s or s[0] in "#\r\n":
         return None
-    words = SPACE.split(s)
-    if KEYTYPE_RE.fullmatch(words[0]):
-        return _same_key(words[1]) if len(words) > 1 and words[1].strip() else None
-    i, quoted = 0, False
-    while i < len(s) and (quoted or s[i] not in " \t"):
-        if s[i] == "\\" and s[i + 1:i + 2] == '"':
+    first = SPACE.split(s, 1)[0]
+    i = 0
+    if not KEYTYPE_RE.fullmatch(first):
+        quoted = False
+        while i < len(s) and (quoted or s[i] not in " \t"):
+            if s[i] == "\\" and s[i + 1:i + 2] == '"':
+                i += 1
+            elif s[i] == '"':
+                quoted = not quoted
             i += 1
-        elif s[i] == '"':
-            quoted = not quoted
-        i += 1
-    rest = SPACE.split(s[i:].lstrip(" \t"))
-    return _same_key(rest[1]) if len(rest) > 1 and KEYTYPE_RE.fullmatch(rest[0]) \
-        and rest[1].strip() else None
+    options = s[:i]
+    i += len(s[i:]) - len(s[i:].lstrip(" \t"))
+    found = _TYPE_AND_KEY.match(s, i)
+    if not found or not KEYTYPE_RE.fullmatch(found.group(1)) or not found.group(2).strip():
+        return None
+    return KeyLine(options, found.group(1), _same_key(found.group(2)), lead + found.end(),
+                   s[found.end():].lstrip(" \t"))
+
+
+def key_of(line: str) -> str | None:
+    """The key (base64, as _same_key gives it) a line of authorized_keys is for (parse);
+    None: a comment, a blank line, or no key."""
+    parsed = parse(line)
+    return parsed.key if parsed else None
 
 
 # --- the file ---------------------------------------------------------------------------------
