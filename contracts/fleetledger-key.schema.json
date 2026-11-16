@@ -11,7 +11,7 @@
     "file": { "enum": ["authorized_keys", "authorized_keys2"], "description": "The file in ~/.ssh it is in." },
     "line": { "type": "integer", "minimum": 1, "description": "Its line number in that file." },
     "name": { "type": ["string", "null"], "minLength": 1, "description": "The line's comment (what follows the key), as written: ship-fleet keys name sets it. Any text a hand edit put there; null when there is none." },
-    "type": { "type": "string", "minLength": 1, "description": "The key's type as the line gives it (ssh-ed25519, ssh-rsa, ecdsa-sha2-nistp256, sk-ssh-ed25519@openssh.com, ...)." },
+    "type": { "type": "string", "minLength": 1, "description": "The key's type as the line gives it (ssh-ed25519, ssh-rsa, ecdsa-sha2-nistp256, a security key's sk- types, ...)." },
     "fingerprint": {
       "oneOf": [{ "$ref": "#/$defs/sshFingerprint" }, { "type": "null" }],
       "description": "As ssh-keygen -l prints it; null for a key that is not valid base64 (sshd lets nobody in with it)."

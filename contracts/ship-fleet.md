@@ -384,8 +384,14 @@ ship-fleet keys revoke old-laptop           # removes its line, after you type i
 `name` takes letters, digits and `. _ @ + -` (no spaces, quotes or commas), so a name
 can never start a new line or add an option, and refuses one another line has. `revoke`
 asks for the key's name in a terminal (`--yes` skips that) and refuses, unless
-`--allow-lockout` is given: the last line that gets a shell; the key this session
-logged in with; and, over ssh when sshd does not say which key that is, any key. It
+`--allow-lockout` is given: the last line that surely gets a shell; the key this
+session logged in with; and, over ssh when sshd does not say which key that is, any
+key. Another line counts as a shell you can still log in with only when FleetLedger can
+be sure of it: in `authorized_keys` (an sshd may be set to read no other), outside its
+block, the first line for its key, with no `from=`, `expiry-time=` or other option that
+could keep it out, and a key `ssh-keygen` accepts. A session with no ssh variables at
+all (a console, `sudo -u`, a terminal multiplexer started at boot) is not guarded by
+the session rule, only by the last-shell one. It
 refuses a key with more than one line (one removed would leave it able to log in).
 Neither touches a line in FleetLedger's block (`ship-fleet untrust NAME` removes a
 machine's), a line in `authorized_keys2`, or a file whose block markers are broken.
@@ -400,4 +406,6 @@ change made since it read the file. Each writes an audit line (`key-name`,
 sshd says which key that was; neither when it does not (no `ExposeAuthInfo`, a local
 login, a certificate, two keys), and never for the web UI, whatever session started it.
 A shell inside `tmux` or `screen` keeps the `SSH_USER_AUTH` of the session that started
-it while that session lasts. A `machine-bundle` call names its machine as before.
+it while that session lasts. The name is the first line's for that key, even where sshd
+skipped it (a `from=` that did not match) and let the key in through a later one: the
+fingerprint is right either way. A `machine-bundle` call names its machine as before.

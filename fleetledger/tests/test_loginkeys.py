@@ -252,12 +252,43 @@ def test_revoke_refuses_the_last_key_with_a_shell(vm):
     before = seed(f'{A} you@desktop\ncommand="/usr/bin/true" {C} only-a-command\n'
                   "ssh-ed25519 AAAA!!!! broken\n")
     code, _, err = vm.run("keys", "revoke", "you@desktop", "--yes")
-    assert code == 1 and "last key here that gets a shell" in err and "--allow-lockout" in err
+    assert code == 1 and "last key here that surely gets a shell" in err
+    assert "--allow-lockout" in err
     assert ak().read_bytes() == before
     assert vm.run("keys", "revoke", "only-a-command", "--yes")[0] == 0  # not a shell
     code, _, err = vm.run("keys", "revoke", "you@desktop", "--yes", "--allow-lockout")
     assert code == 0, err
     assert ak().read_text() == "ssh-ed25519 AAAA!!!! broken\n"
+
+
+@pytest.mark.parametrize("other", [
+    "ssh-ed25519 AAAA old",  # not a key ssh-keygen accepts
+    f"ssh-ed25519 {B.split()[1][:40]} old",  # a truncated paste
+    f"ssh-rsa {B.split()[1]} old",  # its type and its key disagree
+    f'expiry-time="20200101" {B} old',  # expired
+    f'from="192.0.2.1" {B} old',  # only from somewhere else
+    f"bogus-option {B} old",  # sshd refuses the line
+    f'command="/bin/true" {B} job\n{B} old',  # sshd uses the first line: no shell
+    f"{authkeys.BEGIN}\n{B} old\n{authkeys.END}",  # in FleetLedger's block
+])
+def test_only_a_line_that_surely_gives_a_shell_counts_as_another(vm, other):
+    before = seed(f"{A} me\n{other}\n")
+    code, _, err = vm.run("keys", "revoke", "me", "--yes")
+    assert code == 1 and "last key here that surely gets a shell" in err
+    assert ak().read_bytes() == before
+
+
+def test_a_key_only_in_authorized_keys2_does_not_count_as_another_shell(vm):
+    before = seed(f"{A} me\n")
+    (ak().parent / "authorized_keys2").write_text(f"{B} old\n")
+    code, _, err = vm.run("keys", "revoke", "me", "--yes")
+    assert code == 1 and "surely gets a shell" in err and ak().read_bytes() == before
+
+
+def test_revoking_the_last_line_keeps_the_newline_of_the_one_before(vm):
+    seed(f"{A} one\n{B} two\n{C} three")
+    assert vm.run("keys", "revoke", "three", "--yes")[0] == 0
+    assert ak().read_text() == f"{A} one\n{B} two\n"
 
 
 def test_revoke_refuses_the_key_this_session_logged_in_with(vm, tmp_path, monkeypatch):
@@ -472,7 +503,7 @@ def test_a_revoked_key_can_no_longer_log_in_and_the_other_still_can(sshd, monkey
         sshd.two.with_name("two.pub").read_text())
     # The last key with a shell, and this session's: both refusals, then the flag.
     code, _, err = sshd.run("keys", "revoke", "desktop", "--yes")
-    assert code == 1 and "last key here that gets a shell" in err
+    assert code == 1 and "last key here that surely gets a shell" in err
     assert ssh(sshd, sshd.one, "true").returncode == 0
     assert sshd.run("keys", "revoke", "desktop", "--yes", "--allow-lockout")[0] == 0
     assert ssh(sshd, sshd.one, "true").returncode == 255

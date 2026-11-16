@@ -93,7 +93,7 @@ keys. `ship-fleet keys ls` lists them: each key's name (its comment), type and
 fingerprint, and what it may do (a shell, one forced command, or a trusted machine's
 bundle only). `ship-fleet keys name SHA256:... desktop` names one of yours (only its
 comment changes); `ship-fleet keys revoke old-laptop` removes its line after you type
-its name. Revoke refuses to remove the last key that gets a shell, or the key your
+its name. Revoke refuses to remove the last key that surely gets a shell, or the key your
 session logged in with, unless you add `--allow-lockout`; a trusted machine's
 bundle-only line goes with `ship-fleet untrust NAME` instead. The seed sets sshd's
 `ExposeAuthInfo yes`, so a session knows which key let it in: audit lines of commands

@@ -292,10 +292,46 @@ def lockout_reasons(lst: Listing, k: Key, s: Session) -> list[str]:
     elif s.keys is None and s.over_ssh:
         why.append("FleetLedger cannot tell which key this ssh session logged in with "
                    "(sshd's ExposeAuthInfo is off here), so it may be this one")
-    if k.access == "shell" and not any(o.access == "shell" and o.fingerprint is not None
-                                       and o.parsed.key != k.parsed.key for o in lst.keys):
-        why.append("it is the last key here that gets a shell")
+    if k.access == "shell" and not any(o.parsed.key != k.parsed.key and surely_a_shell(lst, o)
+                                       for o in lst.keys):
+        why.append("it is the last key here that surely gets a shell")
     return why
+
+
+# Options that leave a line able to log in, from anywhere, at any time, to a shell.
+HARMLESS = {"restrict", "no-pty", "pty", "no-port-forwarding", "port-forwarding",
+            "no-agent-forwarding", "agent-forwarding", "no-x11-forwarding", "x11-forwarding",
+            "no-user-rc", "user-rc", "no-touch-required", "verify-required"}
+
+
+def surely_a_shell(lst: Listing, o: Key, check=None) -> bool:
+    """Would sshd surely give o's key a shell through o? Only a line FleetLedger can be
+    sure of counts as the key you will log in with after a revoke: in authorized_keys
+    (an sshd_config may leave authorized_keys2 out), outside FleetLedger's block, the
+    first line for its key (sshd uses that one), with no option that could keep it out
+    (from=, expiry-time=, anything unknown), and a key ssh-keygen itself accepts."""
+    if o.access != "shell" or o.file != MAIN or o.in_block or o.fingerprint is None:
+        return False
+    if next(x for x in lst.keys if x.parsed.key == o.parsed.key) is not o:
+        return False
+    if any(name not in HARMLESS for name, _ in options(o.parsed.options)):
+        return False
+    return (check or _keygen_accepts)(f"{o.parsed.keytype} {o.parsed.key}")
+
+
+def _keygen_accepts(line: str) -> bool:
+    import subprocess
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".pub") as fh:
+        fh.write(line + "\n")
+        fh.flush()
+        try:
+            got = subprocess.run(["ssh-keygen", "-lf", fh.name], capture_output=True,
+                                 text=True, timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return got.returncode == 0
 
 
 # --- the changes -------------------------------------------------------------------------------
@@ -409,6 +445,8 @@ def revoke(store, selector: str, s: Session, *, allow_lockout: bool, confirm) ->
             raise FleetError("Not changed: that line changed while FleetLedger worked.")
         lines = list(lst2.file.lines)
         del lines[k2.index]
+        if k2.index == len(lines) and lines:  # it was the last line, with no newline:
+            lines.append("")  # the line before keeps the newline it had
         return lines
 
     return _apply(k.text, change)[0]
@@ -550,7 +588,7 @@ def add_parsers(sub, add) -> None:
             "KEY is a key's name or its SHA256: fingerprint (ssh-keygen -lf prints it).\n"
             "name and revoke change the file only on FleetLedger's own VM, never a line\n"
             "in FleetLedger's block (ship-fleet untrust NAME removes a machine's) or in\n"
-            "authorized_keys2. revoke refuses to remove the last key that gets a shell,\n"
+            "authorized_keys2. revoke refuses to remove the last key that surely gets a shell,\n"
             "or the key this session logged in with (or, when sshd does not say which\n"
             f"that is, any key over ssh), unless {FORCE} is given.\n\n"
             "Audit lines of commands run over ssh name the key that logged in, when sshd\n"
@@ -563,5 +601,5 @@ def add_parsers(sub, add) -> None:
                    help="ls: JSON (contracts/fleetledger-key.schema.json)")
     p.add_argument("--yes", action="store_true", help="revoke: go on without asking")
     p.add_argument(FORCE, dest="allow_lockout", action="store_true",
-                   help="revoke: even the last key that gets a shell, or the key this "
+                   help="revoke: even the last key that surely gets a shell, or the key this "
                    "session may have logged in with (you can be shut out of this computer)")
