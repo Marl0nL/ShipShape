@@ -255,9 +255,12 @@ same vault.
   default). Renew it from the new computer, as for any machine
   ([trust-machines.md](trust-machines.md), "Renew"):
   `ship-fleet trust <machine> --print-cert | ssh old-computer 'cat > ~/.ssh/shipshape/<machine>-cert.pub'`.
-- **Do not `untrust` the old computer.** Its key is one of your keys for Ships, and
-  the revocation list applies to every login: untrusting it would lock your own key
-  out of every Ship.
+- **To stop using the old computer, let its certificate lapse; do not `untrust`
+  it.** Its key is one of your keys for Ships, and the revocation list applies to
+  every login: untrusting it would lock your own key out of every Ship.
+  `ship-fleet untrust` (and the web UI's Untrust) says so and refuses unless you
+  type its name after that warning (or add `--yes --revoke-my-key`); pressing Enter
+  leaves it trusted, and nothing on the new computer renews it.
 
 ## If something goes wrong
 

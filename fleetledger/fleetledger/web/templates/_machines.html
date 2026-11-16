@@ -87,6 +87,21 @@
         <button type="submit" class="ghost small" title="ship-fleet trust {{ m.name }}{{ ' --hostnames overlay' if this_device }}: a new certificate, and its bundle as a download">Download bundle</button>
       </form>
       {% endif %}
+      {% set yours = own_key_machines.get(m.name) %}
+      {% if yours %}
+      {# Its key is one of your keys for Ships: revoking it locks that key out of every
+         Ship, so its name is typed (as the CLI asks), and Cancel (stop renewing) is the
+         way out. #}
+      <form method="post" action="/settings/machines/untrust" class="inline"
+        data-confirm-title="Revoke one of your own keys on every Ship?"
+        data-confirm="{{ yours[0] }} {{ yours[1] }}"
+        data-confirm-action="Revoke my key" data-confirm-type="{{ m.name }}" data-confirm-danger>
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="machine" value="{{ m.name }}">
+        <label class="confirm">Type {{ m.name }} to confirm <input name="confirm_name" autocomplete="off" data-confirm-typed></label>
+        <button type="submit" class="ghost danger small" title="ship-fleet untrust {{ m.name }} --yes --revoke-my-key">Untrust</button>
+      </form>
+      {% else %}
       <form method="post" action="/settings/machines/untrust" class="inline"
         data-confirm-title="Untrust {{ m.name }}?"
         data-confirm="{{ m.name }}'s key goes into the revocation list on every Ship, so none lets it in. This cannot be undone: trust it again only under a new name, with a new key.{% if here %} This is this computer: ssh, herdr --remote and hc stop working here (ship-fleet ssh still works).{% endif %}"
@@ -96,6 +111,7 @@
         <label class="confirm"><input type="checkbox" name="confirm" value="yes" data-confirm-field> sure</label>
         <button type="submit" class="ghost danger small" title="ship-fleet untrust {{ m.name }}">Untrust</button>
       </form>
+      {% endif %}
     </td>
   </tr>
   {% endfor %}
