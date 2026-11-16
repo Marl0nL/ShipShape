@@ -204,7 +204,8 @@ two alerts the dashboard adds itself: a disk 80% full (warning) or 90% full
 Its three levels are shown by an icon and a word as well as a colour:
 **critical** (high: a Ship presenting the wrong host key or claiming another
 identity, unreachable Ships, wrong-account or expired sign-ins, failures, expired
-host certificates, a trusted machine's lapsed certificate), **warning** (medium: waiting
+host certificates, a trusted machine's lapsed certificate, FleetLedger's vault
+locked, with **Unlock**: then a Ship not checked yet is not listed apart), **warning** (medium: waiting
 agents, missing or expiring sign-ins, pending reboots and herdr restarts, expiring
 certificates, a trusted machine's certificate in its last day, the overlay)
 and **notice** (low: Ships behind on tooling, tools waiting for a sign-in, tags

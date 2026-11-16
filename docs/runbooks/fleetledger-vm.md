@@ -215,8 +215,9 @@ After two weeks, once you are happy: `ship-fleet migrate wipe` on the desktop.
 ## Every boot: unlock, once
 
 A boot (a Proxmox update, a power cut) leaves the vault locked. FleetLedger then shows
-the last known state and changes nothing, and your Ships keep running. Unlock it once,
-for every secret, until the next boot:
+the last known state and changes nothing, and your Ships keep running; Needs
+attention (`ship-fleet attention --offline` over ssh) says it once, as `vault-locked`.
+Unlock it once, for every secret, until the next boot:
 
 - the web UI's **Unlock** button, on a paired browser; or
 - `ssh -t fleetledger@fleetledger ship-fleet unlock`.

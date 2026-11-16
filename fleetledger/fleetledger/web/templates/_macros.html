@@ -41,6 +41,7 @@
 <li class="alert lvl-{{ a.level }}" data-key="{{ a.key }}"{% if a.waiting %} data-waiting="{{ a.ship }}: {{ a.message }}"{% endif %}>
   {{ sev(a.level) }}
   {% if ship and a.ship %}<a href="/ships/{{ a.ship }}" class="ship">{{ a.ship }}</a>
+  {% elif ship and a.code == "vault-locked" %}<a href="/unlock" class="ship">FleetLedger</a>
   {% elif ship %}<a href="/settings?said=machines#machines" class="ship" title="a trusted machine">{{ a.subject }}</a>{% endif %}
   <span class="msg">{{ a.message }} <code class="code">{{ a.code }}</code></span>
   <span class="fix">

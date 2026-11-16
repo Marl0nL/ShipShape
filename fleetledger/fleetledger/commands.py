@@ -1133,7 +1133,7 @@ def cmd_attention(args, app) -> int:
         return 0
     seen: set[tuple[str, str, str | None]] = set()
     while True:
-        items = ops.attention(_views(app, inv, ships, offline=False), inv)
+        items = ops.attention(_views(app, inv, ships, offline=args.offline), inv)
         if args.json:
             app.say(json.dumps([i.as_dict() for i in items], indent=2))
         elif args.watch is None:
