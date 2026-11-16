@@ -463,7 +463,7 @@ def test_untrust_of_a_machine_holding_your_key_says_so_and_offers_to_stop_renewi
     until = ca.machine(caenv.store.load(), "old-desktop").last_valid_before
     inv = caenv.store.load()
     assert trustcmd.your_key_file(inv, ca.machine(inv, "old-desktop")) == (
-        inv.agent_key_paths[0])
+        inv.agent_key_paths[0], True)
     caenv.trusted.clear()
     # --yes alone is not enough, and nobody can be asked: refused, saying why.
     for argv in (("untrust", "old-desktop"), ("untrust", "old-desktop", "--yes")):
@@ -492,6 +492,25 @@ def test_untrust_of_a_machine_holding_your_key_says_so_and_offers_to_stop_renewi
     assert ca.machine(caenv.store.load(), "old-desktop").revoked
     krl = __import__("base64").b64decode(dict(caenv.trusted)["ship-01"]["revoked_keys"])
     assert ca.krl_revokes(krl, key)
+
+
+def test_untrust_asks_as_for_your_key_when_one_of_your_key_files_cannot_be_read(caenv,
+                                                                               tmp_path):
+    from fleetledger import trustcmd
+
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+              "--out", str(tmp_path / "b"))
+    gone = tmp_path / "gone.pub"  # e.g. not copied to this computer
+    with caenv.store.edit() as ed:
+        ed.doc["fleet"]["agent_keys"].append(str(gone))
+    inv = caenv.store.load()
+    assert trustcmd.your_key_file(inv, ca.machine(inv, "laptop")) == (gone, False)
+    code, _, err = caenv.run("untrust", "laptop", "--yes")  # never a silent pass
+    assert code == 1 and "cannot be read here" in err and "--revoke-my-key" in err
+    assert not ca.machine(caenv.store.load(), "laptop").revoked
+    assert caenv.run("untrust", "laptop", "--yes", "--revoke-my-key")[0] == 0
+    assert ca.machine(caenv.store.load(), "laptop").revoked
 
 
 def test_untrust_of_a_machine_holding_your_key_with_both_flags(caenv):

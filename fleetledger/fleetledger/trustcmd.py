@@ -690,20 +690,23 @@ def has_cert(ship: Ship) -> bool:
 
 
 
-def your_key_file(inv: Inventory, m: ca.Machine) -> Path | None:
+def your_key_file(inv: Inventory, m: ca.Machine) -> tuple[Path, bool] | None:
     """The file in fleet.agent_keys that holds m's key, if its key is one of your keys
-    for Ships (as the old computer's is after a move); else None. A file that cannot be
-    read is passed over: it is reported elsewhere (doctor)."""
-    from fleetledger.seed import cloudinit
-
+    for Ships (as the old computer's is after a move): (file, True). A file that cannot
+    be read here might hold it, so it counts too, as (file, False): the guard then asks
+    rather than letting untrust revoke your key unwarned. None for any other machine."""
+    blob = sshkeys.blob(m.public_key)
+    unread = None
     for path in inv.agent_key_paths:
         try:
-            lines = cloudinit.read_public_keys(path, "an agent key")
-        except ConfigError:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            unread = unread or path
             continue
-        if sshkeys.blob(m.public_key) in {sshkeys.blob(k) for k in lines}:
-            return path
-    return None
+        lines = [ln for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        if blob in {sshkeys.blob(ln) for ln in lines}:
+            return path, True
+    return (unread, False) if unread else None
 
 
 def _when(text: str) -> str:
@@ -711,17 +714,23 @@ def _when(text: str) -> str:
 
 
 def your_key_warning(inv: Inventory, m: ca.Machine) -> tuple[str, str] | None:
-    """For a machine whose key is one of your keys for Ships: what untrusting it does,
-    and the alternative, to stop renewing it (it stays trusted and its certificate
-    lapses). None for any other machine."""
-    path = your_key_file(inv, m)
-    if path is None:
+    """For a machine whose key is (or may be) one of your keys for Ships: what
+    untrusting it does, and the alternative, to stop renewing it (it stays trusted and
+    its certificate lapses). None for any other machine."""
+    found = your_key_file(inv, m)
+    if found is None:
         return None
-    consequence = (
-        f"{m.name}'s key is one of your keys for Ships ({paths.tilde(path)}, in "
-        "fleet.agent_keys). Untrusting it puts that key in the revocation list on every "
-        "Ship, and the list applies to every login, not only certificates: that key would "
-        "stop logging in to any Ship, as the agent or as you. This cannot be undone.")
+    path, certain = found
+    lockout = ("puts that key in the revocation list on every Ship, and the list applies "
+               "to every login, not only certificates: that key would stop logging in to "
+               "any Ship, as the agent or as you. This cannot be undone.")
+    if certain:
+        consequence = (f"{m.name}'s key is one of your keys for Ships ({paths.tilde(path)}, "
+                       f"in fleet.agent_keys). Untrusting it {lockout}")
+    else:
+        consequence = (f"{paths.tilde(path)}, one of your keys for Ships (fleet.agent_keys), "
+                       f"cannot be read here, so FleetLedger cannot tell whether {m.name}'s "
+                       f"key is that key. If it is, untrusting {m.name} {lockout}")
     until = ca.parse_stamp(m.last_valid_before)
     here = this_computer()
     if here and here["machine"] == m.name:
@@ -769,8 +778,7 @@ def confirm_untrust(app, inv: Inventory, m: ca.Machine, *, yes: bool,
         answer = app.confirm(f"Type {m.name} to untrust it all the same, or press Enter to "
                              "stop renewing it instead: ").strip()
         if not answer:
-            app.say(f"Nothing revoked: {m.name} stays trusted, and FleetLedger issues it no "
-                    "new certificate unless asked.")
+            app.say(f"Nothing revoked: {m.name} stays trusted.")
             return False
         if answer != m.name:
             raise FleetError(f"Nothing revoked: {m.name} stays trusted.",
