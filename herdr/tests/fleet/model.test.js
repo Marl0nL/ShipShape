@@ -225,18 +225,16 @@ test("readFleetFile reads every machine-bundle example", () => {
   for (const [name, doc] of examples("machine-bundle")) {
     const got = readFleetFile(JSON.stringify(doc));
     assert.equal(got.error, undefined, name);
-    assert.deepEqual(got.ships, doc.ships.map((s) => ({ name: s.name, tags: s.tags })), name);
-    assert.equal(got.ssh, doc.fleetledger ? `fleetledger@${doc.fleetledger.name}` : null, name);
+    assert.deepEqual(got, { ships: doc.ships.map((s) => ({ name: s.name, tags: s.tags })) }, name);
   }
 });
 
-test("readFleetFile: the shape is checked; names it would send are too", () => {
+test("readFleetFile: the shape is checked, and names outside [a-z0-9-] are left out", () => {
   const doc = example("machine-bundle", "renewed.json");
   assert.match(readFleetFile(JSON.stringify({ ...doc, schema: "shipshape.machine-bundle/2" })).error, /fleet.json: shape .* newer/);
   assert.match(readFleetFile(JSON.stringify({ ...doc, schema: undefined })).error, /fleet.json: no "schema" field/);
-  const odd = { ...doc, fleetledger: { ...doc.fleetledger, name: "-oProxyCommand=x" }, ships: [...doc.ships, { name: "Bad Name", tags: [] }] };
+  const odd = { ...doc, ships: [...doc.ships, { name: "Bad Name", tags: [] }] };
   const got = readFleetFile(JSON.stringify(odd));
-  assert.equal(got.ssh, null);
   assert.deepEqual(got.ships.map((s) => s.name), ["ship-01"]);
 });
 
@@ -323,7 +321,25 @@ test("a locked vault on a FleetLedger without about still shows, from attention"
   assert.equal(h.locked, true);
   assert.ok(h.facts.includes("version unknown"));
   assert.ok(h.facts.includes("vault locked"));
-  assert.ok(h.notices.some((x) => x.text === "ship-fleet about: usage: ship-fleet ..."));
+  assert.ok(h.notices.some((x) => x.text === "ship-fleet about: this FleetLedger is older than the contract this panel reads; update FleetLedger (ship-fleet: error: argument command: invalid choice: 'about')"));
+});
+
+test("an older FleetLedger without --offline is named plainly", async () => {
+  const { fleet } = stand({ files: settings({ ssh: DEST }), answers: { ls: { code: 2, stderr: "usage: ship-fleet ls [-h] [--json]\nship-fleet ls: error: unrecognized arguments: --offline\n" }, attention: ok([]), about: ok(example("fleetledger-about", "desktop-checked.json")) } });
+  await fleet.refresh();
+  assert.equal(fleet.state.error, "ship-fleet ls: this FleetLedger is older than the contract this panel reads; update FleetLedger (ship-fleet ls: error: unrecognized arguments: --offline)");
+});
+
+test("a failed read drops the last read's left-out notices", async () => {
+  let up = true;
+  const newer = { ...example("fleetledger-ship", "unreachable.json"), schema: "shipshape.fleetledger-ship/2" };
+  const { fleet } = stand({ files: settings({ ssh: DEST }), answers: { ls: () => (up ? ok([newer]) : { code: 1, stderr: "boom\n" }), attention: ok([]), about: ok(example("fleetledger-about", "desktop-checked.json")) } });
+  await fleet.refresh();
+  assert.equal(fleet.state.refused.length, 1);
+  up = false;
+  await fleet.refresh();
+  assert.deepEqual(fleet.state.refused, []);
+  assert.ok(!header(fleet.state, 1_000_000, paths).notices.some((n) => /Left out/.test(n.text)));
 });
 
 test("an empty fleet says so", async () => {
@@ -400,14 +416,38 @@ test("the key file goes to ssh with IdentitiesOnly", async () => {
 
 const bundle = (over = {}) => ({ ...example("machine-bundle", "renewed.json"), ...over });
 
-test("fleet.json: FleetLedger's address when settings give none", async () => {
-  const doc = bundle();
-  const { fleet, calls } = stand({ files: { [FLEET_FILE]: JSON.stringify(doc) }, answers: answersFor(ships()) });
+test("fleet.json never says where to ask: a refresher's key may only fetch its bundle", async () => {
+  const { fleet, calls } = stand({ files: { [FLEET_FILE]: JSON.stringify(bundle()) } });
   await fleet.refresh();
-  assert.equal(sshCalls(calls)[0].args[5], "fleetledger@fleetledger");
-  assert.equal(fleet.state.where.from, "fleet.json");
-  assert.equal(fleet.state.shipsFrom, "FleetLedger");
-  assert.match(header(fleet.state, 1_000_000, paths).facts[0], /\(from fleet.json\)/);
+  assert.deepEqual(sshCalls(calls), []);
+  assert.equal(fleet.state.where, null);
+  assert.equal(fleet.state.shipsFrom, "fleet.json");
+});
+
+test("a key forced to machine-bundle: said, and not used again", async () => {
+  let now = 1_000_000;
+  const forced = { ls: ok(bundle()), attention: ok(bundle()), about: ok(bundle()) };
+  const { fleet, calls } = stand({ files: settings({ ssh: DEST }), answers: forced, clock: () => now });
+  await fleet.refresh();
+  assert.equal(sshCalls(calls).length, 1);
+  assert.match(fleet.state.error, /answered with this machine's bundle.*will not ask with it again/);
+  now += POLL_MS;
+  await fleet.refresh();
+  assert.equal(sshCalls(calls).length, 1);
+  assert.match(header(fleet.state, now, paths).notices.find((n) => n.tone === "bad").text, /machine's bundle/);
+});
+
+test("a key forced to machine-bundle: another key in settings is asked", async () => {
+  const files = settings({ ssh: DEST });
+  let lsAnswer = ok(bundle());
+  const { fleet, calls } = stand({ files, answers: { ls: () => lsAnswer, attention: ok([]), about: ok(example("fleetledger-about", "desktop-checked.json")) } });
+  await fleet.refresh();
+  files[SETTINGS] = JSON.stringify({ ssh: DEST, identity_file: "~/.ssh/id_fleet" });
+  lsAnswer = ok(ships());
+  await fleet.refresh();
+  assert.equal(sshCalls(calls).length, 4);
+  assert.equal(fleet.state.error, null);
+  assert.equal(fleet.state.ships.length, ships().length);
 });
 
 test("fleet.json: its Ships when FleetLedger cannot be read", async () => {

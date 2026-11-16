@@ -45,10 +45,12 @@ the panel. Saving the file reloads the panel.
 
 Without `ssh`, the panel says where to put it. If the refresher has left
 `~/.ssh/shipshape/fleet.json` on this computer (this machine's own bundle from `ship-fleet
-machine-bundle NAME`, `contracts/machine-bundle.schema.json`), the panel takes FleetLedger's
-address from it when `settings.json` gives none (`fleetledger@` the bundle's `fleetledger.name`,
-the FleetLedger VM's login), and shows its Ships (name and tags) when it cannot read FleetLedger
-itself. The file is not there today, which is normal.
+machine-bundle NAME`, `contracts/machine-bundle.schema.json`), the panel shows its Ships (name and
+tags) when it has no list from FleetLedger. The file is not there today, which is normal. It never
+takes FleetLedger's address from that file: a refresher's key may be allowed only
+`ship-fleet machine-bundle`, and every call with it counts as this machine refreshing. If
+FleetLedger ever answers the panel with this machine's bundle, the panel says so and does not ask
+with that key again until `settings.json` names another.
 
 ## What it runs, and where
 

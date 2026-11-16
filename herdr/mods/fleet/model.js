@@ -130,6 +130,9 @@ function refuser() {
 export function readShips(stdout) {
   const p = parse(stdout, "ship-fleet ls");
   if (p.error) return { error: p.error };
+  if (p.value?.schema === SCHEMA.machineBundle) {
+    return { forced: true, error: "FleetLedger answered with this machine's bundle: the key ssh used may only fetch it, and each ask counts as this machine refreshing. The panel will not ask with it again; set \"ssh\" and \"identity_file\" in settings.json to a key that may run ship-fleet." };
+  }
   if (!Array.isArray(p.value)) return { error: `ship-fleet ls: not a list (${checkSchema(p.value, SCHEMA.ship) ?? "one document"})` };
   const refused = refuser();
   const ships = [];
@@ -206,11 +209,10 @@ export function readSettings(text, home) {
   return { ssh: s.ssh, identity, warnings };
 }
 
-/** The FleetLedger VM's login (fleetledger/fleetledger/appliance.py USER). */
-export const VM_USER = "fleetledger";
-
-/** The refresher's fleet.json, a machine bundle (null: there is none, which is normal today).
- *  Its Ships and their tags, and FleetLedger's own VM, reached as VM_USER@its name. */
+/** The refresher's fleet.json, a machine bundle (null: there is none, which is normal today):
+ *  its Ships and their tags. Never where to reach FleetLedger: the key a refresher fetches its
+ *  bundle with may be forced to `ship-fleet machine-bundle`, and every call with it counts as
+ *  that machine asking (contracts/ship-fleet.md), so only settings.json says where to ask. */
 export function readFleetFile(text) {
   if (text === null || text === undefined) return { absent: true };
   const p = parse(text, "fleet.json");
@@ -218,12 +220,10 @@ export function readFleetFile(text) {
   const why = checkSchema(p.value, SCHEMA.machineBundle);
   if (why) return { error: `fleet.json: ${why}` };
   const f = p.value;
-  const vm = typeof f.fleetledger?.name === "string" && NAME.test(f.fleetledger.name) ? f.fleetledger.name : null;
-  const ssh = vm ? `${VM_USER}@${vm}` : null;
   const ships = (Array.isArray(f.ships) ? f.ships : [])
     .filter((s) => s && typeof s.name === "string" && NAME.test(s.name))
     .map((s) => ({ name: s.name, tags: strings(s.tags) ? s.tags : [] }));
-  return { ssh, ships };
+  return { ships };
 }
 
 /** `hc machine ls --json`: Herdr's own connection to each machine, by name. */
@@ -254,6 +254,12 @@ export async function ask(host, where, args) {
     return { ok: false, reached: false, error: `Couldn't run ssh: ${firstLine(e?.message ?? e) || "it gave no reason"}` };
   }
   if (r.code === 0) return { ok: true, stdout: r.stdout };
+  // 2 with a usage line is argparse: this FleetLedger has no such command or option.
+  const said = String(r.stderr ?? "");
+  if (r.code === 2 && /^usage:/m.test(said)) {
+    const err = firstLine(said.split("\n").filter((l) => /error:/.test(l)).join("\n")) || firstLine(said);
+    return { ok: false, reached: true, error: `ship-fleet ${args[0]}: this FleetLedger is older than the contract this panel reads; update FleetLedger (${err})` };
+  }
   const line = firstLine(r.stderr, r.stdout) || `it exited ${r.code}`;
   // 255 is ssh's own failure: no connection, no key, a host key it does not know.
   if (r.code === 255) return { ok: false, reached: false, error: `Couldn't reach FleetLedger at ${where.ssh}: ${line}` };
@@ -279,7 +285,7 @@ export class Fleet {
       readAt: null, // the last read, whatever came of it
       settings: null,
       fleetFile: null,
-      where: null, // {ssh, identity, from: "settings.json" | "fleet.json"}
+      where: null, // {ssh, identity}, from settings.json
       ships: null, // the last list that was read, null before one
       shipsFrom: null, // "FleetLedger" | "fleet.json"
       shipsAt: null,
@@ -313,19 +319,24 @@ export class Fleet {
     const [settingsText, fleetText] = await Promise.all([readFile(host, settingsPath(host)), readFile(host, fleetFilePath(host))]);
     st.settings = settingsText.error ? { error: settingsText.error, warnings: [] } : readSettings(settingsText.text, host.home());
     st.fleetFile = fleetText.error ? { error: fleetText.error } : readFleetFile(fleetText.text);
-    const fromFile = st.fleetFile.ssh ?? null;
-    st.where = st.settings.ssh
-      ? { ssh: st.settings.ssh, identity: st.settings.identity, from: "settings.json" }
-      : !st.settings.error && fromFile
-        ? { ssh: fromFile, identity: st.settings.identity ?? null, from: "fleet.json" }
-        : null;
+    st.where = st.settings.ssh ? { ssh: st.settings.ssh, identity: st.settings.identity } : null;
+    const key = st.where && `${st.where.ssh}\n${st.where.identity ?? ""}`;
 
     const machines = this.readMachines();
-    if (st.where) {
+    // A key that got this machine's bundle is not used again (each ask counts as a refresh):
+    // st.error keeps saying why until settings.json names another destination or key.
+    const usable = st.where && key !== this.forced;
+    if (usable) {
       const ls = await ask(host, st.where, ["ls", "--json", "--offline"]);
+      let reached = ls.reached !== false;
+      st.refused = [];
       if (ls.ok) {
         const got = readShips(ls.stdout);
         st.error = got.error ?? null;
+        if (got.forced) {
+          this.forced = key;
+          reached = false;
+        }
         if (!got.error) {
           st.ships = got.ships;
           st.refused = got.refused;
@@ -335,7 +346,7 @@ export class Fleet {
       } else {
         st.error = ls.error;
       }
-      if (ls.reached !== false) {
+      if (reached) {
         const [att, about] = await Promise.all([ask(host, st.where, ["attention", "--offline", "--json"]), ask(host, st.where, ["about", "--json"])]);
         const a = att.ok ? readAttention(att.stdout) : { error: att.error };
         st.attentionError = a.error ?? null;
@@ -350,8 +361,9 @@ export class Fleet {
         st.about = null;
         st.aboutError = null;
       }
-    } else {
+    } else if (!st.where) {
       st.error = null;
+      st.refused = [];
       st.fleetItems = [];
       st.attentionError = null;
       st.about = null;
@@ -439,7 +451,7 @@ export function header(state, now, paths) {
   const st = state;
   const notices = []; // {tone, text}
   const facts = [];
-  if (st.where) facts.push(`FleetLedger: ${st.where.ssh}${st.where.from === "fleet.json" ? " (from fleet.json)" : ""}`);
+  if (st.where) facts.push(`FleetLedger: ${st.where.ssh}`);
   if (st.about?.version) facts.push(`version ${st.about.version}`);
   else if (st.aboutError) facts.push("version unknown");
   const locked = st.about?.vault === "locked" || st.fleetItems.some((i) => i.code === "vault-locked");
