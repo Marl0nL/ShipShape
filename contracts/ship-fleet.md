@@ -179,3 +179,79 @@ never a credential. It is written as every other change (locked, validated, mode
 
 It only reads `ships.toml`: it reaches no Ship, and the listing runs while the vault
 is locked (a change does not). Tag accounts never reach a Ship (`settings.md`).
+
+## `ship-fleet machine-bundle NAME`
+
+One trusted machine's own bundle, for that machine to keep itself current over ssh:
+its certificate, its known_hosts and SSH config, its `hc` machines, and a file of the
+fleet's Ships with their tags. Schema: `machine-bundle.schema.json`
+(`"schema": "shipshape.machine-bundle/1"`); examples in `examples/machine-bundle/`.
+Always JSON; there is no text form and no option.
+
+| Field | What it is |
+|---|---|
+| `machine` | NAME, the trusted machine (`ships.toml` `machine.<name>`). |
+| `at` | When FleetLedger made the document. |
+| `certificate` | `line`: its user certificate, as `<machine>-cert.pub` holds it; `valid_before`: when it lapses; `renewed`: this call signed it; `not_renewed`: why a certificate that was due was not signed (`code` `vault-locked` or `sign-failed`, and `why`), else null. `line` is null only when FleetLedger has no valid certificate for it and could not sign one. |
+| `scope`, `logins` | What its certificates open: which Ships, and which logins on them. |
+| `ssh` | `user`: the login its SSH config uses (agent when it may log in as the agent, else your own). |
+| `known_hosts` | Its known_hosts lines for Ships: one `@cert-authority` line naming every name of every Ship listed (none while there is none), then `@revoked *` per revoked host key. |
+| `fleetledger` | FleetLedger's own VM (`[fleet] self`): `name`, and its host key as a `known_hosts` line, so the machine keeps the pin of the computer it asks. Null when FleetLedger records no VM of its own. |
+| `ships` | Every Ship the machine's scope reaches, and only those: `name` (its `Host` alias and `hc` machine name), `tags`, `runtime` (`core` or `herdr`, from its last status), `host_names` (`lan`: the first of its non-overlay names that resolves on the FleetLedger computer; `overlay`: its overlay name, or null) and `host_certificate` (its last status shows one). |
+| `idle_limit` | `on`: after `days` without asking, the machine is refused until allowed again. |
+
+It is data, never a script, and the machine checks every field against the schema's
+patterns before writing a file from it. The bundle a person installs by hand
+(`ship-fleet trust`, `install.sh`) is unchanged.
+
+**What it does.**
+
+- It answers only for a machine that is trusted and not untrusted. An unknown
+  machine and an untrusted one get the same one line on stderr, exit 1, and nothing on
+  stdout. So does a name that is not a machine name.
+- It signs a new certificate only once the current one is past half its life (with
+  the default 7-day certificates, in its last 84 hours), with the code, lifetime and
+  record `ship-fleet trust` uses, ships.toml locked throughout, so two calls at once
+  sign one. Otherwise it returns the current one again. A certificate FleetLedger does
+  not hold (signed by `trust --print-cert` since), or one for more than the machine may
+  have now (its scope or logins narrowed since), counts as none: a new one is signed.
+- While the vault is locked it signs nothing and never asks for a passphrase: the
+  document comes with the current certificate while it is valid (null once lapsed),
+  `not_renewed.code` `vault-locked`, and the rest as ever. Signing never prompts
+  (stdin closed, no terminal); a CA key that would need a passphrase gives
+  `sign-failed`.
+- **The idle limit.** It records when the machine asked (`last_refreshed` in
+  `ships.toml`, to within five minutes). A machine whose last ask, or the last time
+  you allowed it again, is more than 30 days ago is refused, saying so and the one
+  command that lets it ask again: `ship-fleet trust NAME --allow-again`. A refusal
+  does not count as asking. `ship-fleet trust NAME --idle-limit off` keeps the machine
+  trusted until untrusted; `--idle-limit on` (the default) puts the limit back. A
+  machine that has never asked, such as one trusted before the limit existed, starts
+  its 30 days at its first ask, so the upgrade locks out no machine. FleetLedger's own
+  computer (`trust --this-computer`) has no idle limit. Certificate lifetimes do not
+  change.
+- Every call it answers writes one line to the audit log: the machine, and
+  `returned`, `renewed`, `returned, not renewed: <code>`, `refused: <why>` (unknown,
+  untrusted, not a machine name, idle since ...) or `failed`.
+- On a copy on standby or retired (`ship-fleet migrate`) it refuses, as every command
+  but a few does, saying where the fleet is; that copy writes nothing, not even an
+  audit line. During a move it refuses until the move ends.
+
+**What it never does.** It takes the machine from its argument alone: it reads
+nothing from stdin, never looks at `SSH_ORIGINAL_COMMAND`, runs no shell, and has no
+option, so a key whose `authorized_keys` line forces `ship-fleet machine-bundle NAME`
+gets NAME's bundle and nothing else: no other machine's, no secret, no Ship outside
+NAME's scope. It writes only NAME's record in `ships.toml` (`last_refreshed`; a new
+certificate's serial, date and `issued` entry; `idle_refused`), the new certificate
+beside NAME's bundle (`~/.local/share/fleetledger/trust/NAME/NAME-cert.pub`), and its
+audit line; asked again within five minutes it does not rewrite `ships.toml`.
+
+**Attention.** A machine that has asked at least once refreshes itself, so FleetLedger
+says when it stops (fleet-level items in `ship-fleet attention`, the web UI and
+`doctor`, one per machine): `machine-refresh-stopped` when it has not asked for 4 days
+(more than a long weekend switched off, and past half the 7-day certificate's life, so
+a certificate renewed at its last ask still has 3 days); `machine-refresh-refused`
+once it was refused for being idle, in place of its certificate's own item; and,
+when its certificate is in its last day or lapsed, the existing `machine-cert-*` item,
+whose fix then says when it last asked and, while the vault is locked, to unlock it.
+A machine that never asked has only the `machine-cert-*` items, as before.

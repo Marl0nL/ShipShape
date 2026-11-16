@@ -195,7 +195,10 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
         {"machine": m.name, "scope": list(m.scope), "valid_before": m.last_valid_before,
          "revoked": m.revoked, "fingerprint": ca.fingerprint(m.public_key),
          "state": ca.cert_state(m, default_hours=cfg.user_cert_hours),
-         "this_computer": bool(here and here["machine"] == m.name)}
+         "this_computer": bool(here and here["machine"] == m.name),
+         # ship-fleet machine-bundle: when it last got its bundle, and the idle limit
+         "last_refreshed": m.last_refreshed, "idle_limit": m.idle_limit,
+         "idle_refused": m.idle_refused}
         for m in ca.machines(inv)
     ]
     return {"host_ca": ca.fingerprint(cfg.host_public),
@@ -235,6 +238,13 @@ def ca_show(args, app) -> int:
             if m["this_computer"] and m["state"] == "expiring":
                 state += " (renews itself)"
             what = f"until {m['valid_before'] or '-':<21} {state}"
+            if m["idle_refused"]:
+                what += (f"; refused its bundle since {m['idle_refused'][:10]} (idle: "
+                         f"ship-fleet trust {m['machine']} --allow-again)")
+            elif m["last_refreshed"]:
+                what += f"; last asked {m['last_refreshed'][:16].replace('T', ' ')} UTC"
+            if not m["idle_limit"]:
+                what += "; no idle limit"
         app.say(f"  {m['machine']:<14} {','.join(m['scope']):<20} {what}")
     if not machines:
         app.say("  none (ship-fleet trust <machine> --key <its .pub>)")
@@ -262,8 +272,57 @@ def _read_key(text_or_path: str) -> str:
     return line
 
 
+# trust options that sign or write a bundle: --allow-again and --idle-limit take none.
+SIGNING_OPTIONS = ("this_computer", "key", "scope", "logins", "hours", "out", "print_cert",
+                   "install", "no_herdr")
+
+
+def set_refresh(args, app, store) -> int:
+    """--allow-again and --idle-limit: change only the machine's record of who may ask
+    for its bundle (ship-fleet machine-bundle); nothing is signed or written besides."""
+    given = [f"--{o.replace('_', '-')}" for o in SIGNING_OPTIONS if getattr(args, o, None)]
+    if args.hostnames != "here":
+        given.append("--hostnames")
+    if given:
+        raise FleetError(f"--allow-again and --idle-limit change only the record; give "
+                         f"{', '.join(given)} in a separate ship-fleet trust.")
+    name = args.machine
+    if not name:
+        raise FleetError("Which machine? ship-fleet trust NAME --allow-again.")
+    m = ca.machine(store.load(), name)
+    if m is None or m.revoked:
+        raise FleetError(f"No trusted machine called {name}.")
+    now = now_timestamp()
+    with store.edit() as ed:
+        if args.allow_again:
+            ed.set_machine_field(name, "refresh_allowed", now)
+            ed.set_machine_field(name, "idle_refused", None)
+        if args.idle_limit == "off":
+            ed.set_machine_field(name, "idle_limit", False)
+            ed.set_machine_field(name, "idle_refused", None)
+        elif args.idle_limit == "on":
+            ed.set_machine_field(name, "idle_limit", None)  # on is the default
+    days = ca.IDLE_LIMIT.days
+    if args.allow_again:
+        audit.record("-", "trust-allow-again", name, "ok")
+        app.say(f"{name} may ask for its bundle again; it is refused again only after "
+                f"{days} more days without asking.")
+    if args.idle_limit:
+        audit.record("-", f"trust-idle-limit-{args.idle_limit}", name, "ok")
+        if args.idle_limit == "off":
+            app.say(f"{name} stays trusted until you untrust it, however long it goes "
+                    "without asking for its bundle.")
+        else:
+            app.say(f"{name} is refused its bundle after {days} days without asking for it, "
+                    f"until you allow it again (ship-fleet trust {name} --allow-again).")
+    return 0
+
+
 def cmd_trust(args, app) -> int:
     store = app.store_factory()
+    if getattr(args, "allow_again", False) or getattr(args, "idle_limit", None):
+        ca.require(store.load())
+        return set_refresh(args, app, store)
     inv = store.load()
     cfg = ca.require(inv)
     migrate_logins(store, app.note if args.print_cert else app.say)
