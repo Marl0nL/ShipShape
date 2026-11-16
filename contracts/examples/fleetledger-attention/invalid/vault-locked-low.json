@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.fleetledger-attention/1",
+  "ship": null,
+  "code": "vault-locked",
+  "message": "FleetLedger's vault has been locked since this computer started (2026-01-01 00:00 UTC): until it is unlocked FleetLedger checks no Ship, renews no certificate and makes no backup. Your Ships keep running.",
+  "subject": "vault",
+  "severity": "low",
+  "fix": "Unlock it on the FleetLedger computer: ship-fleet unlock (over ssh is fine), or Unlock in the web UI."
+}

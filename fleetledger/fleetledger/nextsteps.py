@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass
 from fleetledger import firstrun
 from fleetledger.errors import FleetError
 
-SCHEMA = "fleetledger.next-steps/1"
+SCHEMA = "shipshape.next-steps/1"
 STATES = ("done", "todo", "attention", "blocked", "skip")
 # done: nothing to do. todo: not done yet; command does it. attention: was set up and
 # needs fixing; command fixes it. blocked: waits for the step named by after.

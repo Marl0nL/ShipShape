@@ -1,0 +1,16 @@
+{
+  "schema": "shipshape.fleetledger-ship/1",
+  "name": "ship-04",
+  "tags": [
+    "work"
+  ],
+  "state": "provisioning",
+  "problem": null,
+  "message": null,
+  "host": "ship-04.local",
+  "attention": [],
+  "status": null,
+  "cloud_init": {
+    "status": "running"
+  }
+}

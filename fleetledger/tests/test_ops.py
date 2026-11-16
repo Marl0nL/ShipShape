@@ -1392,7 +1392,8 @@ def test_cli_attention_while_locked_says_it_once_for_the_fleet(app, world, locke
     items = _offline_attention(app)
     [vault_item] = [i for i in items if i["ship"] is None]
     assert vault_item == {
-        "ship": None, "code": "vault-locked", "subject": "vault", "severity": "high",
+        "schema": "shipshape.fleetledger-attention/1", "ship": None, "code": "vault-locked",
+        "subject": "vault", "severity": "high",
         "message": ops.vault_locked_message(), "fix": ops.VAULT_FIX}
     assert "since this computer started (2026-01-01 00:00 UTC)" in vault_item["message"]
     for stops in ("checks no Ship", "renews no certificate", "makes no backup"):
@@ -1508,7 +1509,8 @@ def test_cli_attention_lists_the_token_item_in_the_fleet_shape(app, world):
     _with_token(world.store, token_expires=soon)
     items = _offline_attention(app)
     [item] = [i for i in items if i["code"] == "proxmox-token-expiring"]
-    assert item == {"ship": None, "code": "proxmox-token-expiring",
+    assert item == {"schema": "shipshape.fleetledger-attention/1", "ship": None,
+                    "code": "proxmox-token-expiring",
                     "subject": "shipshape@pve!build", "severity": "medium",
                     "message": item["message"], "fix": ops.PROXMOX_TOKEN_FIX}
     assert f"expires on {soon} (in 3 days)" in item["message"]

@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.fleetledger-attention/1",
+  "ship": null,
+  "code": "proxmox-token-expiring",
+  "message": "FleetLedger's Proxmox API token shipshape@pve!fleet expires on 2026-01-04 (in 3 days): then FleetLedger can no longer make, resize, snapshot or destroy Ships on Proxmox. Running Ships carry on.",
+  "subject": "shipshape@pve!fleet",
+  "severity": "medium",
+  "fix": "Make a new token on the Proxmox host (docs/runbooks/proxmox-setup.md, step 1), then on the FleetLedger computer: ship-fleet setup --text --redo hypervisor. It records the new token's expiry."
+}

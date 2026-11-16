@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.fleetledger-attention/1",
+  "ship": null,
+  "code": "machine-cert-expiring",
+  "message": "The certificate of laptop lapses at 2026-01-08 09:00 UTC, within a day: ssh, herdr --remote and hc from it stop then.",
+  "subject": "laptop",
+  "severity": "medium",
+  "fix": "Renew it: Download bundle in its row under Settings ▸ Access ▸ Trusted machines, in the FleetLedger computer's browser or one paired from laptop (or ship-fleet trust laptop on the FleetLedger computer), then on laptop: sh install.sh from the bundle."
+}

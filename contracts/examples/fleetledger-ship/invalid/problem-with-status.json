@@ -1,0 +1,16 @@
+{
+  "schema": "shipshape.fleetledger-ship/1",
+  "name": "ship-02",
+  "tags": [
+    "personal"
+  ],
+  "state": "unreachable",
+  "problem": "unreachable",
+  "message": "Cannot reach ship-02",
+  "host": null,
+  "attention": [],
+  "status": {
+    "schema": "shipshape.ship-status/1"
+  },
+  "cloud_init": null
+}

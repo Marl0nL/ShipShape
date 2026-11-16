@@ -1,0 +1,25 @@
+{
+  "schema": "shipshape.fleetledger-signin/1",
+  "ship": "ship-01",
+  "service": "claude",
+  "group": "healthy",
+  "state": "ok",
+  "level": null,
+  "message": "Signed in as work@example.com.",
+  "since": "2026-01-01T00:00:00Z",
+  "account": "work@example.com",
+  "rank": 0,
+  "flow": null,
+  "batch": null,
+  "deadline": null,
+  "answers": true,
+  "tags": [
+    "work"
+  ],
+  "expires_at": null,
+  "note": null,
+  "drops": [],
+  "keep": [],
+  "provider": "claude",
+  "fix": "ship-fleet login ship-01 claude"
+}

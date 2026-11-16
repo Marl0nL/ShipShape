@@ -27,13 +27,19 @@ not part of the interface: ask for a contract change instead of guessing.
 | Agent record (`/var/lib/shipshape/agents.json`) | `agent-record.schema.json` | Ship: ship-ctl | Ship: ship-ctl (resume, restart, notices, status); Fleet sees it only through the status document's `agent_record` |
 | FleetLedger itself (`ship-fleet about --json`) | `fleetledger-about.schema.json` | Fleet: `ship-fleet about` | other programs on your computers (a Fleet panel, over ssh) |
 | Tag accounts (`ship-fleet signins --accounts --json`) | `fleetledger-tag-accounts.schema.json` | Fleet: `ship-fleet signins --accounts` | other programs on your computers (a Fleet panel, over ssh) |
+| Ships as FleetLedger sees them (`ship-fleet ls --json` entries, `status --json`) | `fleetledger-ship.schema.json` | Fleet: `ship-fleet ls`, `status` | other programs on your computers (a Fleet panel, over ssh) |
+| What needs you (`ship-fleet attention --json` entries) | `fleetledger-attention.schema.json` | Fleet: `ship-fleet attention` | other programs on your computers (a Fleet panel, over ssh) |
+| Every sign-in (`ship-fleet signins --json` entries) | `fleetledger-signin.schema.json` | Fleet: `ship-fleet signins` | other programs on your computers (a Fleet panel, over ssh) |
+| The CA and trusted machines (`ship-fleet ca show --json`) | `fleetledger-ca.schema.json` | Fleet: `ship-fleet ca show` | other programs on your computers (a Fleet panel, over ssh) |
 
 Prose documents:
 
 - `seed.md`: what a seed ISO contains and how first boot hands over to ship-provision; the bundle format.
 - `ship-runtime.md`: the users, paths, units and sudo rules every Ship has, and how FleetLedger reaches them.
 - `ship-ctl.md`: every ship-ctl command, its output and exit codes, and how status is worked out.
-- `ship-fleet.md`: the `ship-fleet` output other programs may read (`about --json`, `signins --accounts --json`).
+- `ship-fleet.md`: the `ship-fleet` output other programs may read (`ls`, `status`,
+  `attention`, `signins`, `ca show`, `doctor --next` and `about`, each `--json`), and the one
+  `schema` field convention they share.
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
 - `toolkit.md`: your own toolkits: their layout, ids, the rules FleetLedger checks, and how they reach Ships (the archive, `ship-ctl toolkit`, the allow-list).

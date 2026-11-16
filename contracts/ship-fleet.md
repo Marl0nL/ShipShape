@@ -6,7 +6,115 @@ terminal app, say, over `ssh <FleetLedger computer> ship-fleet ...`) may read th
 and they change only as `README.md` says (an optional field added keeps the version;
 anything else bumps it).
 
-Each `--json` prints exactly one JSON document on stdout and nothing else.
+Each `--json` prints exactly one JSON document on stdout and nothing else (`attention
+--watch` prints one per poll); what went wrong goes to stderr. A command that lists
+prints a JSON list, `[]` when there is nothing to list (no Ships yet, say).
+
+## Versions
+
+Every document names its shape in a `schema` field, `"shipshape.<contract>/<version>"`:
+`<contract>` is its schema's file name in this folder less `.schema.json`, and
+`<version>` a whole number. A list carries it on each entry (an empty list has no
+shape to read). A reader checks it first and refuses a document, or an entry, whose
+`schema` it does not know, or that has none (a FleetLedger older than the document).
+An optional field added keeps the version; anything else bumps it, as `README.md` says.
+
+| Command | Prints | `schema` |
+|---|---|---|
+| `ls [--tag TAG] [--offline] --json` | a list, one per Ship | `shipshape.fleetledger-ship/1` |
+| `status NAME --json` | one Ship | `shipshape.fleetledger-ship/1` |
+| `attention [--tag TAG] [--offline] --json` | a list | `shipshape.fleetledger-attention/1` |
+| `signins [--tag TAG] [--service S] [--group G] [--offline] --json` | a list | `shipshape.fleetledger-signin/1` |
+| `signins --accounts [--tag TAG] --json` | one document | `shipshape.fleetledger-tag-accounts/1` |
+| `ca show --json` | one document | `shipshape.fleetledger-ca/1` |
+| `doctor --next --json` | one document | `shipshape.next-steps/1` |
+| `about [--check] --json` | one document | `shipshape.fleetledger-about/1` |
+
+`--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
+`about`, `doctor --next` and `signins --accounts`, answer while FleetLedger's vault is
+locked; the others are refused then (stderr says how to unlock, exit 1).
+
+## `ship-fleet ls --json` and `ship-fleet status NAME --json`
+
+One Ship as FleetLedger sees it: `ls` lists every Ship in the inventory (with `--tag`,
+those with it) in its order, `status` prints one. Schema:
+`fleetledger-ship.schema.json`; examples in `examples/fleetledger-ship/`.
+
+| Field | What it is |
+|---|---|
+| `name`, `tags` | The Ship and its tags in the inventory (`defaults.tags` counting). |
+| `state` | The status document's (`provisioning`, `needs-sign-in`, `ready`, `running`, `unknown`); `not-enrolled` (in the inventory, never enrolled, not answering); else the problem. |
+| `problem`, `message` | Why there is no status, and in words: `unreachable`, `host-key` (another host key answered), `identity` (it says it is another Ship), `invalid` (its status breaks the contract), `error` (ship-ctl failed), `unknown` (offline, never fetched). Both null when it answered. |
+| `host` | The name it answered on; null offline. |
+| `attention` | Its attention items (`code`, `message`, `subject`): the Ship's own and FleetLedger's about it. `attention --json` ranks them with the fleet's. |
+| `status` | The Ship's status document (`ship-status.schema.json`), fetched now or, offline, the last one; null with a problem. |
+| `cloud_init` | cloud-init's own status JSON while ship-ctl is not installed yet; else null. |
+
+Without `--offline`, `ls` asks every Ship at once and `status` one (and renews this
+computer's certificate in its last day, saying so on stderr); `status` exits 1 when
+the Ship has a problem, after printing it.
+
+## `ship-fleet attention --json`
+
+What needs you, most urgent first (`high`, `medium`, `low`), the Ships' items before
+the fleet's within each severity. Schema: `fleetledger-attention.schema.json`; examples
+in `examples/fleetledger-attention/`.
+
+| Field | What it is |
+|---|---|
+| `ship` | The Ship it is about; null for an item about the fleet. |
+| `code` | A Ship's attention code (`ship-status.schema.json`), FleetLedger's about a Ship, a `problem` word or `not-enrolled`, or a fleet item's code. Show unknown codes as they are. |
+| `message`, `fix` | What it is, and the next step where the message does not say it (empty then; never empty for a fleet item). |
+| `subject` | What it is about within the Ship (an agent, a service id, a unit), or the fleet item's subject. |
+| `severity` | `high`, `medium` or `low`. |
+
+The fleet's own items, read from FleetLedger's files only (nothing is issued or asked):
+
+| `code` | `subject` | When |
+|---|---|---|
+| `vault-locked` (high) | `vault` | FleetLedger's vault is locked (after every boot, or `ship-fleet vault lock`). While it is, a Ship never fetched gets no item of its own. |
+| `machine-cert-expiring` (medium), `machine-cert-lapsed` (high) | the machine's name | A trusted machine that reaches one of the Ships listed is in its certificate's last day, or past it. The FleetLedger computer itself, which renews its own, only once lapsed. |
+| `proxmox-token-expiring` (medium), `proxmox-token-lapsed` (high) | the token's id | FleetLedger's Proxmox API token is in its last 14 days, or past them (`token_expires` in `ships.toml`). |
+
+## `ship-fleet signins --json`
+
+Every sign-in on every Ship, the rows of the web UI's Sign-ins page in the same order:
+what needs you, then what is under way, degraded, healthy, and not used. With a Ship
+named, its rows only. Schema: `fleetledger-signin.schema.json`; examples in
+`examples/fleetledger-signin/`.
+
+| Field | What it is |
+|---|---|
+| `ship`, `tags` | The Ship and its tags. |
+| `service`, `provider` | The status document's auth key (`claude`, `gcloud`, `gcloud_adc`, `github`, ...) and the service `ship-fleet login` takes for it (`gcloud-adc`). |
+| `group`, `rank` | `action`, `underway`, `degraded`, `healthy` or `off`, and the urgency within it (the list is already in order). |
+| `state`, `level`, `message` | A short word (`ok`, `expiring`, `expired`, `wrong account`, `scopes differ`, `missing`, `error`, `unknown`, `off`), `critical`, `warning`, `notice` or null, and a sentence. |
+| `since`, `expires_at` | Since when it has been as it is (or when it expired), and when an expiring one goes. |
+| `account` | The account it is signed in as, as the tool reports it. Never a credential. |
+| `answers` | The Ship answered (offline: last answered), so signing in or out can work. |
+| `drops`, `keep` | `scopes differ`: the GitHub scopes signing in again would drop, and the choice that keeps them. |
+| `fix` | The command that resolves it; empty when healthy. |
+| `flow`, `batch`, `deadline`, `note` | The web UI's sign-ins in progress: always null from the command line. |
+
+## `ship-fleet ca show --json`
+
+The certificate authority, each Ship's host certificate as its last status showed
+it, and every machine trusted to attach (`ship-fleet trust`). Read from `ships.toml`
+and the status cache: it asks no Ship and issues nothing. Without a CA (`ship-fleet ca
+init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.json`; examples in
+`examples/fleetledger-ca/`.
+
+| Field | What it is |
+|---|---|
+| `host_ca`, `user_ca` | Fingerprints of the key that signs Ships' host certificates and of the user CA keys Ships accept (the current one first). |
+| `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
+| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`) and `this_computer` (the FleetLedger computer, which renews its own). |
+
+## `ship-fleet doctor --next --json`
+
+What is left after first-run setup, one step per entry in a fixed order. It reads
+FleetLedger's files only and contacts nothing. Schema: `next-steps.schema.json`;
+examples in `examples/next-steps/`.
 
 ## `ship-fleet about [--check] [--json]`
 

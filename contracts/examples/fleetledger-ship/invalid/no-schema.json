@@ -1,0 +1,13 @@
+{
+  "name": "ship-02",
+  "tags": [
+    "personal"
+  ],
+  "state": "unreachable",
+  "problem": "unreachable",
+  "message": "Cannot reach ship-02",
+  "host": null,
+  "attention": [],
+  "status": null,
+  "cloud_init": null
+}
