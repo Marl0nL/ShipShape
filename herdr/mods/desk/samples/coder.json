@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "kind": "coder",
+  "title": "fix-login",
+  "tags": [
+    "work"
+  ],
+  "updated": "2026-11-12T09:58:00Z",
+  "summary": "Making the OAuth callback keep the return URL",
+  "lists": [
+    {
+      "title": "Plan",
+      "items": [
+        {
+          "text": "Reproduce the loop with an expired session",
+          "done": true
+        },
+        {
+          "text": "Carry return_to through the state param",
+          "done": true
+        },
+        {
+          "text": "Unit tests for the callback",
+          "done": false
+        },
+        {
+          "text": "Check the mobile deep-link path",
+          "done": false
+        }
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "id": "risk",
+      "title": "Watch out",
+      "body": "The mobile app sends return_to un-encoded.",
+      "tone": "warn"
+    }
+  ]
+}
