@@ -115,7 +115,7 @@ def _key(file: str, index: int, text: str, parsed: authkeys.KeyLine, in_block: b
     command = next((v for n, v in opts if n == "command"), None)
     machine = None
     if "cert-authority" in names:
-        access = "cert-authority"
+        access, command = "cert-authority", None  # its options say what it forces
     elif command is not None:
         found = BUNDLE_RE.fullmatch(command)
         if in_block and found and "restrict" in names:
@@ -292,8 +292,9 @@ def lockout_reasons(lst: Listing, k: Key, s: Session) -> list[str]:
     elif s.keys is None and s.over_ssh:
         why.append("FleetLedger cannot tell which key this ssh session logged in with "
                    "(sshd's ExposeAuthInfo is off here), so it may be this one")
-    if k.access == "shell" and not any(o.parsed.key != k.parsed.key and surely_a_shell(lst, o)
-                                       for o in lst.keys):
+    others = (o for o in lst.keys if o.parsed.key != k.parsed.key)
+    if k.access in ("shell", "cert-authority") and not any(surely_a_shell(lst, o)
+                                                           for o in others):
         why.append("it is the last key here that surely gets a shell")
     return why
 

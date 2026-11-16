@@ -278,6 +278,16 @@ def test_only_a_line_that_surely_gives_a_shell_counts_as_another(vm, other):
     assert ak().read_bytes() == before
 
 
+def test_a_certificate_authority_line_is_listed_by_the_schema_and_guarded_as_a_shell(vm):
+    before = seed(f'cert-authority,command="/bin/true" {A} ca-forced\ncert-authority {B} ca\n'
+                  f'command="/bin/true" {C} job\n')
+    doc = keys_json(vm)  # schema-checked
+    assert [(k["access"], k["command"]) for k in doc] == [
+        ("cert-authority", None), ("cert-authority", None), ("command", "/bin/true")]
+    code, _, err = vm.run("keys", "revoke", "ca", "--yes")
+    assert code == 1 and "surely gets a shell" in err and ak().read_bytes() == before
+
+
 def test_a_key_only_in_authorized_keys2_does_not_count_as_another_shell(vm):
     before = seed(f"{A} me\n")
     (ak().parent / "authorized_keys2").write_text(f"{B} old\n")

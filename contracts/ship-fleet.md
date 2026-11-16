@@ -359,8 +359,9 @@ Every key that may log in to this computer as FleetLedger's user: each line with
 in `~/.ssh/authorized_keys`, then `~/.ssh/authorized_keys2` (sshd reads both by
 default), in the order sshd tries them. Comments and blank lines are left out. Schema:
 `fleetledger-key.schema.json`; examples in `examples/fleetledger-key/`. It only reads
-the two files (and the session's own `SSH_USER_AUTH` file): it reaches no Ship, runs
-anywhere, and answers while the vault is locked.
+the two files (and the session's own `SSH_USER_AUTH` file): it reaches no Ship, runs on
+a desktop too, and answers while the vault is locked. On a copy on standby or retired
+(`ship-fleet migrate`) it refuses, as every command but a few does.
 
 | Field | What it is |
 |---|---|
