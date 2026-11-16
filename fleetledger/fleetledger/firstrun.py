@@ -340,8 +340,11 @@ def machines_items(inv) -> list[Item]:
     due = ops.machine_cert_attention(inv, inv.ships())
     if not due:
         return [Item("fleet", "trusted machines", "ok",
-                     f"{len(trusted)}, no certificate lapsing within a day")]
-    return [Item("fleet", f"machine {i.subject}", "warn", i.message, i.fix) for i in due]
+                     f"{len(trusted)}, none to renew by hand now")]
+    here = ops.THIS_COMPUTER_COMMAND
+    return [Item("fleet", f"machine {i.subject}", "warn", i.message,
+                 here if i.fix == ops.THIS_COMPUTER_FIX
+                 else ops.MACHINE_CERT_COMMAND.format(name=i.subject)) for i in due]
 
 
 def ships_items(inv) -> list[Item]:

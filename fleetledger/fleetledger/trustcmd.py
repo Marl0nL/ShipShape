@@ -193,7 +193,8 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
     machines = [
         {"machine": m.name, "scope": list(m.scope), "valid_before": m.last_valid_before,
          "revoked": m.revoked, "fingerprint": ca.fingerprint(m.public_key),
-         "state": ca.cert_state(m), "this_computer": bool(here and here["machine"] == m.name)}
+         "state": ca.cert_state(m, default_hours=cfg.user_cert_hours),
+         "this_computer": bool(here and here["machine"] == m.name)}
         for m in ca.machines(inv)
     ]
     return {"host_ca": ca.fingerprint(cfg.host_public),

@@ -194,26 +194,34 @@ def machine(inventory: Inventory, name: str) -> Machine | None:
     return Machine.from_entry(name, entry) if entry else None
 
 
-def cert_state(m: Machine, now: datetime | None = None) -> str:
-    """A trusted machine's last certificate: revoked, none (never issued), lapsed,
-    expiring (in its last day, MACHINE_DUE_WITHIN) or ok. Read from ships.toml only."""
+def cert_state(m: Machine, now: datetime | None = None, *,
+               default_hours: int = USER_CERT_HOURS) -> str:
+    """A trusted machine's last certificate: revoked, none (never issued, or a date
+    ships.toml does not parse), lapsed, expiring or ok. Expiring: in its last day
+    (MACHINE_DUE_WITHIN), or the last half of the lifetime its renewal gets
+    (cert_hours, else default_hours: [ca] user_cert_hours) if that is shorter, so a
+    machine on short certificates is not due as soon as it gets one. Reads ships.toml."""
     if m.revoked:
         return "revoked"
-    until = parse_stamp(m.last_valid_before)
+    try:
+        until = parse_stamp(m.last_valid_before)
+    except ValueError:  # edited by hand: say nothing rather than fail every page
+        return "none"
     if until is None:
         return "none"
     now = now or utc_now()
     if until <= now:
         return "lapsed"
-    return "expiring" if until - now <= MACHINE_DUE_WITHIN else "ok"
+    window = min(MACHINE_DUE_WITHIN, timedelta(hours=m.cert_hours or default_hours) / 2)
+    return "expiring" if until - now <= window else "ok"
 
 
-def cert_due(m: Machine, now: datetime | None = None, *, renews_itself: bool = False
-             ) -> str | None:
+def cert_due(m: Machine, now: datetime | None = None, *, renews_itself: bool = False,
+             default_hours: int = USER_CERT_HOURS) -> str | None:
     """"lapsed" or "expiring" when a person should renew the machine's certificate, else
     None. renews_itself: FleetLedger's own computer, which renews itself in its last day
     (trustcmd.renew_this_computer_if_due), so it is due only once lapsed."""
-    state = cert_state(m, now)
+    state = cert_state(m, now, default_hours=default_hours)
     if state == "lapsed" or (state == "expiring" and not renews_itself):
         return state
     return None

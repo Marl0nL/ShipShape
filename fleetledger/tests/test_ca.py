@@ -508,8 +508,31 @@ def test_a_machines_certificate_in_its_last_day_or_lapsed_needs_attention(caenv,
     code, out, _ = caenv.run("doctor", "--offline")
     desk_row = next(x for x in out.splitlines() if "machine desk" in x)
     assert "lapsed at" in desk_row
-    assert "Download bundle in its row" in out.split("Next:", 1)[1]
+    assert "ship-fleet trust desk   (or Download bundle" in out.split("Next:", 1)[1]
     assert "machine tablet" not in out and "machine spare" not in out
+
+
+def test_a_machine_on_short_certificates_is_due_only_in_the_last_half(cakeys):
+    from datetime import datetime
+
+    now = datetime(2026, 1, 1, tzinfo=ca.UTC)
+
+    def machine(hours_left, cert_hours=None, stamp=None):
+        return ca.Machine("lap", "ssh-ed25519 AAAA", "2026-01-01T00:00:00Z", ("all",),
+                          cert_hours=cert_hours,
+                          last_valid_before=stamp or ca.stamp(now + timedelta(hours=hours_left)))
+
+    assert ca.cert_state(machine(20), now) == "expiring"  # 7-day certificates: the last day
+    assert ca.cert_state(machine(25), now) == "ok"
+    assert ca.cert_state(machine(-1), now) == "lapsed"
+    # 12-hour certificates: due in their last 6 hours, so a new one is not due at once.
+    assert ca.cert_state(machine(12, cert_hours=12), now) == "ok"
+    assert ca.cert_state(machine(5, cert_hours=12), now) == "expiring"
+    assert ca.cert_state(machine(12), now, default_hours=12) == "ok"
+    # A date edited by hand that does not parse: no state, never an error on every page.
+    assert ca.cert_state(machine(0, stamp="next tuesday"), now) == "none"
+    assert ca.cert_due(machine(20), now, renews_itself=True) is None
+    assert ca.cert_due(machine(-1), now, renews_itself=True) == "lapsed"
 
 
 def test_doctor_says_trusted_machines_are_current(caenv, tmp_path):
@@ -524,7 +547,7 @@ def test_doctor_says_trusted_machines_are_current(caenv, tmp_path):
     _certified_for(caenv.store, "laptop", 2)
     [item] = firstrun.machines_items(caenv.store.load())
     assert (item.name, item.state) == ("machine laptop", "warn")
-    assert "Download bundle" in item.next
+    assert item.next.startswith("ship-fleet trust laptop ") and "Download bundle" in item.next
 
 
 def test_a_narrowing_whose_revocation_does_not_reach_every_ship_fails(caenv, tmp_path):

@@ -191,7 +191,8 @@ day `ship-fleet attention`, the web UI's Needs attention and `ship-fleet doctor`
 flag it as `machine-cert-expiring`, and once it has lapsed as `machine-cert-lapsed`;
 `ship-fleet ca show` gives each machine's state, and its row under Trusted machines a
 badge. Nothing renews another machine by itself. To
-renew it, run `ship-fleet trust laptop` again; it reuses the recorded key. To
+renew it, run `ship-fleet trust laptop` again on the FleetLedger computer; it reuses the
+recorded key. To
 send only the new certificate, use:
 
 ```sh

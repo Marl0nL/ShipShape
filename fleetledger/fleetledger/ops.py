@@ -1236,6 +1236,10 @@ MACHINE_CERT = {
                "The certificate of {name} lapsed at {until}: ssh, herdr --remote and hc "
                "from it stopped then."),
 }
+# The next step on the FleetLedger computer (doctor / Health: a command to copy).
+MACHINE_CERT_COMMAND = ("ship-fleet trust {name}   (or Download bundle under Settings ▸ "
+                        "Access ▸ Trusted machines; then sh install.sh on {name})")
+THIS_COMPUTER_COMMAND = "ship-fleet trust --this-computer"
 MACHINE_CERT_FIX = (
     "Renew it: Download bundle in its row under Settings ▸ Access ▸ Trusted machines, in "
     "the FleetLedger computer's browser or one paired from {name} (or ship-fleet trust "
@@ -1253,13 +1257,14 @@ def machine_cert_attention(inventory: Inventory, ships: Sequence[Ship], *,
     computer renews itself in its last day: it is named only once lapsed."""
     from fleetledger import ca, trustcmd
 
-    if ca.config(inventory) is None:
+    cfg = ca.config(inventory)
+    if cfg is None:
         return []
     here = trustcmd.this_computer()
     items = []
     for m in ca.machines(inventory):
         mine = bool(here and here["machine"] == m.name)
-        due = ca.cert_due(m, now, renews_itself=mine)
+        due = ca.cert_due(m, now, renews_itself=mine, default_hours=cfg.user_cert_hours)
         if due is None or not any(m.reaches(inventory, s) for s in ships):
             continue
         code, text = MACHINE_CERT[due]
