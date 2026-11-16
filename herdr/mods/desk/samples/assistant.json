@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "kind": "assistant",
+  "title": "Assistant",
+  "tags": [
+    "personal"
+  ],
+  "updated": "2026-11-12T09:40:00Z",
+  "summary": "Sorting out Thursday's Melbourne trip and this week's admin",
+  "cards": [
+    {
+      "id": "flights",
+      "title": "Flights held",
+      "body": "SYD to MEL Thu 7:05, back Fri 18:30. Hold expires 5pm today.",
+      "tone": "warn",
+      "link": "https://example.com/booking/QF417"
+    },
+    {
+      "id": "dinner",
+      "title": "Dinner Thursday",
+      "body": "Booked for 4 at 7:30, Chin Chin, Flinders Lane.",
+      "tone": "good"
+    },
+    {
+      "id": "rego",
+      "title": "Car rego due",
+      "body": "Renewal due 30 Nov. Paid by card ending 4421 last year.",
+      "tone": "info"
+    },
+    {
+      "id": "insurance",
+      "title": "Insurance claim",
+      "body": "Waiting on the assessor's report. Chased on Monday, no reply.",
+      "tone": "bad"
+    }
+  ],
+  "lists": [
+    {
+      "title": "Today",
+      "items": [
+        {
+          "text": "Confirm flights before 5pm",
+          "done": false
+        },
+        {
+          "text": "Reply to the landlord about the leak",
+          "done": true
+        },
+        {
+          "text": "Book a haircut",
+          "done": false
+        }
+      ]
+    },
+    {
+      "title": "This week",
+      "items": [
+        {
+          "text": "Draft the quarterly expenses",
+          "done": false
+        },
+        {
+          "text": "Gift for Sam's birthday (Sat)",
+          "done": false
+        }
+      ]
+    }
+  ],
+  "notes": "Prefers window seats, no checked bags. Hotel: use the corporate rate only for work trips.",
+  "links": [
+    {
+      "title": "Trip itinerary",
+      "url": "https://example.com/trip"
+    }
+  ]
+}

@@ -5,6 +5,11 @@ ship (in ShipShape terms one Ship, one VM), its agents are the crew, and the cha
 out on a voyage while its agents work. Beside it sit the terminals of the selected ship, a muster
 roll of every agent, and a close-up "deck view" of any ship.
 
+Beside it is a second layout, **the Desk** (Herdr's default layout plus a panel that follows the
+focused agent, which agents on any machine, Ships included, fill in themselves). See
+[`DESK.md`](DESK.md); it installs with `herdr/install-desk.sh`. The rest of this file is about the
+sea chart.
+
 It is a Herdr *layout* plus one *mod*, laid out the way Herdr shares layouts:
 
 | Path | What it is |
