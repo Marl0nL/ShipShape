@@ -111,7 +111,7 @@ DATA_TOPS = ("audit.log", "status", "history.sqlite3", "attempts.json", "net", "
 TOOLKIT_ARCHIVES = "toolkit-archives"  # toolkitpack.CACHE: packed toolkits, rebuilt
 BACKUP_LAST = "backup-last.json"  # the last ship-fleet backup's result (backup.py)
 # The remote web UI's paired browsers and pairing links (web/devices.py): they stay.
-WEB_FILES = ("web/devices.json", "web/pairings.json", "web/.lock")
+WEB_FILES = ("web/devices.json", "web/pairings.json", "web/lapsed.json", "web/.lock")
 HOST_RE = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]{0,63}@)?[A-Za-z0-9_][A-Za-z0-9_.:-]{0,252}$")
 
 

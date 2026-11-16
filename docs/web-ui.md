@@ -374,7 +374,10 @@ Following Jupyter's model, adapted to "one person, one computer":
   deleting a snapshot, accepting a new host key, trusting, untrusting or
   rescoping a machine, removing an image, every setup change, pairing another
   device) need a device paired in the last 4 hours; the desktop's own browser is
-  never held to that.
+  never held to that. A refusal says why (not paired, which device lapsed and
+  when, or when it was paired) and gives the `ship-fleet ui link` command that gets
+  back in, with the device's name and machine (kept for a lapsed device in
+  `lapsed.json`, only until its cookie expires; it signs nobody in).
 - **One-time link.** `ship-fleet ui` makes a random token, keeps only its
   SHA-256, and puts it in the link. The first visit swaps it for a session
   cookie (`HttpOnly`, `SameSite=Strict`, named after the port) and refreshes to

@@ -60,6 +60,7 @@ from urllib.parse import parse_qs
 
 from fleetledger.errors import FleetError
 from fleetledger.web import devices as devices_mod
+from fleetledger.web import refusal
 from fleetledger.web.devices import Device, Devices
 from fleetledger.web.remote import Remote
 
@@ -278,6 +279,18 @@ class Gate:
         return Session(cookie_value, devices_mod.csrf_for(cookie_value), self.clock(),
                        where=where, device=device)
 
+    def refused(self, cookie_value: str | None, where: str,
+                login: str | None) -> refusal.Page:
+        """What to tell a browser this gate found no session for (web/refusal.py). A
+        lapsed device's details go only to a browser holding its cookie, from the login
+        that paired it; asked only after the session was refused, so it admits nobody."""
+        had_cookie = bool(cookie_value) and len(cookie_value) <= 200
+        if where == LOCAL:
+            return refusal.not_signed_in(had_cookie, self.session_idle)
+        record = (self.devices.lapsed_for(cookie_value, login)
+                  if had_cookie and login and self.devices is not None else None)
+        return refusal.lapsed(record) if record is not None else refusal.not_paired(had_cookie)
+
     def cookie_header(self, session: Session) -> str:
         if session.where == LOCAL:
             return f"{self.cookie_name}={session.id}; HttpOnly; SameSite=Strict; Path=/"
@@ -420,8 +433,7 @@ class GateMiddleware:
             return
         session = self.gate.session(cookie, where, login)
         if session is None:
-            await _plain(send_secured, 401, NOT_SIGNED_IN if where == LOCAL
-                         else NOT_PAIRED)
+            await _page(send_secured, 401, self.gate.refused(cookie, where, login))
             return
         scope.setdefault("state", {})["session"] = session
         if method in SAFE_METHODS:
@@ -433,7 +445,7 @@ class GateMiddleware:
             await _plain(send_secured, 403, "Cross-origin request refused.")
             return
         if session.device is not None and not self.gate.fresh_enough(session, path):
-            await _plain(send_secured, 403, NOT_FRESH)
+            await _page(send_secured, 403, refusal.not_fresh(session.device))
             return
         if method == "POST" and UPLOAD_PATH.match(path):
             await self._upload(scope, receive, send_secured, headers, session)
@@ -529,8 +541,8 @@ class GateMiddleware:
             await _plain(
                 send,
                 403,
-                "That link is used, expired or wrong. Press Enter in the terminal running "
-                "`ship-fleet ui` for a new one." if where == LOCAL else
+                "That link is used, expired or wrong. Get a new one: "
+                f"`{refusal.LOCAL_LINK}` in a terminal on this computer." if where == LOCAL else
                 "That link is used, expired or wrong. Get a new one: `ship-fleet ui link` on "
                 "the FleetLedger computer (over ssh is fine).",
             )
@@ -580,19 +592,8 @@ class GateMiddleware:
         await self.app(scope, receive, send)
 
 
-NOT_SIGNED_IN = ("Not signed in to this FleetLedger. Open a link `ship-fleet ui` printed "
-                 "(press Enter in its terminal for a new one).")
 PROXIED = ("This computer's address (127.0.0.1 or localhost) takes no request a proxy passed "
            "on. From your other devices, open the remote address FleetLedger printed.")
-NOT_PAIRED = ("This device is not signed in to this FleetLedger. Pair it once: run "
-              "`ship-fleet ui link` on the FleetLedger computer (over ssh is fine) and open "
-              "the link here, or use Settings, Devices, Pair a device on a browser that is "
-              "signed in.")
-NOT_FRESH = (f"This device was paired more than {devices_mod.FRESH // 3600} hours ago, and "
-             "this action (destroy, "
-             "rollback, trusting machines, setup's keys, pairing another device ...) needs a "
-             "fresh pairing. Pair this browser again: run `ship-fleet ui link` on the "
-             "FleetLedger computer (over ssh is fine) and open the link here.")
 NOT_ALLOWED = ("This Tailscale login may not use this FleetLedger (or its remote address is "
                "off). Its owner allows logins with `ship-fleet ui remote --login`.")
 NOT_THROUGH_SERVE = ("This address works only through Tailscale Serve, from a device signed in "
@@ -600,14 +601,21 @@ NOT_THROUGH_SERVE = ("This address works only through Tailscale Serve, from a de
                      "Funnel).")
 
 
+async def _page(send: Send, status: int, page: refusal.Page) -> None:
+    await _respond(send, status, page.html(), b"text/html; charset=utf-8")
+
+
 async def _plain(send: Send, status: int, text: str) -> None:
-    body = text.encode("utf-8")
+    await _respond(send, status, text.encode("utf-8"), b"text/plain; charset=utf-8")
+
+
+async def _respond(send: Send, status: int, body: bytes, kind: bytes) -> None:
     await send(
         {
             "type": "http.response.start",
             "status": status,
             "headers": [
-                (b"content-type", b"text/plain; charset=utf-8"),
+                (b"content-type", kind),
                 (b"content-length", str(len(body)).encode()),
             ],
         }

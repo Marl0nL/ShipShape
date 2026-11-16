@@ -248,6 +248,10 @@ FleetLedger keeps the devices in `~/.local/share/fleetledger/web/devices.json` (
 each one's name, login, origin and times, and only a SHA-256 of its session, so the
 file opens nothing. Pairing links waiting to be opened are kept the same way in
 `pairings.json`. A file that cannot be read counts as empty: nobody is signed in.
+A device that lapses leaves its name, login, machine and times in `lapsed.json` until
+its cookie would have expired anyway (30 days after pairing). That record signs nobody
+in: it lets the refusal page tell that browser which device lapsed, when and why, and
+prefill the `ship-fleet ui link --name NAME --machine MACHINE` that pairs it again.
 
 ## Revoke a device
 
@@ -295,6 +299,6 @@ revoke --all` forgets them.
 | Nobody may use … yet | `ship-fleet ui remote --login you@example.com` |
 | (in the browser) This address works only through Tailscale Serve … | open it from a device signed in to the tailnet as you, not a tagged device |
 | (in the browser) This Tailscale login may not use this FleetLedger | sign the device in to Tailscale as an allowed login, or add it: `ship-fleet ui remote --login ...` (the whole list) |
-| (in the browser) This device is not signed in … Pair it once | `ssh desktop ship-fleet ui link --name NAME`, open the link there |
-| (in the browser) … needs a fresh pairing | the same: pair that browser again, then retry |
+| (in the browser) Not paired, or Pairing lapsed | run the command the page shows on the FleetLedger computer (`ssh desktop ship-fleet ui link --name NAME`; for a lapsed device it keeps its name and machine), open the link there |
+| (in the browser) Pair again to do this … needs a fresh pairing | the same: pair that browser again with the command the page shows, then retry |
 | (in the browser) That link is used, expired or wrong | a new one: `ship-fleet ui link` |
