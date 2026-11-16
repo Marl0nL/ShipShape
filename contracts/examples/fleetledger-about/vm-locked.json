@@ -1,0 +1,28 @@
+{
+  "schema": "shipshape.fleetledger-about/1",
+  "version": "0.1.0",
+  "checkout": {
+    "path": "/home/fleetledger/ShipShape",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "branch": null,
+    "dirty": false
+  },
+  "upstream": { "checked": false, "ref": "origin/main", "commit": null, "newer": null, "behind": null },
+  "ui": {
+    "local": "http://127.0.0.1:8765",
+    "remote": "https://fleetledger.example-tailnet.ts.net",
+    "running": true,
+    "as_service": true,
+    "jobs": 0,
+    "stopping": false
+  },
+  "service": { "installed": true, "active": "active", "enabled": "enabled" },
+  "vault": { "state": "locked" },
+  "backup": {
+    "scheduled": true,
+    "last": { "at": "2026-11-15T03:31:07Z", "ok": true, "to": "/mnt/backups/fleetledger", "why": null }
+  },
+  "copy": "active",
+  "self_update": { "command": "ship-fleet self-update", "ref": "origin/main" },
+  "unread": []
+}

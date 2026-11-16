@@ -391,10 +391,16 @@ def cmd_remote(args, app) -> int:
     save(remote)
     audit.record("-", "ui-remote", "web", "on")
     _revoke_unlisted(logins, app)
+    from fleetledger import service
+
+    # A FleetLedger that runs as a service picks the setting up when it (re)starts.
+    start = ("Start or restart the service to use it: ship-fleet service restart (it lets "
+             "running jobs finish first)" if service.unit_path().is_file()
+             else "Run ship-fleet ui")
     app.say(f"Remote web UI is on: {remote.origin}, through Tailscale Serve to "
-            f"127.0.0.1:{remote.port}, for {', '.join(logins)}. Run ship-fleet ui (it now "
-            f"uses port {remote.port}); each start checks Serve again. Pair each device "
-            "once: ship-fleet ui link --name laptop.")
+            f"127.0.0.1:{remote.port}, for {', '.join(logins)}. {start} (it now uses port "
+            f"{remote.port}); each start checks Serve again. Pair each device once: "
+            "ship-fleet ui link --name laptop.")
     app.say(f"Before using it, read the risks in {RUNBOOK}: anyone with a session there "
             "controls the whole fleet.")
     return 0

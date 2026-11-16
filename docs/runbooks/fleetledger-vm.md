@@ -19,10 +19,10 @@ The pieces this uses, each with its own page:
 ship-fleet appliance seed --name fleetledger --vmid 120
 # ... create the VM with the printed qm steps, then, once it has booted:
 ssh vmadmin@fleetledger.local    # Tailscale: install, join as tag:fleetledger
-ssh fleetledger@fleetledger.local ship-fleet vault init
+ssh -t fleetledger@fleetledger.local ship-fleet vault init    # -t: it asks for a passphrase
 ship-fleet migrate push fleetledger@fleetledger.local
 # On the VM, from then on:
-ssh fleetledger@fleetledger ship-fleet unlock    # once after each boot (or Unlock in the web UI)
+ssh -t fleetledger@fleetledger ship-fleet unlock    # once after each boot (or Unlock in the web UI)
 ```
 
 ## What it is, and what keeps it safe
@@ -208,6 +208,9 @@ Serve must be enabled for your tailnet first: if `tailscale serve --bg` prints a
 and waits, open the link and enable Serve, and it carries on by itself
 ([remote-ui.md](remote-ui.md), step 1.4).
 
+`ship-fleet about` shows both addresses from then on (this computer's and the remote
+one), with the service's state.
+
 From now on the VM runs FleetLedger, always on. The desktop is an ordinary trusted
 machine: renew its certificate from the web UI (Download bundle) like the laptop's.
 After two weeks, once you are happy: `ship-fleet migrate wipe` on the desktop.
@@ -299,6 +302,7 @@ ship-fleet migrate retire --to <the new VM> --yes      # works while locked
 ## Updates
 
 ```sh
+ship-fleet about --check             # this version, and whether origin/main is newer
 ship-fleet self-update               # to origin/main; --to v1.2 for a tag
 ```
 

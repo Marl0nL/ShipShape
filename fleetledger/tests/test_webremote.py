@@ -507,6 +507,22 @@ def test_turning_it_on_checks_serve_then_saves_a_private_setting(home):
     assert [e["outcome"] for e in audit.read()] == ["on", "off"]
 
 
+def test_turning_it_on_says_how_to_start_it_service_or_terminal(home, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    on = ["ui", "remote", REMOTE, "--port", str(PORT), "--login", LOGIN]
+    code, said = run_cli(on)
+    assert code == 0, said
+    assert f"Run ship-fleet ui (it now uses port {PORT})" in said
+    assert "service restart" not in said
+    units = tmp_path / "xdg" / "systemd" / "user"
+    units.mkdir(parents=True)
+    (units / "fleetledger.service").write_text("# Written by ship-fleet service install\n")
+    code, said = run_cli(on)
+    assert code == 0, said
+    assert "Start or restart the service to use it: ship-fleet service restart" in said
+    assert "Run ship-fleet ui" not in said
+
+
 def test_it_is_not_turned_on_when_the_check_fails(home):
     fake = FakeTailscale()
     fake.handlers["/"]["Proxy"] = "http://127.0.0.1:9999"

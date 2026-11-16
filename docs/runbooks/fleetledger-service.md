@@ -143,8 +143,10 @@ says whether systemd runs it and whether it is enabled, the address it answers o
 the jobs it is running (or that it is stopping, waiting for them). Its log:
 `journalctl --user -u fleetledger` (add `-f` to follow it).
 
-After updating FleetLedger (`git pull` in the checkout, and `fleetledger/install.sh` if
-its dependencies changed):
+`ship-fleet self-update` updates FleetLedger and restarts the service itself
+([update-fleet.md](update-fleet.md#updating-fleetledger-itself)). After updating it by
+hand instead (`git pull` in the checkout, and `fleetledger/install.sh` if its
+dependencies changed):
 
 ```sh
 ship-fleet service restart
