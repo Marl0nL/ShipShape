@@ -104,6 +104,10 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
         "revoked": [m for m in machines if m.revoked],
         "bundles": bundles,
         "fingerprints": {m.name: ca.fingerprint(m.public_key) for m in machines},
+        # Machines whose key is one of your keys for Ships: (what untrusting does, the
+        # alternative), for Untrust's typed confirmation.
+        "own_key_machines": {m.name: w for m in machines if not m.revoked
+                      and (w := trustcmd.your_key_warning(inv, m))},
         "this_until": trustcmd.this_computer_until(inv),
         "scope_choices": scope_choices(inv),
         "cert_jobs": jobs["certs"],
@@ -311,10 +315,20 @@ async def untrust(request: Request) -> Response:
     m = inv and _trusted(request, inv, one(fields, "machine"))
     if not m:
         return _to_machines()
-    if one(fields, "confirm") != "yes":
+    from fleetledger import trustcmd
+
+    if trustcmd.your_key_file(inv, m) is not None:
+        # One of your keys for Ships: its name typed, as the CLI asks, not the tick box.
+        if one(fields, "confirm_name") != m.name:
+            flash(request, "bad", f"Nothing revoked: {m.name}'s key is one of your keys for "
+                  f"Ships. Type {m.name} to untrust it all the same.")
+        else:
+            _start(request, "trust", [], ["untrust", m.name, "--yes", "--revoke-my-key"],
+                   f"Untrust {m.name}")
+    elif one(fields, "confirm") != "yes":
         flash(request, "bad", "Tick the box to confirm.")
     else:
-        _start(request, "trust", [], ["untrust", m.name], f"Untrust {m.name}")
+        _start(request, "trust", [], ["untrust", m.name, "--yes"], f"Untrust {m.name}")
     return _to_machines()
 
 

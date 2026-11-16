@@ -367,7 +367,7 @@ def make_fleet(a: Computer, monkeypatch) -> None:
              ("trust", "phone", "--key", str(machines / "phone.pub")),
              ("trust", "phone", "--scope", "tag:work"),  # narrowed: its wider certificate revoked
              ("trust", "old-laptop", "--key", str(machines / "old-laptop.pub")),
-             ("untrust", "old-laptop"),
+             ("untrust", "old-laptop", "--yes"),
              ("ca", "sign")]
     for argv in steps:
         code, out, err = a.run(*argv)

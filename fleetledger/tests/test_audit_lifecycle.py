@@ -61,7 +61,7 @@ def test_re_pin_and_untrust_are_recorded(caenv, tmp_path):  # noqa: F811
     keygen(tmp_path / "laptop", "laptop")
     caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
               "--out", str(tmp_path / "b"))
-    assert caenv.run("untrust", "laptop")[0] == 0
+    assert caenv.run("untrust", "laptop", "--yes")[0] == 0
     assert entries() == [("ship-01", "re-pin", "host-key", "ok"),
                          ("-", "untrust", "laptop", "ok")]
 
@@ -70,7 +70,7 @@ def test_entries_hold_no_paths_keys_or_secrets(caenv, tmp_path):  # noqa: F811
     keygen(tmp_path / "laptop", "laptop")
     caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
               "--out", str(tmp_path / "b"))
-    caenv.run("untrust", "laptop")
+    caenv.run("untrust", "laptop", "--yes")
     caenv.run("new", "ship-11", "--driver", "proxmox")
     caenv.run("destroy", "ship-11", "--yes")
     text = paths.audit_log_path().read_text()
@@ -132,6 +132,6 @@ def test_a_second_untrust_records_nothing(caenv, tmp_path):  # noqa: F811
     keygen(tmp_path / "laptop", "laptop")
     caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
               "--out", str(tmp_path / "b"))
-    assert caenv.run("untrust", "laptop")[0] == 0
+    assert caenv.run("untrust", "laptop", "--yes")[0] == 0
     caenv.run("untrust", "laptop")  # already revoked: nothing changes
     assert entries() == [("-", "untrust", "laptop", "ok")]

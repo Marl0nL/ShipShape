@@ -414,13 +414,96 @@ def test_trust_untrust_cycle(caenv, tmp_path):
     assert code == 1 and "different key" in err
     # Untrust: revoked in the inventory and pushed to every Ship in a KRL.
     _no_ssh_section(caenv)
-    code, out, err = caenv.run("untrust", "laptop")
+    code, out, err = caenv.run("untrust", "laptop", "--yes")
     assert code == 0, err
     assert ca.machine(caenv.store.load(), "laptop").revoked
     krl = __import__("base64").b64decode(dict(caenv.trusted)["ship-02"]["revoked_keys"])
     assert ca.krl_revokes(krl, pub.read_text())
     code, _, err = caenv.run("trust", "laptop")
     assert code == 1 and "stays untrusted" in err
+
+
+def test_untrust_asks_for_the_machines_name_or_takes_yes(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+              "--out", str(tmp_path / "b"))
+    # Nobody to ask: refused, naming --yes; nothing revoked or pushed.
+    caenv.trusted.clear()
+    code, _, err = caenv.run("untrust", "laptop")
+    assert code == 1 and "Nothing revoked" in err and "untrust laptop --yes" in err
+    assert "cannot be undone" in err and "--revoke-my-key" not in err
+    assert not ca.machine(caenv.store.load(), "laptop").revoked and caenv.trusted == []
+    # In a terminal: only the name, as it is spelt.
+    asked = []
+    caenv.app.stdin_isatty = lambda: True
+    caenv.app.confirm = lambda prompt: asked.append(prompt) or "Laptop"
+    code, _, err = caenv.run("untrust", "laptop")
+    assert code == 1 and "stays trusted" in err
+    assert "Type laptop to untrust it" in asked[0] and "revocation list" in asked[0]
+    assert not ca.machine(caenv.store.load(), "laptop").revoked
+    caenv.app.confirm = lambda prompt: "laptop"
+    assert caenv.run("untrust", "laptop")[0] == 0
+    assert ca.machine(caenv.store.load(), "laptop").revoked
+
+
+def _your_key_machine(caenv, name="old-desktop"):
+    """A trusted machine whose key is the fleet's own (fleet.agent_keys), as the old
+    computer is after a move; and that key's line."""
+    you = caenv.store.load().agent_key_paths[0]
+    code, _, err = caenv.run("trust", name, "--key", str(you), "--out",
+                             str(you.parent / f"{name}-bundle"))
+    assert code == 0, err
+    return you.read_text().strip()
+
+
+def test_untrust_of_a_machine_holding_your_key_says_so_and_offers_to_stop_renewing(caenv):
+    from fleetledger import trustcmd
+
+    key = _your_key_machine(caenv)
+    until = ca.machine(caenv.store.load(), "old-desktop").last_valid_before
+    inv = caenv.store.load()
+    assert trustcmd.your_key_file(inv, ca.machine(inv, "old-desktop")) == (
+        inv.agent_key_paths[0])
+    caenv.trusted.clear()
+    # --yes alone is not enough, and nobody can be asked: refused, saying why.
+    for argv in (("untrust", "old-desktop"), ("untrust", "old-desktop", "--yes")):
+        code, _, err = caenv.run(*argv)
+        assert code == 1 and "Nothing revoked" in err, argv
+        assert "one of your keys for Ships" in err and "stop logging in to any Ship" in err
+        assert f"lapses on {until[:10]} {until[11:16]} UTC" in err
+        assert "untrust old-desktop --yes --revoke-my-key" in err
+    assert not ca.machine(caenv.store.load(), "old-desktop").revoked and caenv.trusted == []
+    # In a terminal, Enter (the default) stops renewing it: nothing changes.
+    asked = []
+    caenv.app.stdin_isatty = lambda: True
+    caenv.app.confirm = lambda prompt: asked.append(prompt) or ""
+    code, out, _ = caenv.run("untrust", "old-desktop", "--yes")
+    assert code == 0 and "To stop renewing it instead" in out and "stays trusted" in out
+    assert "press Enter to stop renewing it instead" in asked[0]
+    assert not ca.machine(caenv.store.load(), "old-desktop").revoked and caenv.trusted == []
+    caenv.app.confirm = lambda prompt: "yes"
+    code, _, err = caenv.run("untrust", "old-desktop")
+    assert code == 1 and "stays trusted" in err
+    assert not ca.machine(caenv.store.load(), "old-desktop").revoked
+    # Its name typed after the warning revokes it, your key with it.
+    caenv.app.confirm = lambda prompt: "old-desktop"
+    code, out, err = caenv.run("untrust", "old-desktop")
+    assert code == 0, err
+    assert ca.machine(caenv.store.load(), "old-desktop").revoked
+    krl = __import__("base64").b64decode(dict(caenv.trusted)["ship-01"]["revoked_keys"])
+    assert ca.krl_revokes(krl, key)
+
+
+def test_untrust_of_a_machine_holding_your_key_with_both_flags(caenv):
+    key = _your_key_machine(caenv)
+    code, _, err = caenv.run("untrust", "old-desktop", "--revoke-my-key")
+    assert code == 1 and "untrust old-desktop --yes --revoke-my-key" in err  # still --yes
+    assert not ca.machine(caenv.store.load(), "old-desktop").revoked
+    code, _, err = caenv.run("untrust", "old-desktop", "--yes", "--revoke-my-key")
+    assert code == 0, err
+    assert ca.machine(caenv.store.load(), "old-desktop").revoked
+    krl = __import__("base64").b64decode(dict(caenv.trusted)["ship-02"]["revoked_keys"])
+    assert ca.krl_revokes(krl, key)
 
 
 def test_ca_show_prints_and_gives_json_from_the_same_rows(caenv, tmp_path):
@@ -657,6 +740,17 @@ def test_this_computer_without_your_private_key_says_so(here):
     code, out, _ = here.run("trust", "--this-computer")
     assert code == 1 and "private half is not here" in out
     assert trustcmd.this_computer() is None
+
+
+def test_untrusting_this_computer_with_your_key_says_it_renews_itself_here(here):
+    from fleetledger import trustcmd
+
+    assert here.run("trust", "--this-computer")[0] == 0
+    name = trustcmd.this_computer()["machine"]
+    code, _, err = here.run("untrust", name, "--yes")
+    assert code == 1 and "one of your keys for Ships" in err
+    assert "stop running FleetLedger here" in err and "renews this computer's" in err
+    assert not ca.machine(here.store.load(), name).revoked
 
 
 def test_joining_the_overlay_re_signs_the_host_certificate_with_its_overlay_name(caenv):

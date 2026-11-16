@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from fleetledger import attach, ca, paths, sshkeys, status
+from fleetledger import attach, ca, paths, prompts, sshkeys, status
 from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, now_timestamp
@@ -690,6 +690,102 @@ def has_cert(ship: Ship) -> bool:
 
 
 
+def your_key_file(inv: Inventory, m: ca.Machine) -> Path | None:
+    """The file in fleet.agent_keys that holds m's key, if its key is one of your keys
+    for Ships (as the old computer's is after a move); else None. A file that cannot be
+    read is passed over: it is reported elsewhere (doctor)."""
+    from fleetledger.seed import cloudinit
+
+    for path in inv.agent_key_paths:
+        try:
+            lines = cloudinit.read_public_keys(path, "an agent key")
+        except ConfigError:
+            continue
+        if sshkeys.blob(m.public_key) in {sshkeys.blob(k) for k in lines}:
+            return path
+    return None
+
+
+def _when(text: str) -> str:
+    return f"{text[:10]} {text[11:16]} UTC"
+
+
+def your_key_warning(inv: Inventory, m: ca.Machine) -> tuple[str, str] | None:
+    """For a machine whose key is one of your keys for Ships: what untrusting it does,
+    and the alternative, to stop renewing it (it stays trusted and its certificate
+    lapses). None for any other machine."""
+    path = your_key_file(inv, m)
+    if path is None:
+        return None
+    consequence = (
+        f"{m.name}'s key is one of your keys for Ships ({paths.tilde(path)}, in "
+        "fleet.agent_keys). Untrusting it puts that key in the revocation list on every "
+        "Ship, and the list applies to every login, not only certificates: that key would "
+        "stop logging in to any Ship, as the agent or as you. This cannot be undone.")
+    until = ca.parse_stamp(m.last_valid_before)
+    here = this_computer()
+    if here and here["machine"] == m.name:
+        cert = (f"FleetLedger renews this computer's certificate (until "
+                f"{_when(m.last_valid_before)}) in its last day whenever it runs here, and "
+                "nothing else renews it" if until else
+                "this computer gets a certificate whenever FleetLedger runs here, and from "
+                "nothing else")
+        instead = (f"To stop renewing it instead, leave {m.name} trusted and stop running "
+                   f"FleetLedger here: {cert}.")
+    else:
+        if until is None:
+            cert = "it holds no certificate from FleetLedger now"
+        elif until <= ca.utc_now():
+            cert = f"its certificate lapsed on {_when(m.last_valid_before)}"
+        else:
+            cert = f"its certificate lapses on {_when(m.last_valid_before)} by itself"
+        instead = (f"To stop renewing it instead, leave {m.name} trusted: {cert}, and nothing "
+                   f"renews it unless you run ship-fleet trust {m.name} (or Download bundle "
+                   "in the web UI).")
+    return consequence, instead
+
+
+UNTRUST_SAID = ("Untrusting {name} puts its key in the revocation list on every Ship, so "
+                "none lets it in. This cannot be undone: trust it again only under a new "
+                "name, with a new key.")
+
+
+def confirm_untrust(app, inv: Inventory, m: ca.Machine, *, yes: bool,
+                    revoke_my_key: bool) -> bool:
+    """Untrust only with the machine's name typed in a terminal, or --yes where nobody
+    can be asked. A machine whose key is one of your keys for Ships also needs
+    --revoke-my-key, or its name typed after what that does is said; pressing Enter
+    there stops renewing it instead (False: nothing done). FleetError on a refusal."""
+    warning = your_key_warning(inv, m)
+    hint = f"ship-fleet untrust {m.name} --yes" + (" --revoke-my-key" if warning else "")
+    if warning and not revoke_my_key:
+        consequence, instead = warning
+        if not app.stdin_isatty():
+            raise FleetError(f"Nothing revoked. {consequence} {instead}",
+                             hint=f"To revoke it all the same, run it in a terminal, or: "
+                             f"{hint}")
+        app.say(consequence)
+        app.say(instead)
+        answer = app.confirm(f"Type {m.name} to untrust it all the same, or press Enter to "
+                             "stop renewing it instead: ").strip()
+        if not answer:
+            app.say(f"Nothing revoked: {m.name} stays trusted, and FleetLedger issues it no "
+                    "new certificate unless asked.")
+            return False
+        if answer != m.name:
+            raise FleetError(f"Nothing revoked: {m.name} stays trusted.",
+                             hint=f"To revoke it, type {m.name} exactly, or: {hint}")
+        return True
+    if yes:
+        return True
+    said = warning[0] if warning else UNTRUST_SAID.format(name=m.name)
+    prompts.typed(app, f"{said} Type {m.name} to untrust it: ", m.name, exact=True,
+                  no_terminal=f"Nothing revoked. {said} Run it in a terminal to type its "
+                  f"name, or: {hint}",
+                  refused=f"Nothing revoked: {m.name} stays trusted.")
+    return True
+
+
 def cmd_untrust(args, app) -> int:
     store = app.store_factory()
     migrate_logins(store, app.say)
@@ -698,6 +794,9 @@ def cmd_untrust(args, app) -> int:
     m = ca.machine(inv, args.machine)
     if m is None:
         raise FleetError(f"No machine named '{args.machine}'.")
+    if not m.revoked and not confirm_untrust(app, inv, m, yes=args.yes,
+                                             revoke_my_key=args.revoke_my_key):
+        return 0
     if not m.revoked:
         with store.edit() as ed:
             ed.set_machine_field(m.name, "revoked", now_timestamp())

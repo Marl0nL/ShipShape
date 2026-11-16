@@ -231,7 +231,17 @@ ship-fleet untrust laptop
 ```
 
 This marks the machine revoked in `ships.toml`, adds its key to the revocation
-list, and pushes the list to every Ship.
+list, and pushes the list to every Ship. It cannot be undone, so it asks you to
+type the machine's name; where nobody can be asked (a script), add `--yes`.
+
+A machine whose key is one of your keys for Ships (`fleet.agent_keys`), such as
+the old computer after a move, is different: the revocation list applies to
+every login, so untrusting it locks that key out of every Ship, as the agent and
+as you. `untrust` says so and offers to stop renewing it instead: press Enter and
+it stays trusted, and its certificate lapses by itself, since nothing renews a
+machine other than this computer unless you run `ship-fleet trust <machine>` or
+Download bundle. To revoke it all the same, type its name after the warning, or
+add `--yes --revoke-my-key`. The web UI's Untrust asks for its name the same way.
 
 Expiry and revocation stop **new** connections. sshd checks a certificate only
 when a connection opens. herdr keeps its SSH connection to each saved machine

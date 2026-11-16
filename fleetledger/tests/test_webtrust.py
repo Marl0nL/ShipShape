@@ -230,6 +230,49 @@ def test_untrust_revokes_and_pushes_the_list_and_names_ships_not_updated(caweb):
     assert "No trusted machine called laptop" in _settings(caweb)
 
 
+def _untrust_form(page, name):
+    """The Untrust form in name's row."""
+    forms = page.split('<form method="post" action="/settings/machines/untrust"')[1:]
+    return next(f[:f.index("</form>")] for f in forms
+                if f'name="machine" value="{name}"' in f[:f.index("</form>")])
+
+
+def test_untrusting_a_machine_holding_your_key_needs_its_name_typed(caweb, monkeypatch):
+    you = caweb.store.load().agent_key_paths[0]
+    key = you.read_text().strip()
+    _trust(caweb, "old-desktop", key)
+    finished(caweb)
+    _trust(caweb, "laptop", _key(caweb, "laptop"))
+    finished(caweb, 2)
+    page = _settings(caweb)
+    guarded = _untrust_form(page, "old-desktop")
+    assert 'data-confirm-type="old-desktop"' in guarded and 'name="confirm_name"' in guarded
+    assert "one of your keys for Ships" in guarded and "To stop renewing it instead" in guarded
+    assert 'name="confirm"' not in guarded  # the tick box alone never does
+    plain = _untrust_form(page, "laptop")  # any other machine: as before
+    assert "data-confirm-type" not in plain and 'name="confirm" value="yes"' in plain
+    argvs = []
+    real = jobs.run_cli
+    monkeypatch.setattr(jobs, "run_cli",
+                        lambda app, argv, job: argvs.append(argv) or real(app, argv, job))
+    for fields in ({"confirm": "yes"}, {"confirm_name": "old"}):
+        caweb.post("/settings/machines/untrust", {"machine": "old-desktop", **fields})
+        assert "Type old-desktop to untrust it all the same" in _settings(caweb)
+    assert argvs == [] and not ca.machine(caweb.store.load(), "old-desktop").revoked
+    caweb.trusted.clear()
+    caweb.post("/settings/machines/untrust", {"machine": "old-desktop",
+                                              "confirm_name": "old-desktop"})
+    job = finished(caweb, 3)
+    assert job.ok, job.snapshot()
+    assert argvs == [["untrust", "old-desktop", "--yes", "--revoke-my-key"]]
+    assert ca.machine(caweb.store.load(), "old-desktop").revoked
+    krl = __import__("base64").b64decode(dict(caweb.trusted)["ship-01"]["revoked_keys"])
+    assert ca.krl_revokes(krl, key)
+    caweb.post("/settings/machines/untrust", {"machine": "laptop", "confirm": "yes"})
+    assert finished(caweb, 4).ok
+    assert argvs[-1] == ["untrust", "laptop", "--yes"]
+
+
 def test_renew_one_ship_from_its_row_its_menu_or_an_alert(caweb):
     assert caweb.post("/ships/ship-01/certs/renew", {"from": "settings"}).headers[
         "location"] == "/settings?said=certificates#certificates"

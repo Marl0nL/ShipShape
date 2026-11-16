@@ -540,8 +540,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-herdr", action="store_true",
                    help="install, --this-computer: skip herdr saved machines")
 
-    p = _add(sub, "untrust", "revoke a machine's certificates on every Ship")
+    p = _add(sub, "untrust", "revoke a machine's certificates on every Ship",
+             "Puts the machine's key in the revocation list on every Ship. This cannot be\n"
+             "undone. In a terminal it asks you to type the machine's name; elsewhere it\n"
+             "needs --yes. A machine whose key is one of your keys for Ships\n"
+             "(fleet.agent_keys) is refused unless you confirm that its key then stops\n"
+             "logging in to every Ship: type its name after the warning, or add\n"
+             "--revoke-my-key. Pressing Enter there leaves it trusted instead, so its\n"
+             "certificate lapses unless renewed.")
     p.add_argument("machine")
+    p.add_argument("--yes", action="store_true",
+                   help="untrust without typing the machine's name (for scripts)")
+    p.add_argument("--revoke-my-key", action="store_true",
+                   help="also when its key is one of your keys for Ships: that key stops "
+                   "logging in to every Ship")
 
     p = _add(sub, "net", "where Ships connect: destinations, programs, traffic (visibility only)",
              "Network visibility. Ships record which programs reach which domains; nothing\n"
