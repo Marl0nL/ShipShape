@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from fleetledger import inhibitors
@@ -82,6 +82,7 @@ SEVERITY = {
     "unit-failed": "high",
     "host-cert-expired": "high",
     "machine-cert-lapsed": "high",  # a trusted machine's certificate (fleet-level)
+    "proxmox-token-lapsed": "high",  # FleetLedger's Proxmox API token (fleet-level)
     "vault-locked": "high",  # FleetLedger's vault (fleet-level): nothing is checked
     "agent-waiting": "medium",
     "signin-missing": "medium",
@@ -94,6 +95,7 @@ SEVERITY = {
     "tmp-reboot-pending": "low",  # /tmp moves to the disk at the next reboot
     "host-cert-expiring": "medium",
     "machine-cert-expiring": "medium",  # in its last day (fleet-level)
+    "proxmox-token-expiring": "medium",  # in its last 14 days (fleet-level)
     "host-cert-missing": "medium",
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
     "agent-repo-waiting": "medium",  # its agent starts once GitHub is signed in
@@ -175,7 +177,11 @@ class AttentionItem:
         """The Ship, or for a fleet-level item what it is about (machine laptop)."""
         if self.ship:
             return self.ship
-        return "FleetLedger" if self.code == "vault-locked" else f"machine {self.subject}"
+        if self.code == "vault-locked":
+            return "FleetLedger"
+        if self.code in PROXMOX_TOKEN_CODES:
+            return f"Proxmox token {self.subject}"
+        return f"machine {self.subject}"
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -1233,7 +1239,8 @@ def fleet_attention(inventory: Inventory, ships: Sequence[Ship], *,
                     now: datetime | None = None) -> list[AttentionItem]:
     """Attention items about the fleet rather than one Ship (ship None), for what
     reaches these Ships. Read from ships.toml only: nothing is issued or asked."""
-    return vault_attention() + machine_cert_attention(inventory, ships, now=now)
+    return (vault_attention() + machine_cert_attention(inventory, ships, now=now)
+            + proxmox_token_attention(inventory, now=now))
 
 
 VAULT_LOCKED = ("FleetLedger's vault has been locked since {since}: until it is unlocked "
@@ -1315,3 +1322,43 @@ def machine_cert_attention(inventory: Inventory, ships: Sequence[Ship], *,
             None, code, text.format(name=name, until=until), m.name, SEVERITY[code],
             THIS_COMPUTER_FIX if mine else MACHINE_CERT_FIX.format(name=m.name)))
     return items
+
+
+PROXMOX_TOKEN_WARN_DAYS = 14
+PROXMOX_TOKEN = {
+    "expiring": ("proxmox-token-expiring",
+                 "FleetLedger's Proxmox API token {token} expires on {day} ({left}): then "
+                 "FleetLedger can no longer make, resize, snapshot or destroy Ships on "
+                 "Proxmox. Running Ships carry on."),
+    "lapsed": ("proxmox-token-lapsed",
+               "FleetLedger's Proxmox API token {token} expired on {day}: FleetLedger can "
+               "no longer make, resize, snapshot or destroy Ships on Proxmox. Running Ships "
+               "carry on."),
+}
+PROXMOX_TOKEN_CODES = tuple(code for code, _ in PROXMOX_TOKEN.values())
+PROXMOX_TOKEN_COMMAND = "ship-fleet setup --text --redo hypervisor"
+PROXMOX_TOKEN_FIX = ("Make a new token on the Proxmox host (docs/runbooks/proxmox-setup.md, "
+                     "step 1), then on the FleetLedger computer: " + PROXMOX_TOKEN_COMMAND
+                     + ". It records the new token's expiry.")
+
+
+def proxmox_token_attention(inventory: Inventory, *,
+                            now: datetime | None = None) -> list[AttentionItem]:
+    """proxmox-token-expiring (its last PROXMOX_TOKEN_WARN_DAYS days) and
+    proxmox-token-lapsed, from [drivers.proxmox] token_expires, which setup writes when
+    it stores a new token (or you, by hand). No date, or none that reads as one: no
+    item. Proxmox is never asked."""
+    config = inventory.driver_config("proxmox") or {}
+    try:
+        day = date.fromisoformat(str(config["token_expires"]))
+    except (KeyError, ValueError):
+        return []
+    today = (now or datetime.now(UTC)).astimezone(UTC).date()
+    left = (day - today).days
+    if left > PROXMOX_TOKEN_WARN_DAYS:
+        return []
+    code, text = PROXMOX_TOKEN["lapsed" if left < 0 else "expiring"]
+    words = {0: "today", 1: "tomorrow"}.get(left, f"in {left} days")
+    token = str(config.get("token_id", ""))
+    return [AttentionItem(None, code, text.format(token=token, day=day.isoformat(), left=words),
+                          token, SEVERITY[code], PROXMOX_TOKEN_FIX)]

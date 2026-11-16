@@ -285,7 +285,14 @@ def build_parser() -> argparse.ArgumentParser:
              "  ship-fleet signins ship-01 --only claude,github  exactly these\n\n"
              "A sign-in a Ship does not use gets no prompt, no sign-in flow and no attention\n"
              "item, and is shown as off; turning one off signs it out on the Ship, so no\n"
-             "credentials for it stay there. Its tool may stay installed.")
+             "credentials for it stay there. Its tool may stay installed.\n\n"
+             "Tag accounts: the account each tag's Ships must sign in as, per sign-in\n"
+             "([tag.<tag>] in ships.toml; a Ship signed in as another shows wrong account):\n\n"
+             "  ship-fleet signins --accounts                    every tag's (--json too)\n"
+             "  ship-fleet signins --tag work --set-account claude=work@example.com\n"
+             "  ship-fleet signins --tag work --clear-account gcloud\n\n"
+             "Only account names are kept (an email address or a login), never a\n"
+             "credential; they stay in ships.toml and reach no Ship.")
     p.add_argument("name", nargs="?", help="a Ship (omit it: every sign-in on every Ship)")
     p.add_argument("--on", action="append", default=[], metavar="NAME")
     p.add_argument("--off", action="append", default=[], metavar="NAME")
@@ -298,6 +305,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="list: only this group (action: what needs you)")
     p.add_argument("--json", action="store_true", help="list: print JSON")
     p.add_argument("--offline", action="store_true", help="list: the last known status only")
+    p.add_argument("--accounts", action="store_true",
+                   help="list each tag's expected accounts (with --tag: that tag's)")
+    p.add_argument("--set-account", action="append", default=[], metavar="SIGNIN=ACCOUNT",
+                   help="with --tag: the account that tag's Ships sign in to SIGNIN as "
+                   "(repeatable)")
+    p.add_argument("--clear-account", action="append", default=[], metavar="SIGNIN",
+                   help="with --tag: drop that tag's expected account for SIGNIN (repeatable)")
 
     p = _add(sub, "set", "change settings on Ships (ship-ctl set)",
              "Change settings on one Ship, several, every Ship with a tag, or all.\n"
@@ -766,6 +780,9 @@ def _vault_locked(args, app) -> None:
         return  # stepping aside needs no secret, and must not wait for an unlock
     if args.command == "toolkit" and args.action in ("ls", "check", "show"):
         return  # reads your toolkit folders and ships.toml only
+    if (args.command == "signins" and getattr(args, "accounts", False)
+            and not (args.set_account or args.clear_account)):
+        return  # lists tag accounts from ships.toml only
     if vault.state() == "locked":
         raise FleetError("FleetLedger's vault is locked, so FleetLedger is read-only: it "
                          "changes nothing and reaches no Ship. Your Ships keep running.",

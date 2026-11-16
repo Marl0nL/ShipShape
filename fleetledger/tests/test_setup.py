@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import stat
 import subprocess
+from datetime import date
 
 import pytest
 from fleetledger.drivers.proxmox_api import ProxmoxError
@@ -244,6 +245,15 @@ PROXMOX_OK = [*START,
               "", "skip"]        # overlay, Ship
 
 
+TODAY = date(2026, 11, 16)
+EXPIRES = "2027-02-14"  # TODAY + 90 days
+
+
+@pytest.fixture(autouse=True)
+def today(monkeypatch):
+    monkeypatch.setattr(proxmox_setup, "_today", lambda: TODAY)
+
+
 def test_proxmox_from_three_answers(fresh):
     code, out, err = to_proxmox(fresh, *PROXMOX_OK)
     assert code == 0, err
@@ -256,6 +266,7 @@ def test_proxmox_from_three_answers(fresh):
         "disk_storage": "local-lvm", "bridge": "vmbr0", "image_storage": "shipshape-images",
         "token_id": TOKEN_ID, "token_store": "keyring",
         "keyring_item": "proxmox-token:" + TOKEN_ID, "tls_fingerprint": FPR,
+        "token_expires": EXPIRES,  # 90 days on, as the printed token command makes it
         "vmid_range": [9100, 9199]}  # Ships kept away from the low ids Proxmox hands out
     assert fresh.keyring.items == {("fleetledger", "proxmox-token:" + TOKEN_ID): TOKEN}
     assert set(fresh.pve.secrets_seen) == {TOKEN}
@@ -938,6 +949,89 @@ def test_a_rotated_token_asks_for_the_new_secret_instead_of_stopping(fresh):
     assert "refused the stored secret" in out
     assert fresh.keyring.items[("fleetledger", "proxmox-token:" + TOKEN_ID)] == new
     assert new not in out + err
+
+
+def test_a_new_token_secret_records_its_expiry_and_says_so(fresh):
+    code, out, _ = to_proxmox(fresh, *PROXMOX_OK)
+    assert code == 0
+    assert f"the token expires on {EXPIRES} (90 days on" in out
+    assert "token_expires" in out  # how to change it
+    assert f'token_expires = "{EXPIRES}"' in fresh.store.path.read_text()
+
+
+def test_a_reused_secret_keeps_the_expiry_recorded_for_its_token(fresh, monkeypatch):
+    assert to_proxmox(fresh, *PROXMOX_OK)[0] == 0
+    with fresh.store.edit() as ed:  # set by hand to the token's real expiry
+        ed.doc["drivers"]["proxmox"]["token_expires"] = "2027-01-31"
+    monkeypatch.setattr(proxmox_setup, "_today", lambda: date(2026, 12, 1))
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "", "yes", *FOUND, "", "", "skip"])
+    assert code == 0, err
+    assert fresh.store.load().driver_config("proxmox")["token_expires"] == "2027-01-31"
+    assert "the token expires on" not in out
+
+
+def test_a_rotated_token_gets_a_new_expiry(fresh, monkeypatch):
+    assert to_proxmox(fresh, *PROXMOX_OK)[0] == 0
+    fresh.pve.refused = {TOKEN}
+    fresh.app.ask_secret = lambda prompt: "0a1b2c3d-0000-4000-8000-NEWSECRET002"
+    monkeypatch.setattr(proxmox_setup, "_today", lambda: date(2027, 2, 10))
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "", "", "", *FOUND, "", "", "skip"])
+    assert code == 0, err
+    assert fresh.store.load().driver_config("proxmox")["token_expires"] == "2027-05-11"
+
+
+def test_a_run_stopped_after_a_new_secret_keeps_its_expiry(fresh, monkeypatch):
+    """The secret is stored before the rest is found; a run that stops there (Ctrl-C,
+    an API error) and one that then reuses the stored secret still record its day."""
+    from fleetledger.errors import FleetError
+
+    real = proxmox_setup._discover
+
+    def stopped(*args, **kw):
+        raise FleetError("stopped part way")
+
+    monkeypatch.setattr(proxmox_setup, "_discover", stopped)
+    code, _, err = to_proxmox(fresh, *START, "")
+    assert code != 0 and "stopped part way" in err
+    monkeypatch.setattr(proxmox_setup, "_today", lambda: date(2026, 12, 1))  # a later day
+    monkeypatch.setattr(proxmox_setup, "_discover", real)
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "", "yes", *FOUND, "", "", "skip"])
+    assert code == 0, err
+    assert fresh.store.load().driver_config("proxmox")["token_expires"] == EXPIRES
+
+
+def test_keep_secret_records_the_day_for_the_web_setup_too(fresh):
+    """The web UI's setup stores through keep_secret: a new secret's day is in the
+    progress file at once, and a reuse of that secret picks it up again."""
+    base = {"api_url": "https://pve.example.com:8006/api2/json", "token_id": TOKEN_ID,
+            "tls_fingerprint": FPR}
+    config = dict(base)
+    proxmox_setup.keep_secret(config, TOKEN, "keyring")
+    assert config["token_expires"] == EXPIRES
+    assert proxmox_setup._load_progress()["token_expires"] == EXPIRES
+    again = dict(base)
+    proxmox_setup.keep_secret(again, TOKEN, "keyring", reused=True)
+    assert again["token_expires"] == EXPIRES
+    other = {**base, "token_id": "other@pve!build"}
+    proxmox_setup.keep_secret(other, TOKEN, "keyring", reused=True)
+    assert "token_expires" not in other
+
+
+def test_save_keeps_the_expiry_only_for_the_same_token(store):
+    """The web UI's setup saves through proxmox_setup.save too: a reused secret's config
+    has no token_expires, and the recorded day stays only for that token id."""
+    base = {"api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
+            "pool": "shipshape", "template_vmid": 9000, "seed_storage": "s",
+            "disk_storage": "d", "bridge": "vmbr0", "token_id": TOKEN_ID,
+            "token_file": "~/t", "tls_fingerprint": FPR}
+    proxmox_setup.save(store, {**base, "token_expires": "2027-01-31"})
+    proxmox_setup.save(store, base)
+    assert store.load().driver_config("proxmox")["token_expires"] == "2027-01-31"
+    proxmox_setup.save(store, {**base, "token_id": "other@pve!build"})
+    assert "token_expires" not in store.load().driver_config("proxmox")
 
 
 @pytest.mark.parametrize("remove", ["yes", "no"])

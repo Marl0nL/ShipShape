@@ -1,0 +1,40 @@
+{
+  "schema": "shipshape.fleetledger-tag-accounts/1",
+  "signins": [
+    "claude",
+    "gcloud",
+    "github"
+  ],
+  "tags": [
+    {
+      "tag": "lab",
+      "accounts": {},
+      "ships": [
+        "ship-03"
+      ]
+    },
+    {
+      "tag": "personal",
+      "accounts": {
+        "claude": "you@example.com",
+        "github": "example-user"
+      },
+      "ships": [
+        "ship-02"
+      ]
+    },
+    {
+      "tag": "work",
+      "accounts": {
+        "claude": "work@example.com",
+        "gcloud": "work@example.com",
+        "github": "example-work"
+      },
+      "ships": [
+        "ship-01",
+        "ship-03"
+      ]
+    }
+  ],
+  "conflicts": []
+}

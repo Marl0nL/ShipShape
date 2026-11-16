@@ -19,6 +19,7 @@ import re
 import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -275,14 +276,15 @@ def _load_progress() -> dict[str, Any]:
     """What a partial run confirmed (no secret): kept so the next run does not ask
     again, and so a certificate that changes in between is noticed."""
     doc = paths.read_json(_progress_path()) or {}
-    keys = ("api_url", "tls_fingerprint", "token_id")
+    keys = ("api_url", "tls_fingerprint", "token_id", "token_expires")
     return {k: doc[k] for k in keys if isinstance(doc.get(k), str)}
 
 
 def _save_progress(config: Mapping[str, Any]) -> None:
     import json
 
-    doc = {k: config[k] for k in ("api_url", "tls_fingerprint", "token_id")}
+    doc = {k: config[k] for k in ("api_url", "tls_fingerprint", "token_id", "token_expires")
+           if k in config}
     paths.private_dir(_progress_path().parent)
     paths.write_private(_progress_path(), json.dumps(doc, indent=1).encode("utf-8"))
 
@@ -348,6 +350,7 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
             "through the pinned certificate.")
     where = keep_secret(config, secret, store_kind, reused=reused, secret_path=secret_path)
     app.say(f"The secret is in {where}.")
+    _note_expiry(app, config, reused=reused)
 
     match = re.match(r"^(\d+)\.", str(version.get("version", "")))
     result = _discover(app, store, api, config, old, versions,
@@ -359,10 +362,43 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
     return result
 
 
+TOKEN_DAYS = 90  # the --expire user_and_token_commands prints
+
+
+def _today() -> date:
+    return datetime.now(UTC).date()
+
+
+def _note_expiry(app, config: dict[str, Any], *, reused: bool) -> None:
+    """Say the day keep_secret took a new secret to expire on."""
+    if reused or not config.get("token_expires"):
+        return
+    app.say(f"FleetLedger takes it that the token expires on {config['token_expires']} "
+            f"({TOKEN_DAYS} days on, as the command it prints makes it) and says so 14 days "
+            "before. Made with another expiry? Change token_expires under [drivers.proxmox] "
+            "in ships.toml.")
+
+
 def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused: bool = False,
                 secret_path: Path | None = None) -> str:
     """Store a checked token secret (unless reused from there) and record where in
-    config. Returns where, in words."""
+    config. Also token_expires (never asked of Proxmox): a new secret is taken to expire
+    TOKEN_DAYS on, and that day goes into the progress file at once, so a run stopped
+    before the save keeps it; a reused one keeps the day a stopped run recorded for its
+    token id (else save() keeps the one in ships.toml). Returns where, in words."""
+    if reused:
+        progress = _load_progress()
+        if progress.get("token_id") == config["token_id"] and progress.get("token_expires"):
+            config["token_expires"] = progress["token_expires"]
+        return _keep_secret(config, secret, store_kind, reused=True, secret_path=secret_path)
+    config["token_expires"] = (_today() + timedelta(days=TOKEN_DAYS)).isoformat()
+    where = _keep_secret(config, secret, store_kind, reused=False, secret_path=secret_path)
+    _save_progress(config)
+    return where
+
+
+def _keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused: bool,
+                 secret_path: Path | None) -> str:
     item = secret_store.proxmox_item(config["token_id"])
     from_file = None
     if store_kind != "keyring" and reused and secret_store.vault_on():
@@ -666,13 +702,19 @@ def snapshot_hint(found: Found, pool: str) -> str | None:
 
 ORDER = ("api_url", "node", "pool", "template_vmid", "seed_storage", "disk_storage", "bridge",
          "image_storage", "token_id", "token_store", "keyring_item", "token_file",
-         "tls_fingerprint", "vmid_range")
+         "token_expires", "tls_fingerprint", "vmid_range")
 
 
 def save(store, config: Mapping[str, Any]) -> None:
-    """[drivers.proxmox] (complete) and defaults.driver = proxmox, in one edit."""
-    ordered = {k: config[k] for k in ORDER if config.get(k) is not None}
+    """[drivers.proxmox] (complete) and defaults.driver = proxmox, in one edit. With no
+    token_expires (a reused secret) the day recorded for the same token id stays."""
+    config = dict(config)
     with store.edit() as ed:
+        before = ed.snapshot().driver_config("proxmox") or {}
+        if (not config.get("token_expires") and before.get("token_expires")
+                and before.get("token_id") == config.get("token_id")):
+            config["token_expires"] = before["token_expires"]
+        ordered = {k: config[k] for k in ORDER if config.get(k) is not None}
         ed.set_driver("proxmox", ordered)
         ed.set_default("driver", "proxmox")
     _progress_path().unlink(missing_ok=True)

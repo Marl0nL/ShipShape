@@ -17,7 +17,7 @@ import json
 import re
 import subprocess
 import tarfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -1432,6 +1432,89 @@ def _offline_attention_tag(app, tag):
     code, out, err = app.run("attention", "--offline", "--json", "--tag", tag)
     assert code == 0, err
     return json.loads(out)
+
+
+# --- the Proxmox token's expiry (fleet-level) -----------------------------------------
+
+PROXMOX = {"api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
+           "pool": "shipshape", "template_vmid": 9000, "seed_storage": "shipshape-seeds",
+           "disk_storage": "local-lvm", "bridge": "vmbr0", "token_id": "shipshape@pve!build",
+           "token_file": "~/.config/fleetledger/proxmox-token",
+           "tls_fingerprint": ":".join(["AB"] * 32)}
+NOON = datetime(2027, 2, 1, 12, 0, tzinfo=UTC)
+
+
+def _with_token(store, **extra):
+    with store.edit() as ed:
+        ed.set_driver("proxmox", {**PROXMOX, **extra})
+    return store.load()
+
+
+def _token_items(inv, now=NOON):
+    return [i for i in ops.fleet_attention(inv, inv.ships(), now=now)
+            if i.code.startswith("proxmox-token-")]
+
+
+@pytest.mark.parametrize("expires", ["2027-02-16", "2027-06-01"])
+def test_a_fresh_proxmox_token_raises_nothing(store, expires):
+    assert _token_items(_with_token(store, token_expires=expires)) == []  # 15+ days left
+
+
+@pytest.mark.parametrize(("expires", "left"), [
+    ("2027-02-15", "in 14 days"), ("2027-02-02", "tomorrow"), ("2027-02-01", "today")])
+def test_a_proxmox_token_in_its_last_14_days_is_one_fleet_item(store, expires, left):
+    [item] = _token_items(_with_token(store, token_expires=expires))
+    assert (item.ship, item.code, item.severity) == (None, "proxmox-token-expiring", "medium")
+    assert item.subject == "shipshape@pve!build"
+    assert f"expires on {expires} ({left})" in item.message
+    assert "Running Ships carry on" in item.message
+    assert "ship-fleet setup --text --redo hypervisor" in item.fix
+    assert item.where == "Proxmox token shipshape@pve!build"
+
+
+def test_a_lapsed_proxmox_token_is_high(store):
+    [item] = _token_items(_with_token(store, token_expires="2027-01-31"))
+    assert (item.code, item.severity) == ("proxmox-token-lapsed", "high")
+    assert "expired on 2027-01-31" in item.message
+    assert ops.PROXMOX_TOKEN_COMMAND in item.fix
+
+
+def test_an_unknown_proxmox_token_age_raises_nothing(store):
+    assert _token_items(store.load()) == []  # no Proxmox at all
+    assert _token_items(_with_token(store)) == []  # set up before token_expires existed
+
+
+def test_a_token_expiry_that_is_no_day_is_a_clear_config_error(store):
+    from fleetledger.errors import ConfigError
+
+    _with_token(store, token_expires="2027-01-31")
+    text = store.path.read_text().replace('"2027-01-31"', '"2027-02-30"')
+    store.path.write_text(text)
+    with pytest.raises(ConfigError, match="token_expires: '2027-02-30' is not a day"):
+        store.load()
+    store.path.write_text(text.replace('"2027-02-30"', '"next spring"'))
+    with pytest.raises(ConfigError, match="token_expires"):
+        store.load()
+    # Read past the checks (a hand-built Inventory): unknown, not a crash.
+    import tomllib
+
+    from fleetledger.inventory import Inventory
+
+    assert _token_items(Inventory(tomllib.loads(store.path.read_text()))) == []
+
+
+def test_cli_attention_lists_the_token_item_in_the_fleet_shape(app, world):
+    soon = (datetime.now(UTC).date() + timedelta(days=3)).isoformat()
+    _with_token(world.store, token_expires=soon)
+    items = _offline_attention(app)
+    [item] = [i for i in items if i["code"] == "proxmox-token-expiring"]
+    assert item == {"ship": None, "code": "proxmox-token-expiring",
+                    "subject": "shipshape@pve!build", "severity": "medium",
+                    "message": item["message"], "fix": ops.PROXMOX_TOKEN_FIX}
+    assert f"expires on {soon} (in 3 days)" in item["message"]
+    code, out, _ = app.run("attention", "--offline")
+    [line] = [x for x in out.splitlines() if "proxmox-token-expiring" in x]
+    assert line.split()[:4] == ["medium", "Proxmox", "token", "shipshape@pve!build"]
 
 
 @pytest.mark.parametrize("argv,expected", [

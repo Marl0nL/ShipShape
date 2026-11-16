@@ -797,6 +797,8 @@ def _report_login(app, result: concierge.LoginResult) -> int:
 def cmd_signins(args, app) -> int:
     store = app.store_factory()
     inv = store.load()
+    if args.accounts or args.set_account or args.clear_account:
+        return _tag_accounts(args, app, store, inv)
     listing = any((args.tag, args.service, args.group, args.json, args.offline))
     changing = args.only is not None or args.on or args.off
     if args.name is None or (listing and not changing):
@@ -822,6 +824,64 @@ def cmd_signins(args, app) -> int:
             app.say(f"github scopes: {', '.join(ship.github_scopes)}")
         return 0
     return 0 if set_signins(app, store, ship.name, wanted, app.say) else 1
+
+
+def _tag_accounts(args, app, store, inv: Inventory) -> int:
+    """ship-fleet signins --accounts, --set-account, --clear-account (tagaccounts.py)."""
+    from fleetledger import tagaccounts
+
+    changing = bool(args.set_account or args.clear_account)
+    others = [flag for flag, given in (
+        ("a Ship's name", args.name), ("--on", args.on), ("--off", args.off),
+        ("--only", args.only is not None), ("--service", args.service),
+        ("--group", args.group), ("--offline", args.offline),
+        ("--json", changing and args.json), ("--accounts", changing and args.accounts))
+        if given]
+    if others:
+        raise FleetError(f"Tag accounts take {'--tag' if changing else '--tag and --json'} "
+                         f"only, not {', '.join(others)}.",
+                         hint="ship-fleet signins --accounts [--tag TAG] [--json], or "
+                         "ship-fleet signins --tag TAG --set-account SIGNIN=ACCOUNT "
+                         "--clear-account SIGNIN")
+    if not changing:
+        if args.tag is not None:
+            tagaccounts.check_tag(args.tag)
+        doc = tagaccounts.document(inv, args.tag)
+        if args.json:
+            app.say(json.dumps(doc, indent=2))
+            return 0
+        _say_tag_accounts(app, doc, args.tag)
+        return 0
+    if args.tag is None:
+        raise FleetError("Name the tag whose accounts to change: --tag TAG.")
+    sets = tagaccounts.parse_sets(args.set_account)
+    now = tagaccounts.change(store, args.tag, sets, args.clear_account)
+    words = [f"{s} {a}" for s, a in sorted(now.items())]
+    app.say(f"Tag {args.tag} expects: {', '.join(words) or 'no accounts'}.")
+    inv = store.load()
+    ships = [s.name for s in inv.ships(args.tag)]
+    app.say(f"Checked on {', '.join(ships)} at the next status poll and after every sign-in."
+            if ships else f"No Ship has tag {args.tag} yet.")
+    for c in tagaccounts.conflicts(inv, args.tag):
+        app.say(f"{c['ship']}: its tags expect different {c['signin']} accounts "
+                f"({' and '.join(c['accounts'])}), so it shows as the wrong account either "
+                "way.")
+    return 0
+
+
+def _say_tag_accounts(app, doc: dict, tag: str | None) -> None:
+    if not doc["tags"]:
+        app.say(f"No Ship has tag {tag}, and it names no accounts." if tag
+                else "No tags yet.")
+        return
+    rows = [[t["tag"], *(t["accounts"].get(s, "-") for s in doc["signins"]),
+             ", ".join(t["ships"]) or "-"] for t in doc["tags"]]
+    app.say(table(rows, ["TAG", *(s.upper() for s in doc["signins"]), "SHIPS"]))
+    for c in doc["conflicts"]:
+        app.say(f"\n{c['ship']}: its tags expect different {c['signin']} accounts "
+                f"({' and '.join(c['accounts'])}).")
+    app.say("\nChange: ship-fleet signins --tag TAG --set-account SIGNIN=ACCOUNT "
+            "(or --clear-account SIGNIN)")
 
 
 def _list_signins(args, app, inv: Inventory) -> int:

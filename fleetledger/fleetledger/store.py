@@ -14,6 +14,7 @@ import os
 import tomllib
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -59,6 +60,13 @@ def semantic_errors(doc: Mapping[str, Any]) -> list[str]:
         other = seen_keys.setdefault(key, ship_name)
         if other != ship_name:
             problems.append(f"ship.{ship_name}.host_key: same host key as {other}")
+    expires = doc.get("drivers", {}).get("proxmox", {}).get("token_expires")
+    if isinstance(expires, str):
+        try:
+            date.fromisoformat(expires)
+        except ValueError:
+            problems.append(f"drivers.proxmox.token_expires: '{expires}' is not a day "
+                            "(YYYY-MM-DD)")
     from fleetledger import appliance
 
     problems += appliance.clashes(doc)  # no Ship may be FleetLedger's own VM
@@ -117,6 +125,30 @@ class InventoryEditor:
         else:
             current[key] = value
         self.set_field(name, section, current or None)
+
+    def set_tag_account(self, tag: str, signin: str, account: str | None) -> None:
+        """tag.<tag>.<signin> = account; None removes it, and the tag's table once empty."""
+        if account is None:
+            table = self.doc.get("tag", {}).get(tag)
+            if table is None or signin not in table:
+                return
+            del table[signin]
+            if not table:
+                del self.doc["tag"][tag]
+            if not self.doc["tag"]:
+                del self.doc["tag"]
+            return
+        if "tag" not in self.doc:
+            self.doc.add(tomlkit.nl())
+            self.doc["tag"] = tomlkit.table(is_super_table=True)
+        elif not isinstance(self.doc["tag"], Table):  # tag = { ... } by hand: a table now
+            tags = tomlkit.table(is_super_table=True)
+            for name, accounts in self.doc["tag"].unwrap().items():
+                tags[name] = _table(accounts)
+            self.doc["tag"] = tags
+        if tag not in self.doc["tag"]:
+            self.doc["tag"][tag] = tomlkit.table()
+        self.doc["tag"][tag][signin] = account
 
     def mark_enrolled(self, name: str, when: str) -> None:
         self.set_field(name, "enrolled", when)

@@ -3,7 +3,13 @@
 Each Ship signs in to Claude Code, gcloud (with Application Default
 Credentials) and GitHub as itself. The tokens are created on the Ship and stay
 there; FleetLedger only relays the one-time code. The account each Ship must use
-comes from its tags (`[tag.<tag>]` in `ships.toml`).
+comes from its tags (`[tag.<tag>]` in `ships.toml`):
+
+```sh
+ship-fleet signins --accounts                                    # every tag's accounts
+ship-fleet signins --tag work --set-account claude=work@example.com
+ship-fleet signins --tag work --clear-account gcloud
+```
 
 ## Sign in
 
