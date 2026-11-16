@@ -38,3 +38,34 @@ commands (`status` with `--no-optional-locks`, so it never rewrites the index),
 `systemctl --user is-active` and `is-enabled` when the unit is installed, one request
 to the running UI's control socket (`web/control.py`), FleetLedger's own state files,
 and a listing of the last backup's folder. `--check` adds the one fetch.
+
+## `ship-fleet signins --accounts [--tag TAG] [--json]`
+
+The account each tag's Ships must sign in as, per sign-in: `[tag.<tag>]` in
+`ships.toml`, which FleetLedger compares with the signed-in account after every
+sign-in and on every status poll (a Ship signed in as another shows
+`signin-wrong-account`). Schema: `fleetledger-tag-accounts.schema.json`
+(`"schema": "shipshape.fleetledger-tag-accounts/1"`); examples in
+`examples/fleetledger-tag-accounts/`.
+
+| Field | What it is |
+|---|---|
+| `signins` | Every sign-in a tag may name an account for, in FleetLedger's order (its sign-in registry, `ship/signins/`): `claude`, `gcloud`, `github`, then any others. `gcloud_adc` follows `gcloud` and is not one of them. |
+| `tags` | Every tag that names accounts or that a Ship has (`defaults.tags` counting), by name. Each: `tag`, `accounts` (sign-in id to account name; a sign-in left out has no expectation from this tag) and `ships` (the Ships with that tag). With `--tag`, that tag only, or none when no Ship has it and it names no accounts. |
+| `conflicts` | Ships whose tags expect different accounts for one sign-in (`ship`, `signin`, `accounts`): that sign-in shows as the wrong account whichever it is signed in as. With `--tag`, only Ships with that tag. |
+
+The same command changes them, one tag at a time:
+
+```sh
+ship-fleet signins --tag work --set-account claude=work@example.com --set-account github=example-user
+ship-fleet signins --tag work --clear-account gcloud
+```
+
+A change is checked as a hand edit of `ships.toml` is (a known sign-in id, a tag
+name as `ships.toml.schema.json` has it, an account that is not empty) and refused
+when the account has spaces or looks like a token: only account names are kept,
+never a credential. It is written as every other change (locked, validated, mode
+0600, comments kept); a tag left with no accounts loses its table.
+
+It only reads `ships.toml`: it reaches no Ship, and the listing runs while the vault
+is locked (a change does not). Tag accounts never reach a Ship (`settings.md`).

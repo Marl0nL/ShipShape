@@ -25,13 +25,14 @@ not part of the interface: ask for a contract change instead of guessing.
 | Baked image manifest | `image-manifest.schema.json` | Ship: `ship/image/bake` (phase 4) | Fleet: `ship-fleet image` (phase 4) |
 | Agent record (`/var/lib/shipshape/agents.json`) | `agent-record.schema.json` | Ship: ship-ctl | Ship: ship-ctl (resume, restart, notices, status); Fleet sees it only through the status document's `agent_record` |
 | FleetLedger itself (`ship-fleet about --json`) | `fleetledger-about.schema.json` | Fleet: `ship-fleet about` | other programs on your computers (a Fleet panel, over ssh) |
+| Tag accounts (`ship-fleet signins --accounts --json`) | `fleetledger-tag-accounts.schema.json` | Fleet: `ship-fleet signins --accounts` | other programs on your computers (a Fleet panel, over ssh) |
 
 Prose documents:
 
 - `seed.md`: what a seed ISO contains and how first boot hands over to ship-provision; the bundle format.
 - `ship-runtime.md`: the users, paths, units and sudo rules every Ship has, and how FleetLedger reaches them.
 - `ship-ctl.md`: every ship-ctl command, its output and exit codes, and how status is worked out.
-- `ship-fleet.md`: the `ship-fleet` output other programs may read (`about --json`).
+- `ship-fleet.md`: the `ship-fleet` output other programs may read (`about --json`, `signins --accounts --json`).
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
 - `toolkit.md`: your own toolkits: their layout, ids, the rules FleetLedger checks, and how they reach Ships (the archive, `ship-ctl toolkit`, the allow-list).

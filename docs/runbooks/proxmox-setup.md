@@ -145,8 +145,27 @@ To keep the secret in the OS keyring instead of the file, replace `token_file`
 with `token_store = "keyring"` and `keyring_item = "proxmox-token:shipshape@pve!build"`.
 
 The token expires after 90 days: make a new one with the same `pveum user token
-add` and the `acl modify --tokens` lines, then run `ship-fleet setup --redo
+add` and the `acl modify --tokens` lines, then run `ship-fleet setup --text --redo
 hypervisor` (or replace the file).
+
+FleetLedger warns before then. When setup stores a new token secret it records the
+day the token expires, taking it to be 90 days on (what the command above makes):
+
+```toml
+token_expires = "2027-02-14"         # in [drivers.proxmox]; not a secret
+```
+
+From 14 days before that day `ship-fleet attention` (and Needs attention in the web
+UI) lists `proxmox-token-expiring`, and `proxmox-token-lapsed` once it has passed,
+each with the command above. FleetLedger reads the day from `ships.toml` only: it
+never asks Proxmox. If your token has another expiry, or you replace the file by
+hand, set `token_expires` yourself to the day Proxmox shows (Datacenter >
+Permissions > API Tokens, the Expire column; or `pveum user token list
+shipshape@pve` on the host, which prints it in seconds since 1970: `date -d @<that>
++%F`; 0 means it never expires: then delete the line). It must be a quoted `YYYY-MM-DD`; anything else stops FleetLedger with a
+config error naming the field. A fleet set up before FleetLedger recorded this day
+has no `token_expires`, and so no warning, until you add it (or redo the setup step
+with a new token).
 
 ## 4. Snapshots and baked images (phase 4, optional)
 

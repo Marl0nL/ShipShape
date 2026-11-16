@@ -487,3 +487,27 @@ def test_remote_control_agents_counts_only_those_given_it():
     for value in ("off", "blocked"):
         doc["claude"]["remote_control"] = value
         assert remote_control_agents(doc) == 0
+
+
+def test_the_proxmox_token_item_offers_its_command_on_the_fleet_page(web, store):  # noqa: F811
+    """The frozen web UI shows ops.fleet_attention's token item as it is: its token, and
+    the setup command to copy (not a Ship's or a machine's link)."""
+    from fleetledger import ops
+
+    action = dashboard.action_for("proxmox-token-lapsed", None, None, None,
+                                  machine="shipshape@pve!build")
+    assert (action.kind, action.value) == ("command", ops.PROXMOX_TOKEN_COMMAND)
+    soon = (datetime.now(UTC).date() + timedelta(days=2)).isoformat()
+    with store.edit() as ed:
+        ed.set_driver("proxmox", {
+            "api_url": "https://pve.example.com:8006/api2/json", "node": "pve",
+            "pool": "shipshape", "template_vmid": 9000, "seed_storage": "s",
+            "disk_storage": "d", "bridge": "vmbr0", "token_id": "shipshape@pve!build",
+            "token_file": "~/t", "tls_fingerprint": ":".join(["AB"] * 32),
+            "token_expires": soon})
+    web.fleet.load_cached()  # the inventory as it is now
+    web.sign_in()
+    page = web.client.get("/").text
+    assert page.count('data-key="fleet/proxmox-token-expiring/shipshape@pve!build"') == 1
+    assert 'class="ship" title="FleetLedger\'s Proxmox API token">shipshape@pve!build' in page
+    assert ops.PROXMOX_TOKEN_COMMAND in page

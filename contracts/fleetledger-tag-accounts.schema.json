@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-tag-accounts.schema.json",
+  "title": "Tag accounts (ship-fleet signins --accounts --json, version 1)",
+  "description": "Printed on stdout by `ship-fleet signins --accounts --json` on the FleetLedger computer: the account each tag's Ships must sign in to each sign-in as (ships.toml [tag.<tag>]), the Ships that have each tag, and the Ships whose tags disagree. Read from ships.toml only: it asks no Ship. Account names only, never a credential. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "signins",
+    "tags",
+    "conflicts"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shipshape.fleetledger-tag-accounts/1"
+    },
+    "signins": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/signinId"
+      },
+      "uniqueItems": true,
+      "description": "Every sign-in a tag may name an account for, in FleetLedger's order (its sign-in registry: claude, gcloud, github, then any others)."
+    },
+    "tags": {
+      "type": "array",
+      "description": "Every tag that names accounts or that a Ship has (defaults.tags counting), by name; with --tag, that one only (none when no Ship has it and it names no accounts).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tag",
+          "accounts",
+          "ships"
+        ],
+        "properties": {
+          "tag": {
+            "$ref": "#/$defs/tag"
+          },
+          "accounts": {
+            "type": "object",
+            "propertyNames": {
+              "$ref": "#/$defs/signinId"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Sign-in id to the account name its Ships must be signed in as (an email address or a login). A sign-in left out has no expectation from this tag."
+          },
+          "ships": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/shipName"
+            },
+            "description": "The Ships with this tag, by name."
+          }
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "description": "Ships whose tags expect different accounts for one sign-in (so it shows as the wrong account whichever it is signed in as); with --tag, only Ships with that tag.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ship",
+          "signin",
+          "accounts"
+        ],
+        "properties": {
+          "ship": {
+            "$ref": "#/$defs/shipName"
+          },
+          "signin": {
+            "$ref": "#/$defs/signinId"
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 2,
+            "uniqueItems": true
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "signinId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "A sign-in id, as FleetLedger's sign-in registry names it (the built-ins: claude, gcloud, github)."
+    }
+  }
+}

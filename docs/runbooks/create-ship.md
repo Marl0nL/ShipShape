@@ -72,7 +72,9 @@ repo_url = "https://example.com/you/orchestrator.git"
 ```
 
 The full format is `contracts/ships.toml.schema.json`. The file stays on your
-computer: it names your accounts and machines.
+computer: it names your accounts and machines. The tag accounts can also be set
+without editing it: `ship-fleet signins --tag work --set-account
+claude=work@example.com` (see [sign-in.md](sign-in.md)).
 
 ## 3. Create the Ship
 

@@ -19,4 +19,5 @@ bridge = "vmbr0"
 token_id = "shipshape@pve!build"
 token_store = "keyring"
 keyring_item = "proxmox-token:shipshape@pve!build"
+token_expires = "2027-02-14"        # setup writes it; FleetLedger warns 14 days before
 tls_fingerprint = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"

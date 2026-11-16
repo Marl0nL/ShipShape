@@ -566,6 +566,11 @@
           "$ref": "#/$defs/path",
           "description": "File holding only the token secret, mode 0600 (token_store = file)."
         },
+        "token_expires": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Optional: the day the API token expires (YYYY-MM-DD, quoted). Not a secret. `ship-fleet setup` writes it when it stores a new token secret, as 90 days on, the expiry of the token its printed command makes; set it by hand to the token's real expiry (Proxmox: Datacenter > Permissions > API Tokens, the Expire column). FleetLedger raises proxmox-token-expiring in the last 14 days and proxmox-token-lapsed after; without it, no alert. Read from ships.toml only: FleetLedger never asks Proxmox."
+        },
         "tls_fingerprint": {
           "type": "string",
           "pattern": "^([0-9A-F]{2}:){31}[0-9A-F]{2}$",

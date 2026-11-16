@@ -205,6 +205,11 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
         return machine_action(machine, remote)
     if code == "vault-locked":  # fleet-level (ops.vault_attention)
         return Action("link", "Unlock", "/unlock")
+    from fleetledger import ops
+
+    if code in ops.PROXMOX_TOKEN_CODES:  # fleet-level (ops.proxmox_token_attention)
+        return Action("command", "Copy", ops.PROXMOX_TOKEN_COMMAND,
+                      "With a new token made on the Proxmox host, on the FleetLedger computer:")
     if code == "signin-scopes-differ" and view is not None:
         from fleetledger import ghscopes
 

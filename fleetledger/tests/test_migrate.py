@@ -559,7 +559,7 @@ def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
             "pool": "shipshape", "template_vmid": 9000, "seed_storage": "local",
             "disk_storage": "local-lvm", "bridge": "vmbr0", "token_id": "fleet@pve!ledger",
             "token_store": "keyring", "keyring_item": token_item,
-            "tls_fingerprint": ":".join(["AB"] * 32)})
+            "token_expires": "2027-02-14", "tls_fingerprint": ":".join(["AB"] * 32)})
         ed.set_overlay({"provider": "tailscale", "tags": ["tag:ship"],
                         "key_source": "tailscale-api",
                         "api": {"tailnet": "-", "oauth_client_id": "k123EXAMPLE",
@@ -596,6 +596,7 @@ def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
     doc = tomllib.loads(b.store.path.read_text())
     pve = doc["drivers"]["proxmox"]
     assert "token_store" not in pve and "keyring_item" not in pve
+    assert pve["token_expires"] == "2027-02-14"  # carried as the rest of ships.toml
     token_file = paths.expand(pve["token_file"])
     assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
     assert doc["overlay"]["api"]["secret_store"] == "file"
@@ -608,6 +609,8 @@ def test_the_proxmox_token_and_oauth_secret_are_stored_again_and_checked(
     code = receive(b, monkeypatch, stream, store_kind="keyring")
     assert code == migrate.VERIFIED, b.out.getvalue()
     assert b.ring.items[("fleetledger", token_item)].startswith("11111111")
+    pve = tomllib.loads(b.store.path.read_text())["drivers"]["proxmox"]
+    assert pve["token_expires"] == "2027-02-14"
     assert b.ring.items[("fleetledger", oauth_item)].startswith("tskey-client")
 
 
