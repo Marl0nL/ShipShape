@@ -169,7 +169,8 @@ def _this_computer(items, inv) -> Step:
                     optional=True)
     if inv is None or ca.config(inv) is None:
         return Step("this-computer", title, "blocked", "needs FleetLedger's certificate "
-                    "authority (FleetLedger set up, above)", docs=TRUST_DOC, optional=True, after="setup")
+                    "authority (FleetLedger set up, above)", docs=TRUST_DOC, optional=True,
+                    after="setup")
     here = trustcmd.this_computer()
     m = ca.machine(inv, here["machine"]) if here else None
     if m is None or m.revoked:
@@ -207,7 +208,8 @@ def _laptop(items, inv) -> Step:
     title = "Another computer (a laptop)"
     if inv is None or ca.config(inv) is None:
         return Step("laptop", title, "blocked", "needs FleetLedger's certificate "
-                    "authority (FleetLedger set up, above)", docs=TRUST_DOC, optional=True, after="setup")
+                    "authority (FleetLedger set up, above)", docs=TRUST_DOC, optional=True,
+                    after="setup")
     here = trustcmd.this_computer()
     mine = here["machine"] if here else None
     others = [m for m in ca.machines(inv) if not m.revoked and m.name != mine]

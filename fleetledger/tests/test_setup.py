@@ -372,8 +372,9 @@ def test_a_vault_that_cannot_be_made_here_leaves_files_and_says_why(no_keyring, 
 def test_a_vault_kept_after_a_failed_move_is_said_and_used(no_keyring, monkeypatch):
     """vault init keeps a vault ships.toml may already read from: setup says it is on,
     what is left, and keeps nothing more in files."""
-    from fleetledger import vault, vaultcmd
     from fleetledger.errors import FleetError
+
+    from fleetledger import vault, vaultcmd
 
     def half_move(app, store, progress=None):
         progress.pointing = True
