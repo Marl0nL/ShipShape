@@ -59,7 +59,7 @@
           },
           "valid_before": { "type": ["string", "null"], "description": "When its last certificate ends (UTC, RFC 3339, Z); null: none issued yet." },
           "revoked": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }], "description": "When ship-fleet untrust revoked it; it stays so." },
-          "fingerprint": { "$ref": "#/$defs/sshFingerprint", "description": "Its own public key's, as ssh-keygen -l prints it. No two machines in the list share a key (ship-fleet trust refuses one already trusted, revoked or not), so a machine finds its own entry, and its trusted name, by its key's fingerprint." },
+          "fingerprint": { "$ref": "#/$defs/sshFingerprint", "description": "Its own public key's, as ssh-keygen -l prints it. No two entries that are not revoked share a key, so a machine finds its own live entry, and its trusted name, as the one with its key's fingerprint and revoked null; revoked entries with the same fingerprint may be listed too." },
           "state": {
             "enum": ["ok", "expiring", "lapsed", "none", "revoked"],
             "description": "Its last certificate: ok; expiring (its last day, or the last half of a shorter lifetime); lapsed; none (never issued); revoked."

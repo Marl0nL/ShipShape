@@ -36,8 +36,8 @@
           "description": "Which check it is (contracts/ship-fleet.md lists them). With subject, it names the item: a check made once per machine or Ship appears once for each."
         },
         "subject": {
-          "oneOf": [{ "$ref": "#/$defs/shipName" }, { "type": "null" }],
-          "description": "fleet.machine-certificate: the trusted machine's name; ships.not-enrolled: the Ship's. null for every other check."
+          "type": ["string", "null"],
+          "description": "fleet.machine-certificate: the trusted machine's name; ships.not-enrolled: the Ship's; fleet.managed-keys, when it fails: the key file's name (one item per key). null otherwise."
         },
         "area": { "enum": ["computer", "fleet", "hypervisor", "overlay", "ships"] },
         "title": { "type": "string", "minLength": 1, "description": "The check's name as the text form's CHECK column shows it." },
@@ -51,8 +51,22 @@
       "allOf": [
         {
           "if": { "properties": { "key": { "enum": ["fleet.machine-certificate", "ships.not-enrolled"] } } },
-          "then": { "properties": { "subject": { "$ref": "#/$defs/shipName" } } },
-          "else": { "properties": { "subject": { "type": "null" } } }
+          "then": { "properties": { "subject": { "$ref": "#/$defs/shipName" } } }
+        },
+        {
+          "if": { "properties": { "key": { "const": "fleet.managed-keys" }, "state": { "const": "fail" } } },
+          "then": { "properties": { "subject": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,255}$" } } }
+        },
+        {
+          "if": {
+            "not": {
+              "anyOf": [
+                { "properties": { "key": { "enum": ["fleet.machine-certificate", "ships.not-enrolled"] } } },
+                { "properties": { "key": { "const": "fleet.managed-keys" }, "state": { "const": "fail" } } }
+              ]
+            }
+          },
+          "then": { "properties": { "subject": { "type": "null" } } }
         }
       ]
     },

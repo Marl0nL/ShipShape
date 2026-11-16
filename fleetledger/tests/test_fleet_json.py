@@ -253,8 +253,38 @@ def test_ca_show_json_has_each_machines_logins_and_finds_one_by_its_key(
     assert {m["machine"]: m["logins"] for m in doc["machines"]} == {
         "laptop": ["agent"], "desk": ["agent", "owner"]}
     assert "logins" not in text and "agent" not in text  # the text form is as it was
-    # A machine finds its own entry, and its trusted name, by its key's fingerprint.
+    # A machine finds its own live entry, and its trusted name, by its key's fingerprint,
+    # even beside a revoked entry with the same key (trust --this-computer after an
+    # untrust adds one under a new name).
     key = (tmp_path / "laptop.pub").read_text()
+    with caenv.store.edit() as ed:
+        ed.set_machine("old-laptop", {"public_key": key.strip(), "added": "2026-01-01T00:00:00Z",
+                                      "scope": ["all"], "logins": ["agent"],
+                                      "revoked": "2026-01-02T00:00:00Z"})
+    doc = documents(caenv, "ca", "show", "--json")
+    check("fleetledger-ca", doc)
     mine = [m for m in doc["machines"] if m["fingerprint"] == sshkeys.fingerprint(key)]
-    assert [m["machine"] for m in mine] == ["laptop"]
-    assert len({m["fingerprint"] for m in doc["machines"]}) == len(doc["machines"])
+    assert sorted(m["machine"] for m in mine) == ["laptop", "old-laptop"]
+    assert [m["machine"] for m in mine if m["revoked"] is None] == ["laptop"]
+    live = [m["fingerprint"] for m in doc["machines"] if m["revoked"] is None]
+    assert len(set(live)) == len(live)
+
+
+def test_doctor_json_names_each_managed_key_that_fails(tmp_path, monkeypatch):
+    """One fail item per managed key gone, each with the key file as its subject, so
+    key and subject still name one item."""
+    from fleetledger import keys
+
+    gone = [tmp_path / "shipshape_fleet_ed25519", tmp_path / "shipshape_agent_ed25519"]
+    monkeypatch.setattr(keys, "managed", lambda inv: (None, gone))
+    doc = setupcmd.as_json(firstrun._managed_items(None))
+    check("fleetledger-doctor", doc)
+    assert [(i["key"], i["subject"], i["state"]) for i in doc["items"]] == [
+        ("fleet.managed-keys", "shipshape_fleet_ed25519", "fail"),
+        ("fleet.managed-keys", "shipshape_agent_ed25519", "fail")]
+    monkeypatch.setattr(keys, "managed", lambda inv: (None, []))
+    monkeypatch.setattr(keys, "describe", lambda store: "the keyring")
+    [ok] = setupcmd.as_json(firstrun._managed_items(None))["items"]
+    assert ok["subject"] is None and ok["state"] == "ok"
+    bad = {"schema": setupcmd.SCHEMA, "items": [dict(ok, subject="x")]}
+    assert schemas.errors("fleetledger-doctor", bad) != []  # ok: no subject

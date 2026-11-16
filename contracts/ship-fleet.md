@@ -113,10 +113,12 @@ init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.j
 | `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
 | `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `logins` (what its certificates log in as: `agent`, `owner` or both; `ship-fleet trust NAME --logins`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`) and `this_computer` (the FleetLedger computer, which renews its own). |
 
-No two machines share a key (`trust` refuses one already trusted, revoked or not), so
-a machine finds its own entry, and the name it is trusted under, by its key's
-fingerprint: `ssh-keygen -lf <its .pub>` prints the same `SHA256:...` as `fingerprint`.
-An entry found that way may be `revoked`.
+No two entries that are not `revoked` share a key (`trust NAME --key` refuses one
+already listed; `trust --this-computer` reuses the live entry with its key, or adds a
+new one when only revoked entries have it). So a machine finds its own live entry, and
+the name it is trusted under, as the one entry with its key's `fingerprint` and
+`revoked` null: `ssh-keygen -lf <its .pub>` prints the same `SHA256:...`. Revoked
+entries with that fingerprint may be there too; none means it is not trusted now.
 
 ## `ship-fleet doctor [--offline] --json`
 
@@ -129,7 +131,7 @@ does, after printing: 1 when any item is `missing` or `fail`, else 0.
 | Field | What it is |
 |---|---|
 | `key` | Which check (below). |
-| `subject` | For a check made once per machine or Ship, its name; else null. `key` and `subject` together name one item. |
+| `subject` | For a check made once per machine, Ship or key, its name (`fleet.machine-certificate`: the machine; `ships.not-enrolled`: the Ship; `fleet.managed-keys` when it fails: the key file); else null. `key` and `subject` together name one item. |
 | `area`, `title` | The text form's AREA and CHECK columns. |
 | `state` | `ok`, `info` (fine, with a next step), `warn`, `missing`, `fail`, `skip` (not checked, or optional and not set up). |
 | `detail`, `fix` | What it found, and the exact command (or step) that fixes it, empty when none. The text form lists `fix` under Next for `info`, `warn`, `missing` and `fail`. |
@@ -141,7 +143,7 @@ does, after printing: 1 when any item is `missing` or `fail`, else 0.
 | `computer.backups` | The last `ship-fleet backup`, when there has been one or one is scheduled. |
 | `computer.image-builds`, `computer.ship-fleet-wrapper` | On FleetLedger's own VM only: KVM for image builds, and the root-owned `/usr/local/bin/ship-fleet` a plain `ssh` command needs (listed only when it is missing or cannot be run). |
 | `fleet.this-copy` | Which copy of the fleet this is (`ship-fleet migrate`). |
-| `fleet.inventory`, `fleet.admin-key`, `fleet.ssh-agent`, `fleet.your-keys-for-ships`, `fleet.managed-keys`, `fleet.certificate-authority` | `ships.toml`, FleetLedger's keys and the CA. |
+| `fleet.inventory`, `fleet.admin-key`, `fleet.ssh-agent`, `fleet.your-keys-for-ships`, `fleet.managed-keys`, `fleet.certificate-authority` | `ships.toml`, FleetLedger's keys and the CA. `fleet.managed-keys` is one `ok` item, or one `fail` per key FleetLedger looks after that is gone or whose passphrase it cannot read (`subject`). |
 | `fleet.trusted-machines`, `fleet.machine-certificate` | Trusted machines: one `ok` item, or one `warn` per machine (`subject`) whose certificate is in its last day or has lapsed. |
 | `hypervisor.driver`, `hypervisor.proxmox`, `hypervisor.proxmox-settings`, `hypervisor.proxmox-token`, `hypervisor.proxmox-api`, `hypervisor.template`, `hypervisor.fleetledgers-own-vm` | Where Ships run. |
 | `overlay.overlay`, `overlay.oauth-secret` | The overlay network. |
