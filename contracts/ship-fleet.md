@@ -157,9 +157,9 @@ does, after printing: 1 when any item is `missing` or `fail`, else 0.
 ## `ship-fleet snapshot ls NAME --json`
 
 The Ship's disk snapshots as its driver lists them, in the text form's order (Proxmox:
-oldest first); `[]` when it has none. Each entry is what the text form shows, nothing
-more. Schema: `fleetledger-snapshot.schema.json`; examples in
-`examples/fleetledger-snapshot/`.
+oldest first, any with no time before them); `[]` when it has none. Each entry is what
+the text form shows, nothing more. Schema: `fleetledger-snapshot.schema.json`; examples
+in `examples/fleetledger-snapshot/`.
 
 | Field | What it is |
 |---|---|
@@ -170,9 +170,9 @@ more. Schema: `fleetledger-snapshot.schema.json`; examples in
 
 It asks the hypervisor, never the Ship. A driver that cannot list snapshots (`manual`)
 or a hypervisor that fails: nothing on stdout, one line on stderr (`ship-fleet: ...`,
-and a hint on the next where there is one), exit 1; a Ship not in the inventory the
-same, exit 2. `--json` belongs to `ls` only: `take`, `rollback` and `rm` refuse it,
-exit 1.
+and a hint on the next where there is one), exit 1; a Ship not in the inventory, or a
+`ships.toml` whose driver settings are missing or unknown, the same but exit 2.
+`--json` belongs to `ls` only: `take`, `rollback` and `rm` refuse it, exit 1.
 
 ## `ship-fleet doctor --next --json`
 
