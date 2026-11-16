@@ -107,6 +107,20 @@ def test_clear_drops_the_account_and_an_empty_tag(run, store):
     store.load()  # still a valid inventory
 
 
+def test_a_hand_written_inline_tag_table_is_changed_too(run, store):
+    text = store.path.read_text(encoding="utf-8")
+    start, end = text.index("[tag.work]"), text.index("[profile_options")
+    text = text[:start] + text[end:]  # top level, before any table:
+    text = text.replace("schema = 1\n",
+                        'schema = 1\ntag = { work = { claude = "work@example.com" } }\n')
+    store.path.write_text(text, encoding="utf-8")
+    store.load()
+    code, _, err = run("signins", "--tag", "personal", "--set-account", "claude=you@example.com")
+    assert code == 0, err
+    assert on_disk(store) == {"work": {"claude": "work@example.com"},
+                              "personal": {"claude": "you@example.com"}}
+
+
 def test_a_ship_whose_tags_disagree_is_named(run, store):
     with store.edit() as ed:
         ed.set_tags("ship-01", ["personal", "work"])

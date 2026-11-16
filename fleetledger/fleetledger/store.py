@@ -141,6 +141,11 @@ class InventoryEditor:
         if "tag" not in self.doc:
             self.doc.add(tomlkit.nl())
             self.doc["tag"] = tomlkit.table(is_super_table=True)
+        elif not isinstance(self.doc["tag"], Table):  # tag = { ... } by hand: a table now
+            tags = tomlkit.table(is_super_table=True)
+            for name, accounts in self.doc["tag"].unwrap().items():
+                tags[name] = _table(accounts)
+            self.doc["tag"] = tags
         if tag not in self.doc["tag"]:
             self.doc["tag"][tag] = tomlkit.table()
         self.doc["tag"][tag][signin] = account

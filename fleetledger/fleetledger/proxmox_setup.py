@@ -350,7 +350,7 @@ def run(app, store, inv, *, versions: Mapping[str, Any]) -> Result:
             "through the pinned certificate.")
     where = keep_secret(config, secret, store_kind, reused=reused, secret_path=secret_path)
     app.say(f"The secret is in {where}.")
-    _note_expiry(app, config, old, reused=reused)
+    _note_expiry(app, config, reused=reused)
 
     match = re.match(r"^(\d+)\.", str(version.get("version", "")))
     result = _discover(app, store, api, config, old, versions,
@@ -369,12 +369,9 @@ def _today() -> date:
     return datetime.now(UTC).date()
 
 
-def _note_expiry(app, config: dict[str, Any], old: Mapping[str, Any], *, reused: bool) -> None:
-    """A reused secret keeps the day recorded for its token id (here, or from a partial
-    run); a new one got its day from keep_secret, said here."""
-    if reused:
-        if old.get("token_id") == config["token_id"] and old.get("token_expires"):
-            config["token_expires"] = old["token_expires"]
+def _note_expiry(app, config: dict[str, Any], *, reused: bool) -> None:
+    """Say the day keep_secret took a new secret to expire on."""
+    if reused or not config.get("token_expires"):
         return
     app.say(f"FleetLedger takes it that the token expires on {config['token_expires']} "
             f"({TOKEN_DAYS} days on, as the command it prints makes it) and says so 14 days "
@@ -385,11 +382,24 @@ def _note_expiry(app, config: dict[str, Any], old: Mapping[str, Any], *, reused:
 def keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused: bool = False,
                 secret_path: Path | None = None) -> str:
     """Store a checked token secret (unless reused from there) and record where in
-    config, and for a new secret the day it expires (token_expires: TOKEN_DAYS on, never
-    asked of Proxmox). Returns where, in words."""
+    config. Also token_expires (never asked of Proxmox): a new secret is taken to expire
+    TOKEN_DAYS on, and that day goes into the progress file at once, so a run stopped
+    before the save keeps it; a reused one keeps the day a stopped run recorded for its
+    token id (else save() keeps the one in ships.toml). Returns where, in words."""
+    if reused:
+        progress = _load_progress()
+        if progress.get("token_id") == config["token_id"] and progress.get("token_expires"):
+            config["token_expires"] = progress["token_expires"]
+        return _keep_secret(config, secret, store_kind, reused=True, secret_path=secret_path)
+    config["token_expires"] = (_today() + timedelta(days=TOKEN_DAYS)).isoformat()
+    where = _keep_secret(config, secret, store_kind, reused=False, secret_path=secret_path)
+    _save_progress(config)
+    return where
+
+
+def _keep_secret(config: dict[str, Any], secret: str, store_kind: str, *, reused: bool,
+                 secret_path: Path | None) -> str:
     item = secret_store.proxmox_item(config["token_id"])
-    if not reused:  # a new secret: taken to expire as the printed command makes it
-        config["token_expires"] = (_today() + timedelta(days=TOKEN_DAYS)).isoformat()
     from_file = None
     if store_kind != "keyring" and reused and secret_store.vault_on():
         # Found in a 0600 file, with the vault on: into the vault, and the file goes.

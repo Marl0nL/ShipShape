@@ -783,6 +783,44 @@ def test_a_rotated_token_gets_a_new_expiry(fresh, monkeypatch):
     assert fresh.store.load().driver_config("proxmox")["token_expires"] == "2027-05-11"
 
 
+def test_a_run_stopped_after_a_new_secret_keeps_its_expiry(fresh, monkeypatch):
+    """The secret is stored before the rest is found; a run that stops there (Ctrl-C,
+    an API error) and one that then reuses the stored secret still record its day."""
+    from fleetledger.errors import FleetError
+
+    real = proxmox_setup._discover
+
+    def stopped(*args, **kw):
+        raise FleetError("stopped part way")
+
+    monkeypatch.setattr(proxmox_setup, "_discover", stopped)
+    code, _, err = to_proxmox(fresh, *START, "")
+    assert code != 0 and "stopped part way" in err
+    monkeypatch.setattr(proxmox_setup, "_today", lambda: date(2026, 12, 1))  # a later day
+    monkeypatch.setattr(proxmox_setup, "_discover", real)
+    code, out, err = fresh.run("--redo", "hypervisor", answers=[
+        "no", "proxmox", "", "", "yes", *FOUND, "", "", "skip"])
+    assert code == 0, err
+    assert fresh.store.load().driver_config("proxmox")["token_expires"] == EXPIRES
+
+
+def test_keep_secret_records_the_day_for_the_web_setup_too(fresh):
+    """The web UI's setup stores through keep_secret: a new secret's day is in the
+    progress file at once, and a reuse of that secret picks it up again."""
+    base = {"api_url": "https://pve.example.com:8006/api2/json", "token_id": TOKEN_ID,
+            "tls_fingerprint": FPR}
+    config = dict(base)
+    proxmox_setup.keep_secret(config, TOKEN, "keyring")
+    assert config["token_expires"] == EXPIRES
+    assert proxmox_setup._load_progress()["token_expires"] == EXPIRES
+    again = dict(base)
+    proxmox_setup.keep_secret(again, TOKEN, "keyring", reused=True)
+    assert again["token_expires"] == EXPIRES
+    other = {**base, "token_id": "other@pve!build"}
+    proxmox_setup.keep_secret(other, TOKEN, "keyring", reused=True)
+    assert "token_expires" not in other
+
+
 def test_save_keeps_the_expiry_only_for_the_same_token(store):
     """The web UI's setup saves through proxmox_setup.save too: a reused secret's config
     has no token_expires, and the recorded day stays only for that token id."""
