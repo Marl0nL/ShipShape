@@ -1342,6 +1342,98 @@ def test_cli_attention_nothing(app, world):
     assert code == 0 and out.strip() == "Nothing needs attention."
 
 
+@pytest.fixture
+def locked_vault(monkeypatch):
+    """A vault on this computer, as fast to make as test_vault's (lower scrypt cost; the
+    temporary runtime folder passes for RAM). Locked, as after a boot (no lock note)."""
+    from fleetledger import vault
+
+    monkeypatch.setattr(vault, "SCRYPT_N", 2 ** 10)
+    monkeypatch.setattr(vault, "in_ram", lambda path: True)
+    monkeypatch.setattr(vault, "booted_at", lambda: EPOCH)
+    vault.create("correct horse battery staple")
+    vault.lock()
+    (vault.runtime_folder() / vault.LOCKED_FILE).unlink()  # the boot cleared RAM
+    return vault
+
+
+def _offline_attention(app):
+    code, out, err = app.run("attention", "--offline", "--json")
+    assert code == 0, err
+    return json.loads(out)
+
+
+def test_cli_attention_offline_with_no_vault_is_as_it_was(app, world):
+    """--offline reads the caches, asking no Ship; with no vault (or unlocked) every
+    Ship with no status yet is still its own item, and no fleet item appears."""
+    world.sims["ship-01"].herdr_pending = True
+    assert app.run("attention")[0] == 0  # a live check: both Ships' caches filled
+    status.cache_path("ship-02").unlink()  # one Ship never checked
+    calls = {"n": 0}
+    app.ssh_factory = lambda inv: calls.update(n=calls["n"] + 1)  # never asked offline
+    items = _offline_attention(app)
+    assert calls["n"] == 0
+    assert {(i["ship"], i["code"]) for i in items} == {
+        ("ship-01", "herdr-restart-pending"), ("ship-02", "unknown")}
+    assert "vault-locked" not in app.run("attention", "--offline")[1]
+
+
+def test_cli_attention_while_locked_says_it_once_for_the_fleet(app, world, locked_vault):
+    world.sims["ship-01"].herdr_pending = True
+    locked_vault.unlock("correct horse battery staple")
+    assert app.run("attention")[0] == 0
+    status.cache_path("ship-02").unlink()
+    locked_vault.lock()
+    (locked_vault.runtime_folder() / locked_vault.LOCKED_FILE).unlink()  # a boot
+    # Asking the Ships is refused as ever, and points at the offline list.
+    code, _, err = app.run("attention")
+    assert code == 1 and "vault is locked" in err
+    assert "ship-fleet attention --offline" in err
+    items = _offline_attention(app)
+    [vault_item] = [i for i in items if i["ship"] is None]
+    assert vault_item == {
+        "ship": None, "code": "vault-locked", "subject": "vault", "severity": "high",
+        "message": ops.vault_locked_message(), "fix": ops.VAULT_FIX}
+    assert "since this computer started (2026-01-01 00:00 UTC)" in vault_item["message"]
+    for stops in ("checks no Ship", "renews no certificate", "makes no backup"):
+        assert stops in vault_item["message"]
+    assert "ship-fleet unlock" in vault_item["fix"]
+    # The Ship never checked is not listed apart; the real problem on the other still is.
+    assert {(i["ship"], i["code"]) for i in items} == {
+        (None, "vault-locked"), ("ship-01", "herdr-restart-pending")}
+    code, out, _ = app.run("attention", "--offline")
+    [line] = [x for x in out.splitlines() if "vault-locked" in x]
+    assert line.split()[:3] == ["high", "FleetLedger", "vault-locked"]
+    assert "ship-fleet unlock" in line and "ship-02" not in out
+    # Locked by hand: since when, not since the boot.
+    locked_vault.unlock("correct horse battery staple")
+    locked_vault.lock(wall=lambda: EPOCH + 3600)
+    [vault_item] = [i for i in _offline_attention(app) if i["ship"] is None]
+    assert "since 2026-01-01 01:00 UTC (ship-fleet vault lock)" in vault_item["message"]
+    # Unlocked: no fleet item, and the Ship never checked is its own item again.
+    locked_vault.unlock("correct horse battery staple")
+    assert {(i["ship"], i["code"]) for i in _offline_attention(app)} == {
+        ("ship-01", "herdr-restart-pending"), ("ship-02", "unknown")}
+    code, out, _ = app.run("attention", "--offline")
+    assert code == 0 and "vault-locked" not in out and "ship-02" in out
+    code, out, _ = app.run("attention", "--json")
+    assert code == 0 and "vault-locked" not in out
+
+
+def test_cli_attention_locked_with_no_ship_listed_still_says_so(app, world, locked_vault):
+    [item] = _offline_attention_tag(app, "nosuchtag")
+    assert (item["ship"], item["code"]) == (None, "vault-locked")
+    locked_vault.unlock("correct horse battery staple")
+    code, out, _ = app.run("attention", "--offline", "--tag", "nosuchtag")
+    assert code == 0 and out.strip() == "No Ships with tag nosuchtag."
+
+
+def _offline_attention_tag(app, tag):
+    code, out, err = app.run("attention", "--offline", "--json", "--tag", tag)
+    assert code == 0, err
+    return json.loads(out)
+
+
 @pytest.mark.parametrize("argv,expected", [
     (["tools", "add", "--tag", "work", "a", "b"], ["tools", "--tag", "work", "add", "a", "b"]),
     (["logs", "--tag=work", "herdr"], ["logs", "--tag=work", "herdr"]),

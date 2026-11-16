@@ -386,16 +386,17 @@ def ships_items(inv) -> list[Item]:
 
 
 def vault_items() -> list[Item]:
-    """FleetLedger's vault, when it is on (vault.py): nothing when it is off."""
-    from fleetledger import vault
+    """FleetLedger's vault, when it is on (vault.py): nothing when it is off. Locked,
+    the same words as ship-fleet attention's one vault-locked item (ops)."""
+    from fleetledger import ops, vault
 
     state = vault.state()
     if state == "off":
         return []
     out = []
     if state == "locked":
-        out.append(Item("computer", "vault", "warn", "locked (it locks at every boot): "
-                        "FleetLedger is read-only until it is unlocked", "ship-fleet unlock"))
+        out.append(Item("computer", "vault", "warn", ops.vault_locked_message(),
+                        "ship-fleet unlock"))
     else:
         out.append(Item("computer", "vault", "ok", "unlocked, until the next boot"))
     if not vault.in_ram(vault.runtime_folder()):

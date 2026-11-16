@@ -203,6 +203,8 @@ def action_for(code: str, ship: str, view: ShipView | None, signin: str | None,
     on_fleetledger = " (on the FleetLedger computer)" if remote else ""
     if code in MACHINE_CODES and machine:
         return machine_action(machine, remote)
+    if code == "vault-locked":  # fleet-level (ops.vault_attention)
+        return Action("link", "Unlock", "/unlock")
     if code == "signin-scopes-differ" and view is not None:
         from fleetledger import ghscopes
 

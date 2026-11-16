@@ -439,9 +439,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "attention", "list what needs you across the fleet (Needs attention)",
              "Waiting agents, missing, expiring or wrong-account sign-ins, failed services\n"
              "or tools, pending reboots, Ships behind on tooling or unreachable; most\n"
-             "urgent first. --watch keeps polling and prints only new items.")
+             "urgent first. --watch keeps polling and prints only new items. --offline\n"
+             "asks no Ship: each one's last known status (it works while the vault is\n"
+             "locked, and then says so once for the fleet).")
     p.add_argument("--tag", help="only Ships with this tag")
     p.add_argument("--json", action="store_true", help="print JSON")
+    p.add_argument("--offline", action="store_true",
+                   help="from each Ship's last known status, asking none")
     p.add_argument("--watch", type=float, nargs="?", const=30.0, metavar="SECONDS",
                    help="poll every SECONDS (default 30) and print new items")
 
@@ -760,7 +764,9 @@ def _vault_locked(args, app) -> None:
     if vault.state() == "locked":
         raise FleetError("FleetLedger's vault is locked, so FleetLedger is read-only: it "
                          "changes nothing and reaches no Ship. Your Ships keep running.",
-                         hint=vault.UNLOCK_HINT + " Meanwhile: ship-fleet ls --offline.")
+                         hint=vault.UNLOCK_HINT + " Meanwhile: ship-fleet "
+                         + ("attention" if args.command == "attention" else "ls")
+                         + " --offline.")
 
 
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
