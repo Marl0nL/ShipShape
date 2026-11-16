@@ -81,6 +81,7 @@ SEVERITY = {
     "runtime-switch-failed": "high",  # a runtime switch failed and did not roll back cleanly
     "unit-failed": "high",
     "host-cert-expired": "high",
+    "machine-cert-lapsed": "high",  # a trusted machine's certificate (fleet-level)
     "agent-waiting": "medium",
     "signin-missing": "medium",
     "signin-expiring": "medium",
@@ -91,6 +92,7 @@ SEVERITY = {
     "core-restart-pending": "low",  # agents unaffected; the next reboot switches it
     "tmp-reboot-pending": "low",  # /tmp moves to the disk at the next reboot
     "host-cert-expiring": "medium",
+    "machine-cert-expiring": "medium",  # in its last day (fleet-level)
     "host-cert-missing": "medium",
     "overlay-down": "medium",  # phase 5: the Ship cannot be reached off the LAN
     "agent-repo-waiting": "medium",  # its agent starts once GitHub is signed in
@@ -160,11 +162,17 @@ class Outcome:
 
 @dataclass(frozen=True)
 class AttentionItem:
-    ship: str
+    ship: str | None  # None: about the fleet, not one Ship (fleet_attention)
     code: str
     message: str
     subject: str | None
     severity: str
+    fix: str = ""  # the next step, where the message does not say it
+
+    @property
+    def where(self) -> str:
+        """The Ship, or for a fleet-level item what it is about (machine laptop)."""
+        return self.ship or f"machine {self.subject}"
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -1182,8 +1190,12 @@ NOT_ENROLLED = ("Not enrolled yet: it may still be starting, or its VM is still 
 NOT_ENROLLED_UP = "Not enrolled yet, though it answers: finish enrolling it."
 
 
-def attention(views: Iterable[status_mod.ShipView]) -> list[AttentionItem]:
-    """Everything across the fleet a person should look at, most urgent first."""
+def attention(views: Iterable[status_mod.ShipView],
+              inventory: Inventory | None = None) -> list[AttentionItem]:
+    """Everything across the fleet a person should look at, most urgent first.
+    inventory: also the fleet-level items about these Ships (fleet_attention), after
+    the Ships' own within each severity; None: the Ships' items alone (a Ship page)."""
+    views = list(views)
     items = []
     for view in views:
         if view.not_enrolled:  # being made, or made by hand: not an outage
@@ -1202,5 +1214,63 @@ def attention(views: Iterable[status_mod.ShipView]) -> list[AttentionItem]:
             items.append(AttentionItem(view.ship.name, entry["code"], entry["message"],
                                        entry.get("subject"),
                                        SEVERITY.get(entry["code"], "medium")))
+    if inventory is not None:
+        items += fleet_attention(inventory, [v.ship for v in views])
     order = {name: i for i, name in enumerate(dict.fromkeys(i.ship for i in items))}
-    return sorted(items, key=lambda i: (SEVERITY_ORDER[i.severity], order[i.ship]))
+    return sorted(items, key=lambda i: (SEVERITY_ORDER[i.severity], i.ship is None,
+                                        order[i.ship]))
+
+
+def fleet_attention(inventory: Inventory, ships: Sequence[Ship], *,
+                    now: datetime | None = None) -> list[AttentionItem]:
+    """Attention items about the fleet rather than one Ship (ship None), for what
+    reaches these Ships. Read from ships.toml only: nothing is issued or asked."""
+    return machine_cert_attention(inventory, ships, now=now)
+
+
+MACHINE_CERT = {
+    "expiring": ("machine-cert-expiring",
+                 "The certificate of {name} lapses at {until}, within a day: ssh, herdr "
+                 "--remote and hc from it stop then."),
+    "lapsed": ("machine-cert-lapsed",
+               "The certificate of {name} lapsed at {until}: ssh, herdr --remote and hc "
+               "from it stopped then."),
+}
+# The next step on the FleetLedger computer (doctor / Health: a command to copy).
+MACHINE_CERT_COMMAND = ("ship-fleet trust {name}   (or Download bundle under Settings ▸ "
+                        "Access ▸ Trusted machines; then sh install.sh on {name})")
+THIS_COMPUTER_COMMAND = "ship-fleet trust --this-computer"
+MACHINE_CERT_FIX = (
+    "Renew it: Download bundle in its row under Settings ▸ Access ▸ Trusted machines, in "
+    "the FleetLedger computer's browser or one paired from {name} (or ship-fleet trust "
+    "{name} on the FleetLedger computer), then on {name}: sh install.sh from the bundle.")
+THIS_COMPUTER_FIX = (
+    "FleetLedger renews it whenever its web UI checks the Ships or ship-fleet status runs; "
+    "now: ship-fleet trust --this-computer on the FleetLedger computer.")
+
+
+def machine_cert_attention(inventory: Inventory, ships: Sequence[Ship], *,
+                           now: datetime | None = None) -> list[AttentionItem]:
+    """machine-cert-expiring (its last day) and machine-cert-lapsed, for each trusted
+    machine that reaches one of these Ships. A machine's certificate renews only when
+    someone downloads its bundle, so without these it lapses silently. FleetLedger's own
+    computer renews itself in its last day: it is named only once lapsed."""
+    from fleetledger import ca, trustcmd
+
+    cfg = ca.config(inventory)
+    if cfg is None:
+        return []
+    here = trustcmd.this_computer()
+    items = []
+    for m in ca.machines(inventory):
+        mine = bool(here and here["machine"] == m.name)
+        due = ca.cert_due(m, now, renews_itself=mine, default_hours=cfg.user_cert_hours)
+        if due is None or not any(m.reaches(inventory, s) for s in ships):
+            continue
+        code, text = MACHINE_CERT[due]
+        name = f"{m.name} (the FleetLedger computer)" if mine else m.name
+        until = m.last_valid_before.replace("T", " ")[:16] + " UTC"
+        items.append(AttentionItem(
+            None, code, text.format(name=name, until=until), m.name, SEVERITY[code],
+            THIS_COMPUTER_FIX if mine else MACHINE_CERT_FIX.format(name=m.name)))
+    return items

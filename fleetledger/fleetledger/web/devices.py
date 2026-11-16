@@ -19,8 +19,14 @@ revocable (docs/runbooks/remote-ui.md).
   paired within FRESH, so a stolen laptop's week-old session cannot destroy Ships
   or mint itself a new pairing. Pairing again refreshes it. A browser on this
   computer is never held to it.
+- A device that lapses unused (IDLE) leaves a **lapse record** in lapsed.json: its key
+  (the same hash), name, login, machine and times, kept only until its cookie expires
+  anyway (ABSOLUTE after pairing, when one that lapsed at ABSOLUTE leaves none). It
+  admits nobody: it is read only after a request was refused, so the refusal page can
+  tell that browser which device lapsed and when, and prefill the `ship-fleet ui link`
+  that pairs it again (web/refusal.py).
 
-Both files are 0600 in a 0700 folder under FleetLedger's data folder, written
+The files are 0600 in a 0700 folder under FleetLedger's data folder, written
 atomically under a lock, so `ship-fleet ui link` and a running UI share them. A file
 that cannot be read counts as empty: nobody is signed in.
 """
@@ -126,6 +132,29 @@ class Device:
 
 
 @dataclass(frozen=True)
+class Lapsed:
+    """What is kept of a device that lapsed, to say so on its browser's refusal page."""
+
+    key: str  # the device's key: sha256 of its session id (hex)
+    name: str
+    login: str
+    machine: str | None
+    paired: float  # wall clock
+    seen: float  # wall clock of its last request
+    lapsed: float  # wall clock when it was found lapsed
+
+    @property
+    def since(self) -> float:
+        """When it lapsed: IDLE after its last request."""
+        return self.seen + IDLE
+
+    @staticmethod
+    def of(device: Device, now: float, seen: float | None = None) -> Lapsed:
+        return Lapsed(device.key, device.name, device.login, device.machine, device.paired,
+                      max(device.seen, seen or 0.0), now)
+
+
+@dataclass(frozen=True)
 class Pairing:
     key: str  # sha256 of the link's token (hex)
     expires: float  # wall clock
@@ -134,7 +163,7 @@ class Pairing:
     machine: str | None = None  # the trusted machine the device runs on, if said
 
 
-TIMES = ("paired", "seen", "expires")
+TIMES = ("paired", "seen", "expires", "lapsed")
 MAYBE = ("machine", "name")  # may be None (a Device's name may not)
 
 
@@ -173,6 +202,10 @@ class Devices:
     @property
     def pairings_file(self) -> Path:
         return self.folder / "pairings.json"
+
+    @property
+    def lapsed_file(self) -> Path:
+        return self.folder / "lapsed.json"
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -248,7 +281,9 @@ class Devices:
         is removed; its name and machine carry over when the link named none)."""
         with self._locked():
             now = self.wall()
-            devices = {k: d for k, d in self._devices().items() if not d.lapsed(now)}
+            current = self._devices()
+            devices = {k: d for k, d in current.items() if not d.lapsed(now)}
+            self._note_lapsed([d for k, d in current.items() if k not in devices], now)
             old = devices.pop(replaces, None) if replaces else None
             if len(devices) >= MAX_DEVICES:
                 raise FleetError(f"{len(devices)} devices are paired already; revoke some "
@@ -290,7 +325,7 @@ class Devices:
             return None
         now = self.wall()
         if device.lapsed(now, self._seen.get(key)):
-            self.remove(key)
+            self._lapse(device, now)
             return None
         self._seen[key] = now
         if now - device.seen >= SEEN_EVERY:
@@ -322,6 +357,51 @@ class Devices:
             if gone:
                 self._save(devices)
         return len(gone)
+
+    # --- lapse records (web/refusal.py; they admit nobody) -------------------------------
+    def _lapse(self, device: Device, now: float) -> None:
+        """Sign a lapsed device out, keeping its lapse record."""
+        with self._locked():
+            devices = self._devices()
+            if devices.pop(device.key, None) is not None:
+                self._save(devices)
+                self._note_lapsed([device], now)
+            self._seen.pop(device.key, None)
+
+    def _note_lapsed(self, devices: list[Device], now: float) -> None:
+        """Add lapse records (under the lock), dropping those whose cookie has expired
+        (ABSOLUTE after pairing, so a device that lapsed at ABSOLUTE gets none) and the
+        oldest past MAX_DEVICES. Written only when that changes something."""
+        new = {d.key: Lapsed.of(d, now, self._seen.get(d.key)) for d in devices
+               if now - d.paired <= ABSOLUTE}
+        if not new and not self.lapsed_file.exists():
+            return
+        old = self._read(self.lapsed_file, Lapsed)
+        kept = [r for r in old if r.key not in new and now - r.paired <= ABSOLUTE]
+        if not new and len(kept) == len(old):
+            return
+        kept = sorted([*kept, *new.values()], key=lambda r: r.lapsed)[-MAX_DEVICES:]
+        self._write(self.lapsed_file, kept)
+
+    def forget_lapsed(self) -> None:
+        """Drop every lapse record (ship-fleet ui revoke --all forgets every device)."""
+        with self._locked():
+            if self.lapsed_file.exists():
+                self._write(self.lapsed_file, [])
+
+    def lapsed_for(self, session_id: str, login: str) -> Lapsed | None:
+        """The lapse record of the device this session id belonged to, if that login
+        paired it and its cookie has not expired; else None. Only for a refusal page:
+        it never signs anyone in."""
+        if not session_id or not login:
+            return None
+        key = digest(session_id)
+        now = self.wall()
+        found = next((r for r in self._read(self.lapsed_file, Lapsed)
+                      if hmac.compare_digest(r.key, key)), None)
+        if found is None or found.login != login or now - found.paired > ABSOLUTE:
+            return None
+        return found
 
     def find(self, what: str) -> list[Device]:
         """Devices named `what`, or whose id starts with it (ship-fleet ui revoke)."""
@@ -524,6 +604,7 @@ def cmd_revoke(args, app) -> int:
         if args.device:
             raise FleetError("Name a device or --all, not both.")
         count = revoke(store, store.all())
+        store.forget_lapsed()
         app.say(f"Signed out {count} device(s)." if count else "No device was paired.")
         return 0
     if not args.device:

@@ -94,6 +94,8 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
     if ca.config(inv) is None:
         return {"certs": None}
     machines = ca.machines(inv)
+    hours = ca.config(inv).user_cert_hours
+    here = trustcmd.this_computer()
     bundles = {}
     for m in machines:
         folder = ca.bundle_dir(m.name)
@@ -109,6 +111,12 @@ def section_context(ui: Any, inv: Any) -> dict[str, Any]:
         "own_key_machines": {m.name: w for m in machines if not m.revoked
                       and (w := trustcmd.your_key_warning(inv, m))},
         "this_until": trustcmd.this_computer_until(inv),
+        # Each machine's certificate when it is due (ca.cert_due: the attention items'
+        # rule): lapsed, or expiring in its last day; this computer's only once lapsed.
+        "cert_due": {m.name: ca.cert_due(m, default_hours=hours,
+                                         renews_itself=bool(here and here["machine"]
+                                                            == m.name))
+                     for m in machines},
         "scope_choices": scope_choices(inv),
         "cert_jobs": jobs["certs"],
         "machine_jobs": jobs["trust"],

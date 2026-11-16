@@ -318,7 +318,7 @@ def _attaches(session: Session | None, inv: Any) -> dict[str, Any]:
 def _fleet_context(ui: UI, tag: str | None, session: Session | None = None) -> dict[str, Any]:
     snap = ui.fleet.snapshot
     views = snap.views_for(tag)
-    items = attention_items(views)
+    items = attention_items(views, snap.inventory)
     flows_waiting = [f for f in ui.concierge.active() if f.needs_you]
     alerts = dashboard.alerts(views, items, flows_waiting, snap.inventory,
                               **_attaches(session, snap.inventory))

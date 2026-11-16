@@ -396,7 +396,7 @@ def make_fleet(a: Computer, monkeypatch) -> None:
     remote.save(remote.Remote("https://desktop.example-tailnet.ts.net", 8765))  # a piece-1 setting
     store = devices.Devices()  # the remote web UI's paired browsers and pairing links
     with store._locked():
-        for f in (store.devices_file, store.pairings_file):
+        for f in (store.devices_file, store.pairings_file, store.lapsed_file):
             paths.write_private(f, json.dumps({"schema": 1, "items": []}).encode())
     assert a.run("ls")[0] == 0  # the status cache, and FleetLedger's known_hosts
 
@@ -632,6 +632,7 @@ def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
                       ("remote-ui.json", "the remote web UI setting: this computer's own name"),
                       ("web/devices.json", "paired browsers and pairing links"),
                       ("web/pairings.json", "pair each device again"),
+                      ("web/lapsed.json", "paired browsers and pairing links"),
                       ("web/.lock", "bound to this computer's address"),
                       ("inbox-spool/half-sent", "half-way to a Ship"),
                       ("toolkit-archives/examplekit.tar.gz", "rebuilt from the toolkit's folder"),

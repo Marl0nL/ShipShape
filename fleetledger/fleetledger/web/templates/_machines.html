@@ -76,7 +76,9 @@
         <button type="submit" class="ghost">Save</button>
       </form>
     </td>
-    <td>{{ until(m.last_valid_before) }}</td>
+    <td>{{ until(m.last_valid_before) }}
+      {% set due = cert_due[m.name] %}{% if due == "lapsed" %} <span class="pill bad" title="machine-cert-lapsed: ssh from it stopped; Download bundle renews it">lapsed</span>
+      {% elif due == "expiring" %} <span class="pill warn" title="machine-cert-expiring: Download bundle renews it">lapses within a day</span>{% endif %}</td>
     <td class="row-actions">
       {% if not here and (not this_device or browsers) %}
       <form method="post" action="/settings/machines/bundle" class="inline">

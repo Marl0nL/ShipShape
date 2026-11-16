@@ -53,10 +53,10 @@ function page() {
     setRequestHeader(name, value) { this.headers[name] = value; }
     addEventListener(type, fn) { this.listeners[type] = fn; }
     send(body) { this.body = body; }
-    answer(status, doc) {
+    answer(status, doc, raw) {
       this.uploadProgress({ lengthComputable: true, loaded: this.body.size });
       this.status = status;
-      this.responseText = JSON.stringify(doc);
+      this.responseText = raw === undefined ? JSON.stringify(doc) : raw;
       this.listeners.load();
     }
   }
@@ -163,6 +163,17 @@ test("a failed upload stops the post until the person sends the rest", on(async 
   await p.settle();
   assert.equal(p.requests.length, 2, "nothing is uploaded twice");
   assert.deepEqual(p.sent, [{ file: ["bbb"], tell: null }]);
+}));
+
+test("an upload refused as signed out says so, not the refusal page's HTML", on(async (p) => {
+  p.choose([p.file("a.txt", 1)]);
+  p.$("#inbox-start").click();
+  await p.settle();
+  p.requests[0].answer(401, null, "<!doctype html><title>Not paired</title>");
+  await p.settle();
+  const state = p.document.querySelector("#inbox-queue li .state").textContent;
+  assert.match(state, /not uploaded: this browser is no longer signed in/);
+  assert.doesNotMatch(state, /doctype/);
 }));
 
 test("Clear empties the list", on((p) => {
