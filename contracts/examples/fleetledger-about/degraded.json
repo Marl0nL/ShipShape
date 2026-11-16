@@ -1,20 +1,62 @@
 {
   "schema": "shipshape.fleetledger-about/1",
   "version": "0.1.0",
-  "checkout": { "path": null, "commit": null, "branch": null, "dirty": null },
-  "upstream": { "checked": false, "ref": "origin/main", "commit": null, "newer": null, "behind": null },
-  "ui": { "local": "http://127.0.0.1:8765", "remote": null, "running": false, "as_service": null, "jobs": null, "stopping": null },
-  "service": { "installed": true, "active": null, "enabled": null },
-  "vault": { "state": "unlocked" },
+  "checkout": {
+    "path": null,
+    "commit": null,
+    "branch": null,
+    "dirty": null
+  },
+  "upstream": {
+    "checked": false,
+    "ref": "origin/main",
+    "commit": null,
+    "newer": null,
+    "behind": null
+  },
+  "ui": {
+    "local": "http://127.0.0.1:8765",
+    "remote": null,
+    "running": false,
+    "as_service": null,
+    "jobs": null,
+    "stopping": null
+  },
+  "service": {
+    "installed": true,
+    "active": null,
+    "enabled": null
+  },
+  "vault": {
+    "state": "unlocked"
+  },
   "backup": {
     "scheduled": true,
-    "last": { "at": "2026-11-15T03:31:07Z", "ok": false, "to": "/mnt/backups/fleetledger", "why": "FleetLedger's vault is locked." }
+    "last": {
+      "at": "2026-11-15T03:31:07Z",
+      "ok": false,
+      "to": "/mnt/backups/fleetledger",
+      "why": "FleetLedger's vault is locked."
+    },
+    "last_made": "2026-11-15T03:31:07Z"
   },
   "copy": "retired",
-  "self_update": { "command": "ship-fleet self-update", "ref": "origin/main" },
+  "self_update": {
+    "command": "ship-fleet self-update",
+    "ref": "origin/main"
+  },
   "unread": [
-    { "what": "checkout", "why": "Cannot find the ShipShape checkout (contracts/ and versions.toml)." },
-    { "what": "upstream", "why": "no checkout to compare" },
-    { "what": "service", "why": "systemctl --user is-active: Failed to connect to bus: No medium found" }
+    {
+      "what": "checkout",
+      "why": "Cannot find the ShipShape checkout (contracts/ and versions.toml)."
+    },
+    {
+      "what": "upstream",
+      "why": "no checkout to compare"
+    },
+    {
+      "what": "service",
+      "why": "systemctl --user is-active: Failed to connect to bus: No medium found"
+    }
   ]
 }

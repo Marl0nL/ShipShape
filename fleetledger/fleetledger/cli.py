@@ -701,6 +701,8 @@ def _in_use(args, app):
 
     if args.command == "migrate":
         return nullcontext()  # it takes the lock exclusively itself
+    if args.command == "about":
+        return nullcontext()  # it only reads, and must answer during a move too
     store = app.store_factory()
     path = getattr(store, "path", None)
     serves_ui = args.command == "ui" and getattr(args, "ui_command", None) is None

@@ -14,11 +14,31 @@
     "newer": true,
     "behind": 3
   },
-  "ui": { "local": null, "remote": null, "running": false, "as_service": null, "jobs": null, "stopping": null },
-  "service": { "installed": false, "active": null, "enabled": null },
-  "vault": { "state": "off" },
-  "backup": { "scheduled": false, "last": null },
+  "ui": {
+    "local": null,
+    "remote": null,
+    "running": false,
+    "as_service": null,
+    "jobs": null,
+    "stopping": null
+  },
+  "service": {
+    "installed": false,
+    "active": null,
+    "enabled": null
+  },
+  "vault": {
+    "state": "off"
+  },
+  "backup": {
+    "scheduled": false,
+    "last": null,
+    "last_made": null
+  },
   "copy": "active",
-  "self_update": { "command": "ship-fleet self-update", "ref": "origin/main" },
+  "self_update": {
+    "command": "ship-fleet self-update",
+    "ref": "origin/main"
+  },
   "unread": []
 }

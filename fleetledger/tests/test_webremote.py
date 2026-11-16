@@ -516,11 +516,19 @@ def test_turning_it_on_says_how_to_start_it_service_or_terminal(home, tmp_path, 
     assert "service restart" not in said
     units = tmp_path / "xdg" / "systemd" / "user"
     units.mkdir(parents=True)
-    (units / "fleetledger.service").write_text("# Written by ship-fleet service install\n")
+    unit = units / "fleetledger.service"
+    unit.write_text("# Written by ship-fleet service install\n[Service]\n"
+                    f"ExecStart=/usr/local/bin/ship-fleet ui --service --port {PORT}\n")
     code, said = run_cli(on)
     assert code == 0, said
     assert "Start or restart the service to use it: ship-fleet service restart" in said
     assert "Run ship-fleet ui" not in said
+    # A unit on another port would be refused by the UI: install writes it again.
+    unit.write_text(unit.read_text().replace(f"--port {PORT}", f"--port {PORT + 1}"))
+    code, said = run_cli(on)
+    assert code == 0, said
+    assert f"The service runs the UI on port {PORT + 1}: write it again with ship-fleet " \
+           "service install, then ship-fleet service restart" in said
 
 
 def test_it_is_not_turned_on_when_the_check_fails(home):

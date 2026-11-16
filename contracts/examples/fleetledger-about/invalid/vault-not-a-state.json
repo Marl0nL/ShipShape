@@ -37,7 +37,8 @@
       "ok": true,
       "to": "/mnt/backups/fleetledger",
       "why": null
-    }
+    },
+    "last_made": "2026-11-15T03:31:07Z"
   },
   "copy": "active",
   "self_update": {

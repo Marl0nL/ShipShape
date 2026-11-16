@@ -77,7 +77,9 @@ def _checkout(app: Any, unread: _Unread) -> tuple[dict[str, Any], str | None]:
         out["commit"] = commit
         branch = _git(root, "symbolic-ref", "--short", "-q", "HEAD")
         out["branch"] = branch.stdout.strip() or None
-        status = _git(root, "status", "--porcelain", "--untracked-files=no")
+        # --no-optional-locks: git status may otherwise refresh (write) the index.
+        status = _git(root, "--no-optional-locks", "status", "--porcelain",
+                      "--untracked-files=no")
         if status.returncode == 0:
             out["dirty"] = bool(status.stdout.strip())
         else:
@@ -169,7 +171,7 @@ def _ui(answer: dict[str, Any] | None, unread: _Unread) -> dict[str, Any]:
         out["jobs"] = len(jobs) if isinstance(jobs, list) else 0
         out["stopping"] = bool(answer.get("stopping"))
     if out["local"] is None:
-        port = found.port if found else _unit_port(service)
+        port = found.port if found else service.unit_port()
         if port is not None:
             out["local"] = f"http://127.0.0.1:{port}"
     return out
@@ -179,26 +181,10 @@ def _matching(pattern: re.Pattern, value: Any) -> str | None:
     return value if isinstance(value, str) and pattern.match(value) else None
 
 
-def _unit_port(service: Any) -> int | None:
-    """The port the service unit runs the UI on (its ExecStart's --port)."""
-    try:
-        text = service.unit_path().read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        if line.startswith("ExecStart="):
-            words = line.split()
-            if "--port" in words[:-1]:
-                value = words[words.index("--port") + 1]
-                return int(value) if value.isdigit() and 1024 <= int(value) <= 65535 \
-                    else None
-    return None
-
-
 def _backup(unread: _Unread) -> dict[str, Any]:
     from fleetledger import backup, service
 
-    out: dict[str, Any] = {"scheduled": False, "last": None}
+    out: dict[str, Any] = {"scheduled": False, "last": None, "last_made": None}
     try:
         out["scheduled"] = (service.unit_dir() / backup.TIMER).is_file()
     except OSError as exc:
@@ -209,7 +195,29 @@ def _backup(unread: _Unread) -> dict[str, Any]:
                        "ok": last.get("ok") is True,
                        "to": last.get("to") if isinstance(last.get("to"), str) else None,
                        "why": last.get("why") if isinstance(last.get("why"), str) else None}
+        if out["last"]["to"]:
+            out["last_made"] = _newest(out["last"]["to"], unread)
     return out
+
+
+def _newest(folder: str, unread: _Unread) -> str | None:
+    """When the newest backup in folder was made, from its file name (fleetledger-
+    YYYYMMDD-HHMMSS-...): it outlives a failed attempt, which the last result is."""
+    from pathlib import Path
+
+    from fleetledger import backup
+
+    try:
+        names = [f.name for f in Path(folder).iterdir() if backup.NAME_RE.match(f.name)]
+    except FileNotFoundError:
+        return None  # not mounted just now, say
+    except OSError as exc:
+        unread.add("backups", f"{folder}: {exc.strerror or type(exc).__name__}")
+        return None
+    if not names:
+        return None
+    d, t = max(names).split("-")[1:3]
+    return f"{d[:4]}-{d[4:6]}-{d[6:]}T{t[:2]}:{t[2:4]}:{t[4:]}Z"
 
 
 def _copy(app: Any, unread: _Unread) -> str:
@@ -271,8 +279,9 @@ def lines(doc: dict[str, Any]) -> list[str]:
         out.append(f"Newer on {up['ref']}: not checked (ship-fleet about --check fetches "
                    "once to see).")
     elif up["newer"]:
-        out.append(f"Newer on {up['ref']}: yes, {up['commit'][:12]}, {up['behind']} commit(s) "
-                   f"on: {doc['self_update']['command']} moves to it.")
+        count = f", {up['behind']} commit(s) on" if up["behind"] is not None else ""
+        out.append(f"Newer on {up['ref']}: yes, {up['commit'][:12]}{count}: "
+                   f"{doc['self_update']['command']} moves to it.")
     elif up["commit"] == c["commit"]:
         out.append(f"Newer on {up['ref']}: no, this is it.")
     else:
@@ -312,7 +321,9 @@ def lines(doc: dict[str, Any]) -> list[str]:
                    + ("; scheduled daily." if b["scheduled"] else "."))
     else:
         out.append(f"Backups: the last one failed ({_when(last['at'])}): "
-                   f"{last['why'] or 'no reason given'}.")
+                   f"{last['why'] or 'no reason given'}"
+                   + (f"; the newest in {last['to']} is from {_when(b['last_made'])}."
+                      if b["last_made"] else "."))
     out.append(f"This copy: {doc['copy']}" + {
         "none": " (no fleet here yet).",
         "standby": " (ship-fleet migrate activate makes it act).",

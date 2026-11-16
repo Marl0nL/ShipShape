@@ -74,7 +74,7 @@ def test_about_says_what_fleetledger_is_in_text_and_json(store, home, checkout, 
                          "jobs": None, "stopping": None}
     assert doc["service"] == {"installed": False, "active": None, "enabled": None}
     assert doc["vault"] == {"state": "off"} and doc["copy"] == "active"
-    assert doc["backup"] == {"scheduled": False, "last": None}
+    assert doc["backup"] == {"scheduled": False, "last": None, "last_made": None}
     assert doc["self_update"] == {"command": "ship-fleet self-update", "ref": "origin/main"}
     assert doc["unread"] == []
 
@@ -85,7 +85,8 @@ def test_upstream_is_never_fetched_unless_asked(store, home, fetchable, tmp_path
     doc = as_json(store, fetchable)
     assert doc["upstream"]["checked"] is False and doc["upstream"]["newer"] is None
     run(store, fetchable)
-    assert not [a for a in gits if a[0] in ("fetch", "pull", "remote", "ls-remote")]
+    assert not [a for a in gits if {"fetch", "pull", "remote", "ls-remote"} & set(a)]
+    assert all(a[0] == "--no-optional-locks" for a in gits if "status" in a)
     assert git(fetchable.root, "rev-parse", "origin/main") != newer  # nothing fetched
     doc = as_json(store, fetchable, "--check")
     assert [a for a in gits if a[0] == "fetch"] == [("fetch", "--tags", "--quiet", "origin")]
@@ -180,9 +181,19 @@ def test_backups_last_result_and_schedule(store, home, checkout, units):  # noqa
         str(home / "nas")
     code, said = run(store, checkout)
     assert "Backups: last one " in said and "; scheduled daily." in said
-    backup._note(False, home / "nas", why="the vault is locked")
+    assert doc["backup"]["last_made"] is None  # no backup file there
+    nas = home / "nas"
+    nas.mkdir()
+    (nas / "fleetledger-20261114-033107-123456-e1.flbackup").write_bytes(b"x")
+    (nas / "fleetledger-20261115-033108-000001-e1.flbackup").write_bytes(b"x")
+    (nas / "notes.txt").write_text("not a backup\n")
+    backup._note(False, nas, why="the vault is locked")
+    doc = as_json(store, checkout)
+    assert doc["backup"]["last"]["ok"] is False
+    assert doc["backup"]["last_made"] == "2026-11-15T03:31:08Z"  # the failure hides nothing
     code, said = run(store, checkout)
     assert "Backups: the last one failed" in said and "the vault is locked" in said
+    assert f"the newest in {nas} is from 2026-11-15 03:31 UTC." in said
 
 
 def test_about_runs_on_a_handed_over_copy_and_says_so(store, home, checkout, units):  # noqa: F811
@@ -191,6 +202,15 @@ def test_about_runs_on_a_handed_over_copy_and_says_so(store, home, checkout, uni
     assert code == 0, said
     assert "This copy: retired" in said
     assert as_json(store, checkout)["copy"] == "retired"
+
+
+def test_about_answers_during_a_move_and_never_holds_one_up(store, home, checkout, units):  # noqa: F811
+    from fleetledger import inuse
+
+    with inuse.exclusive(store):  # ship-fleet migrate copying the fleet
+        code, said = run(store, checkout)
+    assert code == 0, said
+    assert "This copy: active." in said
 
 
 def test_what_it_cannot_read_it_says_and_shows_the_rest(store, home, units, tmp_path):  # noqa: F811

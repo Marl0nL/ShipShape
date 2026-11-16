@@ -69,7 +69,7 @@
     "backup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["scheduled", "last"],
+      "required": ["scheduled", "last", "last_made"],
       "properties": {
         "scheduled": { "type": "boolean", "description": "A daily backup timer is installed (ship-fleet backup schedule)." },
         "last": {
@@ -79,7 +79,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["at", "ok", "to", "why"],
-              "description": "The last ship-fleet backup now's result here.",
+              "description": "The last ship-fleet backup now's result here: the last attempt, which may have failed.",
               "properties": {
                 "at": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
                 "ok": { "type": "boolean" },
@@ -88,6 +88,10 @@
               }
             }
           ]
+        },
+        "last_made": {
+          "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
+          "description": "When the newest backup in last.to was made (from its file name), so a failed attempt does not hide the last good one; null when there is none, or the folder is not there just now."
         }
       }
     },
