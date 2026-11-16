@@ -2,7 +2,8 @@
 
 Its logic, model.js, is tested under npm test (herdr/tests/fleet/). Here: the mod's files parse,
 its install script installs it alone and never docks it or writes its settings, and the rules the
-panel keeps that can be read from its source.
+panel keeps that can be read from its source: it skips no question ship-fleet asks, asks none of
+its own, takes no secret, and checks what is typed against ship-fleet's own patterns.
 """
 
 import json
@@ -47,15 +48,91 @@ def test_the_logic_imports_neither_gpui_nor_herdr():
     assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "./model.js"]
 
 
-def test_it_changes_nothing_and_confirms_nothing():
-    """F1 only reads: no --yes anywhere, no ship-fleet verb but its three reads, and every ssh
-    call goes through model.js's quoting."""
-    code = "".join((FLEET / f).read_text("utf-8") for f in ("main.js", "model.js"))
-    assert "--yes" not in code
-    verbs = set(re.findall(r'ask\(host, st\.where, \["([a-z-]+)"', code))
-    assert verbs == {"ls", "attention", "about"}
+def mod_code():
+    return "".join((FLEET / f).read_text("utf-8") for f in ("main.js", "model.js"))
+
+
+def test_its_reads_and_where_its_actions_run():
+    """It reads with four offline or local ship-fleet verbs, every one through model.js's ask(),
+    which quotes; everything else opens a terminal tab, and only model.js builds one."""
+    code = mod_code()
+    verbs = set(re.findall(r'ask\((?:host|this\.host), (?:st\.where|where), \["([a-z-]+)"', code))
+    assert verbs == {"ls", "attention", "about", "signins"}
     assert code.count('exec("ssh"') == 1  # model.js's ask(), which quotes
     assert not re.search(r"catch\s*(\([^)]*\))?\s*\{\s*\}", code)  # no failure is swallowed
+    main = (FLEET / "main.js").read_text("utf-8")
+    model = (FLEET / "model.js").read_text("utf-8")
+    assert "argv" not in main  # main.js runs no command of its own: it hands model.js a job
+    assert '"tab.new"' not in main and '"space.new"' not in main
+    assert model.count("argv: job.argv") == 2  # jobPlan(): tab.new, or space.new if none is local
+    assert model.count('"space.new"') == 1
+    assert set(re.findall(r'host\.exec\("([^"]+)"', model)) == {"ssh", "test", "xdg-open"}
+
+
+SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin"]
+
+
+def test_no_flag_that_skips_a_question_is_anywhere_in_it():
+    """The panel never passes --yes (destroy, rollback, update and reboot of many), --force,
+    --revoke-my-key or --stdin: not in any file of the mod, not even as a word to refuse
+    (model.js spells those without their dashes)."""
+    for path in sorted(FLEET.glob("*.js")):
+        code = path.read_text("utf-8")
+        for flag in SKIPPING:
+            assert flag not in code, f"{path.name}: {flag}"
+        assert not re.search(r"""["'`]-y["'`]""", code), path.name
+
+
+def test_it_asks_nothing_of_its_own_and_types_nothing_into_a_terminal():
+    """Confirmations are ship-fleet's, typed by the person in the terminal: the panel has no
+    question of its own that could be taken for one, and never writes into a terminal."""
+    code = mod_code()
+    assert not re.search(r"are you sure|\bconfirm", code, re.I)
+    assert "terminal.paste" not in code and '"send"' not in code and "'send'" not in code
+    hc_calls = re.findall(r"\.hc\(([^)]*)\)", code)
+    assert hc_calls == ['["machine", "ls", "--json"]']
+
+
+def test_nothing_secret_is_typed_into_it():
+    """Its only inputs are a new Ship's name, tag, repository and size, and a snapshot's name:
+    no passphrase, password, code or token, and nothing drawn masked."""
+    main = (FLEET / "main.js").read_text("utf-8")
+    assert "set_masked" not in main
+    placeholders = re.findall(r'input\("([^"]*)"\)', main)
+    assert placeholders == ["ship-07", "or a new tag", "owner/name (optional)", "vCPUs",
+                            "memory MB", "disk GB", "snapshot name"]
+    assert main.count("InputState.new(") == 1  # input(), above
+
+
+def test_what_it_checks_is_what_ship_fleet_enforces():
+    """Every pattern and limit model.js checks a typed value against is ship-fleet's own."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = ("const m = await import(process.argv[1]); console.log(JSON.stringify({"
+              "NAME: m.NAME.source, TAG: m.TAG.source, REPO: m.REPO.source, "
+              "SNAPSHOT: m.SNAPSHOT.source, SIGNIN: m.SIGNIN.source, SERVICE: m.SERVICE.source, "
+              "SIZE: m.SIZE}))")
+    r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri()],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    js = {k: (v.replace("\\/", "/") if isinstance(v, str) else v)
+          for k, v in json.loads(r.stdout).items()}
+
+    from fleetledger.drivers.base import SNAPSHOT_NAME
+    from fleetledger.lifecycle import size_limits
+
+    from fleetledger import github, ops, signinreg
+
+    ships_toml = json.loads((ROOT / "contracts" / "ships.toml.schema.json").read_text("utf-8"))
+    signin = json.loads((ROOT / "contracts" / "fleetledger-signin.schema.json").read_text("utf-8"))
+    assert js["NAME"] == ops.NAME_RE.pattern
+    assert js["TAG"] == ships_toml["$defs"]["tag"]["pattern"]
+    assert js["REPO"] == github.REPO_RE.pattern
+    assert js["SNAPSHOT"] == SNAPSHOT_NAME.pattern
+    assert js["SIGNIN"] == signinreg.ID.pattern
+    assert js["SERVICE"] == signin["properties"]["provider"]["pattern"]
+    assert js["SIZE"] == {k: list(v) for k, v in size_limits().items()}
 
 
 def install(tmp_path, *extra):

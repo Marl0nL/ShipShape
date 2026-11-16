@@ -7,8 +7,10 @@ agent, which agents on any machine, Ships included, fill in themselves with the 
 [`DESK.md`](DESK.md) for how it works; it installs with `herdr/install-desk.sh`.
 
 **The Fleet panel** (`mods/fleet/`): a Herdr tab with your Ships as FleetLedger last saw them,
-read over ssh from the FleetLedger computer (`ship-fleet ls --json --offline`). It only reads, and
-works in any layout. See [`mods/fleet/README.md`](mods/fleet/README.md); it installs on its own
+read over ssh from the FleetLedger computer (`ship-fleet ls --json --offline`). What changes
+anything (a new Ship, a sign-in, update, reboot, snapshots, destroy, unlock) opens a terminal tab
+running the exact `ship-fleet` command, which asks its own questions there. It works in any
+layout. See [`mods/fleet/README.md`](mods/fleet/README.md); it installs on its own
 with `herdr/install-fleet.sh`, and its model's tests are in `tests/fleet/`.
 
 ## Licences
