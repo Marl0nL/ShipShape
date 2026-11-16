@@ -282,6 +282,12 @@ same vault.
 
   Where FleetLedger came from pipx on the new computer, name it:
   `'~/.local/bin/ship-fleet trust ...'` (see "Handing over by hand").
+
+  If that key is one FleetLedger made (its passphrase kept by FleetLedger, not
+  known to you), plain ssh opens it only while your ssh-agent holds it, and a
+  retired copy no longer loads it there. When the agent no longer holds it, load it
+  by hand with `ssh-add`, with the passphrase from where FleetLedger keeps it on the
+  old computer (`push` names it).
 - **To stop using the old computer, let its certificate lapse; do not `untrust`
   it.** Its key is one of your keys for Ships, and the revocation list applies to
   every login: untrusting it would lock your own key out of every Ship.

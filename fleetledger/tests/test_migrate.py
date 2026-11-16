@@ -1899,6 +1899,32 @@ def test_push_says_so_when_this_computer_was_not_trusted(computers, monkeypatch)
     assert "stays a trusted machine" not in out and "Do not untrust" not in out
 
 
+def test_push_says_a_key_fleetledger_made_is_loaded_by_hand_from_now_on(computers,
+                                                                        monkeypatch):
+    a, b, world = computers
+    own = a.home / ".ssh" / "shipshape_ed25519"
+    monkeypatch.setattr(keys, "managed", lambda inv: ("keyring", [own]))
+    said = "\n".join(migrate.old_computer_said(a.store.load(), "you@vm.example"))
+    assert "Your key here is one FleetLedger made" in said
+    assert "ssh-add ~/.ssh/shipshape_ed25519, with its passphrase from your OS keyring" in said
+    monkeypatch.setattr(keys, "managed", lambda inv: ("keyring", []))
+    assert "one FleetLedger made" not in \
+        "\n".join(migrate.old_computer_said(a.store.load(), "you@vm.example"))
+
+
+def test_a_closing_message_that_fails_never_fails_the_move(computers, monkeypatch):
+    a, b, world = computers
+
+    def broken(inv, host):
+        raise ValueError("a hand-edited stamp")
+
+    monkeypatch.setattr(migrate, "old_computer_said", broken)
+    code, out, err = _pushed(a, [], [0, 0])
+    assert code == 0, out + err
+    assert "is now the active FleetLedger" in out
+    assert "now a retired FleetLedger" in out and '"Afterwards"' in out
+
+
 @pytest.mark.parametrize("codes,exit_code", [
     ([migrate.UNVERIFIED], migrate.UNVERIFIED), ([1], 1), ([255], 1),
     ([0, 1], migrate.NOT_ACTIVATED)])

@@ -844,7 +844,13 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
     if code == 0:
         app.say(f"\n{host} is now the active FleetLedger (epoch {handed}), and nothing on any "
                 "Ship changed.")
-        for line in old_computer_said(store.load(), host):
+        try:
+            said = old_computer_said(store.load(), host)
+        except Exception:  # noqa: BLE001 - the move is done: never fail it over a message
+            said = ["\nThis computer is now a retired FleetLedger. What that means for it, "
+                    "and how to keep attaching from it: docs/runbooks/move-fleetledger.md, "
+                    "\"Afterwards\"."]
+        for line in said:
             app.say(line)
         return VERIFIED
     app.note(f"\nThis copy is retired, but {host} did not become active (exit {code}), so no "
@@ -899,6 +905,13 @@ def old_computer_said(inv, host: str) -> list[str]:
         f"{m.name}{flag} there (or Download bundle in its row under Settings ▸ Access ▸ "
         f"Trusted machines in {host}'s web UI), copy the bundle it makes to this computer, "
         "and run sh install.sh in its folder.")
+    store_kind, managed = keys.managed(inv)
+    if paths.expand(identity) in managed:
+        lines.append(
+            "Your key here is one FleetLedger made: plain ssh opens it only while your "
+            "ssh-agent holds it, and a retired copy no longer loads it there (its ship-fleet "
+            "ssh refuses too). When the agent no longer holds it, load it by hand: ssh-add "
+            f"{identity}, with its passphrase from {keys.describe(store_kind)}.")
     if trustcmd.your_key_file(inv, m) is not None:
         lines.append(
             f"Do not untrust {m.name}: its key is one of your keys for Ships, and untrusting "
