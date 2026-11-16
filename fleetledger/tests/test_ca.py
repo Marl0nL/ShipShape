@@ -21,7 +21,7 @@ from fl_harness import keygen
 from fleetledger.inventory import Ship
 from test_cli import RUNNING, env, result  # noqa: F401  (env is a fixture)
 
-from fleetledger import ca, schemas
+from fleetledger import attach, ca, schemas
 
 pytestmark = pytest.mark.skipif(shutil.which("ssh-keygen") is None, reason="needs ssh-keygen")
 
@@ -789,6 +789,24 @@ def test_a_bundle_dials_the_first_name_that_resolves(cakeys, ship_key):
     assert "  HostName ship-01.example.net\n" in conf
 
 
+def test_trust_says_how_to_renew_where_it_works(caenv, tmp_path):
+    keygen(tmp_path / "laptop", "laptop")
+    code, out, err = caenv.run("trust", "laptop", "--key", str(tmp_path / "laptop.pub"),
+                               "--identity", "~/.ssh/laptop key", "--hostnames", "overlay")
+    assert code == 0, err
+    until = ca.machine(caenv.store.load(), "laptop").last_valid_before
+    renew = next(line for line in out.splitlines() if line.startswith("Renew it"))
+    # On the FleetLedger computer (a laptop has no ship-fleet), with this bundle's options.
+    assert renew == (
+        f"Renew it before {until}: run ship-fleet trust laptop --identity '~/.ssh/laptop key' "
+        "--hostnames overlay again on the FleetLedger computer (or Download bundle in its "
+        "row under Settings ▸ Access ▸ Trusted machines), copy the new bundle to laptop and "
+        "run sh install.sh in its folder there.")
+    assert "--print-cert" not in out and "(on that machine)" not in out
+    code, out, _ = caenv.run("trust", "laptop")
+    assert code == 0 and "run ship-fleet trust laptop again on the FleetLedger computer" in out
+
+
 def test_trust_writes_the_name_that_resolves_here(caenv, tmp_path):
     keygen(tmp_path / "laptop", "laptop")
     caenv.app.resolves = lambda host: host == "ship-02.example.net"
@@ -803,10 +821,12 @@ def test_trust_writes_the_name_that_resolves_here(caenv, tmp_path):
 
 @pytest.fixture
 def here(caenv, tmp_path, monkeypatch):
-    """A scratch home for this computer's SSH config; herdr is never run."""
+    """A scratch home for this computer's SSH config; herdr is never run. hc and herdr
+    count as installed here (attach.tool_here), whatever this computer has."""
     home = tmp_path / "userhome"
     (home / ".ssh").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(attach, "tool_here", lambda runtime: True)
     caenv.app.herdr = False
     caenv.home_dir = home
     return caenv
@@ -830,6 +850,9 @@ def test_this_computer_is_trusted_with_your_key_and_installed_here(here):
     assert "Host ship-01\n" in config and "Host ship-02\n" in config
     assert f"IdentityFile {you.with_suffix('')}" in config
     assert "can attach: ssh ship-01, herdr --remote ship-01" in out
+    # install.sh's notes, not its closing line: FleetLedger's says what works here.
+    assert f"Added 'Include {ssh_dir}/shipshape/config' to the top of ~/.ssh/config." in out
+    assert "Done. Try:" not in out and "To attach to the agents from here" not in out
     assert trustcmd.attaches_here(inv, inv.ship("ship-01"))
     # Again: the same machine entry, renewed, never a second one.
     assert here.run("trust", "--this-computer")[0] == 0

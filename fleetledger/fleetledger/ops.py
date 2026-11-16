@@ -1056,9 +1056,11 @@ def switch_runtime(
                        f"{same}/{len(expected)} agents running in their modes",
     }.get(outcome, f"the switch to {target} failed and the rollback did not finish cleanly")
     if outcome == "switched":
-        details.append("On each laptop that attaches to it: make its trust bundle again "
-                       "(ship-fleet trust <machine>) and run its install.sh, so the herdr "
-                       f"machine entry for {ship.name} is replaced.")
+        details.append("For each laptop that attaches to it, make its trust bundle again "
+                       "(ship-fleet trust <machine> on the FleetLedger computer, or Download "
+                       "bundle under Settings ▸ Access ▸ Trusted machines) and run its "
+                       f"install.sh on that laptop, so its herdr or hc entry for {ship.name} "
+                       "follows; for this computer: ship-fleet trust --this-computer.")
     return Outcome(ship.name, result.ok and not checks, summary, details + checks, data)
 
 

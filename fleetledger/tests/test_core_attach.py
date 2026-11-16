@@ -32,6 +32,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "install-sh"
 SHELLCHECK = shutil.which("shellcheck") or (
     str(Path(__file__).parents[2] / ".venv" / "bin" / "shellcheck")
     if (Path(__file__).parents[2] / ".venv" / "bin" / "shellcheck").exists() else None)
+REAL_TOOL_HERE = attach.tool_here  # before the here fixture stands in for it
 HERDR_ID = "0123456789abcdef0123456789abcdef"  # a herdr profile id: 32 hex digits
 OTHER_ID = "fedcba9876543210fedcba9876543210"
 
@@ -396,6 +397,51 @@ def test_this_computer_says_hc_for_a_core_ship(here):  # noqa: F811
     code, out, err = here.run("trust", "--this-computer")
     assert code == 0, err
     assert "can attach: ssh ship-01, hc attach ship-01/main" in out
+
+
+def test_this_computer_without_hc_says_what_to_install(here, monkeypatch):  # noqa: F811
+    status.write_cache("ship-01", core_doc())
+    monkeypatch.setattr(attach, "tool_here", lambda runtime: runtime != attach.CORE)
+    code, out, err = here.run("trust", "--this-computer")
+    assert code == 0, err
+    assert "can attach: ssh ship-01, herdr --remote ship-02 (certificate until" in out
+    assert "hc attach" not in out
+    assert ("To attach to the agents from here, install hc (herdr-core) from "
+            "https://herdr.dev/core/, then run ship-fleet trust --this-computer again") in out
+
+
+def test_this_computer_with_neither_names_only_ssh_and_what_to_install(
+        here, monkeypatch):  # noqa: F811
+    status.write_cache("ship-01", core_doc())
+    monkeypatch.setattr(attach, "tool_here", lambda runtime: False)
+    code, out, err = here.run("trust", "--this-computer")
+    assert code == 0, err
+    assert "can attach: ssh ship-01 (certificate until" in out
+    assert "hc attach" not in out and "herdr --remote" not in out
+    hints = [line for line in out.splitlines() if line.startswith("To attach to the agents")]
+    assert hints == [
+        "To attach to the agents from here, install hc (herdr-core) from "
+        "https://herdr.dev/core/ and herdr from https://github.com/herdrdev/herdr, then run "
+        "ship-fleet trust --this-computer again (it gives the Ships to them)."]
+
+
+def test_this_computer_passes_install_notes_through_and_names_what_is_on_path(
+        here, laptop, monkeypatch):  # noqa: F811
+    """End to end: install.sh runs with herdr on, a fake hc on PATH and no herdr."""
+    status.write_cache("ship-01", core_doc())
+    monkeypatch.setattr(attach, "tool_here", REAL_TOOL_HERE)
+    (laptop.bindir / "herdr").unlink()
+    monkeypatch.setenv("PATH", laptop.env["PATH"])
+    monkeypatch.setenv("state", laptop.env["state"])
+    here.app.herdr = True
+    code, out, err = here.run("trust", "--this-computer")
+    assert code == 0, err
+    assert "herdr is not installed here; skipping saved machines." in out
+    assert "hc added ship-01." in out
+    assert "Done. Try:" not in out
+    assert "can attach: ssh ship-01, hc attach ship-01/main (certificate until" in out
+    assert "install herdr from https://github.com/herdrdev/herdr" in out  # for ship-02
+    assert "install hc" not in out
 
 
 def test_a_slow_install_is_said_not_raised(here, monkeypatch):  # noqa: F811

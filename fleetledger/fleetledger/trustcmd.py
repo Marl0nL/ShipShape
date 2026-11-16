@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -345,9 +346,27 @@ def cmd_trust(args, app) -> int:
         proc = subprocess.run(argv, cwd=bundle.folder)
         return 1 if not_revoked else proc.returncode
     app.say("On that machine, copy the folder over and run:  sh install.sh")
-    app.say(f"Renew before it lapses: ship-fleet trust {name} --print-cert "
-            f"> ~/.ssh/shipshape/{name}-cert.pub (on that machine)")
+    # One sentence, so the coming self-refresh can replace it alone.
+    app.say(f"Renew it before {ca.stamp(until)}: run {renew_command(name, args)} again on "
+            "the FleetLedger computer (or Download bundle in its row under Settings ▸ "
+            f"Access ▸ Trusted machines), copy the new bundle to {name} and run sh install.sh "
+            "in its folder there.")
     return 1 if not_revoked else 0
+
+
+IDENTITY_DEFAULT = "~/.ssh/shipshape/id_ed25519"  # trust --identity's default
+
+
+def renew_command(name: str, args) -> str:
+    """ship-fleet trust NAME with the options that shape its bundle, as given this time."""
+    words = ["ship-fleet", "trust", name]
+    if args.identity != IDENTITY_DEFAULT:
+        words += ["--identity", args.identity]
+    if args.hostnames != "here":
+        words += ["--hostnames", args.hostnames]
+    if args.out:
+        words += ["--out", args.out]
+    return " ".join(shlex.quote(w) for w in words)
 
 
 LOGINS_EXPLAINED = (
@@ -607,19 +626,48 @@ def trust_this_computer(app, store, say, *, create: bool = True) -> bool:
         why = (proc.stderr or proc.stdout or "").strip().splitlines()
         say("Could not set this computer up for plain ssh" + (f": {why[-1]}" if why else "."))
         return False
+    if create:  # asked for: what install.sh added and skipped (a renewal stays quiet)
+        for line in install_notes(proc.stdout, proc.stderr):
+            say(line)
     works, note = _plain_ssh(inv, paths.expand(here["identity"]))
     if note:
         say(note)
     ready = [s.name for s in ships if has_cert(s)] if works else []
     if ready:
-        agents = attach.for_ship(ready[0], status.read_cache(ready[0]))
-        say(f"This computer ({m.name}) can attach: ssh {ready[0]}, {agents} (certificate "
-            f"until {ca.stamp(until)}; FleetLedger renews it in its last day whenever it "
-            "runs: the web UI, or ship-fleet status).")
+        commands, missing = attach_here_commands(ready)
+        say(f"This computer ({m.name}) can attach: {', '.join([f'ssh {ready[0]}'] + commands)} "
+            f"(certificate until {ca.stamp(until)}; FleetLedger renews it in its last day "
+            "whenever it runs: the web UI, or ship-fleet status).")
+        if missing:
+            say(attach.install_hint(missing))
     unsigned = [s.name for s in ships if not has_cert(s)]
     if unsigned:
         say(f"Not certified yet: {', '.join(unsigned)}; run `ship-fleet ca sign`.")
     return bool(ready)
+
+
+def install_notes(stdout: str, stderr: str) -> list[str]:
+    """What install.sh said it added, skipped and could not do, without its closing
+    "Done. Try: ..." (FleetLedger's own attach line follows, naming only what is here)."""
+    lines = (stdout or "").splitlines() + (stderr or "").splitlines()
+    return [x.strip() for x in lines if x.strip() and not x.startswith("Done. Try:")]
+
+
+def attach_here_commands(ready: list[str]) -> tuple[list[str], set[str]]:
+    """The attach commands that work from here, one per runtime among these Ships (the
+    first Ship of each), and the runtimes whose program (hc, herdr) is not installed."""
+    commands, missing, seen = [], set(), set()
+    for name in ready:
+        doc = status.read_cache(name)
+        runtime = attach.runtime_of(doc)
+        if runtime in seen:
+            continue
+        seen.add(runtime)
+        if attach.tool_here(runtime):
+            commands.append(attach.for_ship(name, doc))
+        else:
+            missing.add(runtime)
+    return commands, missing
 
 
 def _tilde(path: Path) -> str:
