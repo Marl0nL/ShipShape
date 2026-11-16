@@ -77,9 +77,9 @@ def add_parsers(sub, add) -> None:
 
 
 def cmd_doctor(args, app) -> int:
-    if args.next:
+    if getattr(args, "next", False):
         return _next_steps(args, app)
-    if args.json:
+    if getattr(args, "json", False):
         raise FleetError("--json is for the next steps: ship-fleet doctor --next --json.")
     items = firstrun.everything(app, offline=args.offline)
     rows = [[MARK[i.state], i.area, i.name, i.detail] for i in items]
