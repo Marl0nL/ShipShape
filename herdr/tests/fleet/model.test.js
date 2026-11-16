@@ -175,7 +175,7 @@ test("readShips leaves out entries of a shape it does not know, saying why", () 
 });
 
 test("readShips: an empty fleet, not JSON, not a list", () => {
-  assert.deepEqual(readShips("[]\n"), { ships: [], refused: [] });
+  assert.deepEqual(readShips("[]\n"), { ships: [], refused: [], older: false });
   assert.match(readShips("Traceback (most recent call last):").error, /ship-fleet ls: not JSON/);
   assert.match(readShips(JSON.stringify(example("fleetledger-ship", "answering.json"))).error, /not a list/);
 });
