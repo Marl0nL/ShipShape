@@ -250,12 +250,38 @@ same vault.
 
 ## Afterwards
 
-- **The old computer is now a trusted machine like any other.** If it was "this
-  computer" (trusted with your own key, so `ssh <ship>` worked there), its bundle
-  in `~/.ssh/shipshape/` keeps working until its certificate lapses (7 days by
-  default). Renew it from the new computer, as for any machine
-  ([trust-machines.md](trust-machines.md), "Renew"):
-  `ship-fleet trust <machine> --print-cert | ssh old-computer 'cat > ~/.ssh/shipshape/<machine>-cert.pub'`.
+`push` ends by saying what follows for the old computer, as below.
+
+- **The old computer is a retired FleetLedger** (see "A retired copy" above).
+- **It stays a trusted machine like any other.** If it was "this computer"
+  (trusted with your own key, so `ssh <ship>` worked there), its bundle in
+  `~/.ssh/shipshape/` keeps working until its certificate lapses (7 days by
+  default). Nothing renews that certificate or adds new Ships to its SSH config,
+  herdr or hc any more: only "this computer" refreshes itself, and a retired copy
+  never runs what does it. The new FleetLedger has no `this-computer.json` (it stays
+  behind), so it lists the old computer's certificate under attention like any other
+  machine's: `machine-cert-expiring` in its last day, `machine-cert-lapsed` after
+  (`ship-fleet attention`, `ship-fleet doctor`).
+- **To keep using it for ssh, herdr and hc**, renew it from the new computer, as for
+  any machine ([trust-machines.md](trust-machines.md), "Renew"): there, run
+  `ship-fleet trust <machine> --identity '<key>'` (or **Download bundle** in its row
+  under Settings ▸ Access ▸ Trusted machines in the new computer's web UI), copy the
+  bundle to the old computer and run `sh install.sh` in it. `<key>` is the private
+  key path the old computer's bundle names (`identity` in its
+  `~/.config/fleetledger/this-computer.json`; `push` prints the whole command).
+  Quote it, so the new computer's shell leaves its `~` alone. Without `--identity`
+  the bundle names `~/.ssh/shipshape/id_ed25519`. Download bundle keeps the path
+  the last bundle named. To renew only the certificate, from the old computer
+  (which holds your private key; the new one holds only the public halves, so it
+  cannot ssh to the old one):
+
+  ```sh
+  ssh you@new-computer ship-fleet trust <machine> --print-cert > <machine>-cert.pub &&
+    mv <machine>-cert.pub ~/.ssh/shipshape/<machine>-cert.pub
+  ```
+
+  Where FleetLedger came from pipx on the new computer, name it:
+  `'~/.local/bin/ship-fleet trust ...'` (see "Handing over by hand").
 - **To stop using the old computer, let its certificate lapse; do not `untrust`
   it.** Its key is one of your keys for Ships, and the revocation list applies to
   every login: untrusting it would lock your own key out of every Ship.

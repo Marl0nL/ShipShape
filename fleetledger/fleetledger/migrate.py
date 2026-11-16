@@ -843,9 +843,9 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
         code = REFUSED
     if code == 0:
         app.say(f"\n{host} is now the active FleetLedger (epoch {handed}), and nothing on any "
-                "Ship changed. This copy refuses to act on the fleet and keeps its files for a "
-                f"rollback (ship-fleet migrate retire on {host}, then ship-fleet migrate unretire "
-                "here). After two weeks, delete its keys and secrets: ship-fleet migrate wipe.")
+                "Ship changed.")
+        for line in old_computer_said(store.load(), host):
+            app.say(line)
         return VERIFIED
     app.note(f"\nThis copy is retired, but {host} did not become active (exit {code}), so no "
              f"copy acts on the fleet now. Fix that there, then run ship-fleet migrate activate "
@@ -853,7 +853,64 @@ def _cut_over(app, store, host: str, handed: int, options: Iterable[str],
     return NOT_ACTIVATED
 
 
-# --- receive (the new computer) ------------------------------------------------------------
+# ship-fleet trust's own --identity default (cli.py): said only when this computer's differs.
+TRUST_IDENTITY_DEFAULT = "~/.ssh/shipshape/id_ed25519"
+
+
+def old_computer_said(inv, host: str) -> list[str]:
+    """What happens to this computer once a push has handed the fleet to host, in the
+    order a person needs it: it is retired (and what it still runs); if it was trusted
+    ("this computer"), that it is now a trusted machine like any other, which nothing
+    renews or refreshes by itself, how to keep using it, and not to untrust it."""
+    from fleetledger import trustcmd
+
+    still = ", ".join(handover.ALLOWED[:-1]) + " and " + handover.ALLOWED[-1]
+    lines = [
+        f"\nThis computer is now a retired FleetLedger: it refuses to act on the fleet and "
+        f"runs only ship-fleet {still}. It keeps its files for a rollback (ship-fleet "
+        f"migrate retire on {host}, then ship-fleet migrate unretire here). After two "
+        "weeks, delete its keys and secrets: ship-fleet migrate wipe.",
+    ]
+    here = trustcmd.this_computer()
+    m = ca.machine(inv, here["machine"]) if here and ca.config(inv) else None
+    if m is None or m.revoked:
+        lines.append("It was not a trusted machine, and a retired copy's ship-fleet ssh "
+                     f"refuses: to attach from this computer, trust it from {host} as any "
+                     "other machine (docs/runbooks/trust-machines.md, \"Trust a machine\").")
+        return lines
+    until = ca.parse_stamp(m.last_valid_before)
+    if until is None:
+        cert = "it holds none now"
+    elif until <= ca.utc_now():
+        cert = f"it lapsed at {ca.stamp(until)}"
+    else:
+        cert = f"it lapses at {ca.stamp(until)}"
+    lines.append(
+        f"This computer stays a trusted machine, {m.name}, like any other: nothing here "
+        f"renews its certificate ({cert}) or adds new Ships to its SSH config, herdr or hc "
+        "any more. "
+        f"{host} lists its certificate under attention (ship-fleet attention there) in its "
+        "last day, and again once it has lapsed.")
+    identity = here.get("identity") or TRUST_IDENTITY_DEFAULT
+    flag = "" if identity == TRUST_IDENTITY_DEFAULT else f" --identity {shlex.quote(identity)}"
+    # One sentence, so the coming self-refresh can replace it alone.
+    lines.append(
+        f"To keep using ssh, herdr and hc here, renew it from {host}: run ship-fleet trust "
+        f"{m.name}{flag} there (or Download bundle in its row under Settings ▸ Access ▸ "
+        f"Trusted machines in {host}'s web UI), copy the bundle it makes to this computer, "
+        "and run sh install.sh in its folder.")
+    if trustcmd.your_key_file(inv, m) is not None:
+        lines.append(
+            f"Do not untrust {m.name}: its key is one of your keys for Ships, and untrusting "
+            "it would lock that key out of every Ship (ship-fleet untrust says so and asks "
+            "for its name). To stop using this computer, let its certificate lapse.")
+    else:
+        lines.append(f"To stop using this computer, let its certificate lapse, or untrust "
+                     f"{m.name} on {host}.")
+    return lines
+
+
+# --- receive (the new computer)------------------------------------------------------------
 
 
 def setup_only_log(path: Path) -> bool:

@@ -1834,6 +1834,92 @@ def test_push_says_what_happened_there(computers, monkeypatch, exit_code, says):
     assert says in out + err
 
 
+OLD_COMPUTER_SAID = ("now a retired FleetLedger", "stays a trusted machine",
+                     "renew it from", "Do not untrust")
+
+
+def _pushed(a: Computer, procs: list, codes: list[int]):
+    """migrate push to you@vm.example, its ssh sessions answering with codes in turn."""
+    def popen(argv, stdin=None, **kw):
+        procs.append(FakeSSHProcess(argv, codes[len(procs)], stdin=stdin))
+        return procs[-1]
+
+    a.app.popen = popen
+    return a.run("migrate", "push", "you@vm.example")
+
+
+def test_push_ends_with_what_happens_to_this_computer(computers, monkeypatch):
+    a, b, world = computers
+    until = tomllib.loads(a.store.path.read_text())["machine"]["desktop"]["last_valid_before"]
+    procs = []
+    code, out, err = _pushed(a, procs, [0, 0])
+    assert code == 0, out + err
+    end = out[out.index("you@vm.example is now the active FleetLedger (epoch 1)"):]
+    # In the order a person needs it: retired, still trusted (and not renewed), how to
+    # keep using it, and not to untrust it.
+    assert [end.index(s) for s in OLD_COMPUTER_SAID] == \
+        sorted(end.index(s) for s in OLD_COMPUTER_SAID)
+    assert "runs only ship-fleet migrate, doctor, service, unlock and vault" in end
+    assert "ship-fleet migrate retire on you@vm.example, then ship-fleet migrate unretire " \
+        "here" in end and "ship-fleet migrate wipe" in end
+    assert "This computer stays a trusted machine, desktop, like any other: nothing here " \
+        f"renews its certificate (it lapses at {until})" in end
+    assert "you@vm.example lists its certificate under attention" in end
+    renew = ("run ship-fleet trust desktop --identity '~/.ssh/shipshape_ed25519' there (or "
+             "Download bundle")
+    assert renew in end
+    assert "Do not untrust desktop: its key is one of your keys for Ships" in end
+
+    # The command it names works where it says: on the new computer, a bundle for the
+    # key this computer has, which installs here.
+    receive(b, monkeypatch, procs[0].received)
+    assert b.run("migrate", "activate", "--yes")[0] == 0
+    argv = shlex.split(renew.split("run ", 1)[1].split(" there", 1)[0])
+    assert argv[:2] == ["ship-fleet", "trust"]
+    code, out, err = b.run(*argv[1:])
+    assert code == 0, out + err
+    bundle = b.root / "data" / "trust" / "desktop"
+    assert f"Bundle: {bundle}" in out
+    assert "IdentityFile ~/.ssh/shipshape_ed25519\n" in (bundle / "config").read_text()
+    installed = subprocess.run(["sh", str(bundle / "install.sh"), "--no-herdr"], cwd=bundle,
+                               env={**os.environ, "HOME": str(a.home)}, capture_output=True,
+                               text=True, timeout=30)
+    assert installed.returncode == 0, installed.stderr
+    assert (a.home / ".ssh" / "shipshape" / "desktop-cert.pub").read_text() == \
+        (bundle / "desktop-cert.pub").read_text()
+
+
+def test_push_says_so_when_this_computer_was_not_trusted(computers, monkeypatch):
+    a, b, world = computers
+    (a.root / "config" / "this-computer.json").unlink()
+    code, out, err = _pushed(a, [], [0, 0])
+    assert code == 0, out + err
+    assert "now a retired FleetLedger" in out
+    assert "It was not a trusted machine" in out and "trust it from you@vm.example" in out
+    assert "stays a trusted machine" not in out and "Do not untrust" not in out
+
+
+@pytest.mark.parametrize("codes,exit_code", [
+    ([migrate.UNVERIFIED], migrate.UNVERIFIED), ([1], 1), ([255], 1),
+    ([0, 1], migrate.NOT_ACTIVATED)])
+def test_a_push_that_did_not_hand_over_says_nothing_of_a_retired_computer(
+        computers, monkeypatch, codes, exit_code):
+    a, b, world = computers
+    code, out, err = _pushed(a, [], codes)
+    assert code == exit_code
+    for said in OLD_COMPUTER_SAID:
+        assert said not in out + err, said
+
+
+def test_a_trial_push_says_nothing_of_a_retired_computer(computers, monkeypatch):
+    a, b, world = computers
+    a.app.popen = lambda argv, stdin=None, **kw: FakeSSHProcess(argv, 0, stdin=stdin)
+    code, out, err = a.run("migrate", "push", "vm.example", "--no-cutover")
+    assert code == 0 and "this copy is still the active one" in out
+    for said in OLD_COMPUTER_SAID:
+        assert said not in out + err, said
+
+
 def test_push_refuses_a_host_that_is_not_one(computers, monkeypatch):
     a, b, world = computers
     a.app.popen = lambda argv, **kw: pytest.fail("ssh ran")
