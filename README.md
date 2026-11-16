@@ -74,7 +74,8 @@ migrate`: the Ships keep working, nothing adopted again),
 Watching the fleet from Herdr: [the Desk](herdr/DESK.md), a Herdr layout with a panel that follows
 the focused agent, on this computer or on a Ship (`herdr/install-desk.sh`); and [the Fleet
 panel](herdr/mods/fleet/README.md), a Herdr tab listing your Ships over ssh from the FleetLedger
-computer (`herdr/install-fleet.sh`).
+computer, whose actions (a new Ship, sign-ins, update, destroy, unlock, ...) each open a terminal
+tab running the exact `ship-fleet` command (`herdr/install-fleet.sh`).
 
 ## Layout
 
