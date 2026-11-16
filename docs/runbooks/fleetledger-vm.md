@@ -28,7 +28,7 @@ ssh -t fleetledger@fleetledger ship-fleet unlock    # once after each boot (or U
 ## What it is, and what keeps it safe
 
 **The VM.** It runs the stock Ubuntu cloud image pinned in `versions.toml` for Ships,
-checked by its sha256, plus a seed that FleetLedger writes. 2 vCPUs, 4 GB of memory
+checked by its sha256, plus a seed that FleetLedger writes. 2 vCPUs (each one host CPU thread), 4 GB of memory
 and 40 GB of disk are plenty (more disk if you build images there). It has two users,
 and your keys are the only way in to either:
 
@@ -218,8 +218,9 @@ After two weeks, once you are happy: `ship-fleet migrate wipe` on the desktop.
 ## Every boot: unlock, once
 
 A boot (a Proxmox update, a power cut) leaves the vault locked. FleetLedger then shows
-the last known state and changes nothing, and your Ships keep running. Unlock it once,
-for every secret, until the next boot:
+the last known state and changes nothing, and your Ships keep running; Needs
+attention (`ship-fleet attention --offline` over ssh) says it once, as `vault-locked`.
+Unlock it once, for every secret, until the next boot:
 
 - the web UI's **Unlock** button, on a paired browser; or
 - `ssh -t fleetledger@fleetledger ship-fleet unlock`.
@@ -316,10 +317,11 @@ System updates are `vmadmin`'s: `sudo apt upgrade`, and a reboot when one is nee
 (then unlock).
 
 **A VM seeded before `/usr/local/bin/ship-fleet` came in** answers `ship-fleet: command
-not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. Add the file as
-`vmadmin`, from this page (the seed writes the same bytes). Never install it from the
-VM's own checkout: that is `fleetledger`'s, so it could change the file between your
-reading it and root copying it.
+not found` to a plain `ssh fleetledger@fleetledger ship-fleet ...`. `ship-fleet doctor`
+on the VM (and Settings ▸ Health) says so ("ship-fleet on ssh's PATH") and gives the
+commands below; it only looks. Add the file as `vmadmin`, from this page (the seed
+writes the same bytes). Never install it from the VM's own checkout: that is
+`fleetledger`'s, so it could change the file between your reading it and root copying it.
 
 ```sh
 sudo tee /usr/local/bin/ship-fleet >/dev/null <<'EOF'

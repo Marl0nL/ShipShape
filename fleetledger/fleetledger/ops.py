@@ -82,6 +82,7 @@ SEVERITY = {
     "unit-failed": "high",
     "host-cert-expired": "high",
     "machine-cert-lapsed": "high",  # a trusted machine's certificate (fleet-level)
+    "vault-locked": "high",  # FleetLedger's vault (fleet-level): nothing is checked
     "agent-waiting": "medium",
     "signin-missing": "medium",
     "signin-expiring": "medium",
@@ -172,7 +173,9 @@ class AttentionItem:
     @property
     def where(self) -> str:
         """The Ship, or for a fleet-level item what it is about (machine laptop)."""
-        return self.ship or f"machine {self.subject}"
+        if self.ship:
+            return self.ship
+        return "FleetLedger" if self.code == "vault-locked" else f"machine {self.subject}"
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -1194,10 +1197,16 @@ def attention(views: Iterable[status_mod.ShipView],
               inventory: Inventory | None = None) -> list[AttentionItem]:
     """Everything across the fleet a person should look at, most urgent first.
     inventory: also the fleet-level items about these Ships (fleet_attention), after
-    the Ships' own within each severity; None: the Ships' items alone (a Ship page)."""
+    the Ships' own within each severity; None: the Ships' items alone (a Ship page).
+    While the vault is locked (its one fleet-level item), a Ship never checked is not
+    listed apart: the lock is why, and that item says so."""
     views = list(views)
+    fleet = [] if inventory is None else fleet_attention(inventory, [v.ship for v in views])
+    locked = any(i.code == "vault-locked" for i in fleet)
     items = []
     for view in views:
+        if locked and view.problem == "unknown":  # no status yet: the lock's, not its own
+            continue
         if view.not_enrolled:  # being made, or made by hand: not an outage
             items.append(AttentionItem(view.ship.name, "not-enrolled", NOT_ENROLLED, None,
                                        SEVERITY["not-enrolled"]))
@@ -1214,8 +1223,7 @@ def attention(views: Iterable[status_mod.ShipView],
             items.append(AttentionItem(view.ship.name, entry["code"], entry["message"],
                                        entry.get("subject"),
                                        SEVERITY.get(entry["code"], "medium")))
-    if inventory is not None:
-        items += fleet_attention(inventory, [v.ship for v in views])
+    items += fleet
     order = {name: i for i, name in enumerate(dict.fromkeys(i.ship for i in items))}
     return sorted(items, key=lambda i: (SEVERITY_ORDER[i.severity], i.ship is None,
                                         order[i.ship]))
@@ -1225,7 +1233,40 @@ def fleet_attention(inventory: Inventory, ships: Sequence[Ship], *,
                     now: datetime | None = None) -> list[AttentionItem]:
     """Attention items about the fleet rather than one Ship (ship None), for what
     reaches these Ships. Read from ships.toml only: nothing is issued or asked."""
-    return machine_cert_attention(inventory, ships, now=now)
+    return vault_attention() + machine_cert_attention(inventory, ships, now=now)
+
+
+VAULT_LOCKED = ("FleetLedger's vault has been locked since {since}: until it is unlocked "
+                "FleetLedger checks no Ship, renews no certificate and makes no backup. "
+                "Your Ships keep running.")
+VAULT_FIX = ("Unlock it on the FleetLedger computer: ship-fleet unlock (over ssh is fine), "
+             "or Unlock in the web UI.")
+
+
+def vault_locked_message() -> str:
+    """What a locked vault stops, and since when (vault.locked_since)."""
+    from fleetledger import vault
+
+    why, at = vault.locked_since()
+    when = (None if at is None
+            else datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%d %H:%M UTC"))
+    if why == "lock":
+        since = f"{when} (ship-fleet vault lock)"
+    else:
+        since = "this computer started" + (f" ({when})" if when else "")
+    return VAULT_LOCKED.format(since=since)
+
+
+def vault_attention() -> list[AttentionItem]:
+    """vault-locked: one item for the whole fleet while FleetLedger's vault is locked
+    (after every boot), in place of a "not checked yet" per Ship. Off or unlocked:
+    nothing. It reads only whether the RAM key is there: no secret, no unlock."""
+    from fleetledger import vault
+
+    if vault.state() != "locked":
+        return []
+    return [AttentionItem(None, "vault-locked", vault_locked_message(), "vault",
+                          SEVERITY["vault-locked"], VAULT_FIX)]
 
 
 MACHINE_CERT = {

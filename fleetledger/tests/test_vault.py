@@ -571,6 +571,59 @@ def test_an_open_page_learns_the_vault_was_locked(web):  # noqa: F811
     assert "FleetLedger is locked." in web.client.get("/partials/banners").text
 
 
+def test_locked_needs_attention_says_it_once_for_the_fleet(web):  # noqa: F811
+    from fleetledger import status
+
+    status.cache_path("ship-01").unlink()  # never checked: as after a first boot
+    web.fleet.load_cached()
+    vault.create(PASS)
+    vault.lock()
+    (vault.runtime_folder() / vault.LOCKED_FILE).unlink()  # the boot cleared RAM
+    web.sign_in()
+    page = web.client.get("/").text
+    assert page.count('data-key="fleet/vault-locked/vault"') == 1
+    assert 'data-key="ship-01/unknown/"' not in page  # the lock's, said once above
+    assert 'href="/unlock" class="ship">FleetLedger</a>' in page
+    assert "has been locked since this computer started" in page
+    vault.unlock(PASS)
+    page = web.client.get("/").text
+    assert "vault-locked" not in page and 'data-key="ship-01/unknown/"' in page
+
+
+def test_doctor_says_since_when_it_is_locked_and_what_stops(store, home, monkeypatch):
+    from fleetledger import firstrun, ops
+
+    assert firstrun.vault_items() == []  # off: nothing
+    vault.create(PASS)
+    assert [i.state for i in firstrun.vault_items() if i.name == "vault"] == ["ok"]
+    vault.lock()
+    (vault.runtime_folder() / vault.LOCKED_FILE).unlink()  # a boot
+    monkeypatch.setattr(vault, "booted_at", lambda: 1767225600.0)  # 2026-01-01 00:00 UTC
+    [item] = [i for i in firstrun.vault_items() if i.name == "vault"]
+    assert (item.state, item.next) == ("warn", "ship-fleet unlock")
+    assert item.detail == ops.vault_locked_message()
+    assert "since this computer started (2026-01-01 00:00 UTC)" in item.detail
+    app, out = app_for(store)
+    cli.main(["doctor", "--offline"], app)
+    assert "makes no backup" in out.getvalue()
+
+
+def test_when_this_computer_started_and_why_it_is_locked(home):
+    assert vault.booted_at("cpu  1 2 3\nbtime 1767225600\nprocesses 9\n") == 1767225600.0
+    assert vault.booted_at("cpu  1 2 3\n") is None
+    assert vault.booted_at("btime soon\n") is None
+    vault.create(PASS)
+    assert vault.lock(wall=lambda: 5.0)
+    assert vault.locked_since() == ("lock", 5.0)
+    assert vault.unlock(PASS) == "unlocked"
+    assert not (vault.runtime_folder() / vault.LOCKED_FILE).exists()  # an unlock clears it
+    assert vault.lock()
+    (vault.runtime_folder() / vault.LOCKED_FILE).unlink()  # a boot: RAM cleared
+    assert vault.locked_since()[0] == "boot"
+    assert not vault.lock()  # already locked: nothing noted
+    assert vault.locked_since()[0] == "boot"
+
+
 # --- the review's fixes -----------------------------------------------------------------------
 
 

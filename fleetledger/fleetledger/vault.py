@@ -53,6 +53,7 @@ FILE = "vault.json"
 RUNTIME = "vault"
 KEY_FILE = "key"
 TRIES_FILE = "tries.json"
+LOCKED_FILE = "locked.json"  # when `vault lock` locked it (none: locked since the boot)
 BACKEND_NAME = "fleetledger.vault.Backend"
 # scrypt's cost; the file says what it was made with, within these bounds.
 SCRYPT_N = 2 ** 17
@@ -360,6 +361,7 @@ def check_ram() -> None:
 def _keep(data_key: bytes) -> None:
     folder = paths.private_dir(runtime_folder())
     paths.write_private(folder / KEY_FILE, data_key + b"\n")
+    (folder / LOCKED_FILE).unlink(missing_ok=True)
 
 
 def state() -> str:
@@ -458,14 +460,47 @@ def _unlock_locked(secret: str, *, recovery: bool, wait: bool,
     return "unlocked"
 
 
-def lock() -> bool:
+def lock(wall: Callable[[], float] = time.time) -> bool:
     """Forget the unlocked data key here (every FleetLedger process on this computer
-    stops reading secrets at once). True if it was unlocked."""
+    stops reading secrets at once). True if it was unlocked. It notes when, in the same
+    RAM folder, so locked_since can tell this lock from a boot's."""
     try:
         key_path().unlink()
     except FileNotFoundError:
         return False
+    try:
+        paths.write_private(runtime_folder() / LOCKED_FILE,
+                            json.dumps({"at": wall()}).encode("utf-8"))
+    except OSError:
+        pass  # only what locked_since says: the lock itself is done
     return True
+
+
+def booted_at(stat: str | None = None) -> float | None:
+    """When this computer started (Linux: btime in /proc/stat), or None."""
+    try:
+        text = stat if stat is not None else Path("/proc/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        name, _, value = line.partition(" ")
+        if name == "btime":
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def locked_since() -> tuple[str, float | None]:
+    """Why and since when it is locked: ("lock", when `vault lock` ran) or ("boot",
+    when this computer started, None if unknown). Every boot starts locked; a lock
+    notes itself (lock), and an unlock clears that note. Meaningful only while locked."""
+    try:
+        doc = json.loads((runtime_folder() / LOCKED_FILE).read_text(encoding="utf-8"))
+        return "lock", float(doc["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "boot", booted_at()
 
 
 # --- rotation -----------------------------------------------------------------------------

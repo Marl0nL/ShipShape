@@ -12,7 +12,7 @@
   <p class="hint">FleetLedger keeps a sample of each Ship every 5 minutes while this page is open (for 7 days), so the charts fill in as you use it.</p>
   {% endif %}
   <div class="chart-grid">
-    {{ line_chart(charts.cpu, "CPU", "load per core") }}
+    {{ line_chart(charts.cpu, "CPU", "load per vCPU") }}
     {{ line_chart(charts.mem, "Memory") }}
     {{ line_chart(charts.disk, "Disk") }}
     {{ columns_chart(charts.agents, "Agents") }}

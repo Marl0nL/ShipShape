@@ -75,9 +75,15 @@ are. FleetLedger adds no cipher, mode or padding of its own. Why these:
 - On the command line, every command but `unlock`, `vault`, `doctor`, `ui`,
   `service`, `self-update`, `about` and `backup` (which then fails, and says so in
   `doctor`) refuses and says to unlock. `--offline` reads
-  (`ship-fleet ls --offline`) still work, and so does `ship-fleet migrate retire`: a
-  copy that comes back after the fleet was restored elsewhere must step aside
-  without being unlocked.
+  (`ship-fleet ls --offline`, `ship-fleet attention --offline`) still work, and so
+  does `ship-fleet migrate retire`: a copy that comes back after the fleet was
+  restored elsewhere must step aside without being unlocked.
+- **One item says so.** `ship-fleet attention --offline`, `doctor` (Health) and the
+  web UI's Needs attention show one fleet-level `vault-locked` item: locked since
+  this computer started (or since `vault lock`), that until then FleetLedger checks
+  no Ship, renews no certificate and makes no backup, and how to unlock. A Ship it
+  has no status for yet is not listed apart beside it; one whose last known status
+  has a problem still is.
 - **Your Ships keep running.** They do not depend on FleetLedger. Agents resume,
   Remote Control works, and your laptop's own certificate still attaches until it
   lapses (7 days by default).

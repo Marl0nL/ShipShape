@@ -24,9 +24,9 @@ from fleetledger.drivers.proxmox import seed_volume, template_name
 from fleetledger.inventory import Ship
 
 GENERIC = (
-    "Create a VM from the Ubuntu {release} cloud image ({cores} vCPUs, {memory_mb} MB memory, "
-    "{disk_gb} GB disk, bridged onto your LAN with DHCP), attach {seed} as a CD-ROM, and start "
-    "it. cloud-init finds the seed by its CIDATA label."
+    "Create a VM from the Ubuntu {release} cloud image ({cores} vCPUs, each one host CPU "
+    "thread, {memory_mb} MB memory, {disk_gb} GB disk, bridged onto your LAN with DHCP), "
+    "attach {seed} as a CD-ROM, and start it. cloud-init finds the seed by its CIDATA label."
 )
 
 

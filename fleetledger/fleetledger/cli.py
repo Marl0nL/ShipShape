@@ -198,7 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--vmid", type=int, help="VM id to use (Proxmox)")
     p.add_argument("--host", action="append", default=[],
                    help="name to reach the Ship by (repeatable; default <name>.local)")
-    p.add_argument("--cores", type=int)
+    p.add_argument("--cores", type=int,
+                   help="vCPUs (each one host CPU thread); default: defaults.size, else 4")
     p.add_argument("--memory-mb", type=int)
     p.add_argument("--disk-gb", type=int)
     p.add_argument("--autostart", action="append", default=[], metavar="NAME:CWD[:MODE]",
@@ -440,9 +441,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = _add(sub, "attention", "list what needs you across the fleet (Needs attention)",
              "Waiting agents, missing, expiring or wrong-account sign-ins, failed services\n"
              "or tools, pending reboots, Ships behind on tooling or unreachable; most\n"
-             "urgent first. --watch keeps polling and prints only new items.")
+             "urgent first. --watch keeps polling and prints only new items. --offline\n"
+             "asks no Ship: each one's last known status (it works while the vault is\n"
+             "locked, and then says so once for the fleet).")
     p.add_argument("--tag", help="only Ships with this tag")
     p.add_argument("--json", action="store_true", help="print JSON")
+    p.add_argument("--offline", action="store_true",
+                   help="from each Ship's last known status, asking none")
     p.add_argument("--watch", type=float, nargs="?", const=30.0, metavar="SECONDS",
                    help="poll every SECONDS (default 30) and print new items")
 
@@ -541,8 +546,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-herdr", action="store_true",
                    help="install, --this-computer: skip herdr saved machines")
 
-    p = _add(sub, "untrust", "revoke a machine's certificates on every Ship")
+    p = _add(sub, "untrust", "revoke a machine's certificates on every Ship",
+             "Puts the machine's key in the revocation list on every Ship. This cannot be\n"
+             "undone. In a terminal it asks you to type the machine's name; elsewhere it\n"
+             "needs --yes. A machine whose key is one of your keys for Ships\n"
+             "(fleet.agent_keys) is refused unless you confirm that its key then stops\n"
+             "logging in to every Ship: type its name after the warning, or add\n"
+             "--revoke-my-key. Pressing Enter there leaves it trusted instead, so its\n"
+             "certificate lapses unless renewed.")
     p.add_argument("machine")
+    p.add_argument("--yes", action="store_true",
+                   help="untrust without typing the machine's name (for scripts)")
+    p.add_argument("--revoke-my-key", action="store_true",
+                   help="also when its key is one of your keys for Ships: that key stops "
+                   "logging in to every Ship")
 
     p = _add(sub, "net", "where Ships connect: destinations, programs, traffic (visibility only)",
              "Network visibility. Ships record which programs reach which domains; nothing\n"
@@ -752,7 +769,9 @@ def _vault_locked(args, app) -> None:
     if vault.state() == "locked":
         raise FleetError("FleetLedger's vault is locked, so FleetLedger is read-only: it "
                          "changes nothing and reaches no Ship. Your Ships keep running.",
-                         hint=vault.UNLOCK_HINT + " Meanwhile: ship-fleet ls --offline.")
+                         hint=vault.UNLOCK_HINT + " Meanwhile: ship-fleet "
+                         + ("attention" if args.command == "attention" else "ls")
+                         + " --offline.")
 
 
 def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:

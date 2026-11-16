@@ -46,14 +46,15 @@ def add_parsers(sub, add) -> None:
             "ship-fleet start, then resume in their modes.")
     p.add_argument("name")
 
-    p = add(sub, "resize", "change a Ship's CPU cores, memory or disk",
+    p = add(sub, "resize", "change a Ship's vCPUs, memory or disk",
             "  ship-fleet resize ship-01 --cores 8 --memory-mb 16384\n"
             "  ship-fleet resize ship-01 --disk-gb 80 --restart\n\n"
-            "Cores and memory apply when the VM next restarts through the hypervisor\n"
-            "(--restart does it now; a reboot from inside the Ship does not). A disk only\n"
-            "grows: it grows at once, and the Ship's filesystem with it (ship-ctl grow-root).")
+            "--cores is vCPUs (each one host CPU thread). vCPUs and memory apply when the\n"
+            "VM next restarts through the hypervisor (--restart does it now; a reboot from\n"
+            "inside the Ship does not). A disk only grows: it grows at once, and the Ship's\n"
+            "filesystem with it (ship-ctl grow-root).")
     p.add_argument("name")
-    p.add_argument("--cores", type=int)
+    p.add_argument("--cores", type=int, help="vCPUs (each one host CPU thread)")
     p.add_argument("--memory-mb", type=int)
     p.add_argument("--disk-gb", type=int)
     p.add_argument("--restart", action="store_true",

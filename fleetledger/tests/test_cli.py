@@ -269,6 +269,14 @@ def test_help_lists_every_command(capsys):
         assert len(capsys.readouterr().out) > 100
 
 
+def test_cores_help_says_each_vcpu_is_a_host_thread(capsys):
+    for argv in (["new", "--help"], ["resize", "--help"]):
+        with pytest.raises(SystemExit):
+            cli.main(argv)
+        text = " ".join(capsys.readouterr().out.split())
+        assert "--cores CORES vCPUs (each one host CPU thread)" in text, argv
+
+
 def test_version_flag(capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["--version"])

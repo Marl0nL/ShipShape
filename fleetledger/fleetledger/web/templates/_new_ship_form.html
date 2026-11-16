@@ -21,10 +21,10 @@
   </fieldset>
   <fieldset class="ship-size">
     <legend>Size</legend>
-    <label>CPU cores <input name="cores" type="number" min="{{ SIZE.cores_min }}" max="{{ SIZE.cores_max }}" value="{{ nf.cores }}"></label>
+    <label>vCPUs (each one host CPU thread) <input name="cores" type="number" min="{{ SIZE.cores_min }}" max="{{ SIZE.cores_max }}" value="{{ nf.cores }}"></label>
     <label>Memory (GB) <input name="memory_gb" type="number" min="{{ SIZE.mem_min }}" max="{{ SIZE.mem_max }}" value="{{ nf.memory_gb }}"></label>
     <label>Disk (GB) <input name="disk_gb" type="number" min="{{ SIZE.disk_min }}" max="{{ SIZE.disk_max }}" value="{{ nf.disk_gb }}"></label>
-    <p class="hint">Change it later on the Ship's Settings: cores and memory with a
+    <p class="hint">Change it later on the Ship's Settings: vCPUs and memory with a
       restart, and the disk can grow (never shrink).</p>
   </fieldset>
   <fieldset class="ship-signins">
