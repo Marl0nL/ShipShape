@@ -285,10 +285,109 @@ def test_proxmox_secret_in_a_file_when_chosen(fresh):
 
 def test_without_a_usable_keyring_the_file_is_used_without_asking(fresh, monkeypatch):
     monkeypatch.setattr(secret_store, "get_keyring", lambda: fake_backend(locked=True))
-    code, out, err = to_proxmox(fresh, *START, *FOUND, "", "", "skip")  # no store question
+    code, out, err = fresh.run(answers=["no",  # the vault: not now
+                                        "", "yes", "no", "proxmox",
+                                        *START, *FOUND, "", "", "skip"])  # no store question
     assert code == 0, err
     assert "cannot be used here" in out
     assert "token_file" in fresh.store.load().driver_config("proxmox")
+
+
+# --- no usable keyring: the vault ----------------------------------------------------------
+
+VAULT_PASS = "correct horse battery staple"
+
+
+@pytest.fixture
+def no_keyring(fresh, monkeypatch):
+    """No usable OS keyring; the vault's scrypt cheap, its RAM check yes. Vault
+    passphrase prompts get VAULT_PASS, the recovery code's check its last four."""
+    import re
+
+    from fleetledger import vault
+
+    monkeypatch.setattr(secret_store, "get_keyring", lambda: fake_backend(locked=True))
+    monkeypatch.setattr(vault, "SCRYPT_N", 2 ** 10)
+    monkeypatch.setattr(vault, "in_ram", lambda path: True)
+    scripted = fresh.app.confirm
+
+    def confirm(prompt):
+        if prompt.startswith("Type its last four"):
+            fresh.asked.append(prompt)
+            return re.findall(r"([A-Z2-7]{4}-){7}([A-Z2-7]{4})", fresh.out.getvalue())[-1][1]
+        return scripted(prompt)
+
+    def ask_secret(prompt):
+        fresh.asked.append(prompt)
+        return VAULT_PASS if "vault passphrase" in prompt or "same again" in prompt else TOKEN
+
+    fresh.app.confirm, fresh.app.ask_secret = confirm, ask_secret
+    return fresh
+
+
+def test_without_a_keyring_setup_recommends_the_vault_and_makes_it(no_keyring):
+    from fleetledger import vault
+
+    s = no_keyring
+    code, out, err = s.run(answers=["yes",  # the vault, recommended
+                                    "", "yes", "no", "proxmox",
+                                    *START, *FOUND,  # no store question: the vault
+                                    "", "", "skip"])
+    assert code == 0, err
+    assert "no usable OS keyring here" in out and "The vault is on" in out
+    assert vault.state() == "unlocked"
+    # The Proxmox token went into the vault, not a file and not the OS keyring.
+    config = s.store.load().driver_config("proxmox")
+    assert config["token_store"] == "keyring" and "token_file" not in config
+    assert vault.backend().get_password("fleetledger", config["keyring_item"]) == TOKEN
+    assert not (s.home / "config" / "proxmox-token").exists() and s.keyring.sets == []
+    # The passphrase was asked for (not shown) and is nowhere: output, files, argv.
+    assert sum("vault passphrase" in q for q in s.asked) == 1
+    assert VAULT_PASS not in everything(s) and TOKEN not in everything(s)
+    assert all(VAULT_PASS not in " ".join(c) for c in s.tty)
+    assert s.answers == []
+
+
+def test_without_a_keyring_the_vault_can_wait(no_keyring):
+    from fleetledger import vault
+
+    code, out, err = no_keyring.run(answers=["no", *MANUAL])
+    assert code == 0, err
+    assert vault.state() == "off"
+    assert "ship-fleet vault init   (recommended" in out  # left for later
+    assert not any("vault passphrase" in q for q in no_keyring.asked)
+
+
+def test_a_vault_that_cannot_be_made_here_leaves_files_and_says_why(no_keyring, monkeypatch):
+    from fleetledger import vault
+
+    monkeypatch.setattr(vault, "in_ram", lambda path: False)  # no tmpfs for its key
+    code, out, err = no_keyring.run(answers=["yes", *MANUAL])
+    assert code == 0, err
+    assert vault.state() == "off" and "The vault is not on" in err
+    assert "Left for later:" in out and "ship-fleet vault init" in out
+    assert not any("vault passphrase" in q for q in no_keyring.asked)
+
+
+def test_a_second_run_moves_files_already_kept_into_the_vault(no_keyring):
+    from fleetledger import vault
+
+    s = no_keyring
+    assert s.run(answers=["no", "", "yes", "no", "proxmox",
+                          *START, *FOUND, "", "", "skip"])[0] == 0
+    assert (s.home / "config" / "proxmox-token").exists()
+    code, out, err = s.run(answers=["yes", "no", "", "skip"])  # vault, CA, overlay, Ship
+    assert code == 0, err
+    assert vault.state() == "unlocked" and "Moved into it" in out
+    assert not (s.home / "config" / "proxmox-token").exists()
+    config = s.store.load().driver_config("proxmox")
+    assert vault.backend().get_password("fleetledger", config["keyring_item"]) == TOKEN
+
+
+def test_with_a_usable_keyring_the_vault_is_not_mentioned(fresh):
+    code, out, err = fresh.run(answers=MANUAL)
+    assert code == 0, err
+    assert "vault" not in out.lower() and fresh.answers == []
 
 
 def test_a_fingerprint_not_confirmed_sends_nothing(fresh):
@@ -628,7 +727,8 @@ def test_the_first_ship_is_offered_once_the_rest_is_done(env, monkeypatch):  # n
             return subprocess.CompletedProcess(argv, 0, line, "")
         raise AssertionError(argv)
 
-    answers = ["no",       # CA
+    answers = ["no",       # the vault (no usable keyring here)
+               "no",       # CA
                "manual",   # hypervisor
                "",         # overlay: skip
                "ship-05",  # first Ship

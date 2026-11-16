@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/next-steps.schema.json",
+  "title": "Next steps after setup (ship-fleet doctor --next --json, version 1)",
+  "description": "What is left to do on a FleetLedger computer after first-run setup stops at the first Ship, one step per entry, always in the same order with every key present. Produced by FleetLedger (fleetledger/fleetledger/nextsteps.py) from doctor's own checks, read offline: it contacts no Ship, Proxmox or Tailscale. Consumed by programs that draw it, such as a Herdr Fleet panel. A command is text to show or run in a terminal; a program must not add --yes or answer its questions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "left", "left_required", "steps"],
+  "properties": {
+    "schema": { "const": "fleetledger.next-steps/1" },
+    "left": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many steps are todo, attention or blocked."
+    },
+    "left_required": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many of those are not optional."
+    },
+    "steps": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "title", "state", "detail", "command", "docs", "optional", "after"],
+      "properties": {
+        "key": {
+          "enum": ["setup", "first-ship", "signins", "this-computer", "other-devices", "laptop", "always-on", "vault", "backups"],
+          "description": "setup: FleetLedger's own setup (what ship-fleet doctor checks). first-ship: a Ship made and enrolled. signins: one Ship with every sign-in it uses (from its last saved status). this-computer: this computer trusted to attach (plain ssh, hc). other-devices: the web UI reachable from other devices (ship-fleet ui remote). laptop: another computer trusted. always-on: the fleetledger service, or FleetLedger's own VM. vault: FleetLedger's vault on and unlocked. backups: a backup made (they need the vault)."
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "state": {
+          "enum": ["done", "todo", "attention", "blocked", "skip"],
+          "description": "done: nothing to do. todo: not done yet; command does it. attention: set up but needs fixing; command fixes it. blocked: waits for the step named by after. skip: not needed on this computer."
+        },
+        "detail": { "type": "string", "description": "One line on where it stands." },
+        "command": {
+          "type": "string",
+          "description": "For todo and attention: the command (or step) that does or fixes it, with any NAME, DIR or LOGIN for the user to fill in. Empty otherwise."
+        },
+        "docs": {
+          "type": "string",
+          "pattern": "^(docs/[A-Za-z0-9/_.-]+\\.md)?$",
+          "description": "A page in the ShipShape checkout that explains it."
+        },
+        "optional": { "type": "boolean" },
+        "after": {
+          "enum": ["", "setup", "first-ship", "vault"],
+          "description": "For blocked: the key of the step it waits for. Empty otherwise."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "blocked" } } },
+          "then": { "properties": { "after": { "not": { "const": "" } }, "command": { "const": "" } } },
+          "else": { "properties": { "after": { "const": "" } } }
+        },
+        {
+          "if": { "properties": { "state": { "enum": ["todo", "attention"] } } },
+          "then": { "properties": { "command": { "minLength": 1 } } },
+          "else": { "properties": { "command": { "const": "" } } }
+        }
+      ]
+    }
+  }
+}

@@ -285,15 +285,20 @@ def self_hidden(api, config, inv) -> list[Item]:
                  "Members: remove it)")]
 
 
-def appliance_items(inv) -> list[Item]:
-    """On FleetLedger's own VM: can image builds use KVM here (nested virtualisation)?
-    Does a plain ssh command find ship-fleet (the root-owned wrapper)?"""
+def on_its_own_vm(inv) -> bool:
+    """Is this computer FleetLedger's own VM ([fleet] self names it)?"""
     import socket
 
     from fleetledger import appliance
 
     entry = appliance.fleet_self(inv) if inv is not None else None
-    if not entry or socket.gethostname().split(".")[0] != entry["name"]:
+    return bool(entry) and socket.gethostname().split(".")[0] == entry["name"]
+
+
+def appliance_items(inv) -> list[Item]:
+    """On FleetLedger's own VM: can image builds use KVM here (nested virtualisation)?
+    Does a plain ssh command find ship-fleet (the root-owned wrapper)?"""
+    if not on_its_own_vm(inv):
         return []
     if os.access("/dev/kvm", os.R_OK | os.W_OK):
         out = [Item("computer", "image builds", "ok", "KVM here: ship-fleet image build is "
@@ -445,6 +450,11 @@ def backup_items(now: float | None = None) -> list[Item]:
 
 
 def everything(app, *, offline: bool = False) -> list[Item]:
+    return _everything(app, offline=offline)[0]
+
+
+def _everything(app, *, offline: bool = False) -> tuple[list[Item], Any]:
+    """Every doctor item, and the inventory they were read from (None: none readable)."""
     items = computer(app) + vault_items() + backup_items()
     fleet_items, inv = fleet(app)
     items += fleet_items
@@ -454,4 +464,4 @@ def everything(app, *, offline: bool = False) -> list[Item]:
         items += hypervisor(app, inv, offline=offline)
         items += overlay_items(app, inv)
         items += ships_items(inv)
-    return items
+    return items, inv

@@ -129,8 +129,11 @@ as it can use ssh-agent.
 On a computer with no desktop keyring (an always-on VM), turn on FleetLedger's own
 **vault** instead (`ship-fleet vault init`, [vault.md](vault.md)): the passphrases,
 the Proxmox token and the OAuth secret in one encrypted file, unlocked once after
-each boot. Everything above that says "keyring" then means the vault, and the setup
-page offers no file store. While it is locked, every page shows the last known
+each boot. Where no usable keyring is found and the vault is off, the setup page
+says so above its first step and recommends it: its passphrase is chosen in a
+terminal, never on a page, so the page gives the command (`ship-fleet setup --text`
+asks, and makes it on a yes). Everything above that says "keyring" then means the
+vault, and the setup page offers no file store. While it is locked, every page shows the last known
 state with a banner and an **Unlock** button (the Unlock page takes the passphrase,
 or the recovery code), every change but unlocking and managing paired devices is
 refused, and the poller does not poll. Settings ▸ Vault shows its state and offers

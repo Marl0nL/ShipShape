@@ -59,15 +59,28 @@ def add_parsers(sub, add) -> None:
     p = add(sub, "doctor", "show what is set up, what is missing, and the next command",
             "Check this computer, FleetLedger's keys and inventory, the hypervisor, the\n"
             "overlay and the Ships. Read-only: it changes nothing. Each missing piece\n"
-            "comes with the exact command that fixes it.")
+            "comes with the exact command that fixes it.\n\n"
+            "  ship-fleet doctor\n"
+            "  ship-fleet doctor --next          what is left after setup, step by step\n"
+            "  ship-fleet doctor --next --json   the same, for programs\n"
+            "                                    (contracts/next-steps.schema.json)")
     p.add_argument("--offline", action="store_true",
                    help="do not contact the Proxmox API")
+    p.add_argument("--next", action="store_true",
+                   help="the next steps after setup (first Ship signed in, this computer, "
+                   "other devices, a laptop, always on, the vault, backups), each with its "
+                   "state and command; contacts nothing")
+    p.add_argument("--json", action="store_true", help="with --next: as JSON")
 
 
 # --- doctor ---------------------------------------------------------------------------------
 
 
 def cmd_doctor(args, app) -> int:
+    if args.next:
+        return _next_steps(args, app)
+    if args.json:
+        raise FleetError("--json is for the next steps: ship-fleet doctor --next --json.")
     items = firstrun.everything(app, offline=args.offline)
     rows = [[MARK[i.state], i.area, i.name, i.detail] for i in items]
     app.say(table(rows, ["", "AREA", "CHECK", "DETAIL"]))
@@ -79,6 +92,43 @@ def cmd_doctor(args, app) -> int:
     if not any(i.state in ("missing", "fail", "warn") for i in items):
         app.say("\nEverything is in place.")
     return 1 if any(i.state in ("missing", "fail") for i in items) else 0
+
+
+STEP_MARK = {"done": "done", "todo": "to do", "attention": "FIX", "blocked": "later",
+             "skip": "-"}
+
+
+def _next_steps(args, app) -> int:
+    """ship-fleet doctor --next: the checklist (nextsteps.py). Always offline."""
+    import json
+
+    from fleetledger import nextsteps
+
+    found = nextsteps.steps(app)
+    if args.json:
+        app.say(json.dumps(nextsteps.as_json(found), indent=2))
+        return 0
+    titles = {s.key: s.title for s in found}
+    app.say("Next steps after setup:")
+    for step in found:
+        extra = " (optional)" if step.optional and step.state in ("todo", "blocked") else ""
+        app.say(f"\n  {STEP_MARK[step.state]:<6} {step.title}{extra}")
+        if step.state == "blocked":
+            app.say(f"         after: {titles.get(step.after, step.after)}"
+                    + (f" ({step.detail})" if step.detail else ""))
+        elif step.detail:
+            app.say(f"         {step.detail}")
+        if step.command:
+            app.say(f"         run: {step.command}")
+        if step.state in ("todo", "attention") and step.docs:
+            app.say(f"         see: {step.docs}")
+    body = nextsteps.as_json(found)
+    if body["left"] == 0:
+        app.say("\nNothing left to do.")
+    else:
+        app.say(f"\n{body['left']} left, {body['left_required']} of them not optional. "
+                "ship-fleet doctor shows every check.")
+    return 0
 
 
 # --- setup ----------------------------------------------------------------------------------
@@ -174,6 +224,7 @@ def _computer(s: _Setup) -> None:
 
 def _fleet(s: _Setup):
     s.head()
+    _vault(s)
     if s.store.exists():
         inv = s.store.load()
         s.app.say(f"Already set up: {s.store.path} (admin key {inv.admin_key}).")
@@ -197,6 +248,40 @@ def _fleet(s: _Setup):
         if s.made_yours:
             keys.record(ed, s.managed, [s.made_yours])
     return s.store.load()
+
+
+def _vault(s: _Setup) -> None:
+    """No usable OS keyring here and the vault off: every secret FleetLedger keeps would
+    go to a 0600 file. Recommend the vault, and make it on a yes with ship-fleet vault
+    init's own code (the passphrase is asked here, not shown; secrets already kept move
+    in). With a usable keyring, or the vault on, nothing is said."""
+    import argparse
+
+    from fleetledger import vault, vaultcmd
+    from fleetledger.overlay import secret_store
+
+    if vault.is_on():
+        return
+    usable, why = secret_store.keyring_usable()
+    if usable:
+        return
+    s.app.say(f"There is no usable OS keyring here ({why}). Without one, FleetLedger keeps\n"
+              "its secrets (its keys' passphrases, the Proxmox token, the OAuth secret) in\n"
+              "files only you can read, so any copy of this disk opens the fleet. Its vault\n"
+              "keeps them in one encrypted file instead, unlocked once after each boot with a\n"
+              f"passphrase you choose (ship-fleet unlock). See {vaultcmd.RUNBOOK}.")
+    if not s.yes("Turn the vault on now (recommended)"):
+        s.later.append("ship-fleet vault init   (recommended: there is no usable keyring here)")
+        return
+    try:
+        vaultcmd.vault_init(argparse.Namespace(), s.app, s.store)
+    except FleetError as exc:
+        s.app.note(f"The vault is not on: {exc.message}" + (f" {exc.hint}" if exc.hint else ""))
+        s.app.note("Carrying on with files only you can read.")
+        s.later.append("ship-fleet vault init")
+        return
+    if s.managed is not None:
+        s.managed = keys.default_store()  # the vault, now that it is on
 
 
 def _your_key(s: _Setup) -> str:

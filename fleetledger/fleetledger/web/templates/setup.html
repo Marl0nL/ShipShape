@@ -20,6 +20,15 @@
 {# --- 1. your fleet ---------------------------------------------------------------- #}
 <section id="fleet" class="setup-step">
 <h2>1. Your fleet</h2>
+{% if not keyring_usable and not vault_on %}
+<p class="notice" id="vault-recommended"><strong>Recommended: turn the vault on.</strong>
+  There is no usable OS keyring here ({{ keyring_why }}), so FleetLedger keeps its secrets
+  (its keys' passphrases, the Proxmox token, the OAuth secret) in files only you can read:
+  any copy of this disk opens the fleet. Its vault keeps them in one encrypted file instead,
+  unlocked once after each boot. You choose its passphrase in a terminal, never on a page:
+  run <code>ship-fleet vault init</code> there (over ssh, <code>ssh -t</code>), then reload
+  this page. Secrets already kept move into it. See <code>docs/vault.md</code>.</p>
+{% endif %}
 {% if inv is none %}
 <div class="choices">
   <article class="choice recommended">

@@ -175,6 +175,21 @@ def test_the_file_store_when_chosen(ws):
     assert stat.S_IMODE(secret.stat().st_mode) == 0o600
 
 
+def test_without_a_keyring_the_page_recommends_the_vault(ws, monkeypatch):
+    from fleetledger import vault
+
+    assert 'id="vault-recommended"' not in page(ws)  # a usable keyring: nothing new
+    monkeypatch.setattr(secret_store, "get_keyring", lambda: fake_backend(locked=True))
+    text = page(ws)
+    assert 'id="vault-recommended"' in text and "ship-fleet vault init" in text
+    assert "never on a page" in text
+    ws.post("/setup/fleet/new", {"your_key": "~/.ssh/id_ed25519.pub"})
+    assert 'id="vault-recommended"' in page(ws)  # still, once the fleet is made
+    monkeypatch.setattr(vault, "is_on", lambda: True)
+    monkeypatch.setattr(vault, "state", lambda: "unlocked")
+    assert 'id="vault-recommended"' not in page(ws)  # the vault on: nothing to say
+
+
 def test_a_new_fleet_never_overwrites_keys_already_there(ws):
     admin = ws.user_home / ".ssh" / "shipshape_fleet_ed25519"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(admin)], check=True)
