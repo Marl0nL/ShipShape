@@ -286,7 +286,8 @@ def self_hidden(api, config, inv) -> list[Item]:
 
 
 def appliance_items(inv) -> list[Item]:
-    """On FleetLedger's own VM: can image builds use KVM here (nested virtualisation)?"""
+    """On FleetLedger's own VM: can image builds use KVM here (nested virtualisation)?
+    Does a plain ssh command find ship-fleet (the root-owned wrapper)?"""
     import socket
 
     from fleetledger import appliance
@@ -295,12 +296,35 @@ def appliance_items(inv) -> list[Item]:
     if not entry or socket.gethostname().split(".")[0] != entry["name"]:
         return []
     if os.access("/dev/kvm", os.R_OK | os.W_OK):
-        return [Item("computer", "image builds", "ok", "KVM here: ship-fleet image build is "
-                     "quick on this VM")]
-    return [Item("computer", "image builds", "info", "no KVM here (no nested virtualisation, "
-                 "or not in the kvm group): image builds would be very slow",
-                 "give the VM CPU type host on a host with nested virtualisation, or build "
-                 "images on your desktop (docs/runbooks/fleetledger-vm.md)")]
+        out = [Item("computer", "image builds", "ok", "KVM here: ship-fleet image build is "
+                    "quick on this VM")]
+    else:
+        out = [Item("computer", "image builds", "info", "no KVM here (no nested "
+                    "virtualisation, or not in the kvm group): image builds would be very slow",
+                    "give the VM CPU type host on a host with nested virtualisation, or build "
+                    "images on your desktop (docs/runbooks/fleetledger-vm.md)")]
+    return out + wrapper_items()
+
+
+def wrapper_items() -> list[Item]:
+    """FleetLedger's VM seeded before /usr/local/bin/ship-fleet came in: a plain
+    `ssh fleetledger@<vm> ship-fleet ...` is "command not found". Only looks: the fix is
+    vmadmin's (root's file), from the runbook. Nothing when the wrapper is in place."""
+    from fleetledger import appliance
+
+    path = Path(appliance.WRAPPER_PATH)
+    said = ("so a plain ssh fleetledger@<this VM> ship-fleet ... answers \"command not "
+            "found\". Put it in place once as vmadmin, with sudo, as in "
+            "docs/runbooks/fleetledger-vm.md (Updates)")
+    if not os.path.lexists(path):
+        return [Item("computer", "ship-fleet on ssh's PATH", "missing",
+                     f"no {path} (this VM was seeded before it came in), {said}",
+                     appliance.WRAPPER_FIX)]
+    if not path.is_file() or not os.access(path, os.X_OK):
+        return [Item("computer", "ship-fleet on ssh's PATH", "fail",
+                     f"{path} is there but this user cannot run it, {said}",
+                     appliance.WRAPPER_FIX)]
+    return []
 
 
 # --- the overlay and the Ships ------------------------------------------------------------

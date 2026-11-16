@@ -54,6 +54,10 @@ ADMIN = "vmadmin"
 # without it pipx's ~/.local/bin is not on PATH.
 WRAPPER_FILE = Path(__file__).parent / "seed" / "appliance-ship-fleet.sh"
 WRAPPER = WRAPPER_FILE.read_text()
+WRAPPER_PATH = "/usr/local/bin/ship-fleet"
+# The runbook's fix for a VM seeded before the wrapper, as vmadmin (doctor shows it).
+WRAPPER_FIX = (f"sudo tee {WRAPPER_PATH} >/dev/null <<'EOF'\n{WRAPPER}EOF\n"
+               f"sudo chmod 0755 {WRAPPER_PATH}")
 SSHD = ("# FleetLedger's VM: keys only, its two users only.\nPasswordAuthentication no\n"
         "KbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers fleetledger vmadmin\n")
 
@@ -196,7 +200,7 @@ def user_data(name: str, host_key: Any, login_keys: list[str], repo_url: str, co
              "owner": "root:root", "permissions": "0644", "content": REBOOT_DROP_IN},
             {"path": "/etc/ssh/sshd_config.d/10-fleetledger.conf", "owner": "root:root",
              "permissions": "0644", "content": SSHD},
-            {"path": "/usr/local/bin/ship-fleet", "owner": "root:root",
+            {"path": WRAPPER_PATH, "owner": "root:root",
              "permissions": "0755", "content": WRAPPER},
         ],
         "runcmd": [

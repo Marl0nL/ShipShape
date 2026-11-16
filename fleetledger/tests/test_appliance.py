@@ -316,6 +316,76 @@ def test_doctor_on_the_vm_says_whether_image_builds_get_kvm(store, monkeypatch):
     assert firstrun.appliance_items(store.load())[0].state == "ok"
 
 
+def _wrapper_items(store, monkeypatch, tmp_path, host="fleetledger"):
+    """doctor's items for /usr/local/bin/ship-fleet, with that path in tmp_path."""
+    monkeypatch.setattr("socket.gethostname", lambda: host)
+    monkeypatch.setattr(appliance, "WRAPPER_PATH", str(tmp_path / "ship-fleet"))
+    return [i for i in firstrun.appliance_items(store.load())
+            if i.name == "ship-fleet on ssh's PATH"]
+
+
+def test_doctor_on_the_vm_says_nothing_of_the_wrapper_when_it_is_there(
+        store, monkeypatch, tmp_path):
+    _self(store)
+    wrapper = tmp_path / "ship-fleet"
+    wrapper.write_text(appliance.WRAPPER)
+    wrapper.chmod(0o755)
+    assert _wrapper_items(store, monkeypatch, tmp_path) == []
+
+
+def test_doctor_on_a_vm_seeded_before_the_wrapper_gives_vmadmins_fix(
+        store, monkeypatch, tmp_path):
+    # Seeded before /usr/local/bin/ship-fleet came in: a plain ssh command does not find
+    # ship-fleet. doctor (and Settings, Health) says so, with the runbook's fix.
+    _self(store)
+    [item] = _wrapper_items(store, monkeypatch, tmp_path)
+    assert item.state == "missing" and "command not found" in item.detail
+    assert "vmadmin" in item.detail and "docs/runbooks/fleetledger-vm.md" in item.detail
+    assert item.next == appliance.WRAPPER_FIX
+    assert not (tmp_path / "ship-fleet").exists()  # it only looks
+    out = io.StringIO()
+    code = _doctor(store, monkeypatch, tmp_path, out)
+    assert code == 1 and appliance.WRAPPER_FIX in out.getvalue()
+
+
+def _doctor(store, monkeypatch, tmp_path, out):
+    """ship-fleet doctor with only the appliance's items (the rest is tested elsewhere)."""
+    from fleetledger import setupcmd
+
+    inv = store.load()
+    monkeypatch.setattr(firstrun, "everything",
+                        lambda app, offline=False: firstrun.appliance_items(inv))
+    app = type("App", (), {"say": lambda self, text="": out.write(text + "\n")})()
+    return setupcmd.cmd_doctor(type("Args", (), {"offline": True})(), app)
+
+
+def test_doctor_on_the_vm_says_when_the_wrapper_cannot_be_run(store, monkeypatch, tmp_path):
+    _self(store)
+    wrapper = tmp_path / "ship-fleet"
+    wrapper.write_text(appliance.WRAPPER)
+    wrapper.chmod(0o644)
+    [item] = _wrapper_items(store, monkeypatch, tmp_path)
+    assert item.state == "fail" and "cannot run it" in item.detail
+    assert item.next == appliance.WRAPPER_FIX
+    assert stat.S_IMODE(wrapper.stat().st_mode) == 0o644  # left as it was
+    wrapper.unlink()
+    wrapper.mkdir()
+    [item] = _wrapper_items(store, monkeypatch, tmp_path)
+    assert item.state == "fail"
+
+
+def test_doctor_off_the_vm_says_nothing_of_the_wrapper(store, monkeypatch, tmp_path):
+    # Your desktop: no [fleet] self, or one whose name is not this computer's.
+    assert _wrapper_items(store, monkeypatch, tmp_path) == []
+    _self(store)
+    assert _wrapper_items(store, monkeypatch, tmp_path, host="desktop") == []
+
+
+def test_doctors_fix_for_the_wrapper_is_the_runbooks():
+    text = (REPO_ROOT / "docs" / "runbooks" / "fleetledger-vm.md").read_text()
+    assert "\n" + appliance.WRAPPER_FIX + "\n" in text
+
+
 # --- self-update -------------------------------------------------------------------------------
 
 
