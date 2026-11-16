@@ -2832,7 +2832,8 @@ def test_an_activation_whose_keys_cannot_be_written_is_active_and_says_the_fix(
         mp.setattr(authkeys, "_write", lambda f, text: (_ for _ in ()).throw(OSError(28, "full")))
         code, out, err = b.run("migrate", "activate", "--yes")
     assert code == 0 and handover.marker(b.store) is None  # the hand-over stands
-    assert "not brought in step (OSError): run ship-fleet trust --sync-keys here" in err
+    assert "not brought in step (Cannot write" in err and "full.): run ship-fleet trust " \
+        "--sync-keys here" in err
     assert _bundle_keys(b) == []
     code, out, err = b.run("trust", "--sync-keys")
     assert code == 0 and _bundle_keys(b) == ["laptop", "phone"], out + err

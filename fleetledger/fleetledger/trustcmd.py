@@ -1024,8 +1024,11 @@ def cmd_untrust(args, app) -> int:
     # Its bundle key line goes before the Ships are reached (that can take a while).
     unkeyed = False
     try:
-        for line in authkeys.synced_said(authkeys.sync(store)):
+        done = authkeys.sync(store)
+        for line in authkeys.synced_said(done):
             app.say(line)
+        if done.review.adds and authkeys.ed25519_blob(m.public_key) in done.review.file.outside:
+            app.say(authkeys.kept_said(m.name))
     except FleetError as exc:
         unkeyed = True
         app.note(f"ship-fleet: {m.name}'s bundle key may still be in "

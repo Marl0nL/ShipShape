@@ -443,6 +443,57 @@ def test_concurrent_trusts_and_untrusts_end_in_step(vm):
     assert outside() == OWNER_LINES.encode()
 
 
+def test_an_untrust_while_a_trust_writes_leaves_no_line(vm, monkeypatch):
+    seed("")
+    real = authkeys._write
+    done = []
+
+    def untrust_meanwhile():
+        with vm.store.edit() as ed:  # what untrust records, then its sync
+            ed.set_machine_field("laptop", "revoked", "2026-01-01T00:00:00Z")
+        authkeys.sync(vm.store)
+        done.append(1)
+
+    def write(f, text):
+        if not done and "laptop" in text:
+            t = threading.Thread(target=untrust_meanwhile)
+            t.start()
+            while not vm.store.load().doc["machine"]["laptop"].get("revoked"):
+                threading.Event().wait(0.01)  # recorded; its sync now waits for the lock
+            real(f, text)
+            write.thread = t
+            return None
+        return real(f, text)
+
+    monkeypatch.setattr(authkeys, "_write", write)
+    trust(vm)
+    write.thread.join(timeout=30)
+    assert done and block() == []
+
+
+@pytest.mark.parametrize("odd", ["cr-mid", "vt-mid", "nul-tail", "tab"])
+def test_your_line_is_yours_however_sshd_would_read_its_key(vm, odd):
+    seed("")
+    blob, _ = trust(vm)
+    written = {"cr-mid": f"ssh-ed25519 {blob[:20]}\r{blob[20:]} mine",
+               "vt-mid": f"ssh-ed25519 {blob[:20]}\v{blob[20:]} mine",
+               "nul-tail": f"ssh-ed25519 {blob}\0junk mine",
+               "tab": f"ssh-ed25519\t{blob}\tmine"}[odd]
+    ak().write_bytes(ak().read_bytes() + written.encode() + b"\n")
+    assert authkeys.key_of(written) == blob
+    vm.run("trust", "--sync-keys")
+    assert authkeys.BEGIN.encode() not in ak().read_bytes()
+    assert ak().read_bytes() == written.encode() + b"\n"
+
+
+def test_untrusting_a_machine_with_your_own_line_says_that_line_stays(vm):
+    key = keygen(vm.tmp / "mine", "mine").with_name("mine.pub")
+    before = seed(key.read_text())
+    trust(vm, "desktop", key=key)
+    code, out, err = vm.run("untrust", "desktop", "--yes")
+    assert "still has your own line" in out and ak().read_bytes() == before
+
+
 # --- where FleetLedger adds nothing ----------------------------------------------------------
 def test_on_a_desktop_trust_writes_nothing_and_untrust_still_removes(caenv, tmp_path,  # noqa: F811
                                                                     monkeypatch):

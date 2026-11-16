@@ -41,6 +41,7 @@ import base64
 import fcntl
 import os
 import re
+import secrets
 import struct
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -59,7 +60,7 @@ PATH_RE = re.compile(r"/[A-Za-z0-9._/-]+")
 KEYTYPE_RE = re.compile(r"(ssh|ecdsa|sk)-[A-Za-z0-9@.-]+")
 ED25519_PREFIX = struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32)
 OTHER_FILES = ("authorized_keys2",)  # sshd's default AuthorizedKeysFile reads it too
-TRIES = 3  # another writer changed the file while we worked: read it again
+TRIES = 5  # rounds: another writer changed the file meanwhile, or a write to check
 
 
 def _wrapper_target() -> str:
@@ -115,16 +116,30 @@ def line_for(name: str, public_key: str) -> str | None:
     return f'{OPTIONS},command="{forced_command(name)}" ssh-ed25519 {blob} {name}'
 
 
+SPACE = re.compile(r"[ \t]+")  # what separates fields in sshd's reading of a line
+
+
+def _same_key(text: str) -> str:
+    """A key's base64 as sshd decodes it: its decoder skips the other whitespace (\\r,
+    \\n, \\v, \\f) inside it, so this one text stands for every way of writing the key."""
+    text = re.sub(r"[\r\n\v\f]", "", text)
+    try:
+        return base64.b64encode(base64.b64decode(text, validate=True)).decode()
+    except ValueError:
+        return text
+
+
 def key_of(line: str) -> str | None:
-    """The key (base64) a line of authorized_keys is for, read as sshd reads it: a key
-    type first, or else options (skipped as sshd skips them, quotes and \\" included)
-    and then the key. None: a comment, a blank line, or no key."""
-    s = line.strip(" \t\r")
-    if not s or s.startswith("#"):
+    """The key (base64, as _same_key gives it) a line of authorized_keys is for, read as
+    sshd reads it: up to a NUL; fields split on spaces and tabs; a key type first, or
+    else options (skipped as sshd skips them, quotes and \\" included) and then the key.
+    None: a comment, a blank line, or no key."""
+    s = line.split("\0", 1)[0].lstrip(" \t")
+    if not s or s[0] in "#\r\n":
         return None
-    words = s.split()
+    words = SPACE.split(s)
     if KEYTYPE_RE.fullmatch(words[0]):
-        return words[1] if len(words) > 1 else None
+        return _same_key(words[1]) if len(words) > 1 and words[1].strip() else None
     i, quoted = 0, False
     while i < len(s) and (quoted or s[i] not in " \t"):
         if s[i] == "\\" and s[i + 1:i + 2] == '"':
@@ -132,8 +147,9 @@ def key_of(line: str) -> str | None:
         elif s[i] == '"':
             quoted = not quoted
         i += 1
-    rest = s[i:].split()
-    return rest[1] if len(rest) > 1 and KEYTYPE_RE.fullmatch(rest[0]) else None
+    rest = SPACE.split(s[i:].lstrip(" \t"))
+    return _same_key(rest[1]) if len(rest) > 1 and KEYTYPE_RE.fullmatch(rest[0]) \
+        and rest[1].strip() else None
 
 
 # --- the file ---------------------------------------------------------------------------------
@@ -353,7 +369,10 @@ def _refuse_unsafe(f: File) -> None:
 def _write(f: File, text: str) -> None:
     data = text.encode("utf-8", "surrogateescape")
     fd = None
-    tmp = f.path.with_name(f".{f.path.name}.fleetledger-{os.getpid()}.tmp")
+    # Another writer (you, ssh-copy-id) landing between the check below and the rename
+    # would be lost: the window is that short, and rename cannot close it.
+    tmp = f.path.with_name(f".{f.path.name}.fleetledger-{os.getpid()}-"
+                           f"{secrets.token_hex(4)}.tmp")
     try:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         if f.raw is not None:
@@ -404,16 +423,19 @@ def sync(store, *, edit: bool = True) -> Synced:
     from fleetledger import ca
     from fleetledger.inventory import now_timestamp
 
+    installed, removed, fixed, wrote = [], [], [], False
     for _ in range(TRIES):
-        r = review(store, store.load())
-        if r.in_step and not (r.file.broken and r.file.raw is not None):
-            # Nothing to do (a symlinked file included, wherever no line is wanted): no
-            # lock, and no ~/.ssh made.
-            result = Synced(r, False, [], [], [])
-            break
-        with _locked():
+        if not ssh_dir().exists():
+            r = review(store, store.load())
+            if r.in_step and not r.file.broken:
+                result = Synced(r, False, [], [], [])  # nothing there, nothing wanted:
+                break  # and no ~/.ssh made
+        with _locked():  # always, so a sync waits for one another writes now
             r = review(store, store.load())
             f = r.file
+            if r.in_step and not (f.broken and f.raw is not None):
+                result = Synced(r, wrote, installed, removed, fixed)
+                break  # in step (a symlinked file where no line is wanted included)
             _refuse_unsafe(f)
             if r.foreign:
                 raise FleetError(
@@ -422,17 +444,17 @@ def sync(store, *, edit: bool = True) -> Synced:
                     "trusted, so it will not remove them.",
                     hint="Move them above the block's first marker line (or delete "
                     f"them), then run {SYNC} again.")
-            result = Synced(r, False, [n for n in r.wanted if n not in r.present],
-                            r.stale, r.edited)
-            if r.in_step:
-                break
+            installed += [n for n in r.wanted if n not in r.present and n not in installed]
+            removed += [n for n in r.stale if n not in removed]
+            fixed += [n for n in r.edited if n not in fixed]
             try:
                 _write(f, compose(f, list(r.wanted.values())))
             except _Changed:
                 continue
-            result.wrote = True
-            result.review = review(store, store.load())  # as it is now
-            break
+            except OSError as exc:
+                raise FleetError(f"Cannot write {f.path}: {exc.strerror or exc}.") from exc
+            wrote = True
+            # Round again: a machine trusted or untrusted while this wrote is in step too.
     else:
         raise FleetError(f"Not changed: {path()} kept changing while FleetLedger wrote it.",
                          hint=f"Run {SYNC} again.")
@@ -491,6 +513,12 @@ def synced_said(s: Synced) -> list[str]:
     if s.removed:
         out.append(f"Bundle key line(s) removed from {where}: {', '.join(s.removed)}.")
     return out
+
+
+def kept_said(name: str) -> str:
+    return (f"{name}'s key still has your own line in {where_said()}: FleetLedger never "
+            "changes your lines, so remove it there yourself if that key should no longer "
+            "log in to this computer.")
 
 
 def first_fetch_said(name: str, identity: str) -> str:
