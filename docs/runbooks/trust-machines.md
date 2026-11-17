@@ -22,15 +22,20 @@ everything and asks nothing; nothing updates it unattended. It:
   on the VM has a shell, it shows the `ship-fleet trust` it would run there (a name from
   this computer's host name, `--scope all`, `--logins both`, a new key of its own in
   `~/.ssh/shipshape`) and runs it after one yes (`--yes`; `--name`, `--scope`, `--logins`
-  to choose). With no key that logs in there, it says the one step to take on a computer
-  that has one (the Fleet panel's Machines ▸ Trust a machine, or one `ssh ... ship-fleet
-  trust` line), and stops: a computer never trusts itself;
+  to choose). With no key that logs in there, it asks to be paired by code and waits for
+  your approval ([Pairing by code](#pairing-by-code)); with pairing off (or `--no-pairing`),
+  it says the one step to take on a computer that has a key (the Fleet panel's Machines ▸
+  Trust a machine, or one `ssh ... ship-fleet trust` line), and stops: a computer never
+  trusts itself;
 - installs the refresher and its timer (below), the Desk and the Fleet panel into Herdr,
   and fills in the panel's `settings.json` where you have not; and opens the Fleet tab
   (`--no-open` not to).
 
-A computer with no key that logs in to the VM cannot fetch the installer that way: run
-it from a ShipShape checkout instead, and it says the one step to take. No Ship needs
+A computer with no key that logs in to the VM runs the installer from a ShipShape checkout
+instead; while pairing is on (`ship-fleet pair on`, once), it shows a code, which you approve
+on a device that has a shell there (the Fleet panel's Machines page, or `ssh ... ship-fleet
+pair approve`, typing that code), and it then finishes by itself (see [Pairing by
+code](#pairing-by-code)). No Ship needs
 updating for any of this. The rest of this page is how it works, and the steps by hand.
 
 From phase 3 FleetLedger is the fleet's SSH certificate authority (CA). That
@@ -48,6 +53,51 @@ gives you two things:
 
 FleetLedger itself keeps checking each Ship against its pinned host key, as in
 phase 1. Certificates are for everything else.
+
+## Pairing by code
+
+For a computer with no key that logs in to FleetLedger's VM (a new laptop): nobody copies a
+key or a line by hand. Once, on the VM (or from the Fleet panel's Machines page, Turn
+pairing on):
+
+```sh
+ship-fleet pair on
+```
+
+Then, on the new computer, from a ShipShape checkout:
+
+```sh
+./shipshape-setup --herdr-client --fleetledger fleetledger@HOST
+```
+
+It pins the VM's host key (shown for you to confirm, or `--host-key-fingerprint`), makes its
+own key (`~/.ssh/shipshape/id_ed25519`), asks FleetLedger to trust it, and shows a six-digit
+code, its key's fingerprint and the VM's host key's. On a device that has a shell on the VM,
+approve it: the Fleet panel's Machines page lists it under Waiting to be paired (Approve…
+opens a terminal), or
+
+```sh
+ssh fleetledger@HOST ship-fleet pair approve
+```
+
+Type the code the new computer shows (FleetLedger never shows it, so it cannot be copied
+from there), check the key and host key it shows against the new computer's, and choose
+its name, scope and logins (the name it gave itself, `all` and `both` by default). That runs
+`ship-fleet trust NAME --key ...`, with all of trust's rules, and the installer, waiting,
+finishes as a trusted run does: the refresher through its own key, the Desk and the Fleet
+panel from the checkout. Refuse it instead with `ship-fleet pair refuse ID` (or the panel's
+Refuse); a request nobody answers lapses after 10 minutes, and Ctrl-C on the new computer
+withdraws it. Nothing of a refused, withdrawn or lapsed request is kept.
+
+Being on the same network is never an approval. While pairing is on, anybody who reaches
+the VM's ssh may ask (with the installer's well-known pairing key, whose line may run only
+`ship-fleet machine-pair`), but a request grants nothing, at most 4 wait at once, and none
+is trusted until you type its code. Somebody who keeps asking can use those bounds up (the installer then says FleetLedger is busy, and falls back to the step by hand): `ship-fleet pair off`, then `on`, starts them afresh. `ship-fleet pair off` closes it again; `ship-fleet
+doctor` checks its line (`fleet.pairing`). See [docs/security.md](../security.md#pairing-by-code)
+and `contracts/ship-fleet.md` ("ship-fleet pair").
+
+A phone is out of scope: it runs no installer, so it cannot ask. Its browser pairs with the
+web UI instead (`ship-fleet ui link`, or the Fleet panel's Pair a phone's browser).
 
 ## 1. Make the CA (once)
 

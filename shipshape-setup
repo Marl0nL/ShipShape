@@ -14,12 +14,15 @@
 # key (shown for you to confirm, unless ~/.ssh/known_hosts has it already); ask it, over
 # your own ssh, for the setup data (ship-fleet machine-setup); find which trusted machine
 # this computer is by its keys, or, when your ssh session there has a shell and this
-# computer is not trusted yet, have FleetLedger trust it (shown first, one yes); fetch the
-# refresher through this machine's own key, with the VM's host key pinned, and install it
-# only when its SHA-256 is the one FleetLedger gave; install the Desk and the Fleet panel
-# into Herdr, and fill in the Fleet panel's settings.json where you have not; and open the
+# computer is not trusted yet, have FleetLedger trust it (shown first, one yes); with no
+# such key, ask FleetLedger to pair it by code (while pairing is on there: ship-fleet pair
+# on), show the code, this computer's key and FleetLedger's host key, and wait (up to 10
+# minutes) for you to approve it on a device that has a shell there; fetch the refresher
+# through this machine's own key, with the VM's host key pinned, and install it only when
+# its SHA-256 is the one FleetLedger gave; install the Desk and the Fleet panel into
+# Herdr, and fill in the Fleet panel's settings.json where you have not; and open the
 # Fleet tab. Being on the same network never trusts anything: trust needs a key that
-# already has a shell on FleetLedger (or one done there, by you, from a computer that has).
+# already has a shell on FleetLedger, or your approval there, typing the code shown here.
 #
 # Options for the Herdr client (each answers a question, so the whole thing can be run
 # with no terminal):
@@ -31,6 +34,9 @@
 #                               what FleetLedger trusts this computer as (default: a name
 #                               from its host name, all, both)
 #   --yes                       trust this computer with what is shown, without asking
+#                               (never an approval by code: that is typed on FleetLedger)
+#   --no-pairing                with no key that logs in there, do not ask to be paired:
+#                               say the one step to take by hand instead
 #   --no-open                   do not open the Fleet tab in Herdr
 #   --no-herdr                  the refresher only: no Desk, no Fleet panel
 #   --no-timer, --no-hc, --lan  passed to the refresher (see docs/runbooks/trust-machines.md)
@@ -71,10 +77,16 @@ die() {
 usage() {
   cleanup
   warn "shipshape-setup: $*"
-  warn "Usage: shipshape-setup [--herdr-client] [--fleetledger-here] [--fleetledger-remote] [--ship-host] [--fleetledger DEST] [--host-key-fingerprint FP] [--name NAME] [--scope SCOPE] [--logins agent|owner|both] [--yes] [--no-open] [--no-herdr] [--no-timer] [--no-hc] [--lan]"
+  warn "Usage: shipshape-setup [--herdr-client] [--fleetledger-here] [--fleetledger-remote] [--ship-host] [--fleetledger DEST] [--host-key-fingerprint FP] [--name NAME] [--scope SCOPE] [--logins agent|owner|both] [--yes] [--no-pairing] [--no-open] [--no-herdr] [--no-timer] [--no-hc] [--lan]"
   exit 2
 }
 cleanup() {
+  # A pairing request still waiting is withdrawn (Ctrl-C, or any stop): nothing is left
+  # behind on FleetLedger.
+  if [ -n "${pair_token:-}" ]; then
+    t=$pair_token pair_token=
+    pair_ssh cancel "$t" >/dev/null 2>&1
+  fi
   [ -n "$stage" ] && rm -rf "$stage"
   stage=
   # The copy an older installer handed over to (hand_over) goes with it.
@@ -471,14 +483,168 @@ logins_said() {
   case $1 in agent) echo "agent" ;; owner) echo "you (owner)" ;; *) echo "agent and you (owner)" ;; esac
 }
 
-# The one step for a computer with no credential that has a shell on FleetLedger. It is
-# kept apart on purpose: a pairing by code (this computer asks, a trusted device approves)
-# can replace this function alone, ending as trust_here does, with FleetLedger trusting
-# this computer's own key; everything after it (fetch_setup, identify, the refresher, the
-# mods) stays as it is.
+# --- pairing by code: a computer with no credential that has a shell on FleetLedger ---------------
+# This computer asks FleetLedger to trust its own key; you approve it there, on a device that
+# has a shell, by typing the code shown here (ship-fleet pair approve, or the Fleet panel's
+# Machines page). It reaches FleetLedger through the well-known pairing key below, which is
+# public by design (anyone may read it here): on FleetLedger its one line, there only while
+# pairing is on, runs `ship-fleet machine-pair` and nothing else, which can only file a
+# request and say how it stands (contracts/machine-pair.schema.json). Nothing it answers is
+# trusted before FleetLedger's host key is (pin_host_key), and only an approval names this
+# computer's key, its name and the refresher to run: it then ends as a trusted run does.
+PAIR_KEY_BODY='b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACBzN8Do5bgFclIM+lzimWhIBPLntZwsHipZMXqPMmcgpwAAAJjpORa/6TkW
+vwAAAAtzc2gtZWQyNTUxOQAAACBzN8Do5bgFclIM+lzimWhIBPLntZwsHipZMXqPMmcgpw
+AAAECWBw8X1CEX5XIWuLAACM1t37HhSKBuwDpDxP9V8J67PHM3wOjluAVyUgz6XOKZaEgE
+8ue1nCweKlkxeo8yZyCnAAAAEXNoaXBzaGFwZS1wYWlyaW5nAQIDBA=='
+PAIR_SCHEMA=shipshape.machine-pair/1
+PAIR_WAIT=${SHIPSHAPE_SETUP_PAIR_WAIT:-3}
+case $PAIR_WAIT in '' | *[!0-9]* | 0) PAIR_WAIT=3 ;; esac
+pair_token=''
+
+# ssh to FleetLedger with the pairing key alone: ssh's own settings ignored (-F none), the host
+# key checked against ~/.ssh/known_hosts as pin_host_key left it, nothing forwarded.
+pair_ssh() {
+  [ -f "$stage/pairing" ] || return 255
+  ssh -F none -T -x -a -i "$stage/pairing" -l "$pair_user" -p "$port" -o BatchMode=yes \
+    -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=yes \
+    -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+    -o HostKeyAlias="$kh_name" -o ConnectTimeout=15 -o ClearAllForwardings=yes \
+    -o PermitLocalCommand=no -o ControlMaster=no -o ControlPath=none -o ProxyCommand=none \
+    -o LogLevel=ERROR -- "$hn" "$*" </dev/null 2>"$stage/pair.err" | head -c 4097
+}
+
+# The code for FleetLedger's nonce and this computer's key, worked out here
+# (pairing.code_for): the first 8 hex digits of a SHA-256, as a number, modulo 1000000.
+pair_code() {
+  printf 'shipshape-pair/1:%s:%s' "$1" "$2" >"$stage/pair.code-in"
+  h=$(sha256 "$stage/pair.code-in" | cut -c 1-8)
+  printf '%06d' $((0x$h % 1000000))
+}
+
+# One answer, read flat into $stage/pair.flat; its state in $pair_state ('' when it is not one).
+pair_ask() {
+  pair_state=''
+  pair_ssh "$@" >"$stage/pair.json"
+  flat "$stage/pair.json" >"$stage/pair.flat" 2>/dev/null || return 0
+  [ "$(field "$stage/pair.flat" schema)" = "$PAIR_SCHEMA" ] || return 0
+  pair_state=$(field "$stage/pair.flat" state)
+  case $pair_state in pending | approved | refused | unknown | busy | off) ;; *) pair_state='' ;; esac
+}
+
+# Returns 0 with this computer approved (me, me_key, fl_user, fl_hosts, fl_blob and
+# refresher_sha set, as read_setup sets them); 1, saying why in $pair_why, when pairing is
+# not to be had (then the step by hand is said); dies when you refused it or it lapsed.
+pair_here() {
+  pair_why=''
+  # How ssh reaches FleetLedger: its user as you name it (or ssh's), hn and port as pinned.
+  pair_user=${DEST%@*}
+  [ "$pair_user" = "$DEST" ] && pair_user=$(ssh -G "$DEST" 2>/dev/null | awk '$1 == "user" { print $2; exit }')
+  is_user "$pair_user" || { pair_why="ssh's user for $DEST is not one this installer takes"; return 1; }
+  { printf -- '-----BEGIN OPENSSH %s-----\n' 'PRIVATE KEY'
+    printf '%s\n' "$PAIR_KEY_BODY"
+    printf -- '-----END OPENSSH %s-----\n' 'PRIVATE KEY'; } >"$stage/pairing"
+  chmod 600 "$stage/pairing"
+  pair_ask request "$key_blob" "$name"
+  case $pair_state in
+    pending) ;;
+    busy) pair_why="FleetLedger has as many pairing requests waiting as it takes just now (try again in a few minutes)"; return 1 ;;
+    off) pair_why="pairing by code is off on FleetLedger (there: ship-fleet pair on, or the Fleet panel's Machines > Turn pairing on)"; return 1 ;;
+    '')
+      last=$(tail -n 1 "$stage/pair.err" 2>/dev/null | tr -cd ' -~' | cut -c 1-200)
+      case $last in
+        *"ermission denied"*) pair_why="FleetLedger takes no pairing request (pairing by code is off there, or that FleetLedger is older than it: there, ship-fleet self-update, then ship-fleet pair on)" ;;
+        *) pair_why="FleetLedger did not answer the pairing request (${last:-no reason given})" ;;
+      esac
+      return 1 ;;
+    *) pair_why="FleetLedger refused the pairing request: $(field "$stage/pair.flat" why | tr -cd ' -~' | cut -c 1-200)"; return 1 ;;
+  esac
+  f=$stage/pair.flat
+  pid=$(field "$f" id) token=$(field "$f" token) nonce=$(field "$f" nonce)
+  code=$(field "$f" code) left=$(field "$f" expires_in)
+  case $pid in p[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) die "FleetLedger's pairing answer is out of place." ;; esac
+  case $token$nonce in *[!0-9a-f]*) die "FleetLedger's pairing answer is out of place." ;; esac
+  { [ "${#token}" -eq 32 ] && [ "${#nonce}" -eq 32 ]; } || die "FleetLedger's pairing answer is out of place."
+  case $left in '' | *[!0-9]*) die "FleetLedger's pairing answer is out of place." ;; esac
+  { [ "$left" -ge 1 ] && [ "$left" -le 900 ]; } || die "FleetLedger's pairing answer is out of place."
+  pair_token=$token
+  # The code is this computer's own work, from its key: one that differs is not this request.
+  mine=$(pair_code "$nonce" "$key_blob")
+  [ "$mine" = "$code" ] || die "FleetLedger's code for this request is not the one this computer's key gives: not going on."
+  printf 'ssh-ed25519 %s\n' "$key_blob" >"$stage/me.pub"
+  my_fp=$(ssh-keygen -l -f "$stage/me.pub" 2>/dev/null | awk '{ print $2 }')
+  # FleetLedger's host key as ~/.ssh/known_hosts has it (whatever its type), shown so the
+  # approving side, which shows its own, can be checked against it.
+  fl_fp=$(ssh-keygen -l -F "$kh_name" -f "$HOME/.ssh/known_hosts" 2>/dev/null \
+    | awk '$1 != "#" { print $(NF - 1) " " $NF; exit }')
+  say "This computer is not trusted by FleetLedger yet, and no key here has a shell there, so it asked to be paired by code (request $pid)."
+  say ""
+  say "  Code:                   ${mine%???} ${mine#???}"
+  say "  This computer's key:    ED25519 $my_fp ($key_path.pub)"
+  [ -n "$fl_fp" ] && say "  FleetLedger's host key: $fl_fp (pinned here)"
+  say ""
+  say "Approve it on a device that has a shell on FleetLedger: the Fleet panel's Machines page > Approve, or in a terminal:"
+  say "  ssh $DEST ship-fleet pair approve $pid"
+  say "and type the code above there. It shows this computer's key and its own host key: check they are the ones above."
+  say "Waiting for it (up to $((left / 60)) minutes; Ctrl-C withdraws the request)..."
+  now=$(date +%s)
+  deadline=$((now + left + 30))
+  while :; do
+    sleep "$PAIR_WAIT"
+    pair_ask status "$token"
+    case $pair_state in
+      approved) break ;;
+      pending) ;;
+      refused) pair_token=''; die "FleetLedger refused this computer's pairing request; nothing was changed there. (Here: only this computer's key, $key_path.)" ;;
+      unknown) pair_token=''; die "This computer's pairing request lapsed or was withdrawn before it was approved; nothing was changed on FleetLedger. Run this again to ask again." ;;
+      off) pair_token=''; die "Pairing by code was turned off on FleetLedger before this computer was approved; nothing was changed there." ;;
+      *) ;; # a moment's trouble reaching it: ask again until the request would lapse
+    esac
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      pair_token=''
+      die "This computer's pairing request lapsed before it was approved (after $((left / 60)) minutes); nothing was changed on FleetLedger. Run this again to ask again."
+    fi
+  done
+  pair_token=''
+  f=$stage/pair.flat
+  me=$(field "$f" machine)
+  is_name "$me" || die "FleetLedger's approval names no machine this installer takes."
+  me_key=$key_path
+  # As read_setup reads machine-setup's: each value checked, and the host key the one pinned.
+  fl_user=$(field "$f" fleetledger.user)
+  is_user "$fl_user" || die "FleetLedger's user name is out of place."
+  n=$(field "$f" fleetledger.hosts)
+  n=${n#\#}
+  case $n in '' | *[!0-9]*) die "FleetLedger's host names are out of place." ;; esac
+  { [ "$n" -ge 1 ] && [ "$n" -le 8 ]; } || die "FleetLedger names 1 to 8 host names."
+  fl_hosts='' i=0
+  while [ "$i" -lt "$n" ]; do
+    h=$(field "$f" "fleetledger.hosts.$i")
+    is_host "$h" || die "One of FleetLedger's host names is out of place."
+    fl_hosts="${fl_hosts:+$fl_hosts }$h"
+    i=$((i + 1))
+  done
+  hk=$(field "$f" fleetledger.host_key)
+  case $hk in "ssh-ed25519 "*) ;; *) die "FleetLedger's host key is out of place." ;; esac
+  fl_blob=${hk#ssh-ed25519 }
+  is_blob "$fl_blob" || die "FleetLedger's host key is out of place."
+  [ -z "$host_blobs" ] || has "$fl_blob" "$host_blobs" || die "$DEST is not the VM FleetLedger records as its own (its host key differs): not going on."
+  refresher_sha=$(field "$f" refresher_sha256)
+  is_hex64 "$refresher_sha" || die "FleetLedger's refresher digest is out of place."
+  say "FleetLedger approved this computer as $me."
+  return 0
+}
+
+# A computer with no credential that has a shell on FleetLedger: paired by code (above), or,
+# with pairing not to be had, the one step to take by hand on a computer that has one.
 no_credentials() {
   own_key
   name=${want_name:-$(suggest_name)}
+  if [ "$no_pairing" != 1 ]; then
+    if pair_here; then return 0; fi
+    warn "Could not ask to be paired by code: $pair_why."
+    warn ""
+  fi
   warn "This computer cannot trust itself on FleetLedger: $access_said, and only a key that already has a shell there may trust a new one."
   warn ""
   warn "One step, on a computer whose key does (your main machine): in Herdr's Fleet tab, Machines > Trust a machine, with the name $name and this key:"
@@ -717,15 +883,20 @@ role_herdr_client() {
       hand_over
     fi
   else
-    if [ ! -f "$CONF" ]; then no_credentials; fi
-    # Set up before (the pasted line): the refresher knows this computer.
-    me=$(conf_value name) me_key=$(conf_value key)
-    if ! is_name "$me" || ! is_path "$me_key"; then die "$CONF is not one this installer reads."; fi
-    refreshed=''
-    if "$D/refresh" </dev/null; then refreshed=ok; else refreshed=failed; fi
+    paired=''
+    if [ ! -f "$CONF" ]; then
+      no_credentials # paired by code, or it stops here
+      paired=1
+    else
+      # Set up before (the pasted line, or a pairing): the refresher knows this computer.
+      me=$(conf_value name) me_key=$(conf_value key)
+      if ! is_name "$me" || ! is_path "$me_key"; then die "$CONF is not one this installer reads."; fi
+      refreshed=''
+      if "$D/refresh" </dev/null; then refreshed=ok; else refreshed=failed; fi
+    fi
     if [ -f "$here_dir/herdr/install-desk.sh" ]; then source_dir=$here_dir; fi
   fi
-  if [ "$shell" = yes ]; then
+  if [ "$shell" = yes ] || [ -n "$paired" ]; then
     install_refresher
   fi
   mods_said="skipped (--no-herdr)" settings_said="skipped" opened=''
@@ -826,6 +997,7 @@ main() {
   if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then die "HOME is not set."; fi
   r_here=0 r_remote=0 r_ship=0 r_client=0
   want_dest='' want_fp='' want_name='' want_scope='' want_logins='' yes=0 no_open=0 no_herdr=0
+  no_pairing=0 paired=''
   refresher_opts=''
   while [ "$#" -gt 0 ]; do
     case $1 in
@@ -847,6 +1019,7 @@ main() {
         want_scope="${want_scope:+$want_scope }$2"; shift ;;
       --logins) case ${2:-} in agent | owner | both) want_logins=$2 ;; *) usage "--logins is agent, owner or both" ;; esac; shift ;;
       --yes) yes=1 ;;
+      --no-pairing) no_pairing=1 ;;
       --no-open) no_open=1 ;;
       --no-herdr) no_herdr=1 ;;
       --no-timer | --no-hc | --lan) refresher_opts="$refresher_opts $1" ;;

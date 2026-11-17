@@ -23,6 +23,9 @@ import {
   machineRows,
   machinesView,
   pairJob,
+  pairRequestJob,
+  pairingSwitchJob,
+  pairingView,
   readCa,
   readMachineConf,
   readRefreshState,
@@ -46,7 +49,7 @@ const REFRESHER = `${D}/refresh`;
 const STATE = `${D}/state.json`;
 const CONF = `${D}/machine.conf`;
 const DEST = "fleetledger@fleetledger.example.invalid";
-const SKIPPING = ["--yes", "-y", "--force", "--revoke-my-key", "--stdin"];
+const SKIPPING = ["--yes", "-y", "--force", "--revoke-my-key", "--stdin", "--code"];
 // A made-up ed25519 public key: the 19 bytes of its type, then 32 bytes.
 const BLOB = "AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const KEY = `ssh-ed25519 ${BLOB}`;
@@ -490,4 +493,81 @@ test("a trust job lost from sight still brings one read of the list", async () =
   s.calls.length = 0;
   await s.fleet.checkJobs([]);
   assert.equal(verbs(s.calls).filter((v) => v === "ca").length, 1);
+});
+
+// ---- pairing by code ---------------------------------------------------------------------------
+
+const PAIRING = example("fleetledger-ca", "pairing-waiting.json");
+
+test("pairing by code: the computers waiting come with the one read, each name shown as a claim", async () => {
+  const s = await opened({ answers: { ca: ok(PAIRING) } });
+  assert.deepEqual(verbs(s.calls).filter((v) => !["ls", "attention", "about"].includes(v)), ["ca"]); // no read of its own
+  const v = machinesView(s.fleet.state, NOW);
+  assert.equal(v.pairing.on, true);
+  assert.deepEqual(v.pairing.rows.map((r) => r.id), ["p0c0ffe"]);
+  assert.match(v.pairing.rows[0].text, /^calls itself "laptop" \(its own claim\) · key SHA256:L{43} · from 192\.0\.2\.20/);
+  assert.match(v.pairing.said, /type the code the new computer shows/);
+  // A FleetLedger from before pairing by code: nothing shown, nothing refused.
+  const old = await opened();
+  assert.equal(machinesView(old.fleet.state, NOW).pairing, null);
+  assert.deepEqual(old.fleet.state.ca.refused, []);
+});
+
+test("pairing by code: a hostile host, id, address or a code never reaches a row", () => {
+  const good = PAIRING.pairing.pending[0];
+  const bad = [
+    { host: "laptop; rm -rf ~" },
+    { host: "Laptop\u001b[2J" },
+    { id: "p0c0ffe'; id; '" },
+    { source: "192.0.2.20 $(id)" },
+    { fingerprint: "SHA256:x" },
+    { code: "042137" },
+    { asked: "yesterday" },
+  ];
+  const doc = { ...PAIRING, pairing: { on: true, pending: [good, ...bad.map((b) => ({ ...good, ...b }))].slice(0, 4) } };
+  const r = readCa(JSON.stringify(doc));
+  assert.deepEqual(r.pairing.pending.map((x) => x.host), ["laptop"]);
+  assert.equal(r.refused.length, 1); // one line for the reason they share
+  const five = { ...PAIRING, pairing: { on: true, pending: [good, good, good, good, good] } };
+  assert.equal(readCa(JSON.stringify(five)).pairing, undefined); // more than FleetLedger keeps
+  assert.ok(readCa(JSON.stringify({ ...PAIRING, pairing: { on: "yes", pending: [] } })).refused.length);
+});
+
+test("Approve and Refuse open ship-fleet pair in a terminal, never with the code or --yes", async () => {
+  const { fleet } = await opened({ answers: { ca: ok(PAIRING) } });
+  const approve = pairRequestJob(fleet.state, "p0c0ffe", "approve");
+  assert.deepEqual(shWords(approve.job.remote), ["ship-fleet", "pair", "approve", "p0c0ffe"]);
+  assert.deepEqual(shWords(approve.job.shown), approve.job.argv);
+  assert.ok(approve.job.argv.includes("-t")); // a terminal, for the code to be typed in
+  const refuse = pairRequestJob(fleet.state, "p0c0ffe", "refuse");
+  assert.deepEqual(shWords(refuse.job.remote), ["ship-fleet", "pair", "refuse", "p0c0ffe"]);
+  for (const plan of [approve, refuse]) {
+    const words = [...plan.job.argv, ...shWords(plan.job.remote)];
+    for (const flag of SKIPPING) assert.ok(!words.includes(flag), `${flag} in ${plan.job.shown}`);
+  }
+  // Only a request in the list just read, by its id.
+  assert.match(pairRequestJob(fleet.state, "p123456", "approve").errors[0], /Not a request/);
+  assert.match(pairRequestJob(fleet.state, "p0c0ffe; id", "approve").errors[0], /Not a request/);
+  assert.match(pairRequestJob(fleet.state, "p0c0ffe", "approve --yes").errors[0], /Approve or refuse/);
+  const on = pairingSwitchJob(fleet.state, false);
+  assert.deepEqual(shWords(on.job.remote), ["ship-fleet", "pair", "off"]);
+  const locked = await opened({ answers: { ca: ok(PAIRING) }, about: example("fleetledger-about", "vm-locked.json") });
+  assert.match(pairRequestJob(locked.fleet.state, "p0c0ffe", "approve").errors[0], /vault is locked/);
+});
+
+test("after an approval ends, the list is read again once", async () => {
+  const s = await opened({ answers: { ca: ok(PAIRING) } });
+  const plan = pairRequestJob(s.fleet.state, "p0c0ffe", "approve");
+  const LOCAL = { id: "s1", machine: null, tabs: [{ id: "t1", active: true }] };
+  s.fleet.startJob(plan.job, { panes: [], spaces: [LOCAL] });
+  s.fleet.state.jobs[0].startedAt = NOW - 10 * 60 * 1000;
+  s.calls.length = 0;
+  await s.fleet.checkJobs([]);
+  assert.equal(verbs(s.calls).filter((v) => v === "ca").length, 1);
+});
+
+test("pairing off says how a new computer gets in instead", () => {
+  const v = pairingView({ ca: { machines: [], pairing: { on: false, pending: [] } } }, NOW);
+  assert.match(v.said, /off.*Trust a machine/);
+  assert.equal(pairingView({ ca: { pullOnly: "x", pairing: { on: true, pending: [] } } }, NOW), null);
 });

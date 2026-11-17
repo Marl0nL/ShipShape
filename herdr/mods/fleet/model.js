@@ -754,7 +754,8 @@ export function selectPlan(row) {
  *  (untrust), force (reboot past a shutdown lock, update backwards) and stdin (unlock without a
  *  terminal). Never sent; spelt here without their dashes so that no source file of the mod
  *  holds one at all (tests/test_herdr_fleet.py looks). */
-const SKIPPING = new Set(["yes", "force", "revoke-my-key", "stdin", "y"].map((w) => (w.length === 1 ? `-${w}` : `--${w}`)));
+// The code too: an approval by code is typed in its terminal, never passed by the panel.
+const SKIPPING = new Set(["yes", "force", "revoke-my-key", "stdin", "code", "y"].map((w) => (w.length === 1 ? `-${w}` : `--${w}`)));
 
 /** The patterns ship-fleet enforces, each from where it is defined (tests/test_herdr_fleet.py
  *  checks each one against its source). */
@@ -1131,8 +1132,10 @@ const live = (t) => (t.state === undefined || t.state === "live") && (t.exit_cod
 // Reload, and after a job that changed a machine: never on a timer. This computer's state.json
 // and machine.conf, which its refresher writes (contracts/refresh-state.schema.json), are read
 // with every read above, and the refresher runs only on Refresh now (and after a job, above).
-// What changes anything (trust, untrust, allow again, pair a phone's browser) is a job in a
-// terminal tab, built as every other job is.
+// What changes anything (trust, untrust, allow again, pair a phone's browser, pairing by code
+// on and off, approving or refusing a computer that asked) is a job in a terminal tab, built
+// as every other job is. The computers waiting to be paired by code come with the same read
+// (ca show's pairing): never their code, which is typed in the approval's terminal.
 
 export const SCHEMA_CA = "shipshape.fleetledger-ca/1";
 export const SCHEMA_REFRESH = "shipshape.refresh-state/1";
@@ -1155,7 +1158,10 @@ const FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}$/;
 const MACHINE_STATE = new Set(["ok", "expiring", "lapsed", "none", "revoked"]);
 const BUNDLE_KEY = new Set(["installed", "own-line", "missing"]);
 /** Jobs that change a machine: when one ends, the list is read again. */
-const MACHINE_KINDS = new Set(["trust", "untrust", "allow-again"]);
+const MACHINE_KINDS = new Set(["trust", "untrust", "allow-again", "approve", "refuse", "pairing-on", "pairing-off"]);
+/** A pairing request's id (fleetledger/pairing.py ID_RE) and the address it came from. */
+export const PAIR_ID = /^p[0-9a-f]{6}$/;
+const SOURCE = /^[0-9A-Fa-f.:]{1,45}$/;
 
 export const NO_REFRESHER = "No refresher on this computer (~/.ssh/shipshape/refresh), so it does not keep itself current. To get one: on the computer that runs ship-fleet, Trust a machine for this one (the one line of its ~/.ssh/shipshape/id_ed25519.pub), then paste here, in a terminal, the line ship-fleet trust prints.";
 
@@ -1227,8 +1233,28 @@ function shapeOfMachine(e) {
   return null;
 }
 
-/** `ship-fleet ca show --json`: the machines trusted to attach (untrusted ones too), and why any
- *  entry was left out. */
+/** ca show's pairing (contracts/fleetledger-ca.schema.json): {on, pending} or why it is left
+ *  out. A request's host is the computer's own claim: kept only when it is a machine name. */
+function readPairing(p, refused) {
+  if (p === undefined) return null; // a FleetLedger from before pairing by code
+  const keys = (o) => Object.keys(o ?? {}).sort().join(",");
+  if (!p || typeof p !== "object" || Array.isArray(p) || keys(p) !== "on,pending" || typeof p.on !== "boolean" || !Array.isArray(p.pending) || p.pending.length > 4) {
+    refused.add("pairing: not the contract's");
+    return null;
+  }
+  const pending = [];
+  for (const r of p.pending) {
+    if (!r || typeof r !== "object" || keys(r) !== "asked,expires,fingerprint,host,id,source" || !PAIR_ID.test(r.id) || typeof r.host !== "string" || !NAME.test(r.host) || typeof r.fingerprint !== "string" || !FINGERPRINT.test(r.fingerprint) || !(r.source === null || (typeof r.source === "string" && SOURCE.test(r.source))) || !stamp(r.asked) || !stamp(r.expires)) {
+      refused.add("a pairing request: not the contract's");
+      continue;
+    }
+    pending.push({ id: r.id, host: r.host, fingerprint: r.fingerprint, source: r.source, asked: r.asked, expires: r.expires });
+  }
+  return { on: p.on, pending };
+}
+
+/** `ship-fleet ca show --json`: the machines trusted to attach (untrusted ones too), pairing by
+ *  code and the computers waiting, and why any entry was left out. */
 export function readCa(stdout) {
   const p = parse(stdout, "ship-fleet ca show");
   if (p.error) return { error: p.error };
@@ -1257,7 +1283,8 @@ export function readCa(stdout) {
       bundleKey: e.bundle_key ?? null,
     });
   }
-  return { machines, refused: refused.list() };
+  const pairing = readPairing(p.value.pairing, refused);
+  return pairing ? { machines, pairing, refused: refused.list() } : { machines, refused: refused.list() };
 }
 
 // -- what the view shows --
@@ -1356,7 +1383,43 @@ export function machinesView(st, now) {
   if (mine && ca?.machines && !ca.machines.some((m) => m.name === mine && !m.revoked)) {
     notices.push({ tone: "warn", text: `This computer refreshes as ${mine}, which is not a trusted machine in this list.` });
   }
-  return { why, notices, rows: ca?.pullOnly ? [] : machineRows(st, now), local: localLines(st, now), canRefresh: st.local?.installed !== false };
+  return { why, notices, rows: ca?.pullOnly ? [] : machineRows(st, now), local: localLines(st, now), canRefresh: st.local?.installed !== false, pairing: pairingView(st, now) };
+}
+
+/** Pairing by code, for the Machines view: null (a FleetLedger from before it, or a pull-only
+ *  computer), else whether it is on, the switch, and a row per computer waiting, each saying
+ *  what it claims as a claim. */
+export function pairingView(st, now) {
+  const p = st.ca?.pairing;
+  if (!p || st.ca?.pullOnly) return null;
+  const rows = p.pending.map((r) => ({
+    id: r.id,
+    text: `calls itself "${r.host}" (its own claim) · key ${r.fingerprint} · from ${r.source ?? "an unknown address"} · asked ${when(r.asked, now)} · lapses ${fromNow(Date.parse(r.expires) - now)}`,
+  }));
+  const said = p.on
+    ? rows.length
+      ? "Pairing by code is on. Approve opens a terminal where you type the code the new computer shows, then choose its name, scope and logins."
+      : "Pairing by code is on: a computer with no key here can ask to be trusted (shipshape-setup --herdr-client there); none is waiting."
+    : "Pairing by code is off: a new computer with no key here cannot ask to be trusted (Trust a machine by its key instead, or turn it on).";
+  return { on: p.on, said, rows };
+}
+
+/** Turn pairing by code on or off: `ship-fleet pair on|off` in a terminal. */
+export function pairingSwitchJob(st, on) {
+  const gate = machineGate(st);
+  if (gate) return { errors: [gate] };
+  const word = on ? "on" : "off";
+  return { job: job(st.where, `pairing ${word}`, [["pair", word]], { kind: `pairing-${word}` }), errors: [] };
+}
+
+/** Approve or refuse a computer waiting: `ship-fleet pair approve|refuse ID` in a terminal. The
+ *  approval asks there for the code the computer shows: the panel never passes it, nor a yes. */
+export function pairRequestJob(st, id, act) {
+  const gate = machineGate(st);
+  if (gate) return { errors: [gate] };
+  if (!["approve", "refuse"].includes(act)) return { errors: ["Approve or refuse."] };
+  if (!PAIR_ID.test(String(id ?? "")) || !(st.ca?.pairing?.pending ?? []).some((r) => r.id === id)) return { errors: ["Not a request in the list just read: Reload."] };
+  return { job: job(st.where, `${act} ${id}`, [["pair", act, id]], { kind: act }), errors: [] };
 }
 
 // -- what is typed --

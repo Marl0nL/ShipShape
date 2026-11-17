@@ -74,7 +74,7 @@ which is exactly the line the panel showed under the action before you clicked i
 `ship-fleet` asks, it asks in that terminal, and you answer it there: a Ship's name before
 **Destroy**, `yes` before **Roll back**, the vault's passphrase for **Unlock**, a sign-in's link and
 code. The panel never passes a flag that skips one (`--yes`, `--force`, `--revoke-my-key`,
-`--stdin`), asks no question of its own, never types into a terminal, and takes no secret: the
+`--stdin`, `--code`), asks no question of its own, never types into a terminal, and takes no secret: the
 only things typed into it are a new Ship's name, tag, repository and size, a snapshot's name, and
 on the Machines page a machine's name, public key and scope and a device's name, each checked
 against the pattern `ship-fleet` enforces and refused, not sent, when it does not match.
@@ -131,6 +131,15 @@ when it ends, whether it may refresh (or was refused for being idle 30 days), wh
 | A machine's **⋯** | Allow again | `ship-fleet trust NAME --allow-again`, only while it is refused for being idle |
 | | Untrust | `ship-fleet untrust NAME` (`ship-fleet` asks you to type the machine's name; it cannot be undone) |
 | **Pair a phone's browser** | Pair | `ship-fleet ui link --name DEVICE --qr`: a one-time link and its QR code, in the terminal. Only while the remote web UI is on. |
+| **Pairing by code** | Turn pairing on, off | `ship-fleet pair on`, `ship-fleet pair off` |
+| A computer waiting | Approve… | `ship-fleet pair approve ID`: in the terminal, type the code that computer shows, then choose its name, scope and logins (defaults shown); it ends in `ship-fleet trust`. |
+| | Refuse | `ship-fleet pair refuse ID` |
+
+**Pairing by code** comes with the same read (`ca show --json`'s `pairing`): whether it is on,
+and a row per computer waiting to be trusted, with the name it gives itself (shown as its own
+claim), its key's fingerprint, the address it asked from, and when it lapses. Never its code:
+that is typed in the approval's terminal, read off the new computer's screen, so a click here
+approves nothing by itself. A FleetLedger from before pairing shows no such part.
 
 What Trust takes, before anything is sent: a name that is a machine name and not one in the list
 (names are never reused, untrusted ones included); the new machine's public key, exactly one
@@ -157,7 +166,7 @@ when it opens and on its buttons.
 | `hc machine ls --json` | Herdr's connection to each Ship |
 | the same ssh, `'signins' NAME '--offline' '--json'` | When a Ship's menu opens: the sign-ins it uses |
 | the same ssh, `'signins' '--accounts' '--json'` | When New Ship opens: the sign-ins a Ship may use, and the fleet's tags |
-| the same ssh, `'ca' 'show' '--json'` | When Machines opens, on its Reload, and after a job that trusted, untrusted or allowed a machine again: the trusted machines |
+| the same ssh, `'ca' 'show' '--json'` | When Machines opens, on its Reload, and after a job that trusted, untrusted or allowed a machine again, or turned pairing on or off, approved or refused a computer: the trusted machines and the computers waiting |
 | `test -x ~/.ssh/shipshape/refresh`, then the refresher | When a job ends, if there is one; on Refresh now (the `test -x` also when Machines opens) |
 
 It also reads `settings.json`, `fleet.json` (above) and the refresher's `state.json` and

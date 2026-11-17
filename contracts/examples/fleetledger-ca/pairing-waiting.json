@@ -1,0 +1,96 @@
+{
+  "schema": "shipshape.fleetledger-ca/1",
+  "host_ca": "SHA256:HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",
+  "user_ca": [
+    "SHA256:UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU"
+  ],
+  "ships": [
+    {
+      "ship": "ship-01",
+      "certificate_valid_before": "2026-04-01T00:00:00Z",
+      "principals": [
+        "ship-01",
+        "ship-01.local"
+      ],
+      "needs": null,
+      "trust_behind": false,
+      "seen": true
+    },
+    {
+      "ship": "ship-02",
+      "certificate_valid_before": null,
+      "principals": [],
+      "needs": "tooling update",
+      "trust_behind": false,
+      "seen": false
+    }
+  ],
+  "machines": [
+    {
+      "machine": "desk",
+      "scope": [
+        "tag:work"
+      ],
+      "logins": [
+        "agent"
+      ],
+      "valid_before": "2026-01-01T03:00:00Z",
+      "revoked": null,
+      "fingerprint": "SHA256:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      "state": "lapsed",
+      "this_computer": false,
+      "last_refreshed": "2025-12-28T09:00:00Z",
+      "idle_limit": true,
+      "idle_refused": null
+    },
+    {
+      "machine": "fleetledger",
+      "scope": [
+        "all"
+      ],
+      "logins": [
+        "agent",
+        "owner"
+      ],
+      "valid_before": "2026-01-08T00:00:00Z",
+      "revoked": null,
+      "fingerprint": "SHA256:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+      "state": "ok",
+      "this_computer": true,
+      "last_refreshed": null,
+      "idle_limit": true,
+      "idle_refused": null
+    },
+    {
+      "machine": "old-laptop",
+      "scope": [
+        "all"
+      ],
+      "logins": [
+        "agent",
+        "owner"
+      ],
+      "valid_before": "2025-12-01T00:00:00Z",
+      "revoked": "2025-12-02T00:00:00Z",
+      "fingerprint": "SHA256:OOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO",
+      "state": "revoked",
+      "this_computer": false,
+      "last_refreshed": null,
+      "idle_limit": true,
+      "idle_refused": null
+    }
+  ],
+  "pairing": {
+    "on": true,
+    "pending": [
+      {
+        "id": "p0c0ffe",
+        "host": "laptop",
+        "fingerprint": "SHA256:LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL",
+        "source": "192.0.2.20",
+        "asked": "2026-01-12T09:00:00Z",
+        "expires": "2026-01-12T09:10:00Z"
+      }
+    ]
+  }
+}

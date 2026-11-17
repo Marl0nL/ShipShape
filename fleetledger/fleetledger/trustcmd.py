@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from fleetledger import attach, authkeys, ca, paths, prompts, sshkeys, status
+from fleetledger import attach, authkeys, ca, pairing, paths, prompts, sshkeys, status
 from fleetledger.concierge import audit
 from fleetledger.errors import ConfigError, FleetError
 from fleetledger.inventory import Inventory, Ship, now_timestamp
@@ -226,9 +226,11 @@ def ca_show(args, app) -> int:
     for m in machines:
         if keyed.get(m["machine"]):
             m["bundle_key"] = keyed[m["machine"]]
+    # Pairing by code (pairing.py): on, and the computers waiting, for you alone (a shell).
+    asking = pairing.summary(inv)
     if args.json:
         app.say(json.dumps({"schema": CA_SCHEMA, **{key: found[key] for key in (
-            "host_ca", "user_ca", "ships", "machines")}}, indent=2))
+            "host_ca", "user_ca", "ships", "machines")}, "pairing": asking}, indent=2))
         return 0
     app.say(f"Host CA {found['host_ca']}  ({found['host_cert_days']} days per certificate)")
     app.say(f"User CA {found['user_ca'][0]}  ({found['user_cert_hours']} h by default)")
@@ -259,6 +261,10 @@ def ca_show(args, app) -> int:
         app.say(f"  {m['machine']:<14} {','.join(m['scope']):<20} {what}")
     if not machines:
         app.say("  none (ship-fleet trust <machine> --key <its .pub>)")
+    if asking["on"]:
+        n = len(asking["pending"])
+        app.say(f"Pairing by code: on, {n} computer(s) waiting"
+                + (" (ship-fleet pair ls, ship-fleet pair approve)." if n else "."))
     return 0
 
 
@@ -413,6 +419,9 @@ def cmd_trust(args, app) -> int:
             raise FleetError("That key is already trusted under another name.")
         if sshkeys.blob(key) in {sshkeys.blob(k) for k in (cfg.host_public, cfg.user_public)}:
             raise FleetError("That is a CA key, not a machine key.")
+        if sshkeys.blob(key) == pairing.BLOB:
+            raise FleetError("That is the well-known pairing key, whose private half anybody "
+                             "may have (pairing.py): never a machine's key.")
         scope = args.scope or ["all"]
         for s in scope:
             ca.principal_for(s)
@@ -480,6 +489,8 @@ def cmd_trust(args, app) -> int:
             if missing:
                 app.say(attach.install_hint(missing, renew_command(name, args) + " --install"))
         return 1 if not_revoked or unkeyed else proc.returncode
+    if getattr(args, "paired", False):  # ship-fleet pair approve: its installer finishes
+        return 1 if not_revoked or unkeyed else 0
     line = first_install_line(store, inv, m) if keyed in ("installed", "own-line") else None
     if line:
         app.say(f"On {name}, paste this one line in a terminal. It finds {name}'s key by its "

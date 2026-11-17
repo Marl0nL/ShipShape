@@ -32,11 +32,12 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `snapshot ls NAME --json` | a list | `shipshape.fleetledger-snapshot/1` |
 | `about [--check] --json` | one document | `shipshape.fleetledger-about/1` |
 | `machine-bundle NAME` (always JSON) | one document | `shipshape.machine-bundle/1` |
+| `machine-pair` (the pairing key's forced command; always JSON) | one document | `shipshape.machine-pair/1` |
 | `keys ls --json` | a list, one per key line | `shipshape.fleetledger-key/1` |
 
 `--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
-`about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls` and `machine-bundle` (which then signs
-nothing), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
+`about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls`, `machine-bundle` (which then signs
+nothing) and `machine-pair` (a request waits; approving it does not), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
 
 ## `ship-fleet ls --json` and `ship-fleet status NAME --json`
 
@@ -117,6 +118,7 @@ init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.j
 | `host_ca`, `user_ca` | Fingerprints of the key that signs Ships' host certificates and of the user CA keys Ships accept (the current one first). |
 | `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
 | `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `logins` (what its certificates log in as: `agent`, `owner` or both; `ship-fleet trust NAME --logins`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null); on FleetLedger's own VM only, `bundle_key` for a trusted machine: `installed`, `own-line` (its key has a line of yours in `authorized_keys`, so FleetLedger adds none) or `missing` (see "The bundle keys" under `machine-bundle`). |
+| `pairing` | Pairing by code (`ship-fleet pair`, below): `on`, and `pending`, the computers waiting (none while off), each with `id`, `host` (the name it gives itself: its own claim), `fingerprint` (its key's), `source` (the address sshd saw, or null), `asked` and `expires`. Never its code. Added in this version; a FleetLedger from before prints none. |
 
 No two entries that are not `revoked` share a key (`trust NAME --key` refuses one
 already listed; `trust --this-computer` reuses the live entry with its key, or adds a
@@ -151,6 +153,7 @@ does, after printing: 1 when any item is `missing` or `fail`, else 0.
 | `fleet.inventory`, `fleet.admin-key`, `fleet.ssh-agent`, `fleet.your-keys-for-ships`, `fleet.managed-keys`, `fleet.certificate-authority` | `ships.toml`, FleetLedger's keys and the CA. `fleet.managed-keys` is one `ok` item, or one `fail` per key FleetLedger looks after that is gone or whose passphrase it cannot read (`subject`). |
 | `fleet.trusted-machines`, `fleet.machine-certificate`, `fleet.machine-refresh-refused`, `fleet.machine-refresh-stopped` | Trusted machines: one `ok` item, or a `warn` per machine (`subject`) for each of `ship-fleet attention`'s machine items: its certificate in its last day or lapsed, its bundle refresh refused for being idle, or its refreshes stopped. |
 | `fleet.bundle-keys` | On FleetLedger's own VM, or wherever FleetLedger's block is in `~/.ssh/authorized_keys`: whether the block holds exactly one forced line per trusted machine ("The bundle keys" under `machine-bundle`). `fail` for a line edited by hand or duplicated, a stale line, a line that is no machine's, broken markers, or a file others may write; `missing` for a machine with no line yet. Fix: `ship-fleet trust --sync-keys` (or `chmod 600`, or a hand edit on a copy that is not the active one). Not listed elsewhere. |
+| `fleet.pairing` | Pairing by code (`ship-fleet pair`), listed only while it is on or the pairing key has a line anywhere: `ok` with its one line in FleetLedger's block (and how many computers wait); `missing` for no line while on, or on where no computer can ask (not FleetLedger's own VM, or not the copy that acts); `fail` for a line changed by hand or there twice, a line while pairing is off, or a line of yours for the pairing key outside the block (it lets anybody in with whatever that line allows). Fix: `ship-fleet trust --sync-keys`, `ship-fleet pair off`, or deleting your line. |
 | `hypervisor.driver`, `hypervisor.proxmox`, `hypervisor.proxmox-settings`, `hypervisor.proxmox-token`, `hypervisor.proxmox-api`, `hypervisor.template`, `hypervisor.fleetledgers-own-vm` | Where Ships run. |
 | `overlay.overlay`, `overlay.oauth-secret` | The overlay network. |
 | `ships.ships`, `ships.not-enrolled` | The Ships: how many, and one `warn` per Ship (`subject`) not enrolled yet. |
@@ -433,6 +436,71 @@ would run (a name from its host name, scope `all`, logins `both`, its own new
 refresher as the pasted line does (`machine-bundle NAME` with that machine's own key,
 FleetLedger's settings ignored, the host key pinned) and installs it only when its SHA-256
 is `refresher_sha256`; the package only when its size and SHA-256 are `package`'s.
+
+## `ship-fleet pair` and `ship-fleet machine-pair`
+
+Pairing by code, for a computer with no key that logs in to FleetLedger's own VM: it asks
+to be trusted, and you approve it by typing the code it shows. Off by default.
+
+```
+ship-fleet pair on | off        let unknown computers ask, or no longer
+ship-fleet pair ls              the requests waiting
+ship-fleet pair approve [ID]    type its code; choose its name, scope and logins
+ship-fleet pair refuse ID       (or --all)
+```
+
+**The way in.** While pairing is on, on FleetLedger's own VM and as the active copy,
+FleetLedger's block in `~/.ssh/authorized_keys` ("The bundle keys", above) holds one more
+line, for the well-known pairing key, whose private half is in `shipshape-setup` for
+anyone to read:
+
+```
+restrict,command="/home/fleetledger/.local/bin/ship-fleet machine-pair" ssh-ed25519 AAAA... shipshape-pairing
+```
+
+`ship-fleet pair off` removes it (and forgets every request); so does every sync where
+pairing is off, or the copy is not the active one on its own VM. No new port: the VM's
+sshd, keys only, as before. `trust` refuses the pairing key as a machine's key, and
+`pair on` refuses while a line of yours for it is outside the block.
+
+**What an unknown computer can do** (`machine-pair`, schema `machine-pair.schema.json`;
+examples in `examples/machine-pair/`). It reads `SSH_ORIGINAL_COMMAND` alone (at most 200
+bytes of printable ASCII, one fixed pattern per verb; never stdin):
+
+| Command | Answer |
+|---|---|
+| `request BLOB NAME` | Its own ed25519 key's base64 and the name it gives itself (a machine name: a claim). `pending`, with a random `token` (kept only as its SHA-256), a random `nonce`, the `code` and `expires_in` (600 seconds). The same key asking again replaces its earlier request. |
+| `status TOKEN` | `pending` (with `expires_in`), `approved` (with `machine`, `fleetledger`: `user`, `hosts`, `host_key`, and `refresher_sha256`), `refused`, or `unknown` (never filed, withdrawn, or lapsed). |
+| `cancel TOKEN` | Withdraws its own request: `unknown`. An approved one stays approved. |
+
+Anything else is `refused` (exit 1), with one fixed sentence; pairing off, or not FleetLedger's
+own VM as the active copy, is `off`; a full store is `busy`. No answer names a Ship, another
+machine or a count. Bounds: 4 requests waiting at once, 2 from one address, 20 filed in any
+hour, each lapsing after 10 minutes; the store (`~/.local/share/fleetledger/pairing/requests.json`,
+0600) never holds more, and a file that is not FleetLedger's counts as empty. A request
+grants nothing: its key has no line, so it logs in to nothing, and no bundle is made for it.
+It writes the store and, for a request filed, one audit line (`pair-request`).
+
+**The code** is the first 8 hex digits of SHA-256 of `shipshape-pair/1:NONCE:BLOB` (no
+newline), as a number, modulo 1000000, six digits. The installer works it out itself from
+its own key, and stops if FleetLedger's differs. A second computer asking at the same time
+has another key and another nonce, so another code.
+
+**Approving** (`pair approve`, in a shell of yours; the Fleet panel opens it in a terminal
+tab) shows the request (the name it claims, as a claim; its key's fingerprint; where it
+asked from; FleetLedger's own host key, which the computer pinned and shows too), then asks
+you to type the code the computer shows: it is never shown on FleetLedger, so it cannot be
+copied from there. With no ID, the code finds the one request it belongs to; two requests
+with one code are neither approved. Then a name (default: the one it claims, if no machine
+has it), scope (`all`) and logins (`both`), and it runs `ship-fleet trust NAME --key
+'ssh-ed25519 ...' --scope ... --logins ...` with every rule `trust` has (the bundle-only
+forced line, the 30-day idle rule). `--code`, `--name`, `--scope`, `--logins` and `--yes`
+answer the questions for a script; the panel never passes them. The vault must be
+unlocked (trust signs). Once approved, refused or lapsed, nothing of the request stays but
+its token's hash and the word, until it would have lapsed.
+
+A phone is out of scope: it runs no installer, so it never asks (its browser pairs with
+the web UI: `ship-fleet ui link`).
 
 ## `ship-fleet keys ls --json`
 

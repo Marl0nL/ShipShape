@@ -50,7 +50,7 @@ const SETTINGS = `${APP}/mods/fleet/settings.json`;
 const REFRESHER = `${HOME}/.ssh/shipshape/refresh`;
 const DEST = "fleetledger@fleetledger.example.invalid";
 const WHERE = { ssh: DEST, identity: null };
-const SKIPPING = ["--yes", "-y", "--force", "--revoke-my-key", "--stdin"];
+const SKIPPING = ["--yes", "-y", "--force", "--revoke-my-key", "--stdin", "--code"];
 
 // ---- the stand-in ---------------------------------------------------------------------------
 

@@ -69,13 +69,14 @@ def test_its_reads_and_where_its_actions_run():
     assert set(re.findall(r'host\.exec\("([^"]+)"', model)) == {"ssh", "test", "xdg-open"}
 
 
-SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin"]
+SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin", "--code"]
 
 
 def test_no_flag_that_skips_a_question_is_anywhere_in_it():
     """The panel never passes --yes (destroy, rollback, update and reboot of many), --force,
-    --revoke-my-key or --stdin: not in any file of the mod, not even as a word to refuse
-    (model.js spells those without their dashes)."""
+    --revoke-my-key, --stdin or --code (a pairing's code is typed in its terminal): not in any
+    file of the mod, not even as a word to refuse (model.js spells those without their
+    dashes)."""
     for path in sorted(FLEET.glob("*.js")):
         code = path.read_text("utf-8")
         for flag in SKIPPING:
@@ -116,7 +117,7 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
               "NAME: m.NAME.source, TAG: m.TAG.source, REPO: m.REPO.source, "
               "SNAPSHOT: m.SNAPSHOT.source, SIGNIN: m.SIGNIN.source, SERVICE: m.SERVICE.source, "
               "SIZE: m.SIZE, SCOPE: m.SCOPE.source, DEVICE: m.DEVICE.source, LOGINS: m.LOGINS, "
-              "LOGIN_CHOICES: m.LOGIN_CHOICES}))")
+              "LOGIN_CHOICES: m.LOGIN_CHOICES, PAIR_ID: m.PAIR_ID.source}))")
     r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri()],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -141,6 +142,9 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
     assert js["SCOPE"] == ca.SCOPE.pattern
     assert js["DEVICE"] == devices.NAME_RE.pattern
     assert js["LOGINS"] == list(ca.LOGINS)
+    from fleetledger import pairing
+
+    assert js["PAIR_ID"] == f"^{pairing.ID_RE.pattern}$"
     for choice in js["LOGIN_CHOICES"]:
         ca.parse_logins(choice)  # each one ship-fleet trust --logins takes
 

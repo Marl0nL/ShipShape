@@ -414,7 +414,7 @@ def test_locked_every_command_that_acts_refuses_before_it_starts(store, home):
         assert "locked" in out.getvalue()
     allowed = {c for c in cli.COMMANDS if c in cli.LOCKED_ALLOWED}
     assert allowed == {"unlock", "vault", "doctor", "ui", "about", "machine-bundle",
-                       "machine-setup"} | (
+                       "machine-setup", "machine-pair"} | (
         {"service", "self-update", "backup"} & set(cli.COMMANDS))
 
 
