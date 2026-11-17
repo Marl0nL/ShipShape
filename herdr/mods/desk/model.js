@@ -16,6 +16,7 @@ import { agents, terminals, focused, panes, spaces, shared, readTextFile, exec, 
 import { resolve, DEFAULT_TAG_LOOKS, PRESETS } from "./looks.js";
 import { tagColor } from "./ui.js";
 import { createHash } from "crypto";
+import { ShipTags } from "./shiptags.js";
 
 export const DIR = "mods/desk";
 export const KINDS = ["assistant", "manager", "coder", "crew"];
@@ -53,21 +54,9 @@ export function agentName(a) {
 
 const tagList = (s) => (Array.isArray(s) ? s : (s ?? "").split(/[,\s]+/)).map((t) => t.trim().toLowerCase()).filter(Boolean);
 
-// FleetLedger's tags for each Ship (by name), read now and then; a remote space's machine is its Ship.
-const ledger = { tags: new Map(), at: 0, busy: false };
-export async function readLedger() {
-  if (ledger.busy || Date.now() - ledger.at < 300000) return false;
-  ledger.busy = true;
-  try {
-    const r = await exec("ship-fleet", ["ls", "--json", "--offline"], { timeout: 20000 });
-    if (r.code === 0) ledger.tags = new Map(JSON.parse(r.stdout).map((s) => [s.name, tagList(s.tags)]));
-  } catch {
-    // No FleetLedger on this computer: tags come from labels alone.
-  }
-  ledger.at = Date.now();
-  ledger.busy = false;
-  return true;
-}
+// FleetLedger's tags for each Ship (by name): a remote space's machine is its Ship (shiptags.js).
+export const shipTags = new ShipTags({ readTextFile, exec, home });
+export const readLedger = () => shipTags.read();
 
 const SAMPLE_AGENT = {
   assistant: { name: "Assistant", where: "sample" },
@@ -98,7 +87,7 @@ export function subject({ real = false } = {}) {
   const fmTask = labels["firstmate.task"] || null;
   const told = fmTask && labels["desk.kind"] !== "manager" ? { kind: "crew", guessed: false } : KINDS.includes(labels["desk.kind"]) ? { kind: labels["desk.kind"], guessed: false } : null;
   const info = crews.get(a.address);
-  let tags = [...new Set([...tagList(labels["desk.tags"]), ...(ledger.tags.get(space?.machine ?? "") ?? [])])];
+  let tags = [...new Set([...tagList(labels["desk.tags"]), ...shipTags.get(space?.machine)])];
   // A crew wears its boss's tags (a work firstmate's crews are work too) unless it has its own.
   if (!tags.length && (fmTask || labels["desk.kind"] === "crew")) {
     const boss = bossOf(a, labelReader(), labels["desk.parent"] || null);
@@ -439,7 +428,7 @@ export function tagIndex(t) {
     }
     const boss = bossOf(a, labelsOf, null, cwdOf);
     if (boss) parents[a.address] = boss.address;
-    let tags = [...new Set([...(labels.get(a.address) ?? []), ...(ledger.tags.get(machineOf.get(a.space) ?? "") ?? [])])];
+    let tags = [...new Set([...(labels.get(a.address) ?? []), ...shipTags.get(machineOf.get(a.space))])];
     // Crews and secondmates wear their boss's tags unless they have their own.
     if (!tags.length && (crewsOut[a.address] || fm) && boss) tags = agentsOut[boss.address]?.tags ?? labels.get(boss.address) ?? [];
     if (tags.length) agentsOut[a.address] = { tags, color: colorOf(tags) };
@@ -447,7 +436,7 @@ export function tagIndex(t) {
   }
   const spacesOut = {};
   for (const sp of spaces()) {
-    const tags = [...new Set([...(bySpace.get(sp.id) ?? []), ...(ledger.tags.get(sp.machine ?? "") ?? [])])];
+    const tags = [...new Set([...(bySpace.get(sp.id) ?? []), ...shipTags.get(sp.machine)])];
     if (tags.length) spacesOut[sp.id] = { tags, color: colorOf(tags) };
   }
   return { agents: agentsOut, spaces: spacesOut, parents, crews: crewsOut, names: namesOut };

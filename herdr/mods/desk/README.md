@@ -18,8 +18,9 @@ Around it, the parts of `main` that said little are replaced:
 
 - **The top bar** (the desk mod's `bar` part, instead of Herdr's tab strip) says where you are:
   `space › agent`, named by the agent's tab or session title rather than the program, with its tag
-  colour. Tabs appear only when a space has more than one, named by what's in them. New, Files,
-  Changes and the window buttons are as before.
+  colour. Tabs appear only when a space has more than one, named by what's in them. A **Fleet**
+  button opens the Fleet panel's tab when that mod is installed (`install-desk.sh` installs it).
+  New, Files, Changes and the window buttons are as before.
 - **The sidebar's lists** are clones of Herdr's (`mods/desk-spaces`, `mods/desk-agents`). Both
   colour by tag: a tagged space's avatar takes its tag's colour, and each tagged agent gets a bar
   of it (a tag whose look has a band uses the band's colour). The agents list
@@ -63,7 +64,9 @@ Each agent owns its labels and one board file; nothing writes the layout or this
 - `desk.kind`: `assistant`, `manager` or `coder` (unlabelled agents are guessed from their tab or
   space name, else as a coder if they're in a git folder).
 - `desk.tags`: comma-separated (`work,project-x`). Agents on a ShipShape Ship also get the Ship's
-  FleetLedger tags.
+  FleetLedger tags, from this computer's `~/.ssh/shipshape/fleet.json` (kept by its self-refresh),
+  else from a local `ship-fleet`; when neither has them the header says "No Ship tags", and why
+  (`../../DESK.md`, "Where it touches ShipShape").
 - `desk.file`: where its board is, on the agent's own machine.
 
 `bin/desk` (linked as `~/.local/bin/desk`) sets these and writes the board; `AGENTS.md` is the

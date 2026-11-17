@@ -1,0 +1,13 @@
+{
+  "name": "herdr-desk-tests",
+  "version": "0.1.0",
+  "description": "Tests for the Herdr Desk's Ship tags (herdr/mods/desk/shiptags.js), with a stand-in for Herdr",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test *.test.js"
+  }
+}
