@@ -13,6 +13,9 @@ trusts, untrusts and pairs from there (see Machines).
 
 ## Install
 
+`shipshape-setup --herdr-client` installs it with the Desk, from FleetLedger (see
+`herdr/README.md`). By hand, from this checkout:
+
 ```sh
 herdr/install-fleet.sh                                   # into ${HERDR_APP_HOME:-~/.config/herdr-app}/mods/fleet
 herdr-app do tab.new '{"name":"Fleet","mod":"fleet"}'    # open it as a tab
@@ -27,8 +30,12 @@ or opens a new one, and `fleet.refresh` reads again.
 
 ## Settings
 
-Say where FleetLedger is in `~/.config/herdr-app/mods/fleet/settings.json` (under
-`$HERDR_APP_HOME` when that is set; `settings.example.json` is beside it):
+`shipshape-setup --herdr-client` (at the checkout's root) fills these in where you have
+not: `ssh` with the destination it reached FleetLedger by, and `identity_file` with the key
+file ssh logged in with there when that key was not in an agent. It never changes a value
+you set, and leaves a file with anything else in it as it is. By hand, say where
+FleetLedger is in `~/.config/herdr-app/mods/fleet/settings.json` (under `$HERDR_APP_HOME`
+when that is set; `settings.example.json` is beside it):
 
 ```json
 {

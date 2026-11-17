@@ -363,7 +363,10 @@ one the line names, and runs its `install`, which:
 - leaves a timer that runs the refresher at login and hourly: a systemd user timer
   (`shipshape-refresh.timer`) on Linux, a launchd agent (`local.shipshape.refresh`) on
   macOS. `--no-timer` at the end of the line leaves none (also `--no-hc`, `--lan`);
-  `~/.ssh/shipshape/refresh remove-timer` removes it.
+  `~/.ssh/shipshape/refresh remove-timer` removes it;
+- refreshes, and then, with Herdr here (`herdr-app` on PATH, or its folder) and no Fleet
+  panel in it yet, says the one command left: `shipshape-setup --herdr-client`. Not when
+  `shipshape-setup` itself runs the install (it sets `SHIPSHAPE_SETUP`).
 
 Run with no arguments (the timer, the Fleet panel after a job), the refresher asks
 for `ship-fleet machine-bundle NAME` the same way, checks the whole document, and
@@ -375,7 +378,9 @@ bundle becomes a directive), `fleet.json` (the bundle as checked, compact, witho
 `refresher`), `hc-added` and `state.json`, all in `~/.ssh/shipshape`. It adds each
 herdr-core Ship with a host certificate to `hc` (when the bundle's login is `agent`)
 and removes only the `hc` machines it added itself, once their Ship has left the bundle
-or stopped running herdr-core. It never replaces itself. Exit 0: applied (a warning,
+or stopped running herdr-core. It never replaces itself: only an install you run (the
+pasted line, or `shipshape-setup`, each checking the SHA-256 FleetLedger names) puts a new
+refresher in place, never the timer or the Fleet panel. Exit 0: applied (a warning,
 such as hc missing, goes to stderr and `state.json`). Exit 1: nothing new applied, one
 sentence on stderr and in `state.json`: FleetLedger unreachable, the machine refused or
 untrusted, a certificate due and not signed (`vault-locked`, `sign-failed`), no
@@ -392,6 +397,42 @@ when its certificate is in its last day or lapsed, the existing `machine-cert-*`
 whose fix then says when it last asked and, while the vault is locked, to unlock it.
 A machine that never asked has only the `machine-cert-*` items, as before. Any call
 counts as asking, one made by hand included: FleetLedger cannot tell who ran it.
+
+## `ship-fleet machine-setup --json | --package | --installer`
+
+What the installer, `shipshape-setup` (at the checkout's root), reads to set a computer up
+as a Herdr client, over an ssh session that has a shell on FleetLedger's own VM. It only
+reads, and answers only there, as the copy that acts (it names that VM's host key); off it,
+one line on stderr and exit 1. It answers while the vault is locked. A trusted machine's
+bundle-only key never reaches it: its forced line runs `machine-bundle`.
+
+`--json`: schema `machine-setup.schema.json` (`"schema": "shipshape.machine-setup/1"`);
+examples in `examples/machine-setup/`.
+
+| Field | What it is |
+|---|---|
+| `fleetledger` | The VM (`[fleet] self`): `name`; `user`, the user FleetLedger runs as (whom the refresher logs in as); `hosts`, its names in the order the refresher tries them (its bare name last); `host_key`, `ssh-ed25519 AAAA...`. |
+| `refresher_sha256` | The SHA-256 of the refresher every bundle carries (`refresher`). |
+| `package` | `sha256` and `bytes` of what `--package` prints. |
+| `machines` | Every trusted machine but those untrusted and FleetLedger's own computer, with an ed25519 key: `name`, `key` (type and base64 only), `access`: `bundle` (FleetLedger's forced line), `shell` (a line of yours, so it asks for its bundle by name) or `none` (no line yet). |
+
+`--package`: a gzipped tar of `shipshape-setup` and `herdr/` less its tests (the install
+scripts, the Desk layout and themes, the Desk's mods and the Fleet panel; a link inside
+`herdr/` packed as the file it names), the same bytes for the same checkout. `--installer`:
+`shipshape-setup` alone, for a computer with no checkout.
+
+**What the installer does with it**, and what it checks: it pins FleetLedger's host key
+on first contact (`ssh-keyscan`, shown as a fingerprint to confirm, or
+`--host-key-fingerprint`; a key `~/.ssh/known_hosts` already has is used as it is, one it
+has differently is refused) and refuses a VM whose `fleetledger.host_key` is not that key.
+Every value passes the refresher's own patterns, or the whole document is refused. It is
+the trusted machine whose `key` one of its `~/.ssh` key files holds (more than one:
+`--name`). When none is and the session has a shell, it shows the `ship-fleet trust` it
+would run (a name from its host name, scope `all`, logins `both`, its own new
+`~/.ssh/shipshape/id_ed25519`) and runs it after one yes (`--yes`). It fetches the
+refresher as the pasted line does (`machine-bundle NAME` with that machine's own key,
+FleetLedger's settings ignored, the host key pinned) and installs it only when its SHA-256
+is `refresher_sha256`; the package only when its size and SHA-256 are `package`'s.
 
 ## `ship-fleet keys ls --json`
 

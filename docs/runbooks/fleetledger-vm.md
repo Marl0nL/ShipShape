@@ -97,10 +97,11 @@ its name. Revoke refuses to remove the last key that surely gets a shell, or the
 session logged in with, unless you add `--allow-lockout`; a trusted machine's
 bundle-only line goes with `ship-fleet untrust NAME` instead. The seed sets sshd's
 `ExposeAuthInfo yes`, so a session knows which key let it in: audit lines of commands
-you run then carry that key's name (`actor`) and fingerprint (`actor_key`). Without it
-they name no key, and `revoke` over ssh cannot tell which key is yours, so it always
-asks for `--allow-lockout`. A VM seeded before this setting gets it by hand, once, as
-`vmadmin`:
+you run then carry that key's name (`actor`) and fingerprint (`actor_key`). It is
+optional, and nothing else needs it: without it audit lines name no key, and `revoke`
+over ssh cannot tell which key is yours, so it always asks for `--allow-lockout`. A VM
+seeded before this setting lacks it; `ship-fleet doctor` mentions it there once, as
+`info`, with the one command to add it as `vmadmin` if you want it:
 
 ```sh
 echo 'ExposeAuthInfo yes' | sudo tee -a /etc/ssh/sshd_config.d/10-fleetledger.conf
@@ -336,8 +337,13 @@ ship-fleet self-update               # to origin/main; --to v1.2 for a tag
 ```
 
 It refuses uncommitted changes, and refuses going back unless `--force`. It
-reinstalls only if the install itself changed, and restarts the service, which lets
-running jobs finish first. **No Ship changes:** FleetLedger's checkout is also the
+reinstalls only if the install itself changed, brings FleetLedger's own state up to date
+(today: the trusted machines' bundle keys in `authorized_keys`, which `ship-fleet trust
+--sync-keys` used to be needed for), and restarts the service, which lets running jobs
+finish first. That catch-up runs as the new version, and again each time the service
+starts (so an update made by an older `self-update` is caught up too); if it fails it
+says why and the fix, the update stays, the service still restarts, and `self-update`
+run again catches up even with nothing new to fetch. **No Ship changes:** FleetLedger's checkout is also the
 next Ship tooling, so roll it out when you choose, with `ship-fleet update`
 ([update-fleet.md](update-fleet.md)).
 

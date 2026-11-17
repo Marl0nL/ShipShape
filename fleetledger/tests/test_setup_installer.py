@@ -502,3 +502,26 @@ def test_machine_setup_answers_only_on_its_own_vm(vm, monkeypatch):
 def test_the_installer_is_executable_posix_shell_at_the_root():
     assert INSTALLER.read_bytes().startswith(b"#!/bin/sh\n")
     assert INSTALLER.stat().st_mode & 0o111
+
+
+def test_a_newer_installer_from_fleetledger_does_the_rest_itself(vm, desktop, tmp_path):
+    # FleetLedger's checkout has another shipshape-setup than the one run here.
+    root = tmp_path / "vm-checkout"
+    shutil.copytree(REPO / "herdr", root / "herdr", ignore=shutil.ignore_patterns("tests"),
+                    symlinks=True)
+    newer = INSTALLER.read_text().replace('say "FleetLedger: $DEST"',
+                                          'say "FleetLedger (the newer installer): $DEST"')
+    (root / "shipshape-setup").write_text(newer)
+    pkg = machinesetup.package(root)
+    (vm.d / "package.tgz").write_bytes(pkg)
+    doc = json.loads((vm.d / "setup.json").read_text())
+    doc["package"] = {"sha256": hashlib.sha256(pkg).hexdigest(), "bytes": len(pkg)}
+    (vm.d / "setup.json").write_text(json.dumps(doc, indent=2))
+    m = desktop
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "FleetLedger has another version of this installer; it does the rest." in proc.stdout
+    assert "FleetLedger (the newer installer): " in proc.stdout
+    assert (m.home / ".local" / "bin" / "shipshape-setup").read_text() == newer
+    assert (m.d / "refresh").read_bytes() == SCRIPT.read_bytes()
+    assert not list(m.tmp.iterdir())  # the handed-over copy went with it
