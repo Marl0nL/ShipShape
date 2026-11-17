@@ -682,6 +682,20 @@ def test_check_lists_what_moves_what_stays_and_why(computers, monkeypatch):
     assert a.run("migrate", "check")[0] == 0  # read-only: the same again
 
 
+def test_pairing_requests_waiting_stay_here(computers):
+    """The pending pairing requests (pairing.py) are left, with why: they lapse within
+    minutes, and a computer still waiting asks the new computer again."""
+    a, b, world = computers
+    path = a.root / "data" / "pairing" / "requests.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"requests": [], "filed": []}\n')
+    code, out, err = a.run("migrate", "check")
+    assert code == 0, out + err
+    stays = out.split("Stays here:")[1]
+    line = next((x for x in stays.splitlines() if "pairing/requests.json" in x), "")
+    assert "pairing requests waiting to be approved" in line, stays
+
+
 @pytest.mark.parametrize("where", ["config/notes.txt", "data/backup/ships.toml.bak",
                                    "data/ca/old.krl", "data/web/future-piece.json"])
 def test_a_file_fleetledger_does_not_know_stops_the_move(computers, monkeypatch, where):

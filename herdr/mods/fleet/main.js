@@ -2,7 +2,8 @@
 // with them. Every action opens a terminal tab running one ship-fleet command over ssh, shown
 // here before it runs; ship-fleet asks its own questions there. Nothing is typed into the panel
 // but a new Ship's name, tag, repository and size, a snapshot's name, and on the Machines page
-// a machine's name, public key and scope and a device's name. Nothing secret.
+// a machine's name, public key and scope and a device's name. Nothing secret. A computer asking
+// to be paired by code is approved in a terminal tab, where its code is typed: never here.
 // All its logic is in model.js; this file draws and hands model.js Herdr's functions.
 //
 //   herdr-app do tab.new '{"name":"Fleet","mod":"fleet"}'   open it as a tab
@@ -14,7 +15,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand } from "herdr";
-import { Fleet, rows, header, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, LOGIN_CHOICES } from "./model.js";
+import { Fleet, rows, header, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -445,6 +446,49 @@ export default class FleetPanel extends View {
       );
   }
 
+  // Pairing by code: on or off, and the computers waiting. Approve and Refuse each open a
+  // terminal tab (ship-fleet pair approve|refuse ID); the code is typed there, never here.
+  pairingBox(t, p) {
+    const st = fleet.state;
+    const sw = pairingSwitchJob(st, !p.on);
+    const act = (r, what) => {
+      const plan = pairRequestJob(st, r.id, what);
+      return button(t, `${what}-${r.id}`, what === "approve" ? "Approve…" : "Refuse", () => {
+        if (plan.job) this.start(plan.job);
+        else this.note = plan.errors[0];
+      });
+    };
+    return v_flex()
+      .id("pairing")
+      .w_full()
+      .p(10)
+      .gap(6)
+      .rounded(8)
+      .border_1()
+      .border_color(p.rows.length ? t.accent : t.border)
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(div().flex_1().text_size(13).font_weight(600).child(p.rows.length ? `Waiting to be paired (${p.rows.length})` : "Pairing by code"))
+          .when(Boolean(sw.job), (el) => el.child(button(t, "pairing-switch", p.on ? "Turn pairing off" : "Turn pairing on", () => this.start(sw.job)))),
+      )
+      .child(div().text_size(11.5).text_color(t.dim).child(p.said))
+      .children(
+        p.rows.map((r) =>
+          h_flex()
+            .id(`pair-${r.id}`)
+            .w_full()
+            .gap(8)
+            .items_center()
+            .child(div().flex_none().w(70).text_color(t.foreground).font_family("JetBrains Mono").child(r.id))
+            .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(r.text))
+            .child(act(r, "approve"))
+            .child(act(r, "refuse")),
+        ),
+      );
+  }
+
   machineRow(t, r) {
     const key = `m:${r.name}`;
     return h_flex()
@@ -506,6 +550,7 @@ export default class FleetPanel extends View {
             .child(button(t, "machines-reload", st.ca?.loading ? "Reading…" : "Reload", (_e, cx) => this.reloadMachines(cx))),
         ),
       )
+      .when(Boolean(v.pairing), (el) => el.child(this.pairingBox(t, v.pairing ?? { on: false, said: "", rows: [] })))
       .when(Boolean(this.trust), (el) => el.child(this.trustView(t)))
       .when(this.pair, (el) => el.child(this.pairView(t)))
       .when(Boolean(v.why), (el) => el.child(div().text_size(12).text_color(t.dim).child(v.why ?? "")))

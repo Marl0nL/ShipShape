@@ -394,6 +394,18 @@ def bundle_key_items(app, inv) -> list[Item]:
     return [Item("fleet", "bundle keys", state, detail, fix)]
 
 
+def pairing_items(app, inv) -> list[Item]:
+    """Pairing by code (pairing.py), when it is on or its line is anywhere: is its one line
+    in FleetLedger's block, as FleetLedger writes it? Read-only."""
+    from fleetledger import authkeys
+
+    found = authkeys.pairing_check(app.store_factory(), inv)
+    if found is None:
+        return []
+    state, detail, fix = found
+    return [Item("fleet", "pairing", state, detail, fix)]
+
+
 # --- the overlay and the Ships ------------------------------------------------------------
 
 
@@ -540,6 +552,7 @@ def _everything(app, *, offline: bool = False) -> tuple[list[Item], Any]:
         items += machines_items(inv)
         items += appliance_items(inv)
         items += bundle_key_items(app, inv)
+        items += pairing_items(app, inv)
         items += hypervisor(app, inv, offline=offline)
         items += overlay_items(app, inv)
         items += ships_items(inv)

@@ -67,7 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from fleetledger import __version__, ca, handover, inuse, keys, paths, vault
+from fleetledger import __version__, ca, handover, inuse, keys, pairing, paths, vault
 from fleetledger.errors import ConfigError, FleetError
 
 SCHEMA = "fleetledger.migrate/1"
@@ -480,6 +480,10 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
                        "it is next sent")
         elif rel == BACKUP_LAST:
             plan.leave(f, "this computer's last backup result (ship-fleet backup)")
+        elif top == pairing.FOLDER:
+            plan.leave(f, "pairing requests waiting to be approved: they lapse within "
+                       f"{int(pairing.TTL.total_seconds() // 60)} minutes, and a computer "
+                       "still waiting asks the new computer again")
         elif rel in WEB_FILES:
             plan.leave(f, "the remote web UI's paired browsers and pairing links: bound to "
                        "this computer's address; pair each device again with the new computer "

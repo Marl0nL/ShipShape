@@ -83,6 +83,33 @@
           }
         }
       }
+    },
+    "pairing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on", "pending"],
+      "description": "Pairing by code (ship-fleet pair): whether an unknown computer may ask to be trusted, and the computers waiting for you to approve or refuse them. Added in this version; a FleetLedger from before prints none. The code is never here: you type the one the computer shows (ship-fleet pair approve).",
+      "properties": {
+        "on": { "type": "boolean", "description": "ship-fleet pair on (off by default)." },
+        "pending": {
+          "type": "array",
+          "maxItems": 4,
+          "description": "The requests waiting (none while off), oldest first.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "host", "fingerprint", "source", "asked", "expires"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^p[0-9a-f]{6}$", "description": "What ship-fleet pair approve and refuse take." },
+              "host": { "$ref": "#/$defs/shipName", "description": "The name the computer gives itself: its own claim, unchecked; the default name to trust it as." },
+              "fingerprint": { "$ref": "#/$defs/sshFingerprint", "description": "Its key's, as ssh-keygen -l prints it; the installer shows the same." },
+              "source": { "type": ["string", "null"], "maxLength": 45, "pattern": "^[0-9A-Fa-f.:]+$", "description": "The address sshd saw it ask from; null: unknown." },
+              "asked": { "$ref": "#/$defs/timestamp" },
+              "expires": { "$ref": "#/$defs/timestamp", "description": "When it lapses, unless approved or refused first." }
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

@@ -27,7 +27,7 @@ COMMANDS = (
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
     "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle", "keys",
-    "machine-setup",
+    "machine-setup", "pair", "machine-pair",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -37,7 +37,8 @@ EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetle
                          "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
                          "fleetledger.selfupdate", "fleetledger.toolkitcmd",
                          "fleetledger.about", "fleetledger.machinebundle",
-                         "fleetledger.loginkeys", "fleetledger.machinesetup")
+                         "fleetledger.loginkeys", "fleetledger.machinesetup",
+                         "fleetledger.paircmd")
 
 
 @dataclass
@@ -788,9 +789,11 @@ def _handed_over(args, app) -> None:
 # which refuses while locked, so its result, failed, is kept for doctor); about, which
 # reads and says what it could not; machine-bundle, which then signs nothing and says so
 # (it writes only that machine's record of when it asked, and its audit line);
-# machine-setup, which only reads; and any read from the caches alone (--offline).
+# machine-setup, which only reads; machine-pair, which files or answers a pairing
+# request (pairing.py: it writes only the pending store, never a secret, and approving
+# one, a trust, still waits for the unlock); and any read from the caches alone (--offline).
 LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup",
-                  "about", "machine-bundle", "machine-setup")
+                  "about", "machine-bundle", "machine-setup", "machine-pair")
 
 
 def _vault_locked(args, app) -> None:
@@ -807,6 +810,8 @@ def _vault_locked(args, app) -> None:
         return  # reads your toolkit folders and ships.toml only
     if args.command == "keys" and args.action == "ls":
         return  # reads ~/.ssh/authorized_keys only
+    if args.command == "pair" and args.action in ("ls", "refuse"):
+        return  # reads or empties the pending pairing requests only (pairing.py)
     if (args.command == "signins" and getattr(args, "accounts", False)
             and not (args.set_account or args.clear_account)):
         return  # lists tag accounts from ships.toml only

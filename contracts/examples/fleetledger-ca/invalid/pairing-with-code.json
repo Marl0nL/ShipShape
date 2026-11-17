@@ -1,0 +1,23 @@
+{
+  "schema": "shipshape.fleetledger-ca/1",
+  "host_ca": "SHA256:HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH",
+  "user_ca": [
+    "SHA256:UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU"
+  ],
+  "ships": [],
+  "machines": [],
+  "pairing": {
+    "on": true,
+    "pending": [
+      {
+        "id": "p0c0ffe",
+        "host": "laptop",
+        "fingerprint": "SHA256:LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL",
+        "source": "192.0.2.20",
+        "asked": "2026-01-12T09:00:00Z",
+        "expires": "2026-01-12T09:10:00Z",
+        "code": "042137"
+      }
+    ]
+  }
+}

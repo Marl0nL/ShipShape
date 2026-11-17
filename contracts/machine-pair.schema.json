@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/machine-pair.schema.json",
+  "title": "A pairing request's answer (ship-fleet machine-pair, version 1)",
+  "description": "What FleetLedger answers a computer it does not know, through the well-known pairing key's forced line (`ship-fleet machine-pair`, while `ship-fleet pair on`; contracts/ship-fleet.md). One document per call, on one line, whatever happens. The command comes from SSH_ORIGINAL_COMMAND alone: `request BLOB NAME` (the computer's own ed25519 public key's base64, and the name it gives itself), `status TOKEN` or `cancel TOKEN`. Nothing here is about the fleet: no Ship, no other machine, no count; an approved request learns only the name it is trusted as, how to reach FleetLedger's own VM, and which refresher to run.",
+  "type": "object",
+  "required": ["schema", "state"],
+  "properties": {
+    "schema": { "const": "shipshape.machine-pair/1" },
+    "state": {
+      "enum": ["pending", "approved", "refused", "unknown", "busy", "off"],
+      "description": "pending: filed, or still waiting; approved: you approved it (ship-fleet pair approve); refused: you refused it, or the command was not one FleetLedger takes (then why says which); unknown: no request has this token (never filed, withdrawn, or lapsed); busy: as many requests are waiting as FleetLedger takes, try again later; off: pairing by code is off here."
+    }
+  },
+  "oneOf": [
+    {
+      "description": "request: filed.",
+      "additionalProperties": false,
+      "required": ["schema", "state", "id", "token", "nonce", "code", "expires_in"],
+      "properties": {
+        "schema": true,
+        "state": { "const": "pending" },
+        "id": { "type": "string", "pattern": "^p[0-9a-f]{6}$", "description": "The request's name on FleetLedger (ship-fleet pair ls): not a secret." },
+        "token": { "type": "string", "pattern": "^[0-9a-f]{32}$", "description": "Random; what status and cancel take. FleetLedger keeps only its SHA-256, and gives it to this caller alone." },
+        "nonce": { "type": "string", "pattern": "^[0-9a-f]{32}$", "description": "Random, chosen by FleetLedger for this request." },
+        "code": { "type": "string", "pattern": "^[0-9]{6}$", "description": "The first 8 hex digits of SHA-256 of `shipshape-pair/1:NONCE:BLOB` (no newline), as a number, modulo 1000000, as six digits. The computer works it out itself from its own key and checks it is this; you type it on FleetLedger to approve." },
+        "expires_in": { "type": "integer", "minimum": 1, "maximum": 900, "description": "Seconds until it lapses unless approved or refused." }
+      }
+    },
+    {
+      "description": "status: still waiting.",
+      "additionalProperties": false,
+      "required": ["schema", "state", "expires_in"],
+      "properties": {
+        "schema": true,
+        "state": { "const": "pending" },
+        "expires_in": { "type": "integer", "minimum": 0, "maximum": 900 }
+      }
+    },
+    {
+      "description": "status: approved. The computer then fetches its refresher through its own key (ship-fleet machine-bundle NAME, with this host key pinned) and runs it only when its SHA-256 is refresher_sha256.",
+      "additionalProperties": false,
+      "required": ["schema", "state", "machine", "fleetledger", "refresher_sha256"],
+      "properties": {
+        "schema": true,
+        "state": { "const": "approved" },
+        "machine": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$", "description": "The name you trusted it as." },
+        "fleetledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["user", "hosts", "host_key"],
+          "properties": {
+            "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$" },
+            "hosts": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$" } },
+            "host_key": { "type": "string", "pattern": "^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]+={0,2}$", "description": "FleetLedger's own VM's: the installer goes on only when it is the one it pinned." }
+          }
+        },
+        "refresher_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    {
+      "description": "Anything else: refused, unknown, busy or off, with FleetLedger's own fixed words.",
+      "additionalProperties": false,
+      "required": ["schema", "state"],
+      "properties": {
+        "schema": true,
+        "state": { "enum": ["refused", "unknown", "busy", "off"] },
+        "why": { "type": "string", "maxLength": 200 }
+      }
+    }
+  ]
+}

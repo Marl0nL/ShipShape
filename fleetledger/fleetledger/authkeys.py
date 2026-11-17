@@ -7,6 +7,13 @@ alone writes:
     restrict,command="/home/fleetledger/.local/bin/ship-fleet machine-bundle laptop" \
         ssh-ed25519 AAAA... laptop          (one line; split here to fit)
 
+and, while pairing by code is on (pairing.py; `ship-fleet pair on`), one more line, for the
+well-known pairing key, forced to `ship-fleet machine-pair`, which can only file and answer
+a pairing request:
+
+    restrict,command="/home/fleetledger/.local/bin/ship-fleet machine-pair" \
+        ssh-ed25519 AAAA... shipshape-pairing
+
 `restrict` turns off everything a key line can allow (a terminal, port, agent and X11
 forwarding, ~/.ssh/rc) and anything a later OpenSSH adds to that list; `command=` makes
 sshd run that one command whatever the client asks for (a shell, scp, sftp, another
@@ -106,6 +113,17 @@ def ed25519_blob(public_key: str) -> str | None:
 
 def forced_command(name: str) -> str:
     return f"{SHIP_FLEET} machine-bundle {name}"
+
+
+def pairing_line() -> str | None:
+    """The pairing key's one line (pairing.py), or None when ship-fleet's path is not one
+    FleetLedger puts in authorized_keys."""
+    from fleetledger import pairing
+
+    if not PATH_RE.fullmatch(SHIP_FLEET):
+        return None
+    return (f'{OPTIONS},command="{SHIP_FLEET} {pairing.VERB}" ssh-ed25519 {pairing.BLOB} '
+            f"{pairing.COMMENT}")
 
 
 def line_for(name: str, public_key: str) -> str | None:
@@ -262,6 +280,10 @@ class Review:
     unfit: list[str] = field(default_factory=list)  # a name or key no line is made for
     present: dict[str, list[str]] = field(default_factory=dict)  # machine -> its lines
     foreign: list[int] = field(default_factory=list)  # line numbers (1-based)
+    pairing_wanted: str | None = None  # the pairing key's line, while pairing is on here
+    pairing_present: list[str] = field(default_factory=list)  # its lines in the block
+    pairing_own: bool = False  # the pairing key has a line outside the block (yours)
+    pairing_on: bool = False  # [ca] pairing, whether or not a line is wanted here
 
     @property
     def missing(self) -> list[str]:
@@ -277,8 +299,30 @@ class Review:
         return [n for n in self.present if n not in self.wanted]
 
     @property
+    def pairing_in_step(self) -> bool:
+        return self.pairing_present == ([self.pairing_wanted] if self.pairing_wanted else [])
+
+    @property
+    def pairing_state(self) -> str | None:
+        """installed, missing, edited (more than its one line, or changed), stale (a line
+        while none is wanted), own-line (one of yours, outside the block), or None: none
+        wanted, none there."""
+        if self.pairing_own:
+            return "own-line"
+        if self.pairing_wanted is None:
+            return "stale" if self.pairing_present else None
+        if not self.pairing_present:
+            return "missing"
+        return "installed" if self.pairing_in_step else "edited"
+
+    @property
     def in_step(self) -> bool:
-        return not (self.missing or self.edited or self.stale or self.foreign)
+        return not (self.missing or self.edited or self.stale or self.foreign
+                    or not self.pairing_in_step)
+
+    def lines(self) -> list[str]:
+        """What the block should hold: each machine's line, then the pairing key's."""
+        return [*self.wanted.values(), *([self.pairing_wanted] if self.pairing_wanted else [])]
 
     def state_of(self, name: str) -> str | None:
         """ca show's word for one trusted machine: installed, own-line, missing, or
@@ -305,10 +349,12 @@ def adds_here(store, inv) -> bool:
 
 
 def review(store, inv, f: File | None = None) -> Review:
-    from fleetledger import ca
+    from fleetledger import ca, pairing
 
     f = f or read()
     r = Review(f, adds_here(store, inv))
+    r.pairing_on = pairing.is_on(inv)
+    r.pairing_own = pairing.BLOB in f.outside
     machines = ca.machines(inv)
     by_key = {}
     for m in machines:
@@ -322,7 +368,9 @@ def review(store, inv, f: File | None = None) -> Review:
             if x.strip(" \t\r") and not x.lstrip(" \t").startswith("#"):
                 r.foreign.append(i + 1)  # not a comment, yet no key sshd would read
             continue
-        if key in by_key:
+        if key == pairing.BLOB:  # never a machine's (trust refuses it)
+            r.pairing_present.append(x)
+        elif key in by_key:
             r.present.setdefault(by_key[key], []).append(x)
         elif found := written.fullmatch(x):
             # One FleetLedger wrote, for a key no record has now (edited in ships.toml):
@@ -332,6 +380,8 @@ def review(store, inv, f: File | None = None) -> Review:
             r.foreign.append(i + 1)
     if not r.adds and handover_role(store) is not None:
         return r  # standby or retired: nothing is wanted here
+    if r.adds and r.pairing_on and not r.pairing_own:
+        r.pairing_wanted = pairing_line()
     here = _this_machine()
     for m in machines:
         if m.revoked or m.name == here:
@@ -439,6 +489,7 @@ class Synced:
     installed: list[str]  # machines that had no line and have one now
     removed: list[str]
     fixed: list[str]
+    pairing: str | None = None  # the pairing key's line: added, removed or rewritten
 
 
 def sync(store, *, edit: bool = True) -> Synced:
@@ -452,6 +503,7 @@ def sync(store, *, edit: bool = True) -> Synced:
     from fleetledger.inventory import now_timestamp
 
     installed, removed, fixed, wrote = [], [], [], False
+    paired = None
     for _ in range(TRIES):
         if not ssh_dir().exists():
             r = review(store, store.load())
@@ -462,7 +514,7 @@ def sync(store, *, edit: bool = True) -> Synced:
             r = review(store, store.load())
             f = r.file
             if r.in_step and not (f.broken and f.raw is not None):
-                result = Synced(r, wrote, installed, removed, fixed)
+                result = Synced(r, wrote, installed, removed, fixed, paired)
                 break  # in step (a symlinked file where no line is wanted included)
             _refuse_unsafe(f)
             if r.foreign:
@@ -475,8 +527,11 @@ def sync(store, *, edit: bool = True) -> Synced:
             installed += [n for n in r.wanted if n not in r.present and n not in installed]
             removed += [n for n in r.stale if n not in removed]
             fixed += [n for n in r.edited if n not in fixed]
+            if not r.pairing_in_step:
+                paired = ("added" if not r.pairing_present else "rewritten"
+                          if r.pairing_wanted else "removed")
             try:
-                _write(f, compose(f, list(r.wanted.values())))
+                _write(f, compose(f, r.lines()))
             except _Changed:
                 continue
             except OSError as exc:
@@ -490,7 +545,8 @@ def sync(store, *, edit: bool = True) -> Synced:
         from fleetledger.concierge import audit
 
         audit.record("-", "authorized-keys", ",".join(
-            sorted({*result.installed, *result.removed, *result.fixed})) or "-", "ok")
+            sorted({*result.installed, *result.removed, *result.fixed,
+                    *(["pairing"] if result.pairing else [])})) or "-", "ok")
     if result.installed and edit:
         inv = store.load()
         # Never asked (and never refused for it): its 30 days start now, whatever an
@@ -540,6 +596,13 @@ def synced_said(s: Synced) -> list[str]:
                    f"{', '.join(s.fixed)}.")
     if s.removed:
         out.append(f"Bundle key line(s) removed from {where}: {', '.join(s.removed)}.")
+    if s.pairing == "added":
+        out.append(f"Pairing key line added to {where}: an unknown computer may ask to be "
+                   "trusted there, and nothing else, until you turn pairing off.")
+    elif s.pairing == "rewritten":
+        out.append(f"Pairing key line in {where} rewritten as FleetLedger writes it.")
+    elif s.pairing == "removed":
+        out.append(f"Pairing key line removed from {where}: no unknown computer can ask now.")
     return out
 
 
@@ -592,6 +655,44 @@ def check(store, inv) -> tuple[str, str, str] | None:
         said += f"; none for {', '.join(r.unfit)} (its name or key is not one FleetLedger puts "
         said += "there)"
     return "ok", said, ""
+
+
+def pairing_check(store, inv) -> tuple[str, str, str] | None:
+    """doctor's pairing item: (state, detail, next), or None while pairing is off and no
+    line of the pairing key's is anywhere (the default)."""
+    from fleetledger import pairing
+
+    try:
+        r = review(store, inv)
+    except FleetError as exc:
+        return ("fail", exc.message, exc.hint or "") if pairing.is_on(inv) else None
+    where = where_said()
+    state = r.pairing_state
+    if state == "own-line":
+        return ("fail", f"{where} has a line of its own for the well-known pairing key "
+                f"({pairing.COMMENT}), whose private half anybody may have: that line lets "
+                "anybody in with whatever it allows", f"Delete that line from {where}")
+    if not r.pairing_on:
+        if state == "stale":
+            return ("fail", f"{where} has the pairing key's line while pairing is off, so an "
+                    "unknown computer may still ask", SYNC)
+        return None
+    if not r.adds:
+        return ("missing", "pairing by code is on, but this is not FleetLedger's own VM or "
+                "not the copy that acts, so no computer can ask here", "ship-fleet pair off")
+    if r.pairing_wanted is None:
+        return ("fail", f"pairing by code is on, but ship-fleet's path ({SHIP_FLEET}) is not "
+                f"one FleetLedger puts in {where}", "ship-fleet pair off")
+    if state == "missing":
+        return ("missing", f"pairing by code is on, but {where} has no line for the pairing "
+                "key, so a new computer cannot ask", SYNC)
+    if state == "edited":
+        return ("fail", f"the pairing key's line in {where} is not the one FleetLedger writes "
+                "(changed by hand, or there twice)", SYNC)
+    waiting = len(pairing.listing())
+    return ("ok", f"pairing by code is on: an unknown computer may ask to be trusted "
+            f"({waiting} waiting: ship-fleet pair ls); nothing is trusted until you approve "
+            "it. ship-fleet pair off closes it", "")
 
 
 def states(store, inv) -> dict[str, str | None] | None:

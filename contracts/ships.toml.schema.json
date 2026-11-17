@@ -205,6 +205,11 @@
           "items": { "$ref": "#/$defs/sshPublicKey" },
           "uniqueItems": true,
           "description": "Host keys that must never be trusted again (Ships re-keyed or removed after being certified). Trusted machines refuse them (RevokedHostKeys)."
+        },
+        "pairing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pairing by code (`ship-fleet pair on`): on FleetLedger's own VM, the well-known pairing key gets one line in FleetLedger's block of ~/.ssh/authorized_keys, forced to `ship-fleet machine-pair`, so a computer with no credential can ask to be trusted and you approve it by its code. Absent or false: off."
         }
       }
     },

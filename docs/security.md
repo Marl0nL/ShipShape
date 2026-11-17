@@ -52,6 +52,47 @@ from the LAN to other machines or cloud VMs.
   forward your SSH agent to a Ship: FleetLedger turns forwarding off on every
   connection, and Ships use their own GitHub sign-in instead.
 
+## Pairing by code
+
+A computer with no key that logs in to FleetLedger's own VM can ask to be trusted, and you
+approve it on a device that already has a shell there by typing the code it shows
+(`ship-fleet pair`, [runbooks/trust-machines.md](runbooks/trust-machines.md#pairing-by-code)).
+Off by default: `ship-fleet pair on` turns it on.
+
+- **No new listener.** The way in is the VM's sshd, keys only, as before: one more line in
+  FleetLedger's block of `authorized_keys`, for a well-known key whose private half is in
+  the installer for anyone to read, `restrict`ed and forced to `ship-fleet machine-pair`.
+  It is a name for a door, not a credential: what it opens is that one command, which can
+  only file a request, say how one stands, and withdraw one. There only while pairing is
+  on, on the VM, as the active copy; `doctor` checks it (`fleet.pairing`).
+- **What anybody on the network can do with it, bounded.** The command comes from
+  `SSH_ORIGINAL_COMMAND` alone (200 bytes, printable ASCII, a fixed pattern per verb;
+  stdin never read): a request holds the computer's ed25519 key and the name it gives
+  itself (a machine name, shown as its own claim, never trusted). At most 4 wait at once,
+  2 from one address, 20 filed in any hour, each lapsing after 10 minutes; a full store
+  says busy and grows no further. It writes one small store (0600) and an audit line per
+  request filed. Answers are FleetLedger's own fixed words: no Ship, no machine, no count.
+- **A request grants nothing.** Its key gets no line, so it logs in to nothing and fetches
+  no bundle; nobody but you (a shell on FleetLedger: `pair ls`, `ca show --json`) sees the
+  requests, and the computer that asked learns only its own request's state.
+- **The approval is bound to the right computer.** The code comes from a nonce FleetLedger
+  chooses for each request and the computer's own key, and the computer works it out
+  itself. You type the code the computer shows: FleetLedger never shows it, so it cannot
+  be copied from the request list, and a second computer asking at the same time has
+  another key and another code. A code that is not the request's approves nothing; two
+  requests with one code are neither approved. Approving shows the computer's key
+  fingerprint and FleetLedger's own host key, which the installer shows too, so you can
+  check both against the new computer's screen.
+- **The new computer trusts nothing before FleetLedger's host key.** It pins the key on
+  first contact as the installer always has (shown to confirm, or
+  `--host-key-fingerprint`), and refuses an approval naming any other.
+- **Approval is `ship-fleet trust`.** Explicit, in a terminal of yours (the Fleet panel
+  opens one and never passes the code or a yes), ending in `trust NAME --key ...` with all
+  its rules: the bundle-only forced line, the 30-day idle rule, scope and logins you
+  choose. Nothing about what a trusted machine can do changes. Refused, withdrawn and
+  lapsed requests leave nothing (a refused one, only the word, until it would have lapsed).
+- **A phone is out of scope.** It runs no installer; its browser pairs with the web UI.
+
 ## Off the LAN: the overlay network (phase 5)
 
 Ships can join a Tailscale tailnet (or a Headscale server) so you reach them from
@@ -327,6 +368,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | An older checkout runs `update` (another computer's, or a branch you forgot) | rolls every Ship's tooling back to older code and pins | `update` compares each Ship's ShipShape commit with this checkout's in git and leaves a Ship on a newer commit, another branch or a commit it does not have, unless `--force` ([update-fleet.md](runbooks/update-fleet.md)) |
 | Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr and herdr-core pinned by checksum; recipes pin versions; verified Ubuntu images |
+| Someone on your LAN or overlay while pairing by code is on | file pairing requests through the well-known pairing key | its line runs only `ship-fleet machine-pair`; a request grants nothing and is seen by you alone; at most 4 waiting (2 per address, 20 an hour), each for 10 minutes; trusted only when you type the code the computer shows, which FleetLedger never shows; off by default (`ship-fleet pair off`) |
 | Someone on your overlay network | reach a Ship from anywhere | access rules allow only your devices, only port 22; logins still need your key and the pinned host key |
 | A compromised Ship on the overlay | reach your laptop or other Ships | the access rules give Ships no destinations; with `ssh_listen=overlay` the LAN is closed too |
 | A leaked overlay key or OAuth secret | add a machine to your tailnet | join keys are single use and expire in minutes; the OAuth client can only mint `tag:ship` keys, which get no destinations; revoke it in the admin console |
