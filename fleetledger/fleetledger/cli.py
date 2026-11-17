@@ -27,6 +27,7 @@ COMMANDS = (
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
     "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle", "keys",
+    "machine-setup",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -36,7 +37,7 @@ EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetle
                          "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
                          "fleetledger.selfupdate", "fleetledger.toolkitcmd",
                          "fleetledger.about", "fleetledger.machinebundle",
-                         "fleetledger.loginkeys")
+                         "fleetledger.loginkeys", "fleetledger.machinesetup")
 
 
 @dataclass
@@ -786,10 +787,10 @@ def _handed_over(args, app) -> None:
 # that runs it, updating FleetLedger's own checkout, and backup (it reads the vault,
 # which refuses while locked, so its result, failed, is kept for doctor); about, which
 # reads and says what it could not; machine-bundle, which then signs nothing and says so
-# (it writes only that machine's record of when it asked, and its audit line); and any
-# read from the caches alone (--offline).
+# (it writes only that machine's record of when it asked, and its audit line);
+# machine-setup, which only reads; and any read from the caches alone (--offline).
 LOCKED_ALLOWED = ("unlock", "vault", "doctor", "ui", "service", "self-update", "backup",
-                  "about", "machine-bundle")
+                  "about", "machine-bundle", "machine-setup")
 
 
 def _vault_locked(args, app) -> None:

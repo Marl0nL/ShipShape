@@ -881,6 +881,19 @@ first_install() {
 
   if [ "$timer" = 1 ]; then install_timer; else echo "No timer (--no-timer): run $D/refresh when you want it current."; fi
   "$D/refresh"
+  rc=$?
+  herdr_hint
+  return "$rc"
+}
+
+# After the pasted line: with Herdr here and no Fleet panel yet, the one command left. Not
+# when the installer (shipshape-setup) runs this install: it does that part itself.
+herdr_hint() {
+  [ -n "${SHIPSHAPE_SETUP:-}" ] && return 0
+  hh=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
+  command -v herdr-app >/dev/null 2>&1 || [ -d "$hh" ] || return 0
+  [ -d "$hh/mods/fleet" ] && return 0
+  echo "Herdr is here: for the Desk and the Fleet panel, run shipshape-setup --herdr-client (at the root of a ShipShape checkout)."
 }
 
 case ${1:-} in

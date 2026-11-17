@@ -23,7 +23,7 @@
           "enum": [
             "computer.python", "computer.pythonpath", "computer.openssh", "computer.shipshape-checkout",
             "computer.vault", "computer.vault-key-in-ram", "computer.swap", "computer.backups",
-            "computer.image-builds", "computer.ship-fleet-wrapper",
+            "computer.image-builds", "computer.ship-fleet-wrapper", "computer.sshd-auth-info",
             "fleet.this-copy", "fleet.inventory", "fleet.admin-key", "fleet.ssh-agent",
             "fleet.your-keys-for-ships", "fleet.certificate-authority", "fleet.managed-keys",
             "fleet.trusted-machines", "fleet.machine-certificate",

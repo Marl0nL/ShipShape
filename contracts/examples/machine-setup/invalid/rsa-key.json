@@ -1,0 +1,30 @@
+{
+  "schema": "shipshape.machine-setup/1",
+  "fleetledger": {
+    "name": "fleetledger",
+    "user": "fleetledger",
+    "hosts": [
+      "fleetledger.local",
+      "fleetledger.example.invalid",
+      "fleetledger"
+    ],
+    "host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGUtaG9zdC1rZXktb25seS1hLXBsYWNlaG9sZGVy"
+  },
+  "refresher_sha256": "0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c",
+  "package": {
+    "sha256": "1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d",
+    "bytes": 401234
+  },
+  "machines": [
+    {
+      "name": "desktop",
+      "key": "ssh-rsa AAAAB3NzaC1yc2E",
+      "access": "shell"
+    },
+    {
+      "name": "laptop",
+      "key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGUtbGFwdG9wLWtleS1wbGFjZWhvbGRlcg",
+      "access": "bundle"
+    }
+  ]
+}

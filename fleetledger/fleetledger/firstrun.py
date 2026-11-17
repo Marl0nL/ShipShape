@@ -322,10 +322,41 @@ def appliance_items(inv) -> list[Item]:
                     "virtualisation, or not in the kvm group): image builds would be very slow",
                     "give the VM CPU type host on a host with nested virtualisation, or build "
                     "images on your desktop (docs/runbooks/fleetledger-vm.md)")]
-    return out + wrapper_items()
+    return out + wrapper_items() + auth_info_items()
 
 
 WRAPPER_KEY = "computer.ship-fleet-wrapper"
+AUTH_INFO_KEY = "computer.sshd-auth-info"
+SSHD_CONF = Path("/etc/ssh/sshd_config.d/10-fleetledger.conf")  # appliance.SSHD's file
+AUTH_INFO_FIX = ("as vmadmin: echo 'ExposeAuthInfo yes' | sudo tee -a "
+                 f"{SSHD_CONF} && sudo sshd -t && sudo systemctl reload ssh")
+
+
+def auth_info_items(environ=None, conf: Path | None = None) -> list[Item]:
+    """sshd's ExposeAuthInfo, which a VM seeded before it came in lacks. Optional, and
+    the only place FleetLedger mentions it: everything works without it; with it, audit
+    lines name the key that logged in and `keys revoke` can tell yours. Listed (info)
+    only when it is surely off: this session came over ssh and sshd named no key, or
+    (not over ssh) the seed's sshd file is there and does not set it."""
+    from fleetledger import loginkeys
+
+    s = loginkeys.session(environ)
+    if s.over_ssh:
+        off = not (environ if environ is not None else os.environ).get("SSH_USER_AUTH")
+    else:
+        try:
+            text = (conf or SSHD_CONF).read_text()
+        except OSError:
+            return []
+        off = not any(line.split()[:2] == ["ExposeAuthInfo", "yes"]
+                      for line in text.splitlines())
+    if not off:
+        return []
+    return [Item("computer", "sshd auth info", "info",
+                 "optional: sshd does not tell a session which key logged in (ExposeAuthInfo; "
+                 "a VM seeded before it came in). Everything works without it; with it, "
+                 "audit lines name the key, and ship-fleet keys revoke can tell yours",
+                 AUTH_INFO_FIX, key=AUTH_INFO_KEY)]
 
 
 def wrapper_items() -> list[Item]:
