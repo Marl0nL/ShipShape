@@ -90,7 +90,10 @@ class Job:
 class BrowserApp:
     """The app, for a command run from the browser: output to the job, no terminal
     (so a key that must be pasted, or any prompt, is refused). A wrapper, not a copy:
-    every hook set on the app (an API factory, a signer ...) comes along."""
+    every hook set on the app (an API factory, a signer ...) comes along. It names no
+    actor: whatever ssh session started the web UI, a browser runs this command."""
+
+    actor = None
 
     def __init__(self, app: Any, sink: Any) -> None:
         self._app = app

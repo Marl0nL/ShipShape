@@ -84,7 +84,29 @@ A `tests` entry proves a Ship cannot reach it. Ships still get no destinations a
 `~/.ssh/authorized_keys` holds one line per machine you trust (`ship-fleet trust`),
 in a block FleetLedger writes, each forced to fetch that machine's own bundle and
 nothing else ([trust-machines.md](trust-machines.md), "A machine that refreshes
-itself"). FleetLedger never changes your lines. `ship-fleet doctor` checks the block.
+itself"). FleetLedger never changes your lines unless you ask (below). `ship-fleet
+doctor` checks the block.
+
+**Who may log in, and who did.** You work FleetLedger over ssh as `fleetledger`, so the
+keys in its `authorized_keys` are who has a shell on the computer holding the fleet's
+keys. `ship-fleet keys ls` lists them: each key's name (its comment), type and
+fingerprint, and what it may do (a shell, one forced command, or a trusted machine's
+bundle only). `ship-fleet keys name SHA256:... desktop` names one of yours (only its
+comment changes); `ship-fleet keys revoke old-laptop` removes its line after you type
+its name. Revoke refuses to remove the last key that surely gets a shell, or the key your
+session logged in with, unless you add `--allow-lockout`; a trusted machine's
+bundle-only line goes with `ship-fleet untrust NAME` instead. The seed sets sshd's
+`ExposeAuthInfo yes`, so a session knows which key let it in: audit lines of commands
+you run then carry that key's name (`actor`) and fingerprint (`actor_key`). Without it
+they name no key, and `revoke` over ssh cannot tell which key is yours, so it always
+asks for `--allow-lockout`. A VM seeded before this setting gets it by hand, once, as
+`vmadmin`:
+
+```sh
+echo 'ExposeAuthInfo yes' | sudo tee -a /etc/ssh/sshd_config.d/10-fleetledger.conf
+sudo sshd -t && sudo systemctl reload ssh
+# then, in a new ssh session as fleetledger: ship-fleet keys ls marks "(this session)"
+```
 
 ## 1. On the desktop: the seed
 

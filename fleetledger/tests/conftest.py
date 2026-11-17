@@ -97,6 +97,10 @@ def no_real_authorized_keys(tmp_path, monkeypatch):
     from fleetledger import authkeys
 
     monkeypatch.setattr(authkeys, "HOME", tmp_path / "ssh-home")
+    # Nor does a test read the ssh session it runs in (loginkeys.session): tests that
+    # need one set these themselves.
+    for name in ("SSH_USER_AUTH", "SSH_CONNECTION", "SSH_CLIENT"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)

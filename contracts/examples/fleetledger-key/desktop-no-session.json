@@ -1,0 +1,14 @@
+{
+  "schema": "shipshape.fleetledger-key/1",
+  "file": "authorized_keys2",
+  "line": 1,
+  "name": null,
+  "type": "ecdsa-sha2-nistp256",
+  "fingerprint": "SHA256:GKw+c0PwFokMUQ6T+TUmEWnZ4/VlQ2Qpgw+vCTT0+OQ",
+  "access": "shell",
+  "machine": null,
+  "command": null,
+  "options": "no-pty",
+  "this_session": null,
+  "changeable": false
+}

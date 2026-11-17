@@ -35,6 +35,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | What a trusted machine's refresher last did (`~/.ssh/shipshape/state.json`) | `refresh-state.schema.json` | that machine's refresher (`fleetledger/fleetledger/refresher/refresh.sh`) | the Fleet panel on that machine |
 | Every doctor check (`ship-fleet doctor --json`) | `fleetledger-doctor.schema.json` | Fleet: `ship-fleet doctor` | other programs on your computers (a Fleet panel, over ssh) |
 | A Ship's snapshots (`ship-fleet snapshot ls NAME --json` entries) | `fleetledger-snapshot.schema.json` | Fleet: `ship-fleet snapshot ls` | other programs on your computers (a Fleet panel, over ssh) |
+| The keys that may log in to FleetLedger's computer (`ship-fleet keys ls --json` entries) | `fleetledger-key.schema.json` | Fleet: `ship-fleet keys` | other programs on your computers (a Fleet panel, over ssh) |
 
 Prose documents:
 
@@ -42,7 +43,7 @@ Prose documents:
 - `ship-runtime.md`: the users, paths, units and sudo rules every Ship has, and how FleetLedger reaches them.
 - `ship-ctl.md`: every ship-ctl command, its output and exit codes, and how status is worked out.
 - `ship-fleet.md`: the `ship-fleet` output other programs may read (`ls`, `status`,
-  `attention`, `signins`, `ca show`, `doctor`, `doctor --next`, `snapshot ls` and `about`, each `--json`; and `machine-bundle`, always JSON), and the one
+  `attention`, `signins`, `ca show`, `doctor`, `doctor --next`, `snapshot ls`, `about` and `keys ls`, each `--json`; and `machine-bundle`, always JSON), and the one
   `schema` field convention they share.
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
