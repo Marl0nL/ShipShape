@@ -556,9 +556,10 @@ herdr_here() { command -v herdr-app >/dev/null 2>&1 || [ -d "$HERDR_HOME" ]; }
 fetch_package() {
   your_ssh "$DEST" ship-fleet machine-setup --package 2>"$stage/package.err" \
     | head -c $((MAX_PACKAGE + 1)) >"$stage/package.tgz"
-  [ "$(wc -c <"$stage/package.tgz")" -eq "$package_bytes" ] \
-    && [ "$(sha256 "$stage/package.tgz")" = "$package_sha" ] \
-    || die "FleetLedger's package is not the one its setup data names: not installed."
+  if [ "$(wc -c <"$stage/package.tgz")" -ne "$package_bytes" ] \
+    || [ "$(sha256 "$stage/package.tgz")" != "$package_sha" ]; then
+    die "FleetLedger's package is not the one its setup data names: not installed."
+  fi
   tar -tzf "$stage/package.tgz" >"$stage/package.list" 2>/dev/null || die "FleetLedger's package does not unpack."
   # Plain files only: no link, device or folder entry that could point outside it.
   tar -tvzf "$stage/package.tgz" 2>/dev/null | cut -c 1 | grep -qv '^-$' \
@@ -657,7 +658,7 @@ install_self() {
 # package names, checked by its SHA-256 like the rest of the package).
 newer_installer() {
   [ -n "${SHIPSHAPE_SETUP_HANDED:-}" ] && return 1
-  [ -n "$self" ] && [ -f "$self" ] || return 1
+  if [ -z "$self" ] || [ ! -f "$self" ]; then return 1; fi
   [ -f "$source_dir/shipshape-setup" ] || return 1
   cmp -s "$source_dir/shipshape-setup" "$self" && return 1
   return 0
@@ -747,7 +748,10 @@ role_herdr_client() {
   [ -n "$source_dir" ] && install_self
   say ""
   say "Set up $me as a Herdr client of FleetLedger at $DEST:"
-  say "  the refresher: ~/.ssh/shipshape/refresh, $( [ "$refreshed" = ok ] && echo "refreshed now" || echo "its refresh FAILED (above); it tries again hourly")$(timer_present && echo ", at login and hourly")"
+  if [ "$refreshed" = ok ]; then how="refreshed now"
+  else how="its refresh FAILED (above); it tries again hourly"; fi
+  timer_present && how="$how, at login and hourly"
+  say "  the refresher: ~/.ssh/shipshape/refresh, $how"
   say "  the Desk and the Fleet panel: $mods_said"
   say "  the Fleet panel's settings.json: $settings_said"
   if [ -n "$opened" ]; then
@@ -878,5 +882,5 @@ case $0 in
   */shipshape-setup | shipshape-setup) self=$0 here_dir=$(cd "$(dirname "$0")" 2>/dev/null && pwd) ;;
   *) self='' here_dir='' ;;
 esac
-[ -n "$here_dir" ] && [ -f "$here_dir/shipshape-setup" ] || here_dir=/nonexistent
+if [ -z "$here_dir" ] || [ ! -f "$here_dir/shipshape-setup" ]; then here_dir=/nonexistent; fi
 main "$@" </dev/null
