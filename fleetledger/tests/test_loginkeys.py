@@ -82,10 +82,14 @@ def test_ls_lists_every_line_with_a_key_as_the_file_has_it(vm):
         ("authorized_keys", 4, "backup-host", "command"),
         ("authorized_keys", 6, "laptop", "bundle"),
         ("authorized_keys2", 1, "x", "shell")]
-    # Fingerprints as ssh-keygen prints them for the same file.
-    said = subprocess.run(["ssh-keygen", "-lf", str(ak())], capture_output=True, text=True,
-                          check=True).stdout.split("\n")
-    assert [k["fingerprint"] for k in doc[:4]] == [x.split()[1] for x in said if x][:4]
+    # Fingerprints as ssh-keygen prints them for each line's key (fed one by one: older
+    # ssh-keygens do not read every authorized_keys line).
+    for k, x in zip(doc[:4], [A, B, C, f"ssh-ed25519 {blob}"], strict=True):
+        one = vm.tmp / "one.pub"
+        one.write_text(x + "\n")
+        said = subprocess.run(["ssh-keygen", "-lf", str(one)], capture_output=True,
+                               text=True, check=True).stdout.split()
+        assert k["fingerprint"] == said[1]
     assert doc[0]["type"] == "ssh-ed25519" and doc[1]["options"] == 'from="192.0.2.0/24",no-pty'
     assert doc[2]["command"] == "/usr/bin/true" and doc[3]["machine"] == "laptop"
     assert doc[3]["options"].startswith('restrict,command="')
