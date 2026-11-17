@@ -113,8 +113,11 @@ def catch_up_in_process(monkeypatch):
     it in-process, with its own app, and never starts a real ship-fleet."""
     from fleetledger import selfupdate
 
-    monkeypatch.setattr(selfupdate, "run_catch_up",
-                        lambda app, root: selfupdate.catch_up(app))
+    def in_process(app, root):
+        return selfupdate.catch_up(app)
+
+    in_process.real = selfupdate.run_catch_up  # for the one test of the process itself
+    monkeypatch.setattr(selfupdate, "run_catch_up", in_process)
 
 
 @pytest.fixture(autouse=True)

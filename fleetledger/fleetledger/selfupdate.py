@@ -65,11 +65,21 @@ CATCH_UP = ("import sys; from shipfleet_launch import main; "
 
 
 def run_catch_up(app: Any, root: str) -> int:
+    """The new version's catch-up, said by itself; 0 when it worked."""
     try:
-        return subprocess.run([sys.executable, "-c", CATCH_UP], cwd="/", check=False,
+        code = subprocess.run([sys.executable, "-c", CATCH_UP], cwd="/", check=False,
                               timeout=600).returncode
-    except (OSError, subprocess.TimeoutExpired):
-        return 127
+    except subprocess.TimeoutExpired:
+        app.note("ship-fleet: the new version's catch-up did not finish in 10 minutes.")
+        return 1
+    except OSError as exc:
+        app.note(f"ship-fleet: could not start the new version's catch-up: {exc}.")
+        return 1
+    if code == 2:  # argparse: a version from before --catch-up (self-update --force back)
+        app.note("ship-fleet: the version now checked out has no catch-up of its own "
+                 "(it is older than it); nothing to do.")
+        return 0
+    return code
 
 
 def catch_up(app: Any) -> int:
@@ -158,9 +168,10 @@ def cmd_self_update(args: Any, app: Any) -> int:
     app.say("No Ship changed: roll the new tooling out with ship-fleet update when you choose "
             "(docs/runbooks/update-fleet.md).")
     if not caught_up:
-        app.note(f"ship-fleet: FleetLedger is updated to {target[:12]} (and restarted, if it "
-                 "runs as a service), but bringing its own state up to date failed: see "
-                 "above. Fix that, then run ship-fleet self-update again.")
+        restarted = "" if args.no_restart else " (and restarted, if it runs as a service)"
+        app.note(f"ship-fleet: FleetLedger is updated to {target[:12]}{restarted}, but "
+                 "bringing its own state up to date failed: see above. Fix that, then run "
+                 "ship-fleet self-update again.")
         return 1
     return 0
 

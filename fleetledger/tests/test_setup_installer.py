@@ -66,6 +66,15 @@ RECORD = """#!/bin/sh
 echo "$*" >>"{s}/{name}.log"
 """
 
+# herdr-app: fleet.open works only while a Fleet tab is open (one tab.new opened).
+HERDR_APP = """#!/bin/sh
+echo "$*" >>"{s}/herdr-app.log"
+case "$2" in
+  fleet.open) [ -f "{s}/fleet-tab" ] ;;
+  tab.new) touch "{s}/fleet-tab" ;;
+esac
+"""
+
 
 class Computer(Machine):
     """A sandbox computer with Herdr on it (its folder, and a herdr-app that records)."""
@@ -81,7 +90,7 @@ class Computer(Machine):
         self.tmp.mkdir()
         if herdr:
             self.herdr.mkdir(parents=True)
-            self._script("herdr-app", RECORD.format(s=self.state, name="herdr-app"))
+            self._script("herdr-app", HERDR_APP.format(s=self.state))
         # ssh reads the real user's ~/.ssh whatever HOME says: as you use it (no -F), it is
         # pointed at this sandbox's config, known_hosts and key, and at no agent. A name it
         # must not look up (the seed's default name, a placeholder) fails as an unknown host
@@ -214,7 +223,7 @@ def test_the_main_machine_is_set_up_in_one_command(vm, desktop):
     assert json.loads(m.settings.read_text()) == {"ssh": vm.dest,
                                                  "identity_file": "~/.ssh/id_ed25519"}
     # The Fleet tab, opened; the installer itself, kept for updates.
-    assert m.log("herdr-app") == ['do tab.new {"name":"Fleet","mod":"fleet"}']
+    assert m.log("herdr-app") == ["do fleet.open", 'do tab.new {"name":"Fleet","mod":"fleet"}']
     assert "Opened the Fleet tab in Herdr." in out
     assert (m.home / ".local" / "bin" / "shipshape-setup").read_bytes() == INSTALLER.read_bytes()
     # The refresher's own hint is not said: the installer did that part.
@@ -239,6 +248,8 @@ def test_a_second_run_updates_and_asks_nothing(vm, desktop):
     assert (m.d / "refresh").read_bytes() == refresh
     assert (m.home / ".ssh" / "known_hosts").read_text() == known
     assert "settings.json: yours, unchanged" in proc.stdout
+    assert m.log("herdr-app")[-1] == "do fleet.open"  # the tab it opened, not another
+    assert sum(x.startswith("do tab.new") for x in m.log("herdr-app")) == 1
 
 
 def test_settings_you_set_by_hand_are_kept(vm, desktop):
@@ -249,8 +260,9 @@ def test_settings_you_set_by_hand_are_kept(vm, desktop):
     proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp,
                    "--no-open")
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    # Your ssh is for somewhere else: the key it logged in with here does not go beside it.
     assert json.loads(m.settings.read_text()) == {
-        "ssh": "fleetledger@fleetledger.example.invalid", "identity_file": "~/.ssh/id_ed25519"}
+        "ssh": "fleetledger@fleetledger.example.invalid", "identity_file": None}
     assert m.log("herdr-app") == []  # --no-open
     # A file with more in it than the two settings is left alone.
     odd = '{"ssh": null, "identity_file": "~/.ssh/mine", "theme": "dark"}\n'
@@ -336,9 +348,10 @@ def test_a_bundle_only_machine_finishes_from_the_pasted_line_and_a_checkout(vm, 
     assert "for the Desk and the Fleet panel, run shipshape-setup --herdr-client" in proc.stdout
     # The one command left, from a checkout: no shell, so the mods come from the checkout and
     # the panel has nothing to ssh with (it shows fleet.json's Ships).
-    (m.home / ".ssh" / "known_hosts").write_text(f"127.0.0.1 {vm.host_key}\n")
     proc = m.setup("--herdr-client")
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    # The host key the pasted line pinned: no question, no fingerprint to give.
+    assert "the one this computer's refresher pinned" in proc.stdout
     assert (m.herdr / "mods" / "fleet" / "mod.json").is_file()
     assert not m.settings.exists() and "fleet.json" in proc.stdout
     assert not any(a.startswith("machine-setup") for a in asked(vm))
@@ -555,3 +568,38 @@ def test_a_package_with_a_link_in_it_is_not_installed(vm, desktop, tmp_path):
     proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp)
     assert proc.returncode == 1 and "other than plain files" in proc.stderr
     assert not m.herdr.joinpath("mods").exists()
+
+
+def test_an_older_fleetledger_is_told_to_update_first(vm, desktop):
+    (vm.d / "ship-fleet").write_text(
+        "#!/bin/sh\necho 'usage: ship-fleet [-h] {setup,doctor,...} ...' >&2\n"
+        "echo \"ship-fleet: error: argument command: invalid choice: '$1'\" >&2\nexit 2\n")
+    m = desktop
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp)
+    assert proc.returncode == 1
+    assert "is older than this installer: update it there first" in proc.stderr
+    assert "OpenSSH" not in proc.stderr
+
+
+def test_refresher_options_on_a_later_run_are_applied(vm, desktop):
+    m = desktop
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp,
+                   "--no-open")
+    assert proc.returncode == 0 and m.conf()["hc"] == "on"
+    proc = m.setup("--herdr-client", "--no-hc", "--no-open")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert m.conf()["hc"] == "off" and "is current; refreshing" not in proc.stdout
+
+
+def test_fleetledger_out_of_reach_still_updates_a_computer_set_up_before(vm, desktop):
+    m = desktop
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp,
+                   "--no-open")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    (m.home / ".ssh" / "known_hosts").unlink()
+    # Nothing answers there (the sandbox's sshd is on 127.0.0.1 only).
+    proc = m.setup("--herdr-client", "--fleetledger", f"{USER}@127.0.0.2", "--no-open",
+                   installer=m.home / ".local" / "bin" / "shipshape-setup")  # no checkout
+    assert proc.returncode == 0, proc.stdout + proc.stderr  # its refresh uses machine.conf
+    assert "Could not reach FleetLedger" in proc.stderr
+    assert "the Desk and the Fleet panel: kept as they are" in proc.stdout

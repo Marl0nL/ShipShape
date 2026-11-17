@@ -797,3 +797,22 @@ def test_doctor_mentions_expose_auth_info_once_as_optional(tmp_path):
     assert [i.state for i in firstrun.auth_info_items({}, conf)] == ["info"]
     conf.write_text("PasswordAuthentication no\nExposeAuthInfo yes\n")
     assert firstrun.auth_info_items({}, conf) == []
+
+
+
+@pytest.mark.parametrize("script,code,said", [
+    ("import sys; sys.exit(0)", 0, ""),
+    ("import sys; sys.exit(1)", 1, ""),
+    ("import sys; sys.exit(2)", 0, "older than it"),
+])
+def test_the_catch_up_process_and_what_its_exit_means(monkeypatch, script, code, said):
+    """run_catch_up itself (the autouse fixture replaces it elsewhere), with a stand-in for
+    the new version's ship-fleet: never a real one."""
+    notes = []
+
+    class App:
+        note = staticmethod(notes.append)
+
+    monkeypatch.setattr(selfupdate, "CATCH_UP", script)
+    assert selfupdate.run_catch_up.real(App(), "/") == code
+    assert (said in " ".join(notes)) if said else notes == []

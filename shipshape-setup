@@ -69,6 +69,7 @@ die() {
   exit 1
 }
 usage() {
+  cleanup
   warn "shipshape-setup: $*"
   warn "Usage: shipshape-setup [--herdr-client] [--fleetledger-here] [--fleetledger-remote] [--ship-host] [--fleetledger DEST] [--host-key-fingerprint FP] [--name NAME] [--scope SCOPE] [--logins agent|owner|both] [--yes] [--no-open] [--no-herdr] [--no-timer] [--no-hc] [--lan]"
   exit 2
@@ -227,7 +228,10 @@ your_ssh() {
   ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$@" </dev/null
 }
 
-# FleetLedger's host key, pinned on first contact: known already, or shown and confirmed.
+# FleetLedger's host key, pinned on first contact: known already (ssh checks it on every
+# connection), the one this computer's refresher pinned, or shown and confirmed. Returns 1,
+# saying why in $unreachable, when FleetLedger cannot be reached and this computer was set
+# up before (its refresher and the Desk can still be brought up to date).
 pin_host_key() {
   conf=$(ssh -G "$DEST" 2>/dev/null) || die "ssh cannot read its settings for $DEST."
   hn=$(printf '%s\n' "$conf" | awk '$1 == "hostname" { print $2; exit }')
@@ -238,32 +242,34 @@ pin_host_key() {
   if [ -n "$alias" ]; then kh_name=$alias
   elif [ "$port" = 22 ]; then kh_name=$hn
   else kh_name="[$hn]:$port"; fi
+  known_hosts="$HOME/.ssh/known_hosts"
+  host_blobs=$(ssh-keygen -F "$kh_name" -f "$known_hosts" 2>/dev/null | awk '$2 == "ssh-ed25519" { print $3 }' | tr '\n' ' ')
+  [ -n "$host_blobs" ] && return 0
   scanned=$(ssh-keyscan -T 10 -t ed25519 -p "$port" "$hn" 2>/dev/null | awk '$2 == "ssh-ed25519" { print $3; exit }')
   if [ -z "$scanned" ]; then
-    die "Could not reach FleetLedger at $DEST ($hn, port $port). Is this computer on the same network (your LAN or tailnet) as FleetLedger's VM? Name it with --fleetledger USER@HOST."
+    unreachable="Could not reach FleetLedger at $DEST ($hn, port $port). Is this computer on the same network (your LAN or tailnet) as FleetLedger's VM? Name it with --fleetledger USER@HOST."
+    [ -f "$CONF" ] && return 1
+    die "$unreachable"
   fi
   is_blob "$scanned" || die "$hn answered with a host key this installer does not take."
-  known_hosts="$HOME/.ssh/known_hosts"
-  known=$(ssh-keygen -F "$kh_name" -f "$known_hosts" 2>/dev/null | awk '$2 == "ssh-ed25519" { print $3 }')
-  host_blob=$scanned
-  if [ -n "$known" ]; then
-    if has "$scanned" "$(printf '%s' "$known" | tr '\n' ' ')"; then
-      return 0
-    fi
-    die "$hn's host key is not the one ~/.ssh/known_hosts has for it: not trusting it. If FleetLedger's VM really was remade, remove the old line (ssh-keygen -R '$kh_name') and run this again."
-  fi
-  printf 'ssh-ed25519 %s\n' "$scanned" >"$stage/scanned.pub"
-  fp=$(ssh-keygen -l -f "$stage/scanned.pub" 2>/dev/null | awk '{ print $2 }')
-  [ -n "$fp" ] || die "Cannot read $hn's host key."
-  say "First contact with $hn: its host key is ED25519 $fp."
-  if [ -n "$want_fp" ]; then
-    [ "$want_fp" = "$fp" ] || die "That is not the fingerprint you gave ($want_fp): not trusting $hn."
-  elif can_ask; then
-    say "Check it against FleetLedger's VM (there: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub)."
-    ask "Is this FleetLedger's VM? [y/N] "
-    case $answer in y | Y | yes | YES) ;; *) die "Not trusted; nothing was changed." ;; esac
+  host_blobs=$scanned
+  pinned=$(conf_value host_key)
+  if [ -n "$pinned" ] && [ "${pinned#ssh-ed25519 }" = "$scanned" ]; then
+    say "$hn's host key is the one this computer's refresher pinned."
   else
-    die "First contact with $hn: confirm its host key with --host-key-fingerprint $fp (after checking it on the VM: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub)."
+    printf 'ssh-ed25519 %s\n' "$scanned" >"$stage/scanned.pub"
+    fp=$(ssh-keygen -l -f "$stage/scanned.pub" 2>/dev/null | awk '{ print $2 }')
+    [ -n "$fp" ] || die "Cannot read $hn's host key."
+    say "First contact with $hn: its host key is ED25519 $fp."
+    if [ -n "$want_fp" ]; then
+      [ "$want_fp" = "$fp" ] || die "That is not the fingerprint you gave ($want_fp): not trusting $hn."
+    elif can_ask; then
+      say "Check it against FleetLedger's VM (there: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub)."
+      ask "Is this FleetLedger's VM? [y/N] "
+      case $answer in y | Y | yes | YES) ;; *) die "Not trusted; nothing was changed." ;; esac
+    else
+      die "First contact with $hn: confirm its host key with --host-key-fingerprint $fp (after checking it on the VM: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub)."
+    fi
   fi
   { mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; } || die "Cannot make ~/.ssh."
   printf '%s ssh-ed25519 %s\n' "$kh_name" "$scanned" >>"$known_hosts" || die "Cannot write ~/.ssh/known_hosts."
@@ -277,8 +283,12 @@ fetch_setup() {
   your_ssh -v "$DEST" ship-fleet machine-setup --json >"$stage/setup.json" 2>"$stage/setup.err"
   rc=$?
   shell=no
-  last=$(grep -v '^debug' "$stage/setup.err" | grep -v '^[[:space:]]*$' | tail -n 1 | tr -cd ' -~' | cut -c 1-300)
-  first=$(grep -v '^debug' "$stage/setup.err" | grep -v '^[[:space:]]*$' | head -n 1 | tr -cd ' -~' | cut -c 1-300)
+  # What ssh -v says of itself (its debug lines, its banner, its closing figures) is left
+  # out: what is left is FleetLedger's words, or ssh's reason for failing.
+  grep -v -e '^debug' -e '^OpenSSH_' -e '^Authenticated to ' -e '^Transferred: ' \
+    -e '^Bytes per second' -e '^[[:space:]]*$' "$stage/setup.err" >"$stage/setup.said"
+  last=$(tail -n 1 "$stage/setup.said" | tr -cd ' -~' | cut -c 1-300)
+  first=$(head -n 1 "$stage/setup.said" | tr -cd ' -~' | cut -c 1-300)
   if [ "$rc" -eq 0 ] && grep -q '"schema": *"shipshape.machine-bundle/1"' "$stage/setup.json"; then
     access_said="the key ssh used for $DEST may only fetch this machine's bundle there"
     return 0
@@ -288,13 +298,13 @@ fetch_setup() {
     255)
       case $last in
         *"ermission denied"*) access_said="no key here logs in to $DEST"; return 0 ;;
-        *"ost key verification failed"*) die "ssh did not accept the host key of $DEST (above); not going on." ;;
+        *"ost key verification failed"*) die "ssh refused the host key of $DEST: it is not the one ~/.ssh/known_hosts has for it, so this is not trusting it. If FleetLedger's VM really was remade, remove the old line (ssh-keygen -R '$kh_name') and run this again." ;;
         *) die "Could not reach FleetLedger at $DEST: ${last:-ssh gave no reason}. Is this computer on the same network (your LAN or tailnet) as FleetLedger's VM?" ;;
       esac ;;
     *)
-      case $first in
-        *"invalid choice"* | *machine-setup*argument*) die "FleetLedger at $DEST is older than this installer: update it there first (ship-fleet self-update), then run this again." ;;
-      esac
+      if grep -q "invalid choice" "$stage/setup.said"; then
+        die "FleetLedger at $DEST is older than this installer: update it there first (ship-fleet self-update), then run this again."
+      fi
       die "FleetLedger at $DEST refused: ${first:-it gave no reason}" ;;
   esac
   flat "$stage/setup.json" >"$stage/setup.flat" \
@@ -324,7 +334,7 @@ read_setup() {
   case $hk in "ssh-ed25519 "*) ;; *) die "FleetLedger's host key is out of place." ;; esac
   fl_blob=${hk#ssh-ed25519 }
   is_blob "$fl_blob" || die "FleetLedger's host key is out of place."
-  [ "$fl_blob" = "$host_blob" ] || die "$DEST is not the VM FleetLedger records as its own (its host key differs): not going on."
+  has "$fl_blob" "$host_blobs" || die "$DEST is not the VM FleetLedger records as its own (its host key differs): not going on."
   refresher_sha=$(field "$f" refresher_sha256)
   is_hex64 "$refresher_sha" || die "FleetLedger's refresher digest is out of place."
   package_sha=$(field "$f" package.sha256)
@@ -503,7 +513,7 @@ timer_present() {
 
 install_refresher() {
   fetch_refresher
-  if [ -f "$D/refresh" ] && [ "$(sha256 "$D/refresh")" = "$refresher_sha" ] \
+  if [ -z "$refresher_opts" ] && [ -f "$D/refresh" ] && [ "$(sha256 "$D/refresh")" = "$refresher_sha" ] \
     && [ "$(conf_value name)" = "$me" ] && [ "$(conf_value key)" = "$me_key" ] \
     && [ "$(conf_value hosts)" = "$fl_hosts" ] && [ "$(conf_value host_key)" = "ssh-ed25519 $fl_blob" ]; then
     say "The refresher here is current; refreshing."
@@ -552,6 +562,10 @@ fetch_package() {
 }
 
 install_herdr() {
+  if [ -z "$source_dir" ] && [ -d "$HERDR_HOME/mods/fleet" ]; then
+    mods_said="kept as they are: this computer cannot fetch newer ones from FleetLedger (its key has no shell there); from a ShipShape checkout, shipshape-setup --herdr-client updates them."
+    return 0
+  fi
   if [ -z "$source_dir" ]; then
     mods_said="not installed: no ShipShape checkout here, and this computer cannot fetch them from FleetLedger (its key has no shell there). Run shipshape-setup --herdr-client from a ShipShape checkout here."
     return 1
@@ -580,7 +594,7 @@ fill_settings() {
     /*" agent"* | *" agent") ;;
     /*)
       p=${accepted%% *}
-      is_path "$p" && want_ident="\"$(tilde "$p")\"" ;;
+      is_path "$p" && [ -f "$p" ] && want_ident="\"$(tilde "$p")\"" ;;
   esac
   cur_ssh='' cur_ident=''
   if [ -s "$SETTINGS" ]; then
@@ -594,7 +608,10 @@ fill_settings() {
   fi
   set_ssh=0 set_ident=0
   { [ -z "$cur_ssh" ] || [ "$cur_ssh" = null ]; } && set_ssh=1
-  { [ -z "$cur_ident" ] || [ "$cur_ident" = null ]; } && [ "$want_ident" != null ] && set_ident=1
+  # The key only goes with the destination it logged in to: beside an ssh value of yours
+  # for somewhere else it stays as you left it.
+  { [ -z "$cur_ident" ] || [ "$cur_ident" = null ]; } && [ "$want_ident" != null ] \
+    && { [ "$set_ssh" = 1 ] || [ "$cur_ssh" = "$DEST" ]; } && set_ident=1
   if [ "$set_ssh" = 0 ] && [ "$set_ident" = 0 ] && [ -f "$SETTINGS" ]; then
     settings_said="yours, unchanged"
     return 0
@@ -659,9 +676,13 @@ role_herdr_client() {
   fi
   is_dest "$DEST" || usage "Not an ssh destination: $DEST (USER@HOST, or a Host of ~/.ssh/config)."
   say "FleetLedger: $DEST"
-  pin_host_key
-  fetch_setup
-  source_dir=''
+  source_dir='' shell=no
+  if pin_host_key; then
+    fetch_setup
+  else
+    warn "$unreachable"
+    access_said="FleetLedger cannot be reached"
+  fi
   if [ "$shell" = yes ]; then
     identify
     if [ -z "$me" ]; then
@@ -696,16 +717,19 @@ role_herdr_client() {
     if herdr_here; then
       if install_herdr; then
         fill_settings
-        if [ "$no_open" != 1 ] && command -v herdr-app >/dev/null 2>&1 \
-          && herdr-app 'do' tab.new "$TAB" </dev/null >/dev/null 2>&1; then
-          opened=1
+        # The Fleet tab: the open one (fleet.open, while one is open), else a new one.
+        if [ "$no_open" != 1 ] && command -v herdr-app >/dev/null 2>&1; then
+          if herdr-app 'do' fleet.open </dev/null >/dev/null 2>&1 \
+            || herdr-app 'do' tab.new "$TAB" </dev/null >/dev/null 2>&1; then
+            opened=1
+          fi
         fi
       fi
     else
       mods_said="not installed: Herdr is not installed here (no herdr-app, no $HERDR_HOME). Install Herdr, then run shipshape-setup again."
     fi
   fi
-  [ "$shell" = yes ] && install_self
+  [ -n "$source_dir" ] && install_self
   say ""
   say "Set up $me as a Herdr client of FleetLedger at $DEST:"
   say "  the refresher: ~/.ssh/shipshape/refresh, $( [ "$refreshed" = ok ] && echo "refreshed now" || echo "its refresh FAILED (above); it tries again hourly")$(timer_present && echo ", at login and hourly")"
@@ -717,7 +741,10 @@ role_herdr_client() {
     say "Open the Fleet tab: herdr-app do tab.new '$TAB'"
   fi
   [ -d "$HERDR_HOME/mods/desk" ] && say "The Desk layout: herdr-app do layout.switch '{\"name\":\"desk\"}' (or ctrl-shift-l)."
-  say "To update all of this later: shipshape-setup (it asks nothing on a computer set up before)."
+  if command -v shipshape-setup >/dev/null 2>&1; then later=shipshape-setup
+  elif [ -x "$BIN/shipshape-setup" ]; then later="$BIN/shipshape-setup (~/.local/bin is not on your PATH)"
+  else later="shipshape-setup --herdr-client, from a ShipShape checkout"; fi
+  say "To update all of this later: $later; it asks nothing on a computer set up before."
   [ "$refreshed" = ok ] && [ -z "$said_fail" ]
 }
 
@@ -804,7 +831,7 @@ main() {
       --no-open) no_open=1 ;;
       --no-herdr) no_herdr=1 ;;
       --no-timer | --no-hc | --lan) refresher_opts="$refresher_opts $1" ;;
-      -h | --help) sed -n '2,/^$/s/^# \{0,1\}//p' "$self" 2>/dev/null || say "See docs/setup.md."; exit 0 ;;
+      -h | --help) sed -n '2,/^$/s/^# \{0,1\}//p' "$self" 2>/dev/null || say "See docs/runbooks/trust-machines.md, \"Set up or update\"."; exit 0 ;;
       *) usage "Unknown option $1" ;;
     esac
     shift

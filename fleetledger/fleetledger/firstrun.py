@@ -334,7 +334,7 @@ AUTH_INFO_FIX = ("as vmadmin: echo 'ExposeAuthInfo yes' | sudo tee -a "
 
 def auth_info_items(environ=None, conf: Path | None = None) -> list[Item]:
     """sshd's ExposeAuthInfo, which a VM seeded before it came in lacks. Optional, and
-    the only place FleetLedger mentions it: everything works without it; with it, audit
+    the one place FleetLedger suggests it: everything works without it; with it, audit
     lines name the key that logged in and `keys revoke` can tell yours. Listed (info)
     only when it is surely off: this session came over ssh and sshd named no key, or
     (not over ssh) the seed's sshd file is there and does not set it."""
@@ -348,7 +348,7 @@ def auth_info_items(environ=None, conf: Path | None = None) -> list[Item]:
             text = (conf or SSHD_CONF).read_text()
         except OSError:
             return []
-        off = not any(line.split()[:2] == ["ExposeAuthInfo", "yes"]
+        off = not any([w.lower() for w in line.split()[:2]] == ["exposeauthinfo", "yes"]
                       for line in text.splitlines())
     if not off:
         return []
