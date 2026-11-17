@@ -15,11 +15,12 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents } from "herdr";
-import { subject, full, refresh, boardOf, lookFor, readLedger, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
+import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents } from "herdr";
+import { subject, full, refresh, boardOf, lookFor, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
 import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, resolve } from "./looks.js";
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
 import { assistant, manager, coder, none, crewSheet } from "./views.js";
+import { openPlan } from "./fleet-model.js";
 
 const WIDTHS = { assistant: 440, manager: 760, coder: 500, crew: 360, none: 400 };
 // The desk body each kind shows (a crew's sheet is over its terminal; beside it, its branch).
@@ -64,14 +65,18 @@ export default class Desk extends View {
       });
     }
     if (this.part === "kind" || this.part === "looks") return;
+    // The bar's Fleet button, only when the Fleet panel (mods/fleet) is installed.
+    if (this.part === "bar") {
+      cx.spawn(async (cx) => {
+        this.fleetMod = Boolean(await readTextFile(`${appHome()}/mods/fleet/mod.json`).catch(() => null));
+        cx.notify();
+      });
+    }
     // Boards: every second and a half here, every four seconds from other machines,
     // and only for the body on show.
     cx.timer.every(1500, (cx) => this.tick(cx));
     this.tick(cx);
     if (this.part === "head") {
-      cx.spawn(async (cx) => {
-        if (await readLedger()) cx.notify();
-      });
       // Commands, for keys.json or `herdr-app do`:
       //   desk.sample-assistant | -manager | -coder | -crew | -off   preview a sample board
       //   desk.look-<preset>                                   wear a preset (looks.js)
@@ -94,7 +99,6 @@ export default class Desk extends View {
           cx.notify();
         }
       });
-      cx.timer.every(300000, (cx) => cx.spawn(async (cx) => (await readLedger()) && cx.notify()));
     }
   }
 
@@ -106,6 +110,8 @@ export default class Desk extends View {
   }
 
   tick(cx) {
+    // Ship tags: fleet.json every 30 s, the local ship-fleet every 5 minutes (shiptags.js).
+    if (this.part === "head") cx.spawn(async (cx) => (await readLedger()) && cx.notify());
     if (!this.shown()) return;
     const s = subject();
     if (!s) return;
@@ -441,6 +447,13 @@ export default class Desk extends View {
         ),
       )
       .child(div().flex_1())
+      .when(Boolean(this.fleetMod), (e) =>
+        e.child(
+          h_flex().id("bar-fleet").h(26).px(8).flex_none().items_center().rounded(6).text_size(12).text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip("Open the Fleet panel").on_mouse_down("left", stop)
+            .on_click(() => openPlan(panes(), spaces()).forEach(([command, args]) => run(command, args)))
+            .child("Fleet"),
+        ),
+      )
       .child(btn("bar-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 }), "New terminal or agent"))
       .when(enabled.includes("files"), (e) => e.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), (e) => e.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
@@ -544,6 +557,11 @@ export default class Desk extends View {
               .overflow_hidden()
               .child(kindBtn)
               .children((s?.tags ?? []).map((tag) => chip(t, L, tag, tagColor(t, tag))))
+              // An agent on another machine with no Ship tags, or some left out (a fleet.json ignored, an
+              // older FleetLedger's entries refused): say why.
+              .when(Boolean(s?.machine && shipTags.problem), (e) =>
+                e.child(div().id("ship-tags").flex_none().text_size(10.5).text_color(t.dim).tooltip(`Ship tags: ${shipTags.problem}`).child(shipTags.tags.size ? "Some Ship tags left out" : "No Ship tags")),
+              )
               .when(Boolean(updated), (e) => e.child(div().flex_none().text_size(10.5).text_color(t.dim).child(updated))),
           ),
       )

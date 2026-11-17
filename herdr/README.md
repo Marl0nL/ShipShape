@@ -4,7 +4,10 @@ Layouts and mods for Herdr, the terminal app ShipShape's Ships run their agents 
 
 **The Desk** (`layouts/desk.json`): Herdr's default layout plus a panel that follows the focused
 agent, which agents on any machine, Ships included, fill in themselves with the `desk` CLI. See
-[`DESK.md`](DESK.md) for how it works; it installs with `herdr/install-desk.sh`.
+[`DESK.md`](DESK.md) for how it works; it installs with `herdr/install-desk.sh`, which installs
+the Fleet panel too (the Desk's bar opens it). A Ship's tags come from `~/.ssh/shipshape/fleet.json`
+on this computer, which self-refresh keeps current, else from a local `ship-fleet`; its tests are
+in `tests/desk/`.
 
 **The Fleet panel** (`mods/fleet/`): a Herdr tab with your Ships as FleetLedger last saw them,
 read over ssh from the FleetLedger computer (`ship-fleet ls --json --offline`). What changes

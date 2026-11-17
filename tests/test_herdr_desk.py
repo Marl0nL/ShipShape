@@ -112,3 +112,40 @@ def test_the_desk_cli_refuses_a_bad_tone(tmp_path):
                        timeout=60)
     assert r.returncode != 0
     assert not board.exists()
+
+
+def test_the_desk_shares_the_fleet_panels_reader():
+    """The desk reads fleet.json and ship-fleet's answer with the Fleet panel's own checks: its
+    fleet-model.js is a link to that mod's model.js, which install-desk.sh installs as a copy."""
+    link = DESK / "fleet-model.js"
+    assert link.is_symlink()
+    assert os.readlink(link) == "../fleet/model.js"
+    shiptags = (DESK / "shiptags.js").read_text("utf-8")
+    assert re.findall(r'from "([^"]+)"', shiptags) == ["./fleet-model.js"]
+
+
+def install_desk(tmp_path):
+    home = tmp_path / "herdr-app"
+    env = {**os.environ, "HERDR_APP_HOME": str(home), "HOME": str(tmp_path / "home")}
+    r = subprocess.run(["bash", str(HERDR / "install-desk.sh")], env=env, capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return home
+
+
+def test_install_desk_installs_the_fleet_panel_too_and_again(tmp_path):
+    home = install_desk(tmp_path)
+    settings = home / "mods" / "fleet" / "settings.json"
+    settings.write_text('{"ssh": "fleetledger@fleetledger.example.invalid"}\n', "utf-8")
+    home = install_desk(tmp_path)  # again: an update, nothing doubled, settings kept
+    assert sorted(p.name for p in (home / "mods").iterdir()) == ["desk", "desk-agents",
+                                                                 "desk-spaces", "fleet"]
+    fleet = HERDR / "mods" / "fleet"
+    for name in ("mod.json", "model.js", "main.js"):
+        assert (home / "mods" / "fleet" / name).read_bytes() == (fleet / name).read_bytes()
+    copy = home / "mods" / "desk" / "fleet-model.js"
+    assert not copy.is_symlink()
+    assert copy.read_bytes() == (fleet / "model.js").read_bytes()
+    assert (home / "mods" / "desk" / "shiptags.js").is_file()
+    assert settings.read_text("utf-8") == '{"ssh": "fleetledger@fleetledger.example.invalid"}\n'
+    assert (tmp_path / "home" / ".local" / "bin" / "desk").is_symlink()
