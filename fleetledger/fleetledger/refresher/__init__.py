@@ -9,12 +9,14 @@ replaces itself, so a later refresh applies data only, and a FleetLedger that wa
 cannot run code on trusted machines through it. The line fetches with the machine's own key
 through the same forced command as every refresh (a key that may run only
 `ship-fleet machine-bundle NAME` gets nothing more for it), with FleetLedger's host key
-pinned from this computer's own record.
+pinned from this computer's own record, and runs the script only when its SHA-256 is the
+one the line names.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from importlib import resources
 
@@ -52,6 +54,7 @@ def first_install_line(name: str, key_blob: str, user: str, hosts: list[str],
             and all(_HOST.fullmatch(h) for h in hosts)):
         return None
     words = " ".join(hosts)
+    digest = hashlib.sha256(script()).hexdigest()
     pin = f"{','.join(hosts)} ssh-ed25519 {hk}"
     inner = (
         'umask 077 && d="$HOME/.ssh/shipshape" && mkdir -p "$d" && '
@@ -69,6 +72,10 @@ def first_install_line(name: str, key_blob: str, user: str, hosts: list[str],
         '| base64 --decode >"$d/.first-refresh" && '
         '{ [ -s "$d/.first-refresh" ] || { echo "FleetLedger sent no refresher: update it '
         '(ship-fleet self-update) and paste the line again." >&2; exit 1; }; } && '
+        # The script must be the one this line names, whatever answered the fetch.
+        's=$({ sha256sum || shasum -a 256; } <"$d/.first-refresh" 2>/dev/null | cut -c 1-64) && '
+        f'{{ [ "$s" = {digest} ] || {{ echo "The refresher FleetLedger sent is not the one '
+        'this line names: not installed." >&2; exit 1; }; } && '
         f'sh "$d/.first-refresh" install {name} "$k" {user} "{words}" "ssh-ed25519 {hk}" "$@"'
     )
     assert "'" not in inner

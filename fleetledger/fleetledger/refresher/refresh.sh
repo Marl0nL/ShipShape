@@ -34,7 +34,7 @@ STATE="$D/state.json"
 ADDED="$D/hc-added"
 UNIT=shipshape-refresh
 LABEL=local.shipshape.refresh
-MAX_BUNDLE=4194304
+MAX_BUNDLE=1048576
 
 stage=
 locked=
@@ -196,9 +196,23 @@ function ws(   c) {
     else break
   }
 }
-function str(   c, start, h) {
+function str(   c, start, h, rest, q) {
   p++
   start = p
+  if (mute) {
+    # A value nobody reads (the refresher, base64): to its closing quote at once, when
+    # nothing before that needs a closer look.
+    rest = substr(s, p)
+    q = index(rest, "\"")
+    if (q > 0) {
+      rest = substr(rest, 1, q - 1)
+      if (index(rest, "\\") == 0 && index(rest, "\t") == 0 && index(rest, "\n") == 0 && index(rest, "\r") == 0) {
+        tok = rest
+        p += q
+        return
+      }
+    }
+  }
   for (;;) {
     if (p > n) fail("a string does not end")
     c = substr(s, p, 1)
@@ -316,8 +330,9 @@ function bad(why) { print "! " why; failed = 1; exit 3 }
 function name_ok(x) { return x ~ /^[a-z0-9][a-z0-9-]*$/ && length(x) <= 31 }
 function host_ok(x) { return x ~ /^[A-Za-z0-9][A-Za-z0-9.-]*$/ && length(x) <= 253 }
 function stamp_ok(x) { return x ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?Z$/ }
-function blob_ok(x) { return x ~ /^AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+\/]*=?=?$/ && length(x) <= 120 }
-function certblob_ok(x) { return x ~ /^AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29t[A-Za-z0-9+\/]*=?=?$/ && length(x) <= 4000 }
+# Base64 patterns as strings: some awks (busybox) read \/ in a bracket as a backslash too.
+function blob_ok(x) { return x ~ "^AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]*=?=?$" && length(x) <= 120 }
+function certblob_ok(x) { return x ~ "^AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29t[A-Za-z0-9+/]*=?=?$" && length(x) <= 4000 }
 function fl_host(x) { return index(" " tolower(flhosts) " ", " " tolower(x) " ") > 0 }
 function need(path, type) { if (!(path in T)) bad("no " path); if (T[path] != type) bad(path " is not what it should be") }
 function names_ok(list,   k, i, a) {
@@ -369,7 +384,7 @@ END {
     if (top == "known_hosts" && k == 2) { if (t != "s") bad("known_hosts"); continue }
     if (top == "fleetledger" && k == 2) {
       if (a[2] == "name") { if (t != "s" || !name_ok(v)) bad("fleetledger.name"); continue }
-      if (a[2] == "known_hosts") { if (t != "s" || v !~ /^[A-Za-z0-9][A-Za-z0-9.,-]* ssh-ed25519 [A-Za-z0-9+\/]+=?=?$/) bad("fleetledger.known_hosts"); continue }
+      if (a[2] == "known_hosts") { if (t != "s" || v !~ "^[A-Za-z0-9][A-Za-z0-9.,-]* ssh-ed25519 [A-Za-z0-9+/]+=?=?$") bad("fleetledger.known_hosts"); continue }
       bad("an unknown field, " path)
     }
     if (top == "idle_limit" && k == 2) {
@@ -455,7 +470,7 @@ END {
 # no ssh_config (so nothing this script writes, and nothing in ~/.ssh/config, changes where it
 # connects or what it trusts). The command it asks for is fixed: a key whose authorized_keys
 # line forces ship-fleet machine-bundle NAME runs that whatever is asked; your own key, which
-# has a shell there, runs it as asked. Its output is cut off at 4 MiB, its stderr at 4 KiB.
+# has a shell there, runs it as asked. Its output is cut off at 1 MiB, its stderr at 4 KiB.
 fetch() {
   pin="$stage/pin"
   printf '%s %s\n' "$(printf '%s' "$hosts" | tr -s ' ' ',')" "$host_key" >"$pin"
@@ -477,14 +492,14 @@ fetch() {
       } | head -c 4096 >"$stage/err"
     } 3>&1 | head -c $((MAX_BUNDLE + 1)) >"$stage/out"
     rc=$(cat "$stage/rc" 2>/dev/null)
-    [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 4 MiB; refused, and the files here are unchanged."
+    [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 1 MiB; refused, and the files here are unchanged."
     # FleetLedger's refusal is its first line; ssh's own reason is its last (after any banner).
     first=$(grep -v '^[[:space:]]*$' "$stage/err" 2>/dev/null | head -n 1 | tr -cd ' -~' | cut -c 1-300)
     last=$(grep -v '^[[:space:]]*$' "$stage/err" 2>/dev/null | tail -n 1 | tr -cd ' -~' | cut -c 1-300)
     case $rc in
       0) return 0 ;;
       255) said="${said:+$said; }ssh to $user@$h: ${last:-it gave no reason}" ;;
-      '') fail "FleetLedger's answer was cut off: more than 4 MiB, or ssh was stopped." ;;
+      '') fail "FleetLedger's answer was cut off: more than 1 MiB, or ssh was stopped." ;;
       *) fail "FleetLedger refused this machine's bundle: ${first:-it gave no reason} (the files here are unchanged)." ;;
     esac
   done
@@ -493,7 +508,7 @@ fetch() {
 
 check_bundle() {
   [ -s "$stage/out" ] || fail "FleetLedger answered with nothing; the files here are unchanged."
-  [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 4 MiB; refused, and the files here are unchanged."
+  [ "$(wc -c <"$stage/out")" -le "$MAX_BUNDLE" ] || fail "FleetLedger's answer is over 1 MiB; refused, and the files here are unchanged."
   # Printable ASCII, tabs and line ends only (FleetLedger writes JSON with \u escapes).
   [ "$(tr -d '\011\012\015 -~' <"$stage/out" | wc -c)" -eq 0 ] \
     || fail "FleetLedger's answer holds bytes JSON from it never has; refused, and the files here are unchanged."
@@ -552,6 +567,18 @@ build_files() {
     echo "# ShipShape: trust Ships' host certificates (written by ~/.ssh/shipshape/refresh)."
     cat "$stage/known_hosts.ca"
   } >"$stage/known_hosts"
+
+  # A Ship whose name is a Host of your own in ~/.ssh/config is left out (it would take that
+  # alias over, since the Include comes first), and said.
+  own=$(awk 'tolower($1) == "host" { for (i = 2; i <= NF; i++) print tolower($i) }' \
+    "$HOME/.ssh/config" 2>/dev/null | tr '\n' ' ')
+  : >"$stage/ships.kept"
+  left=''
+  while read -r s_name rest; do
+    if has "$s_name" "$own"; then left="$left $s_name"; else echo "$s_name $rest" >>"$stage/ships.kept"; fi
+  done <"$stage/ships"
+  mv -f "$stage/ships.kept" "$stage/ships"
+  [ -n "$left" ] && warning="Left out:$left (each is a Host of your own in ~/.ssh/config)."
 
   ident=$(tilde "$key")
   {
@@ -667,6 +694,7 @@ refresh() {
   read_conf
   take_lock
   trap 'cleanup; exit 1' HUP INT TERM
+  find "$D" -maxdepth 1 -name '.stage.*' -mmin +15 -exec rm -rf {} + 2>/dev/null
   stage=$(mktemp -d "$D/.stage.XXXXXX") || fail "Could not make a folder in $D."
   cert_until_old=$(state_field certificate_valid_before)
   fetch
@@ -842,8 +870,12 @@ first_install() {
   fi
   if [ ! -f "$cfg" ] || ! grep -qxF "$include" "$cfg"; then
     tmp="$cfg.shipshape-tmp"
-    { echo "$include"; if [ -f "$cfg" ]; then cat "$cfg"; fi; } >"$tmp"
-    chmod 600 "$tmp" && mv "$tmp" "$cfg"
+    if { echo "$include"; if [ -f "$cfg" ]; then cat "$cfg"; fi; } >"$tmp" && chmod 600 "$tmp"; then
+      mv "$tmp" "$cfg" || usage "Could not write ~/.ssh/config."
+    else
+      rm -f "$tmp"
+      usage "Could not write ~/.ssh/config (a full disk?); it is unchanged."
+    fi
     echo "Added '$include' to the top of ~/.ssh/config."
   fi
 

@@ -326,7 +326,8 @@ prints one line to paste on NAME (for a key with its own line too: your main mac
 uses the same refresher, which asks for its bundle by name through its shell). The line
 finds NAME's private key under `~/.ssh` by the `.pub` file that holds the trusted key,
 pins the VM's host key from `[fleet] self`, fetches the bundle with that key (`ssh -F
-none`, `BatchMode`, `IdentitiesOnly`), decodes `refresher` and runs its `install`, which:
+none`, `BatchMode`, `IdentitiesOnly`), decodes `refresher`, checks its SHA-256 against the
+one the line names, and runs its `install`, which:
 
 - copies it to `~/.ssh/shipshape/refresh` (mode 0700);
 - writes `~/.ssh/shipshape/machine.conf`, read line by line and never sourced:
@@ -343,7 +344,9 @@ none`, `BatchMode`, `IdentitiesOnly`), decodes `refresher` and runs its `install
 
 Run with no arguments (the timer, the Fleet panel after a job), the refresher asks
 for `ship-fleet machine-bundle NAME` the same way, checks the whole document, and
-refuses it whole if any value is out of place. It then writes, each by rename, only
+refuses it whole if any value is out of place. A Ship whose name is a `Host` of your own
+in `~/.ssh/config` is left out (with a warning), so a bundle can never take over one of
+your aliases. It then writes, each by rename, only
 `NAME-cert.pub`, `known_hosts`, `config` (from its own template: no text from the
 bundle becomes a directive), `fleet.json` (the bundle as checked, compact, without
 `refresher`), `hc-added` and `state.json`, all in `~/.ssh/shipshape`. It adds each

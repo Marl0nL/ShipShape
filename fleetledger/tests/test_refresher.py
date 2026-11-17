@@ -36,7 +36,7 @@ SSHD = os.environ.get("FLEETLEDGER_TEST_SSHD") or shutil.which("sshd") or "/usr/
 SCRIPT = Path(refresher.__file__).with_name(refresher.SCRIPT)
 TOOLS = ("sh", "sed", "tr", "head", "cut", "grep", "mkdir", "mv", "rm", "cat", "date",
          "mktemp", "chmod", "wc", "cp", "id", "sleep", "readlink", "base64", "ssh-keygen", "env",
-         "ls", "touch", "tail", "find")
+         "ls", "touch", "tail", "find", "sha256sum")
 REAL_SSH = shutil.which("ssh") or "/usr/bin/ssh"
 
 pytestmark = [
@@ -303,6 +303,30 @@ def test_no_public_key_file_for_the_trusted_key_says_so(fl, tmp_path):
     assert proc.returncode != 0
     assert "No .pub file under ~/.ssh holds the key trusted as laptop." in proc.stderr
     assert not (m.d / "refresh").exists()
+
+
+def test_the_line_runs_only_the_refresher_it_names(fl, tmp_path):
+    m = machine(fl, tmp_path)
+    line = paste_line(fl, m)
+    pwned = m.root / "pwned"
+    doc = serve(fl)
+    doc["refresher"] = base64.b64encode(f"#!/bin/sh\ntouch {pwned}\n".encode()).decode()
+    serve_doc(fl, doc)
+    proc = m.run(["sh", "-c", line])
+    assert proc.returncode != 0 and "is not the one this line names" in proc.stderr
+    assert not pwned.exists() and not (m.d / "refresh").exists()
+
+
+def test_a_ship_named_like_a_host_of_your_own_is_left_out(fl, laptop):
+    cfg = laptop.home / ".ssh" / "config"
+    cfg.write_text(cfg.read_text() + "Host nas SHIP-02\n  HostName nas.example.invalid\n")
+    serve(fl)
+    proc = laptop.refresh()
+    assert proc.returncode == 0, proc.stderr
+    assert "Left out: ship-02" in proc.stderr
+    assert "Host ship-02" not in (laptop.d / "config").read_text()
+    assert laptop.state_doc()["warning"].startswith("Left out: ship-02")
+    assert laptop.hc() == ["ship-01"]  # the one it added for ship-02 went too
 
 
 def test_no_timer_flag_leaves_no_timer(fl, tmp_path):
@@ -642,13 +666,13 @@ def test_a_malformed_answer_is_refused_and_nothing_changes(fl, laptop, case):
     assert not (laptop.home / "pwned").exists()
 
 
-def test_an_answer_over_4_mib_is_refused(fl, laptop):
+def test_an_answer_over_1_mib_is_refused(fl, laptop):
     doc = serve(fl)
-    doc["refresher"] = "A" * (4 * 1024 * 1024 + 8)
+    doc["refresher"] = "A" * (1024 * 1024 + 8)
     serve_doc(fl, doc)
     before = laptop.files()
     proc = laptop.refresh()
-    assert proc.returncode == 1 and "4 MiB" in proc.stderr, proc.stderr
+    assert proc.returncode == 1 and "1 MiB" in proc.stderr, proc.stderr
     after = laptop.files()
     assert {k for k in before if before[k] != after.get(k)} <= {".ssh/shipshape/state.json"}
 
