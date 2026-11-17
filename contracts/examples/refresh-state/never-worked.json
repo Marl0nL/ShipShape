@@ -1,0 +1,11 @@
+{
+  "schema": "shipshape.refresh-state/1",
+  "refresher": 1,
+  "machine": null,
+  "last_attempt": "2026-01-05T09:00:00Z",
+  "last_success": null,
+  "certificate_valid_before": null,
+  "ships": null,
+  "last_error": "There is no ~/.ssh/shipshape/machine.conf: paste the line ship-fleet trust prints for this machine on the FleetLedger computer.",
+  "warning": null
+}

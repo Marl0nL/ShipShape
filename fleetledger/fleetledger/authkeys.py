@@ -521,16 +521,6 @@ def kept_said(name: str) -> str:
             "log in to this computer.")
 
 
-def first_fetch_said(name: str, identity: str) -> str:
-    """What works on the machine today, in one sentence (the machine's refresher, when
-    it comes, replaces it)."""
-    import getpass
-
-    return (f"From {name}, ssh -i {identity} {getpass.getuser()}@<this VM> now returns its "
-            "bundle as JSON (the command is forced, whatever you ask for); nothing on "
-            f"{name} applies it yet, so install it as below.")
-
-
 def check(store, inv) -> tuple[str, str, str] | None:
     """doctor's item: (state, detail, next), or None where there is nothing to check
     (not FleetLedger's own VM, and no block here)."""

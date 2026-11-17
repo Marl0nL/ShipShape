@@ -63,17 +63,47 @@ tooling first.
 
 ## 3. Trust a machine
 
-On the machine you want to attach from, make a key just for this:
+With FleetLedger on its own VM, trusting a machine is: run `trust` once there, paste one
+line on the machine. From then on the machine keeps itself current.
 
-```sh
-mkdir -p ~/.ssh/shipshape && ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519
-```
+1. On the machine you want to attach from, make a key just for this (no passphrase, so
+   its timer can use it; the key may fetch only its own bundle on the VM):
 
-Copy its **public** half (`id_ed25519.pub`) to the FleetLedger computer, then:
+   ```sh
+   mkdir -p ~/.ssh/shipshape && ssh-keygen -t ed25519 -N '' -f ~/.ssh/shipshape/id_ed25519
+   ```
 
-```sh
-ship-fleet trust laptop --key laptop.pub --scope tag:work       # or --scope all, ship:ship-01
-```
+2. On the FleetLedger VM, with its **public** half (the file, or the pasted
+   `ssh-ed25519 AAAA...` line):
+
+   ```sh
+   ship-fleet trust laptop --key 'ssh-ed25519 AAAA...' --scope tag:work   # or --scope all, ship:ship-01
+   ```
+
+3. `trust` prints one line starting `sh -c '`. Paste it in a terminal on the laptop. It
+   finds the laptop's key under `~/.ssh` by its `.pub` file (wherever you made it),
+   pins the VM's host key, fetches the laptop's bundle with that key, and installs the
+   refresher at `~/.ssh/shipshape/refresh`. The refresher records the name the laptop
+   is trusted under and its key's path in `~/.ssh/shipshape/machine.conf`, writes the
+   certificate, `known_hosts` and SSH config, adds herdr-core Ships to `hc`, and leaves a
+   timer that runs it at login and hourly (a systemd user timer on Linux, a launchd
+   agent on macOS). Add ` --no-timer` at the end of the line for no timer.
+
+Every refresh renews the certificate once it is past half its life, adds new Ships and
+removes destroyed ones (from `hc` too, but only the machines the refresher added
+itself). It applies the bundle as data only and never replaces itself; see
+[A machine that refreshes itself](#a-machine-that-refreshes-itself) below. To remove
+the timer: `~/.ssh/shipshape/refresh remove-timer`. To update the refresher, paste the
+line again (`ship-fleet trust laptop` prints it).
+
+Your main machine (whose own key logs in to the VM with a shell) gets the same line
+from `ship-fleet trust desktop --key ~/.ssh/id_ed25519.pub` and runs the same
+refresher, which asks for its bundle by name. Its timer runs without your ssh-agent, so
+a key with a passphrase works only when you run the refresher yourself (or the Fleet
+panel does, with your agent); give the timer a key it can open.
+
+Without the refresher (FleetLedger on your desktop, or you would rather not), the
+bundle works as before:
 
 - `--scope` decides which Ships the certificate opens. You can repeat it.
 - `--logins` decides what it may log in as there: `agent` (attach to the agent,
@@ -195,8 +225,9 @@ A certificate lapses at the end of its lifetime, and sshd then refuses it. In it
 day `ship-fleet attention`, the web UI's Needs attention and `ship-fleet doctor` (Health)
 flag it as `machine-cert-expiring`, and once it has lapsed as `machine-cert-lapsed`;
 `ship-fleet ca show` gives each machine's state, and its row under Trusted machines a
-badge. Nothing renews another machine by itself. To
-renew it, run `ship-fleet trust laptop` again on the FleetLedger computer; it reuses the
+badge. A machine with the refresher (section 3) renews itself; nothing renews any
+other machine. To
+renew one by hand, run `ship-fleet trust laptop` again on the FleetLedger computer; it reuses the
 recorded key. To
 send only the new certificate, use:
 
@@ -218,8 +249,8 @@ computer FleetLedger runs on. For a machine elsewhere, `--hostnames overlay` wri
 overlay name of each Ship on the overlay instead (the remote web UI's Download bundle
 does that).
 
-Re-run `install.sh` after adding Ships, so the new Ships get `Host` blocks and
-herdr entries.
+Without the refresher, re-run `install.sh` after adding Ships, so the new Ships get
+`Host` blocks and herdr entries.
 
 To change a machine's scope, run `ship-fleet trust laptop --scope <new scope>`; its
 logins, `ship-fleet trust laptop --logins agent` (or the setup page's Trusted
@@ -243,14 +274,29 @@ host key. It signs a new certificate only once the current one is past half its 
 and nothing while the vault is locked (it then returns the current certificate while
 it lasts, and says why it is not new). It is the one command a key of the
 laptop's may run on FleetLedger's own VM, so the laptop can keep itself current
-(the laptop's refresher, which applies it, is not part of FleetLedger yet).
+(the laptop's refresher, installed by the line `trust` prints, applies it).
 
 On FleetLedger's own VM, `ship-fleet trust laptop --key laptop.pub` also gives the
 laptop's key one line in the `fleetledger` user's `~/.ssh/authorized_keys`, in a
 marked block of FleetLedger's own, forced to `ship-fleet machine-bundle laptop` with
 `restrict` (no terminal, no forwarding). From the laptop, `ssh -i
 ~/.ssh/shipshape/id_ed25519 fleetledger@<the VM>` then returns its bundle as JSON,
-whatever command it asks for, and nothing else. `untrust` removes the line. Your own
+whatever command it asks for, and nothing else.
+
+The refresher (`~/.ssh/shipshape/refresh`) asks for that bundle with `ssh -F none`, the
+key and host key in `machine.conf`, and nothing from `~/.ssh/config`. It checks every
+value against a tight pattern and refuses the whole bundle if one is out of place. It
+writes only its own files in `~/.ssh/shipshape` (the SSH config from its own template),
+and changes `hc` only to add herdr-core Ships and remove the ones it added. When
+FleetLedger cannot be reached, refuses the laptop (untrusted, or idle 30 days), or
+cannot sign a certificate that is due (its vault locked), the refresher keeps the last
+good files, exits 1 and says why in one sentence, also in
+`~/.ssh/shipshape/state.json` (for the Fleet panel). `fleet.json` beside it is
+the last bundle it applied, for the Fleet panel and the Desk. The bundle also carries
+the refresher itself, base64: only the pasted line ever decodes it, so a FleetLedger
+that was taken over cannot run code on the laptop through a refresh (it can still sign
+for any name it likes, since it is the CA). Contract: `contracts/ship-fleet.md`, "The
+refresher on a trusted machine". `untrust` removes the line. Your own
 lines in that file are never changed; a machine whose key is one of yours (it has a
 line of its own there) gets no restricted line, so that key keeps your line's shell
 and asks for its bundle by name (`ship-fleet machine-bundle NAME`). `ship-fleet

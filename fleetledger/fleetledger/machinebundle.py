@@ -16,9 +16,11 @@ name. So it must be safe to be the only thing such a key can run:
   certificate when one was signed; when it was refused for being idle), the
   certificate beside its bundle, and one audit line per call.
 
-The bundle is data, never a script: the machine's certificate, the CA lines for its
-known_hosts, each Ship's host names (the one that resolves on the FleetLedger computer
-and the overlay one) with its tags and runtime, and FleetLedger's own host key. A new
+The bundle is data: the machine's certificate, the CA lines for its known_hosts, each
+Ship's host names (the one that resolves on the FleetLedger computer and the overlay one)
+with its tags and runtime, and FleetLedger's own host key. It also carries the refresher
+script, base64, which only the first-install line `ship-fleet trust` prints ever decodes
+(fleetledger/refresher): the refresher never reads it. A new
 certificate is signed only once the current one is past half its life, by the same
 code and for the same lifetime as `ship-fleet trust`. While the vault is locked
 nothing is signed: the bundle comes with the current certificate while it is still
@@ -36,7 +38,7 @@ import subprocess
 from datetime import datetime, timedelta
 from typing import Any
 
-from fleetledger import appliance, attach, ca, paths, sshkeys, trustcmd, vault
+from fleetledger import appliance, attach, ca, paths, refresher, sshkeys, trustcmd, vault
 from fleetledger.concierge import audit
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
@@ -244,6 +246,9 @@ def bundle(app, inv: Inventory, cfg: ca.CAConfig, m: ca.Machine, *, now: datetim
             "on": m.idle_limit and not _is_this_computer(m.name),
             "days": ca.IDLE_LIMIT.days,
         },
+        # For the first-install line alone (refresher/__init__.py); the refresher never
+        # reads it, so a refresh applies data only.
+        "refresher": refresher.script_b64(),
     }
 
 
@@ -335,7 +340,9 @@ def add_parsers(sub, add) -> None:
             "Print the bundle of the trusted machine NAME as JSON\n"
             "(contracts/machine-bundle.schema.json): its certificate, the CA lines for\n"
             "its known_hosts, the Ships its scope reaches with their host names, tags and\n"
-            "runtime, and FleetLedger's own host key. Data only, never a script.\n\n"
+            "runtime, and FleetLedger's own host key; and the refresher script, which\n"
+            "only the first-install line ship-fleet trust prints decodes (the refresher\n"
+            "applies the rest as data and never reads it).\n\n"
             "A new certificate is signed only past half the current one's life. While the\n"
             "vault is locked it signs nothing and says so. A machine untrusted, unknown,\n"
             f"or that has not asked for {ca.IDLE_LIMIT.days} days (ship-fleet trust NAME\n"

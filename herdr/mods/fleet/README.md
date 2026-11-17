@@ -47,7 +47,8 @@ the panel. Saving the file reloads the panel.
 Without `ssh`, the panel says where to put it. If the refresher has left
 `~/.ssh/shipshape/fleet.json` on this computer (this machine's own bundle from `ship-fleet
 machine-bundle NAME`, `contracts/machine-bundle.schema.json`), the panel shows its Ships (name and
-tags) when it has no list from FleetLedger. The file is not there today, which is normal. It never
+tags) when it has no list from FleetLedger. Without the refresher (`ship-fleet trust` prints
+the line that installs it) the file is not there, which is normal. It never
 takes FleetLedger's address from that file: a refresher's key may be allowed only
 `ship-fleet machine-bundle`, and every call with it counts as this machine refreshing. If
 FleetLedger ever answers the panel with this machine's bundle, the panel says so and does not ask
@@ -91,8 +92,8 @@ Ship action and no New Ship is offered, and the panel says why and what to do in
 
 **After a job.** The panel watches Herdr's own list of terminals (no ssh). When a job's terminal
 ends, it runs this computer's refresher if there is one (`~/.ssh/shipshape/refresh`, which keeps
-`~/.ssh/shipshape` and Herdr's machines current; it is not there today, which is normal and
-silent), then reads FleetLedger again as ever (offline). A new Ship that is ready gets a toast.
+`~/.ssh/shipshape` and Herdr's machines current; without it, which is normal, the panel says
+nothing), then reads FleetLedger again as ever (offline). A new Ship that is ready gets a toast.
 
 ## What it runs, and where
 
