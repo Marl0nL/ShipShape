@@ -23,7 +23,7 @@ from fleetledger.errors import ConfigError, FleetError
 from fleetledger.seed import iso
 from test_service import FakeSystem, units  # noqa: F401 - the unit folder fixture
 
-from fleetledger import appliance, cli, firstrun, ssh
+from fleetledger import appliance, cli, firstrun, selfupdate, ssh
 
 GIT = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.com"]
 ORIGIN = "https://example.com/you/ShipShape.git"
@@ -688,3 +688,131 @@ def test_the_runbook_installs_the_same_wrapper_without_reading_fleetledgers_file
     assert block == appliance.WRAPPER
     assert "sudo chmod 0755 /usr/local/bin/ship-fleet" in text
     assert "/home/fleetledger/ShipShape/fleetledger/fleetledger/seed" not in text
+
+
+# --- self-update's catch-up (upkeep.py) ---------------------------------------------------------
+STALE = "AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGUtc3RhbGUta2V5LXBsYWNlaG9sZGVyLTAx"
+
+
+def _stale_block() -> str:
+    """FleetLedger's block with a line it wrote for a machine it no longer trusts."""
+    from fleetledger import authkeys
+
+    line = (f'restrict,command="{authkeys.SHIP_FLEET} machine-bundle old-laptop" '
+            f"ssh-ed25519 {STALE} old-laptop")
+    authkeys.path().parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    authkeys.path().write_text(f"ssh-ed25519 {STALE[:-4]}AAAA you\n{authkeys.BEGIN}\n{line}\n"
+                               f"{authkeys.END}\n")
+    authkeys.path().chmod(0o600)
+    return line
+
+
+def test_self_update_brings_the_bundle_keys_up_to_date_itself(store, home, fetchable,
+                                                             tmp_path, units):  # noqa: F811
+    from fleetledger import authkeys
+
+    line = _stale_block()
+    target = _advance(fetchable, tmp_path, "newer")
+    system = FakeSystem(active=True)
+    units.mkdir(parents=True)
+    (units / "fleetledger.service").write_text("# Written by ship-fleet service install\n")
+    app, out = app_for(store, fetchable, system)
+    calls = []
+    app.run_catch_up = lambda a, root: calls.append(root) or selfupdate.catch_up(a)
+    assert cli.main(["self-update"], app) == 0, out.getvalue()
+    assert git(fetchable.root, "rev-parse", "HEAD") == target
+    assert calls == [str(fetchable.root)]  # the new version's, in a process of its own
+    assert line not in authkeys.path().read_text()
+    assert authkeys.path().read_text().startswith(f"ssh-ed25519 {STALE[:-4]}AAAA you\n")
+    assert "Bundle key line(s) removed" in out.getvalue()
+    assert "FleetLedger's own state is up to date." in out.getvalue()
+    assert ["systemctl", "--user", "--no-block", "restart", "fleetledger.service"] in system.calls
+
+
+def test_a_failed_catch_up_is_said_and_leaves_the_update_whole(store, home, fetchable, tmp_path,
+                                                               units):  # noqa: F811
+    from fleetledger import authkeys
+
+    authkeys.path().parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    broken = f"ssh-ed25519 {STALE} you\n{authkeys.BEGIN}\n"  # a start marker, no end
+    authkeys.path().write_text(broken)
+    target = _advance(fetchable, tmp_path, "newer")
+    system = FakeSystem(active=True)
+    units.mkdir(parents=True)
+    (units / "fleetledger.service").write_text("# Written by ship-fleet service install\n")
+    app, out = app_for(store, fetchable, system)
+    assert cli.main(["self-update"], app) == 1
+    said = out.getvalue()
+    assert "Bringing FleetLedger's own state up to date failed: bundle keys" in said
+    assert f"updated to {target[:12]}" in said and "self-update again" in said
+    assert git(fetchable.root, "rev-parse", "HEAD") == target  # the update stands
+    assert ["systemctl", "--user", "--no-block", "restart", "fleetledger.service"] in system.calls
+    assert authkeys.path().read_text() == broken  # never written over
+
+
+def test_self_update_with_nothing_new_still_catches_up(store, home, fetchable):
+    from fleetledger import authkeys
+
+    line = _stale_block()
+    app, out = app_for(store, fetchable)
+    assert cli.main(["self-update"], app) == 0, out.getvalue()
+    assert "already" in out.getvalue() and line not in authkeys.path().read_text()
+    app, out = app_for(store, fetchable)
+    assert cli.main(["self-update", "--catch-up", "--force"], app) == 1
+    assert "--catch-up takes no other option" in out.getvalue()
+
+
+def test_the_service_catches_up_when_it_starts_and_never_fails_for_it(store, home):
+    from fleetledger import authkeys, upkeep
+
+    line = _stale_block()
+    notes = []
+
+    class App:
+        store_factory = staticmethod(lambda: store)
+        note = staticmethod(notes.append)
+
+    upkeep.at_service_start(App())
+    assert line not in authkeys.path().read_text()
+    assert any("removed" in n for n in notes)
+    authkeys.path().write_text(f"{authkeys.BEGIN}\n")
+    notes.clear()
+    upkeep.at_service_start(App())  # broken markers: said, not raised
+    assert notes and "bundle keys" in notes[0]
+
+
+def test_doctor_mentions_expose_auth_info_once_as_optional(tmp_path):
+    from fleetledger import firstrun
+
+    item, = firstrun.auth_info_items({"SSH_CONNECTION": "192.0.2.1 5 192.0.2.2 22"})
+    assert item.state == "info" and item.detail.startswith("optional")
+    assert item.next == firstrun.AUTH_INFO_FIX and "ExposeAuthInfo yes" in item.next
+    assert firstrun.key_of(item) == "computer.sshd-auth-info"
+    auth = tmp_path / "auth"
+    auth.write_text("publickey ssh-ed25519 AAAA\n")
+    assert firstrun.auth_info_items({"SSH_CONNECTION": "x", "SSH_USER_AUTH": str(auth)}) == []
+    conf = tmp_path / "10-fleetledger.conf"
+    assert firstrun.auth_info_items({}, conf) == []  # no seed file: cannot tell, says nothing
+    conf.write_text("PasswordAuthentication no\n")
+    assert [i.state for i in firstrun.auth_info_items({}, conf)] == ["info"]
+    conf.write_text("PasswordAuthentication no\nExposeAuthInfo yes\n")
+    assert firstrun.auth_info_items({}, conf) == []
+
+
+
+@pytest.mark.parametrize("script,code,said", [
+    ("import sys; sys.exit(0)", 0, ""),
+    ("import sys; sys.exit(1)", 1, ""),
+    ("import sys; sys.exit(2)", 0, "older than it"),
+])
+def test_the_catch_up_process_and_what_its_exit_means(monkeypatch, script, code, said):
+    """run_catch_up itself (the autouse fixture replaces it elsewhere), with a stand-in for
+    the new version's ship-fleet: never a real one."""
+    notes = []
+
+    class App:
+        note = staticmethod(notes.append)
+
+    monkeypatch.setattr(selfupdate, "CATCH_UP", script)
+    assert selfupdate.run_catch_up.real(App(), "/") == code
+    assert (said in " ".join(notes)) if said else notes == []

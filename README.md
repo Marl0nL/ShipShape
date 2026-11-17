@@ -22,6 +22,13 @@ See `docs/architecture.md` and `docs/security.md`.
 
 ## Quick start
 
+On any computer, `./shipshape-setup` (at this checkout's root) asks what the computer
+should be and walks through only those steps: FleetLedger here (the two commands below), or
+a Herdr client that sees and manages your Ships (`./shipshape-setup --herdr-client
+--fleetledger fleetledger@HOST`, or with no checkout the one line in [Set up or
+update](docs/runbooks/trust-machines.md#set-up-or-update)). FleetLedger on a VM of its own
+and a computer that hosts Ships are not one step yet; it says where to go instead.
+
 New here? [Set up your own fleet](docs/guide/your-own-fleet.md) walks through
 every step. In short:
 

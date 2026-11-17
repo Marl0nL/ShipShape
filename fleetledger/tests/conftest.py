@@ -101,6 +101,23 @@ def no_real_authorized_keys(tmp_path, monkeypatch):
     # need one set these themselves.
     for name in ("SSH_USER_AUTH", "SSH_CONNECTION", "SSH_CLIENT"):
         monkeypatch.delenv(name, raising=False)
+    # Nor does it read the real VM's sshd settings (doctor's ExposeAuthInfo item).
+    from fleetledger import firstrun
+
+    monkeypatch.setattr(firstrun, "SSHD_CONF", tmp_path / "no-sshd" / "10-fleetledger.conf")
+
+
+@pytest.fixture(autouse=True)
+def catch_up_in_process(monkeypatch):
+    """self-update's catch-up runs the new version in a process of its own; a test runs
+    it in-process, with its own app, and never starts a real ship-fleet."""
+    from fleetledger import selfupdate
+
+    def in_process(app, root):
+        return selfupdate.catch_up(app)
+
+    in_process.real = selfupdate.run_catch_up  # for the one test of the process itself
+    monkeypatch.setattr(selfupdate, "run_catch_up", in_process)
 
 
 @pytest.fixture(autouse=True)

@@ -291,7 +291,7 @@ def lockout_reasons(lst: Listing, k: Key, s: Session) -> list[str]:
         why.append("it is the key this session logged in with")
     elif s.keys is None and s.over_ssh:
         why.append("FleetLedger cannot tell which key this ssh session logged in with "
-                   "(sshd's ExposeAuthInfo is off here), so it may be this one")
+                   "(sshd does not say), so it may be this one")
     others = (o for o in lst.keys if o.parsed.key != k.parsed.key)
     if k.access in ("shell", "cert-authority") and not any(surely_a_shell(lst, o)
                                                            for o in others):
@@ -511,9 +511,8 @@ def _list(args, app) -> int:
         app.say("This is not FleetLedger's own VM: these are your own login's keys, and "
                 "ship-fleet keys name and revoke change nothing here.")
     elif s.keys is None and s.over_ssh:
-        app.say("Which key this session logged in with is not known: sshd's ExposeAuthInfo "
-                "is off here (docs/runbooks/fleetledger-vm.md), so audit lines name no key "
-                f"and revoke asks for {FORCE}.")
+        app.say("Which key this session logged in with is not known (sshd does not say), so "
+                f"revoke asks for {FORCE}.")
     return 0
 
 

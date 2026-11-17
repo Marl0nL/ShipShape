@@ -2,6 +2,26 @@
 
 Layouts and mods for Herdr, the terminal app ShipShape's Ships run their agents in.
 
+## Set up or update
+
+```sh
+# 1. On FleetLedger's VM:
+ship-fleet self-update
+# 2. On a computer that runs Herdr (later, to update: shipshape-setup):
+ssh fleetledger@fleetledger.example.invalid ship-fleet machine-setup --installer | sh -s -- --herdr-client --fleetledger fleetledger@fleetledger.example.invalid
+```
+
+The second (from a checkout: `./shipshape-setup --herdr-client --fleetledger
+fleetledger@HOST`) installs this computer's refresher, the Desk and the Fleet panel (from
+FleetLedger, the version it runs), fills in the panel's
+`settings.json` where you have not, has FleetLedger trust this computer if it does not yet
+(shown first, one yes), and opens the Fleet tab. Later, `shipshape-setup` alone updates it
+all. See [`../docs/runbooks/trust-machines.md`](../docs/runbooks/trust-machines.md), "Set up
+or update", for what it checks and what it does without a key that logs in to the VM.
+`install-desk.sh` and `install-fleet.sh` below still install from this checkout by hand.
+
+## What is here
+
 **The Desk** (`layouts/desk.json`): Herdr's default layout plus a panel that follows the focused
 agent, which agents on any machine, Ships included, fill in themselves with the `desk` CLI. See
 [`DESK.md`](DESK.md) for how it works; it installs with `herdr/install-desk.sh`, which installs

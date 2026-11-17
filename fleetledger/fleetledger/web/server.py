@@ -313,5 +313,10 @@ def cmd_ui(args, app) -> int:
     kwargs = {"remote": found} if found is not None else {}
     if service:
         kwargs["service"] = True
+        # What an update needs FleetLedger to bring up to date itself (upkeep.py), once at
+        # each start: an update made by an older self-update restarts the service.
+        from fleetledger import upkeep
+
+        upkeep.at_service_start(app)
     return serve(app, port=args.port, open_browser=not (args.no_browser or service),
                  interval=args.interval, **kwargs)

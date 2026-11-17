@@ -1,5 +1,38 @@
 # Runbook: SSH certificates and attaching from other machines
 
+## Set up or update
+
+```sh
+# 1. On FleetLedger's VM:
+ship-fleet self-update
+# 2. On a computer that runs Herdr (later, to update: shipshape-setup):
+ssh fleetledger@fleetledger.example.invalid ship-fleet machine-setup --installer | sh -s -- --herdr-client --fleetledger fleetledger@fleetledger.example.invalid
+```
+
+The first runs on the VM, as ever: it updates FleetLedger, brings its own state up to
+date (the trusted machines' bundle keys) and restarts it. The second runs the installer,
+`shipshape-setup`, that FleetLedger's VM has (the version it runs; from a ShipShape
+checkout, `./shipshape-setup --herdr-client --fleetledger fleetledger@HOST` is the same).
+It installs a copy of itself, so later `shipshape-setup` with nothing after it updates
+everything and asks nothing; nothing updates it unattended. It:
+
+- pins the VM's host key: one `~/.ssh/known_hosts` already has is used; otherwise it shows
+  the fingerprint and asks you to confirm it (or `--host-key-fingerprint SHA256:...`);
+- finds which trusted machine this computer is by its keys. If none, and your ssh session
+  on the VM has a shell, it shows the `ship-fleet trust` it would run there (a name from
+  this computer's host name, `--scope all`, `--logins both`, a new key of its own in
+  `~/.ssh/shipshape`) and runs it after one yes (`--yes`; `--name`, `--scope`, `--logins`
+  to choose). With no key that logs in there, it says the one step to take on a computer
+  that has one (the Fleet panel's Machines ▸ Trust a machine, or one `ssh ... ship-fleet
+  trust` line), and stops: a computer never trusts itself;
+- installs the refresher and its timer (below), the Desk and the Fleet panel into Herdr,
+  and fills in the panel's `settings.json` where you have not; and opens the Fleet tab
+  (`--no-open` not to).
+
+A computer with no key that logs in to the VM cannot fetch the installer that way: run
+it from a ShipShape checkout instead, and it says the one step to take. No Ship needs
+updating for any of this. The rest of this page is how it works, and the steps by hand.
+
 From phase 3 FleetLedger is the fleet's SSH certificate authority (CA). That
 gives you two things:
 
@@ -64,7 +97,8 @@ tooling first.
 ## 3. Trust a machine
 
 With FleetLedger on its own VM, trusting a machine is: run `trust` once there, paste one
-line on the machine. From then on the machine keeps itself current.
+line on the machine. From then on the machine keeps itself current. (`shipshape-setup`,
+above, does all of this for you from a computer whose ssh has a shell on the VM.)
 
 1. On the machine you want to attach from, make a key just for this (no passphrase, so
    its timer can use it; the key may fetch only its own bundle on the VM):
@@ -93,8 +127,12 @@ Every refresh renews the certificate once it is past half its life, adds new Shi
 removes destroyed ones (from `hc` too, but only the machines the refresher added
 itself). It applies the bundle as data only and never replaces itself; see
 [A machine that refreshes itself](#a-machine-that-refreshes-itself) below. To remove
-the timer: `~/.ssh/shipshape/refresh remove-timer`. To update the refresher, paste the
-line again (`ship-fleet trust laptop` prints it).
+the timer: `~/.ssh/shipshape/refresh remove-timer`. To update the refresher, run
+`shipshape-setup` (or paste the line again: `ship-fleet trust laptop` prints it). With
+Herdr on the machine and no Fleet panel in it yet, the pasted line ends by naming the one
+command left: `shipshape-setup --herdr-client`, from a checkout (a key that may only fetch
+its bundle gets the mods from there, and the panel then shows the Ships from
+`fleet.json`).
 
 Your main machine (whose own key logs in to the VM with a shell) gets the same line
 from `ship-fleet trust desktop --key ~/.ssh/id_ed25519.pub` and runs the same

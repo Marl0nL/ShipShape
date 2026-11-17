@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/machine-setup.schema.json",
+  "title": "What the installer reads to set a computer up (ship-fleet machine-setup --json, version 1)",
+  "description": "Printed by `ship-fleet machine-setup --json` on FleetLedger's own VM, as the copy that acts, for `shipshape-setup` (the installer at the checkout's root) over an ssh session that has a shell there. Read-only. The installer checks every value against the refresher's own patterns, finds which trusted machine it is by its public keys, fetches the refresher through that machine's own key (its bundle, with fleetledger.host_key pinned) and runs it only when its SHA-256 is refresher_sha256, and installs the package (`ship-fleet machine-setup --package`) only when its SHA-256 is package.sha256. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "fleetledger", "refresher_sha256", "package", "machines"],
+  "properties": {
+    "schema": { "const": "shipshape.machine-setup/1" },
+    "fleetledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "user", "hosts", "host_key"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$", "description": "FleetLedger's VM's own name ([fleet] self)." },
+        "user": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$", "description": "The user FleetLedger runs as there: who the refresher logs in as." },
+        "hosts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$" },
+          "description": "The names it is reached by, tried in this order (its LAN name, then others such as its overlay name; its bare name last)."
+        },
+        "host_key": { "type": "string", "pattern": "^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{1,100}={0,2}$", "description": "Its ssh host key, as [fleet] self records it: what the installer pins, and checks against the key it confirmed on first contact." }
+      }
+    },
+    "refresher_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The SHA-256 of the refresher this FleetLedger serves in every machine bundle." },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "bytes"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 8388608 }
+      },
+      "description": "What `ship-fleet machine-setup --package` prints: a gzipped tar of shipshape-setup and herdr/ (install scripts, the Desk layout and themes, the Desk's mods and the Fleet panel)."
+    },
+    "machines": {
+      "type": "array",
+      "maxItems": 1000,
+      "description": "Every trusted machine but those untrusted and FleetLedger's own computer, with an ed25519 key.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "key", "access"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+          "key": { "type": "string", "pattern": "^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{1,100}={0,2}$", "description": "Its public key, type and base64 only." },
+          "access": { "enum": ["bundle", "shell", "none"], "description": "bundle: FleetLedger's forced line lets that key fetch its bundle and nothing else; shell: the key has a line of yours (it asks for its bundle by name); none: no line yet (ship-fleet doctor says why)." }
+        }
+      }
+    }
+  }
+}

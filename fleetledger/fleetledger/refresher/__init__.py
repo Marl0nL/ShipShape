@@ -2,15 +2,16 @@
 and the one line `ship-fleet trust` prints to install it there.
 
 How the script reaches the machine: `ship-fleet machine-bundle NAME` always carries it,
-base64, as `refresher` (contracts/machine-bundle.schema.json). Only the first-install line
-below decodes it, once, when you paste that line on the machine: the same act of trust as
-running a bundle's install.sh by hand. The refresher itself never reads that field and never
-replaces itself, so a later refresh applies data only, and a FleetLedger that was taken over
-cannot run code on trusted machines through it. The line fetches with the machine's own key
-through the same forced command as every refresh (a key that may run only
-`ship-fleet machine-bundle NAME` gets nothing more for it), with FleetLedger's host key
-pinned from this computer's own record, and runs the script only when its SHA-256 is the
-one the line names.
+base64, as `refresher` (contracts/machine-bundle.schema.json). Only an install a person runs
+decodes it: the first-install line below, when you paste it on the machine, or the
+installer, shipshape-setup (checking the SHA-256 `ship-fleet machine-setup` names): the same
+act of trust as running a bundle's install.sh by hand. The refresher itself never reads that
+field and never replaces itself, so a later refresh applies data only, and a FleetLedger
+that was taken over cannot run code on trusted machines through it. The line fetches with
+the machine's own key through the same forced command as every refresh (a key that may run
+only `ship-fleet machine-bundle NAME` gets nothing more for it), with FleetLedger's host key
+pinned from this computer's own record, and runs the script only when its SHA-256 is the one
+the line names.
 """
 
 from __future__ import annotations
