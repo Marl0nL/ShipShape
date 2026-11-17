@@ -53,11 +53,11 @@ def mod_code():
 
 
 def test_its_reads_and_where_its_actions_run():
-    """It reads with four offline or local ship-fleet verbs, every one through model.js's ask(),
+    """It reads with five offline or local ship-fleet verbs, every one through model.js's ask(),
     which quotes; everything else opens a terminal tab, and only model.js builds one."""
     code = mod_code()
     verbs = set(re.findall(r'ask\((?:host|this\.host), (?:st\.where|where), \["([a-z-]+)"', code))
-    assert verbs == {"ls", "attention", "about", "signins"}
+    assert verbs == {"ls", "attention", "about", "signins", "ca"}
     assert code.count('exec("ssh"') == 1  # model.js's ask(), which quotes
     assert not re.search(r"catch\s*(\([^)]*\))?\s*\{\s*\}", code)  # no failure is swallowed
     main = (FLEET / "main.js").read_text("utf-8")
@@ -94,13 +94,16 @@ def test_it_asks_nothing_of_its_own_and_types_nothing_into_a_terminal():
 
 
 def test_nothing_secret_is_typed_into_it():
-    """Its only inputs are a new Ship's name, tag, repository and size, and a snapshot's name:
-    no passphrase, password, code or token, and nothing drawn masked."""
+    """Its only inputs are a new Ship's name, tag, repository and size, a snapshot's name, a
+    machine's name, public key and scope, and a device's name: no passphrase, password, code,
+    token or private key, and nothing drawn masked."""
     main = (FLEET / "main.js").read_text("utf-8")
     assert "set_masked" not in main
     placeholders = re.findall(r'input\("([^"]*)"\)', main)
     assert placeholders == ["ship-07", "or a new tag", "owner/name (optional)", "vCPUs",
-                            "memory MB", "disk GB", "snapshot name"]
+                            "memory MB", "disk GB", "snapshot name", "laptop",
+                            "ssh-ed25519 AAAA... (the one line of its .pub file)",
+                            "or type tag:TAG ship:NAME", "phone"]
     assert main.count("InputState.new(") == 1  # input(), above
 
 
@@ -112,7 +115,8 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
     script = ("const m = await import(process.argv[1]); console.log(JSON.stringify({"
               "NAME: m.NAME.source, TAG: m.TAG.source, REPO: m.REPO.source, "
               "SNAPSHOT: m.SNAPSHOT.source, SIGNIN: m.SIGNIN.source, SERVICE: m.SERVICE.source, "
-              "SIZE: m.SIZE}))")
+              "SIZE: m.SIZE, SCOPE: m.SCOPE.source, DEVICE: m.DEVICE.source, LOGINS: m.LOGINS, "
+              "LOGIN_CHOICES: m.LOGIN_CHOICES}))")
     r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri()],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -121,8 +125,9 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
 
     from fleetledger.drivers.base import SNAPSHOT_NAME
     from fleetledger.lifecycle import size_limits
+    from fleetledger.web import devices
 
-    from fleetledger import github, ops, signinreg
+    from fleetledger import ca, github, ops, signinreg
 
     ships_toml = json.loads((ROOT / "contracts" / "ships.toml.schema.json").read_text("utf-8"))
     signin = json.loads((ROOT / "contracts" / "fleetledger-signin.schema.json").read_text("utf-8"))
@@ -133,6 +138,34 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
     assert js["SIGNIN"] == signinreg.ID.pattern
     assert js["SERVICE"] == signin["properties"]["provider"]["pattern"]
     assert js["SIZE"] == {k: list(v) for k, v in size_limits().items()}
+    assert js["SCOPE"] == ca.SCOPE.pattern
+    assert js["DEVICE"] == devices.NAME_RE.pattern
+    assert js["LOGINS"] == list(ca.LOGINS)
+    for choice in js["LOGIN_CHOICES"]:
+        ca.parse_logins(choice)  # each one ship-fleet trust --logins takes
+
+
+def test_a_key_it_sends_is_one_ship_fleet_takes_as_a_line():
+    """Every public key checkPublicKey lets through is an ed25519 line ship-fleet trust --key
+    reads as a line (not a path) and accepts, and carries no comment."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    blob = "AAAAC3NzaC1lZDI1NTE5AAAAI" + "B" + "x" * 42
+    pasted = [f"ssh-ed25519 {blob}", f"ssh-ed25519 {blob} my-laptop\n",
+              f"ssh-ed25519\t{blob}\tit's \"mine\"", f"  ssh-ed25519 {blob}\r\n"]
+    script = ("const m = await import(process.argv[1]); "
+              "console.log(JSON.stringify(JSON.parse(process.argv[2]).map(m.checkPublicKey)))")
+    r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri(),
+                        json.dumps(pasted)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+    from fleetledger import ca, trustcmd
+
+    for key in json.loads(r.stdout):
+        assert key == f"ssh-ed25519 {blob}"
+        assert ca.ED25519_LINE.match(key)
+        assert trustcmd._read_key(key) == key
 
 
 def install(tmp_path, *extra):

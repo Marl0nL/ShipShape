@@ -7,8 +7,9 @@ to that Ship's space in Herdr.
 
 What changes anything runs in a terminal tab, never in the panel: **New Ship**, a Ship's **⋯**
 menu and the **FleetLedger** menu each show the exact command, and clicking opens one terminal
-tab on this computer that runs it, where `ship-fleet` asks its own questions (see Actions). Trusting
-machines and pairing a phone's browser are not here yet.
+tab on this computer that runs it, where `ship-fleet` asks its own questions (see Actions).
+**Machines** shows this computer's own refresh and the machines trusted to attach to Ships, and
+trusts, untrusts and pairs from there (see Machines).
 
 ## Install
 
@@ -67,9 +68,9 @@ which is exactly the line the panel showed under the action before you clicked i
 **Destroy**, `yes` before **Roll back**, the vault's passphrase for **Unlock**, a sign-in's link and
 code. The panel never passes a flag that skips one (`--yes`, `--force`, `--revoke-my-key`,
 `--stdin`), asks no question of its own, never types into a terminal, and takes no secret: the
-only things typed into it are a new Ship's name, tag, repository and size, and a snapshot's name,
-each checked against the pattern `ship-fleet` enforces and refused, not sent, when it does not
-match.
+only things typed into it are a new Ship's name, tag, repository and size, a snapshot's name, and
+on the Machines page a machine's name, public key and scope and a device's name, each checked
+against the pattern `ship-fleet` enforces and refused, not sent, when it does not match.
 
 | Where | Action | Runs on FleetLedger |
 |---|---|---|
@@ -95,10 +96,51 @@ ends, it runs this computer's refresher if there is one (`~/.ssh/shipshape/refre
 `~/.ssh/shipshape` and Herdr's machines current; without it, which is normal, the panel says
 nothing), then reads FleetLedger again as ever (offline). A new Ship that is ready gets a toast.
 
+## Machines
+
+The **Machines** button swaps the Ships for two parts.
+
+**This computer.** What its refresher (`~/.ssh/shipshape/refresh`, which `ship-fleet trust`'s
+one-line install leaves) last did, from `~/.ssh/shipshape/state.json`
+(`contracts/refresh-state.schema.json`, checked field by field; one it does not match is said,
+not shown): when its certificate ends, when it last refreshed and how many Ships it got, and the
+last failure and warning. The name it is trusted under comes from `machine.conf`, and its row
+below is marked. **Refresh now** runs the refresher, shows the first line of what it said on
+stderr if it failed, and reads everything again. Without a refresher the panel says so, and how
+to get one: Trust a machine for this computer from the computer that runs `ship-fleet`, then
+paste here, in a terminal, the line it prints. The Fleet header shows the certificate's end and
+the last refresh too.
+
+**Trusted machines**, from `ship-fleet ca show --json`, read when the page opens, on **Reload**
+and after a trust, untrust or allow-again job ends (never on a timer): one row per machine (the
+untrusted last) with its scope, logins, certificate (`ok`, `expiring`, `lapsed`, `none`) and
+when it ends, whether it may refresh (or was refused for being idle 30 days), whether its key is
+`bundle only` (its line on FleetLedger's VM may fetch its own bundle and nothing else) or a
+`full key` (a line of yours), and when it last asked for its bundle.
+
+| Where | Action | Runs on FleetLedger |
+|---|---|---|
+| **Trust a machine** | Trust | `ship-fleet trust NAME --key 'ssh-ed25519 …' --scope SCOPE… --logins agent\|owner\|both`. On FleetLedger's own VM, `ship-fleet` prints the one line to paste on that machine in the terminal (elsewhere it writes the machine's bundle instead). |
+| A machine's **⋯** | Allow again | `ship-fleet trust NAME --allow-again`, only while it is refused for being idle |
+| | Untrust | `ship-fleet untrust NAME` (`ship-fleet` asks you to type the machine's name; it cannot be undone) |
+| **Pair a phone's browser** | Pair | `ship-fleet ui link --name DEVICE --qr`: a one-time link and its QR code, in the terminal. Only while the remote web UI is on. |
+
+What Trust takes, before anything is sent: a name that is a machine name and not one in the list
+(names are never reused, untrusted ones included); the new machine's public key, exactly one
+line of an ed25519 `.pub` file (`ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519` on that
+machine), sent as its type and key alone, never its comment, and refused when it has a second
+line, options before it, another key type, a certificate, a private key or a cut key; a scope
+(`all` alone, or tags and Ships: `tag:work`, `ship:ship-03`); and its logins.
+
+On a computer that only fetches its own bundle (no `"ssh"` in `settings.json`, or a key that may
+only fetch this machine's bundle), the list cannot be read: the page shows this computer's
+refresh alone and says why in one line.
+
 ## What it runs, and where
 
 On this computer, as you, only while the Fleet tab is the one on show: when it opens, every five
-minutes after, and on Refresh. Once more when a job's terminal ends.
+minutes after, and on Refresh. Once more when a job's terminal ends, and on the Machines page
+when it opens and on its buttons.
 
 | Command | For |
 |---|---|
@@ -108,9 +150,11 @@ minutes after, and on Refresh. Once more when a job's terminal ends.
 | `hc machine ls --json` | Herdr's connection to each Ship |
 | the same ssh, `'signins' NAME '--offline' '--json'` | When a Ship's menu opens: the sign-ins it uses |
 | the same ssh, `'signins' '--accounts' '--json'` | When New Ship opens: the sign-ins a Ship may use, and the fleet's tags |
-| `test -x ~/.ssh/shipshape/refresh`, then the refresher | When a job ends, if there is one |
+| the same ssh, `'ca' 'show' '--json'` | When Machines opens, on its Reload, and after a job that trusted, untrusted or allowed a machine again: the trusted machines |
+| `test -x ~/.ssh/shipshape/refresh`, then the refresher | When a job ends, if there is one; on Refresh now (the `test -x` also when Machines opens) |
 
-It also reads `settings.json` and `fleet.json` (above). Every word sent to the FleetLedger computer
+It also reads `settings.json`, `fleet.json` (above) and the refresher's `state.json` and
+`machine.conf` with every read. Every word sent to the FleetLedger computer
 is quoted for its shell, a value with a line break is refused, and a Ship name outside
 `[a-z0-9-]` is never sent. The documents it reads are `contracts/ship-fleet.md`'s: each one's
 `schema` is checked, and one the panel does not know (a newer panel's, or a FleetLedger older than

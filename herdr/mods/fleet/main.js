@@ -1,7 +1,8 @@
 // The Fleet panel: your Ships as FleetLedger last saw them, in a Herdr tab, and what you can do
 // with them. Every action opens a terminal tab running one ship-fleet command over ssh, shown
 // here before it runs; ship-fleet asks its own questions there. Nothing is typed into the panel
-// but a new Ship's name, tag, repository and size, and a snapshot's name.
+// but a new Ship's name, tag, repository and size, a snapshot's name, and on the Machines page
+// a machine's name, public key and scope and a device's name. Nothing secret.
 // All its logic is in model.js; this file draws and hands model.js Herdr's functions.
 //
 //   herdr-app do tab.new '{"name":"Fleet","mod":"fleet"}'   open it as a tab
@@ -13,7 +14,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand } from "herdr";
-import { Fleet, rows, header, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate } from "./model.js";
+import { Fleet, rows, header, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, LOGIN_CHOICES } from "./model.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -73,6 +74,7 @@ function button(t, id, text, act, on = false) {
 
 const mono = (t, text) => div().w_full().text_size(11).font_family("JetBrains Mono").text_color(t.muted).child(text);
 const FORM = ["name", "tag", "repo", "cores", "memory_mb", "disk_gb"];
+const TRUST = ["mname", "mkey", "mscope"];
 // The FleetLedger menu's key in this.menu, beside Ship names: not one a Ship can have.
 const FLEETLEDGER = ":fleetledger";
 
@@ -81,6 +83,9 @@ export default class FleetPanel extends View {
     this.note = null;
     this.menu = null; // the Ship whose menu is open, or FLEETLEDGER
     this.form = null; // the New Ship form while open: {tag, signins}
+    this.page = "ships"; // or "machines"
+    this.trust = null; // the Trust a machine form while open: {scope, logins}
+    this.pair = false; // the Pair a phone's browser form is open
     const input = (placeholder) => {
       const s = InputState.new({ placeholder });
       s.on("change", (_e, cx) => cx.notify()); // the command shown follows what is typed
@@ -94,6 +99,10 @@ export default class FleetPanel extends View {
       memory_mb: input("memory MB"),
       disk_gb: input("disk GB"),
       snap: input("snapshot name"),
+      mname: input("laptop"),
+      mkey: input("ssh-ed25519 AAAA... (the one line of its .pub file)"),
+      mscope: input("or type tag:TAG ship:NAME"),
+      device: input("phone"),
     };
     cx.timer.every(TICK_MS, (cx) => this.tick(cx));
     this.tick(cx);
@@ -138,9 +147,12 @@ export default class FleetPanel extends View {
   start(job) {
     const r = fleet.startJob(job, { panes: panes(), spaces: spaces(), terminals: terminals() });
     this.note = r.error ?? `Opened a terminal tab: ${job.title}. What ship-fleet asks, it asks there.`;
+    if (job.kind === "trust" && r.ok) this.note += " On FleetLedger's own VM it prints there the line to paste on the new machine.";
     if (r.ok) {
       this.menu = null;
       this.form = null;
+      this.trust = null;
+      this.pair = false;
     }
   }
 
@@ -162,6 +174,49 @@ export default class FleetPanel extends View {
       await reading;
       cx.notify();
     });
+  }
+
+  showPage(cx, page) {
+    this.page = page;
+    this.menu = null;
+    this.form = null;
+    if (page !== "machines") return;
+    cx.spawn(async (cx) => {
+      const reading = fleet.openMachines();
+      cx.notify(); // "reading the trusted machines…"
+      await reading;
+      cx.notify();
+    });
+  }
+
+  reloadMachines(cx) {
+    cx.spawn(async (cx) => {
+      const reading = fleet.loadCa();
+      cx.notify();
+      await reading;
+      cx.notify();
+    });
+  }
+
+  refreshNow(cx) {
+    cx.spawn(async (cx) => {
+      const running = fleet.refreshNow();
+      cx.notify(); // "Refreshing…"
+      await running;
+      cx.notify();
+    });
+  }
+
+  toggleTrust() {
+    this.trust = this.trust ? null : { scope: [], logins: "agent" };
+    for (const k of TRUST) this.inputs[k].set_value("");
+    this.pair = false;
+  }
+
+  togglePair() {
+    this.pair = !this.pair;
+    this.inputs.device.set_value("phone");
+    this.trust = null;
   }
 
   toggleForm(cx) {
@@ -326,6 +381,138 @@ export default class FleetPanel extends View {
       .when(r.named, (el) => el.child(button(t, `more-${r.name}`, "⋯", (_e, cx) => this.toggleMenu(cx, r.name), this.menu === r.name)));
   }
 
+  // ---- the Machines page ----
+
+  trustView(t) {
+    const st = fleet.state;
+    const f = this.trust;
+    const plan = trustJob(st, { name: this.inputs.mname.value(), key: this.inputs.mkey.value(), scope: f.scope, scopeTyped: this.inputs.mscope.value(), logins: f.logins });
+    const label = (text) => div().w(90).flex_none().text_size(12).text_color(t.muted).child(text);
+    const line = (id, ...kids) => h_flex().id(id).w_full().gap(6).items_center().flex_wrap().children(kids);
+    const toggle = (scope) => {
+      f.scope = f.scope.includes(scope) ? f.scope.filter((s) => s !== scope) : [...f.scope, scope];
+    };
+    const scopes = ["all", ...knownTags(st).map((tag) => `tag:${tag}`)];
+    return v_flex()
+      .id("trust")
+      .w_full()
+      .p(10)
+      .gap(6)
+      .rounded(8)
+      .border_1()
+      .border_color(t.border)
+      .child(div().text_size(13).font_weight(600).child("Trust a machine"))
+      .child(div().text_size(11.5).text_color(t.dim).child("On the new machine first: ssh-keygen -t ed25519 -f ~/.ssh/shipshape/id_ed25519, then paste the one line of its .pub file below (never the private key)."))
+      .child(line("t-name", label("Name"), this.inputBox(t, "mname", 200)))
+      .child(line("t-key", label("Public key"), this.inputBox(t, "mkey", 460)))
+      .child(line("t-scope", label("May reach"), ...scopes.map((s) => button(t, `scope-${s}`, s, () => toggle(s), f.scope.includes(s))), this.inputBox(t, "mscope", 200)))
+      .child(line("t-logins", label("Logs in as"), ...LOGIN_CHOICES.map((l) => button(t, `login-${l}`, l, () => {
+        f.logins = l;
+      }, f.logins === l)), div().text_size(11.5).text_color(t.dim).child("agent: attach to the agent; owner: your own login, with sudo")))
+      .children(plan.errors.map((e, i) => div().id(`t-err-${i}`).text_size(12).text_color(t.dim).child(e)))
+      .when(Boolean(plan.job), (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Trust opens a terminal tab that runs this; on FleetLedger's own VM, ship-fleet prints there the one line to paste on the new machine:")).child(mono(t, plan.job?.shown ?? "")))
+      .child(
+        h_flex()
+          .gap(8)
+          .when(Boolean(plan.job), (el) => el.child(button(t, "trust-go", "Trust", () => this.start(plan.job))))
+          .child(button(t, "trust-cancel", "Cancel", () => {
+            this.trust = null;
+          })),
+      );
+  }
+
+  pairView(t) {
+    const plan = pairJob(fleet.state, this.inputs.device.value());
+    return v_flex()
+      .id("pair")
+      .w_full()
+      .p(10)
+      .gap(6)
+      .rounded(8)
+      .border_1()
+      .border_color(t.border)
+      .child(div().text_size(13).font_weight(600).child("Pair a phone's browser"))
+      .child(h_flex().gap(6).items_center().child(div().w(90).flex_none().text_size(12).text_color(t.muted).child("Device name")).child(this.inputBox(t, "device", 200)))
+      .children(plan.errors.map((e, i) => div().id(`p-err-${i}`).text_size(12).text_color(t.dim).child(e)))
+      .when(Boolean(plan.job), (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Opens a terminal tab with a one-time link and its QR code: open it on the phone, signed in to Tailscale.")).child(mono(t, plan.job?.shown ?? "")))
+      .child(
+        h_flex()
+          .gap(8)
+          .when(Boolean(plan.job), (el) => el.child(button(t, "pair-go", "Pair", () => this.start(plan.job))))
+          .child(button(t, "pair-cancel", "Cancel", () => {
+            this.pair = false;
+          })),
+      );
+  }
+
+  machineRow(t, r) {
+    const key = `m:${r.name}`;
+    return h_flex()
+      .id(`machine-${r.name}`)
+      .h(30)
+      .px(8)
+      .gap(10)
+      .items_center()
+      .rounded(6)
+      .child(div().flex_none().w(150).truncate().text_color(r.revoked ? t.dim : t.foreground).child(r.mine ? `${r.name} (this computer)` : r.name))
+      .child(div().flex_none().w(110).truncate().text_color(t.muted).child(r.scope))
+      .child(div().flex_none().w(90).truncate().text_color(t.muted).child(r.logins))
+      .child(div().flex_none().w(200).truncate().text_color(toneColor(t, r.cert.tone)).child(r.cert.text))
+      .child(div().flex_none().w(170).truncate().text_color(toneColor(t, r.refresh.tone)).child(r.refresh.text))
+      .child(div().flex_none().w(100).truncate().text_color(toneColor(t, r.key?.tone ?? "dim")).child(r.key?.text ?? ""))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(r.refreshed))
+      .when(!r.revoked, (el) => el.child(button(t, `more-${key}`, "⋯", () => {
+        this.menu = this.menu === key ? null : key;
+      }, this.menu === key)));
+  }
+
+  machinesPage(t) {
+    const st = fleet.state;
+    const v = machinesView(st, Date.now());
+    const line = (l, i) => div().id(`local-${i}`).w_full().text_size(12).text_color(toneColor(t, l.tone)).child(l.text);
+    const list = v.rows.flatMap((r) => (this.menu === `m:${r.name}` ? [this.machineRow(t, r), this.menuBox(t, `m:${r.name}`, machineMenu(st, r))] : [this.machineRow(t, r)]));
+    return v_flex()
+      .id("machines")
+      .flex_1()
+      .min_h(0)
+      .gap(8)
+      .child(
+        v_flex()
+          .id("this-computer")
+          .w_full()
+          .p(10)
+          .gap(4)
+          .rounded(8)
+          .border_1()
+          .border_color(t.border)
+          .child(
+            h_flex()
+              .gap(8)
+              .items_center()
+              .child(div().flex_1().text_size(13).font_weight(600).child("This computer"))
+              .when(v.canRefresh, (el) => el.child(button(t, "refresh-now", st.refreshing ? "Refreshing…" : "Refresh now", (_e, cx) => this.refreshNow(cx)))),
+          )
+          .children(v.local.map(line))
+          .when(Boolean(st.refreshNote), (el) => el.child(line(st.refreshNote ?? { tone: "dim", text: "" }, "note"))),
+      )
+      .when(!st.ca?.pullOnly, (el) =>
+        el.child(
+          h_flex()
+            .gap(8)
+            .items_center()
+            .child(div().flex_1().text_size(13).font_weight(600).child("Trusted machines"))
+            .child(button(t, "trust-open", "Trust a machine", () => this.toggleTrust(), Boolean(this.trust)))
+            .child(button(t, "pair-open", "Pair a phone's browser", () => this.togglePair(), this.pair))
+            .child(button(t, "machines-reload", st.ca?.loading ? "Reading…" : "Reload", (_e, cx) => this.reloadMachines(cx))),
+        ),
+      )
+      .when(Boolean(this.trust), (el) => el.child(this.trustView(t)))
+      .when(this.pair, (el) => el.child(this.pairView(t)))
+      .when(Boolean(v.why), (el) => el.child(div().text_size(12).text_color(t.dim).child(v.why ?? "")))
+      .children(v.notices.map((n, i) => div().id(`m-notice-${i}`).w_full().text_size(12).text_color(toneColor(t, n.tone)).child(n.text)))
+      .child(v_flex().id("machine-rows").flex_1().min_h(0).overflow_y_scrollbar().children(list));
+  }
+
   render() {
     const t = theme();
     const st = fleet.state;
@@ -348,7 +535,8 @@ export default class FleetPanel extends View {
           .items_center()
           .child(div().flex_none().text_size(14).font_weight(600).child("Fleet"))
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(h.facts.join(" · ")))
-          .child(button(t, "new", "New Ship", (_e, cx) => this.toggleForm(cx), Boolean(this.form)))
+          .child(button(t, "page", this.page === "machines" ? "Ships" : "Machines", (_e, cx) => this.showPage(cx, this.page === "machines" ? "ships" : "machines"), this.page === "machines"))
+          .when(this.page === "ships", (el) => el.child(button(t, "new", "New Ship", (_e, cx) => this.toggleForm(cx), Boolean(this.form))))
           .child(button(t, "fleetledger-menu", "FleetLedger", (_e, cx) => this.toggleMenu(cx, FLEETLEDGER), this.menu === FLEETLEDGER))
           .child(button(t, "refresh", st.asking ? "Reading…" : "Refresh", (_e, cx) => this.refresh(cx))),
       )
@@ -359,7 +547,8 @@ export default class FleetPanel extends View {
       .when(Boolean(this.note), (el) => el.child(div().text_size(12).text_color(t.muted).child(this.note ?? "")))
       .when(Boolean(st.jobNote), (el) => el.child(div().text_size(12).text_color(t.muted).child(st.jobNote ?? "")))
       .when(st.jobs.length > 0, (el) => el.child(div().text_size(12).text_color(t.dim).child(`In terminal tabs now: ${st.jobs.map((j) => j.title).join(", ")}`)))
-      .when(Boolean(h.empty) && !list.length, (el) => el.child(div().pt(8).text_color(t.dim).child(h.empty ?? "")))
-      .child(v_flex().id("ships").flex_1().min_h(0).overflow_y_scrollbar().children(list.flatMap((r) => (this.menu === r.name ? [this.row(t, r), this.shipMenuView(t, r)] : [this.row(t, r)]))));
+      .when(this.page === "machines", (el) => el.child(this.machinesPage(t)))
+      .when(this.page === "ships" && Boolean(h.empty) && !list.length, (el) => el.child(div().pt(8).text_color(t.dim).child(h.empty ?? "")))
+      .when(this.page === "ships", (el) => el.child(v_flex().id("ships").flex_1().min_h(0).overflow_y_scrollbar().children(list.flatMap((r) => (this.menu === r.name ? [this.row(t, r), this.shipMenuView(t, r)] : [this.row(t, r)])))));
   }
 }

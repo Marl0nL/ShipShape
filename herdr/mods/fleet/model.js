@@ -323,6 +323,12 @@ export class Fleet {
       accounts: null, // the New Ship form's sign-ins and tags: {signins, tags} | {error} | {loading: true}
       jobs: [], // terminal tabs the panel opened that have not ended
       jobNote: null, // what came of the last job that ended, for the view
+      // This computer's refresher (the Machines view and the header): state.json and
+      // machine.conf with every read; `installed` only when the view opens or Refresh now runs.
+      local: { refresh: null, conf: null, installed: null },
+      ca: null, // the trusted machines: {machines, refused, at} | {pullOnly} | {error} (+ loading)
+      refreshing: false, // Refresh now is running
+      refreshNote: null, // what came of the last Refresh now: {tone, text}
     };
   }
 
@@ -342,11 +348,12 @@ export class Fleet {
     const host = this.host;
     const st = this.state;
     st.asking = true;
-    const [settingsText, fleetText] = await Promise.all([readFile(host, settingsPath(host)), readFile(host, fleetFilePath(host))]);
+    const [settingsText, fleetText] = await Promise.all([readFile(host, settingsPath(host)), readFile(host, fleetFilePath(host)), this.readLocal()]);
     st.settings = settingsText.error ? { error: settingsText.error, warnings: [] } : readSettings(settingsText.text, host.home());
     st.fleetFile = fleetText.error ? { error: fleetText.error } : readFleetFile(fleetText.text);
     st.where = st.settings.ssh ? { ssh: st.settings.ssh, identity: st.settings.identity } : null;
-    const key = st.where && `${st.where.ssh}\n${st.where.identity ?? ""}`;
+    const key = whereKey(st.where);
+    if (st.ca && !st.ca.loading && st.ca.key !== key) st.ca = null; // read from another FleetLedger or key
 
     const machines = this.readMachines();
     // A key that got this machine's bundle is not used again (each ask counts as a refresh):
@@ -485,6 +492,9 @@ export class Fleet {
         }
       } else notes.push(s ? `${j.ship}: ${s.state}${s.message ? `, ${s.message}` : ""}.` : `${j.ship} is not in FleetLedger's list: see its terminal.`);
     }
+    // A machine trusted, untrusted or allowed again: read the list again, if it was read.
+    // One lost from sight may have ended too: one read either way.
+    if (ended.some((j) => MACHINE_KINDS.has(j.kind)) && st.ca?.machines) await this.loadCa();
     st.jobNote = notes.join(" ") || null;
     return ended;
   }
@@ -492,13 +502,7 @@ export class Fleet {
   /** Runs this computer's refresher when there is one: {absent}, {ok} or {error}. */
   async runRefresher() {
     const path = refresherPath(this.host);
-    let t;
-    try {
-      t = await this.host.exec("test", ["-x", path]);
-    } catch {
-      return { absent: true }; // no `test` here (not a POSIX system): no refresher either
-    }
-    if (t.code !== 0) return { absent: true };
+    if (!(await this.hasRefresher())) return { absent: true };
     let r;
     try {
       r = await this.host.exec(path, [], { timeout: REFRESHER_MS });
@@ -507,6 +511,75 @@ export class Fleet {
     }
     if (r.code === 0) return { ok: true };
     return { error: `${path}: ${firstLine(r.stderr, r.stdout) || `it exited ${r.code}`}` };
+  }
+
+  /** Is the refresher on this computer? A local `test -x`; also kept for the Machines view. */
+  async hasRefresher() {
+    let t;
+    try {
+      t = await this.host.exec("test", ["-x", refresherPath(this.host)]);
+    } catch {
+      t = { code: 1 }; // no `test` here (not a POSIX system): no refresher either
+    }
+    this.state.local.installed = t.code === 0;
+    return this.state.local.installed;
+  }
+
+  /** This computer's state.json and machine.conf, as the refresher last left them. Local reads. */
+  async readLocal() {
+    const host = this.host;
+    const [s, c] = await Promise.all([readFile(host, stateFilePath(host)), readFile(host, machineConfPath(host))]);
+    this.state.local.refresh = s.error ? { error: s.error } : readRefreshState(s.text);
+    this.state.local.conf = c.error ? { error: c.error } : readMachineConf(c.text);
+  }
+
+  /** Why this computer cannot list the trusted machines, or null: it can. */
+  pullOnly() {
+    const st = this.state;
+    if (!st.where) return "This computer does not run ship-fleet (no \"ssh\" in settings.json), so only its own refresh is shown; the trusted machines are listed on the computer that does.";
+    if (this.forced === whereKey(st.where)) return "The key settings.json names may only fetch this machine's bundle, so only its own refresh is shown; the trusted machines are listed on the computer that runs ship-fleet.";
+    return null;
+  }
+
+  /** The Machines view opens: the trusted machines (one read) and this computer's refresher. */
+  async openMachines() {
+    if (this.busy) await this.busy;
+    if (this.state.readAt === null) await this.refresh(); // settings.json, to know where to ask
+    await Promise.all([this.loadCa(), this.hasRefresher(), this.readLocal()]);
+  }
+
+  /** `ship-fleet ca show --json`: when the Machines view opens, on its Reload, and after a job
+   *  that changed a machine. Never on a timer. The last list stays shown while one is read. */
+  async loadCa() {
+    const st = this.state;
+    const pull = this.pullOnly();
+    const key = whereKey(st.where);
+    if (pull) {
+      st.ca = { pullOnly: pull, key };
+      return;
+    }
+    const last = st.ca?.machines && st.ca.key === key ? { machines: st.ca.machines, refused: st.ca.refused, at: st.ca.at } : {};
+    st.ca = { ...last, key, loading: true };
+    const r = await ask(this.host, st.where, ["ca", "show", "--json"]);
+    const got = r.ok ? readCa(r.stdout) : { error: r.error };
+    st.ca = got.error ? { ...last, key, error: got.error } : { ...got, key, at: this.now() };
+  }
+
+  /** Refresh now: runs the refresher, then reads again (state.json, fleet.json, Herdr's machines
+   *  and FleetLedger, as after a job). Its first line on stderr is said when it fails. */
+  async refreshNow() {
+    const st = this.state;
+    if (st.refreshing) return;
+    st.refreshing = true;
+    try {
+      const r = await this.runRefresher();
+      if (r.absent) st.refreshNote = { tone: "warn", text: NO_REFRESHER };
+      else st.refreshNote = r.error ? { tone: "bad", text: r.error } : { tone: "good", text: "Refreshed: this computer's certificate and Ships are current." };
+      if (this.busy) await this.busy;
+      await this.refresh();
+    } finally {
+      st.refreshing = false;
+    }
   }
 
   /** Reads a Ship's sign-ins for its menu (one offline read, when the menu opens). */
@@ -604,6 +677,8 @@ export function header(state, now, paths) {
   if (st.about?.copy && st.about.copy !== "active") facts.push(`copy: ${st.about.copy}`);
   if (st.shipsAt !== null) facts.push(`read ${ago(now - st.shipsAt)}`);
   else if (st.shipsFrom === "fleet.json") facts.push("Ships from fleet.json");
+  const mine = localFact(st, now);
+  if (mine) facts.push(mine);
   if (st.asking) facts.push("asking…");
 
   if (st.settings?.error) notices.push({ tone: "bad", text: st.settings.error });
@@ -623,6 +698,9 @@ export function header(state, now, paths) {
   if (st.attentionError) notices.push({ tone: "warn", text: st.attentionError });
   if (st.aboutError) notices.push({ tone: "dim", text: st.aboutError });
   if (st.machinesError) notices.push({ tone: "dim", text: st.machinesError });
+  const refresh = st.local?.refresh;
+  if (refresh?.error) notices.push({ tone: "warn", text: refresh.error });
+  else if (refresh?.lastError) notices.push({ tone: "warn", text: `This computer's last refresh failed: ${refresh.lastError} (Machines ▸ Refresh now)` });
 
   let empty = null;
   if (st.ships && !st.ships.length && st.shipsFrom === "FleetLedger") empty = "FleetLedger has no Ships yet.";
@@ -1046,3 +1124,352 @@ const sameArgv = (a, b) => Array.isArray(a) && a.length === b.length && a.every(
 export const runsJob = (t, job) => Array.isArray(t?.argv) && (sameArgv(t.argv, job.argv) || t.argv.some((a) => typeof a === "string" && a.includes(job.remote)));
 /** Still running: a terminal that reports no end. */
 const live = (t) => (t.state === undefined || t.state === "live") && (t.exit_code === undefined || t.exit_code === null);
+
+// ---- the Machines view: this computer's refresher, and the machines trusted to attach -------
+//
+// It reads `ship-fleet ca show --json` (contracts/ship-fleet.md) only when the view opens, on its
+// Reload, and after a job that changed a machine: never on a timer. This computer's state.json
+// and machine.conf, which its refresher writes (contracts/refresh-state.schema.json), are read
+// with every read above, and the refresher runs only on Refresh now (and after a job, above).
+// What changes anything (trust, untrust, allow again, pair a phone's browser) is a job in a
+// terminal tab, built as every other job is.
+
+export const SCHEMA_CA = "shipshape.fleetledger-ca/1";
+export const SCHEMA_REFRESH = "shipshape.refresh-state/1";
+/** What the refresher writes on this computer (contracts/ship-fleet.md, "The refresher"). */
+export const stateFilePath = (host) => `${host.home()}/.ssh/shipshape/state.json`;
+export const machineConfPath = (host) => `${host.home()}/.ssh/shipshape/machine.conf`;
+
+/** Each pattern is ship-fleet's own (tests/test_herdr_fleet.py checks each against its source). */
+export const SCOPE = /^(all|tag:[a-z0-9][a-z0-9-]{0,30}|ship:[a-z0-9][a-z0-9-]{0,30})$/; // fleetledger/ca.py SCOPE
+export const DEVICE = /^[A-Za-z0-9][A-Za-z0-9 ._'()-]{0,39}$/; // fleetledger/web/devices.py NAME_RE
+export const LOGINS = ["agent", "owner"]; // fleetledger/ca.py LOGINS, in its order
+/** What `trust --logins` takes (ca.parse_logins); the panel offers these three. */
+export const LOGIN_CHOICES = ["agent", "owner", "both"];
+/** An ed25519 public key's base64, exactly: the 51 bytes of its type and its 32-byte key.
+ *  Tighter than ca.py's ED25519_LINE, which takes any base64 after the type. */
+export const ED25519_BLOB = /^AAAAC3NzaC1lZDI1NTE5AAAAI[A-P][A-Za-z0-9+/]{42}$/;
+
+const TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/;
+const FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}$/;
+const MACHINE_STATE = new Set(["ok", "expiring", "lapsed", "none", "revoked"]);
+const BUNDLE_KEY = new Set(["installed", "own-line", "missing"]);
+/** Jobs that change a machine: when one ends, the list is read again. */
+const MACHINE_KINDS = new Set(["trust", "untrust", "allow-again"]);
+
+export const NO_REFRESHER = "No refresher on this computer (~/.ssh/shipshape/refresh), so it does not keep itself current. To get one: on the computer that runs ship-fleet, Trust a machine for this one (the one line of its ~/.ssh/shipshape/id_ed25519.pub), then paste here, in a terminal, the line ship-fleet trust prints.";
+
+const whereKey = (where) => where && `${where.ssh}\n${where.identity ?? ""}`;
+const stamp = (v) => typeof v === "string" && TIMESTAMP.test(v) && !Number.isNaN(Date.parse(v));
+const stampOrNull = (v) => v === null || stamp(v);
+const sentenceOrNull = (v) => v === null || (typeof v === "string" && v.length <= 2000 && /^[ -~]*$/.test(v));
+
+const REFRESH_FIELDS = {
+  schema: () => true, // checked first
+  refresher: (v) => Number.isInteger(v) && v >= 1,
+  machine: (v) => v === null || (typeof v === "string" && NAME.test(v)),
+  last_attempt: stamp,
+  last_success: stampOrNull,
+  certificate_valid_before: stampOrNull,
+  ships: (v) => v === null || (Number.isInteger(v) && v >= 0),
+  last_error: sentenceOrNull,
+  warning: sentenceOrNull,
+};
+
+/** This computer's ~/.ssh/shipshape/state.json (null: there is none), checked against the
+ *  contract's whole shape: every field there, none other, each of its type and pattern. */
+export function readRefreshState(text) {
+  if (text === null || text === undefined) return { absent: true };
+  const p = parse(text, "state.json");
+  if (p.error) return { error: p.error };
+  const why = checkSchema(p.value, SCHEMA_REFRESH);
+  if (why) return { error: `state.json: ${why}` };
+  const d = p.value;
+  for (const k of Object.keys(d)) if (!(k in REFRESH_FIELDS)) return { error: `state.json: ${JSON.stringify(k).slice(0, 40)} is not in its contract (refresh-state.schema.json)` };
+  for (const [k, ok] of Object.entries(REFRESH_FIELDS)) {
+    if (!(k in d) || !ok(d[k])) return { error: `state.json: "${k}" is missing or not as its contract says (refresh-state.schema.json)` };
+  }
+  return {
+    machine: d.machine,
+    lastAttempt: d.last_attempt,
+    lastSuccess: d.last_success,
+    certificateEnd: d.certificate_valid_before,
+    ships: d.ships,
+    lastError: d.last_error,
+    warning: d.warning,
+  };
+}
+
+/** This computer's ~/.ssh/shipshape/machine.conf (null: there is none): only the name it is
+ *  trusted under, its `name=` line. Data, read line by line, as the refresher reads it. */
+export function readMachineConf(text) {
+  if (text === null || text === undefined) return { absent: true };
+  let name = null;
+  for (const raw of String(text).split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.startsWith("name=")) name = line.slice(5);
+  }
+  if (name === null) return { error: "machine.conf: it has no name= line" };
+  if (!NAME.test(name)) return { error: "machine.conf: its name is not a machine name" };
+  return { name };
+}
+
+function shapeOfMachine(e) {
+  if (!e || typeof e !== "object" || Array.isArray(e)) return "not a JSON object";
+  if (typeof e.machine !== "string" || !NAME.test(e.machine)) return "its name is not a machine name";
+  if (!Array.isArray(e.scope) || !e.scope.length || !e.scope.every((s) => typeof s === "string" && SCOPE.test(s))) return "its scope is not the contract's";
+  if (e.logins !== undefined && (!Array.isArray(e.logins) || !e.logins.length || e.logins.some((l) => !LOGINS.includes(l)) || new Set(e.logins).size !== e.logins.length)) return "its logins are not the contract's";
+  if (!MACHINE_STATE.has(e.state)) return "its state is not one the contract names";
+  if (!(e.valid_before === null || typeof e.valid_before === "string") || !stampOrNull(e.revoked) || typeof e.fingerprint !== "string" || !FINGERPRINT.test(e.fingerprint) || typeof e.this_computer !== "boolean") return "its certificate, revocation, fingerprint or this_computer is not the contract's";
+  for (const k of ["last_refreshed", "idle_refused"]) if (e[k] !== undefined && !stampOrNull(e[k])) return `its ${k} is not the contract's`;
+  if (e.idle_limit !== undefined && typeof e.idle_limit !== "boolean") return "its idle_limit is not the contract's";
+  if (e.bundle_key !== undefined && !BUNDLE_KEY.has(e.bundle_key)) return "its bundle_key is not the contract's";
+  return null;
+}
+
+/** `ship-fleet ca show --json`: the machines trusted to attach (untrusted ones too), and why any
+ *  entry was left out. */
+export function readCa(stdout) {
+  const p = parse(stdout, "ship-fleet ca show");
+  if (p.error) return { error: p.error };
+  const why = checkSchema(p.value, SCHEMA_CA);
+  if (why) return { error: `ship-fleet ca show: ${why}`, older: olderThan(p.value, SCHEMA_CA) };
+  if (!Array.isArray(p.value.machines)) return { error: "ship-fleet ca show: no machines list" };
+  const refused = refuser();
+  const machines = [];
+  for (const e of p.value.machines) {
+    const bad = shapeOfMachine(e);
+    if (bad) {
+      refused.add(bad);
+      continue;
+    }
+    machines.push({
+      name: e.machine,
+      scope: e.scope,
+      logins: e.logins ?? null, // null: a FleetLedger from before logins were recorded
+      validBefore: stamp(e.valid_before) ? e.valid_before : null,
+      revoked: e.revoked,
+      state: e.state,
+      thisComputer: e.this_computer,
+      lastRefreshed: e.last_refreshed ?? null,
+      idleLimit: e.idle_limit ?? true,
+      idleRefused: e.idle_refused ?? null,
+      bundleKey: e.bundle_key ?? null,
+    });
+  }
+  return { machines, refused: refused.list() };
+}
+
+// -- what the view shows --
+
+/** "in 3 days", "in 5 h"; past, as ago() says it. */
+export function fromNow(ms) {
+  if (ms <= 0) return ago(-ms);
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `in ${Math.max(1, m)} min`;
+  const h = Math.round(m / 60);
+  if (h < 36) return `in ${h} h`;
+  return `in ${Math.round(h / 24)} days`;
+}
+
+/** A contract timestamp as a person reads it: "2026-01-12 09:00 UTC (in 3 days)". */
+export function when(iso, now) {
+  const t = Date.parse(iso);
+  if (!stamp(iso) || Number.isNaN(t)) return "?";
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC (${fromNow(t - now)})`;
+}
+
+const CERT_TONE = { ok: "good", expiring: "warn", lapsed: "bad", none: "dim", revoked: "dim" };
+const KEY_SAID = {
+  installed: { text: "bundle only", tone: "good", why: "its key may only fetch its own bundle" },
+  "own-line": { text: "full key", tone: "warn", why: "its key has a line of yours on FleetLedger's computer, which decides what it may do" },
+  missing: { text: "no bundle line", tone: "warn", why: "it cannot fetch its own bundle yet: ship-fleet trust --sync-keys" },
+};
+
+/** This computer's own refresh, for the header and the view: lines of {tone, text}. */
+export function localLines(st, now) {
+  const { refresh, conf, installed } = st.local;
+  const lines = [];
+  if (conf?.name) lines.push({ tone: "dim", text: `This computer is trusted as ${conf.name} (machine.conf).` });
+  else if (conf?.error) lines.push({ tone: "warn", text: conf.error });
+  if (installed === false) lines.push({ tone: "warn", text: NO_REFRESHER });
+  if (refresh?.error) lines.push({ tone: "warn", text: refresh.error });
+  else if (refresh && !refresh.absent) {
+    const r = refresh;
+    if (r.certificateEnd) {
+      const lapsed = Date.parse(r.certificateEnd) <= now;
+      lines.push({ tone: lapsed ? "bad" : "good", text: `Its certificate ${lapsed ? "lapsed" : "ends"} ${when(r.certificateEnd, now)}.` });
+    } else lines.push({ tone: "warn", text: "No certificate installed by the refresher yet." });
+    lines.push({ tone: "dim", text: r.lastSuccess ? `Last refreshed ${when(r.lastSuccess, now)}${r.ships === null ? "" : `, ${r.ships} Ship${r.ships === 1 ? "" : "s"}`}.` : "Never refreshed yet." });
+    if (r.lastError) lines.push({ tone: "bad", text: `Last try, ${when(r.lastAttempt, now)}, failed: ${r.lastError}` });
+    if (r.warning) lines.push({ tone: "warn", text: `Warning: ${r.warning}` });
+  } else if (installed === true) lines.push({ tone: "dim", text: "The refresher has not run yet (no state.json)." });
+  return lines;
+}
+
+/** The header's one fact about this computer's certificate, or null with no state.json. */
+export function localFact(st, now) {
+  const r = st.local?.refresh;
+  if (!r || r.absent || r.error) return null;
+  const cert = r.certificateEnd ? `certificate ${Date.parse(r.certificateEnd) <= now ? "lapsed" : "ends"} ${fromNow(Date.parse(r.certificateEnd) - now)}` : "no certificate";
+  return `this computer: ${cert}, refreshed ${r.lastSuccess ? ago(now - Date.parse(r.lastSuccess)) : "never"}${r.lastError ? " (last try failed)" : ""}`;
+}
+
+/** One row per trusted machine (untrusted ones last), this computer's marked. */
+export function machineRows(st, now) {
+  const me = st.local?.conf?.name ?? null;
+  const list = [...(st.ca?.machines ?? [])].sort((a, b) => Number(Boolean(a.revoked)) - Number(Boolean(b.revoked)));
+  return list.map((m) => {
+    let refresh;
+    if (m.revoked) refresh = { text: `untrusted ${when(m.revoked, now)}`, tone: "dim" };
+    else if (m.thisComputer) refresh = { text: "FleetLedger's own computer: renews its own", tone: "dim" };
+    else if (m.idleRefused) refresh = { text: `refused: idle (since ${when(m.idleRefused, now)})`, tone: "bad" };
+    else refresh = { text: m.idleLimit ? "refresh allowed" : "refresh allowed, no idle limit", tone: "good" };
+    return {
+      name: m.name,
+      mine: m.name === me && !m.revoked,
+      revoked: Boolean(m.revoked),
+      scope: m.scope.join(", "),
+      logins: m.logins ? m.logins.join(" + ") : "logins not recorded",
+      cert: { text: `${m.state}${m.validBefore ? `, ${m.state === "lapsed" ? "ended" : "ends"} ${when(m.validBefore, now)}` : ""}`, tone: CERT_TONE[m.state] ?? "dim" },
+      refreshed: m.lastRefreshed ? `asked ${when(m.lastRefreshed, now)}` : m.thisComputer ? "" : "never asked for its bundle",
+      refresh,
+      key: m.revoked ? null : (KEY_SAID[m.bundleKey] ?? null),
+    };
+  });
+}
+
+/** The Machines view: why there is no list (and what is shown instead), its notices, its rows. */
+export function machinesView(st, now) {
+  const ca = st.ca;
+  const notices = [];
+  let why = null;
+  if (!ca) why = "The trusted machines are not read yet: Reload.";
+  else if (ca.pullOnly) why = ca.pullOnly;
+  else {
+    if (ca.loading) notices.push({ tone: "dim", text: "Reading the trusted machines…" });
+    if (ca.error) notices.push({ tone: "bad", text: ca.error });
+    for (const r of ca.refused ?? []) notices.push({ tone: "warn", text: `Left out of the list: ${r}` });
+    if (ca.machines && !ca.machines.length) why = "No machine is trusted yet.";
+  }
+  const mine = st.local?.conf?.name;
+  if (mine && ca?.machines && !ca.machines.some((m) => m.name === mine && !m.revoked)) {
+    notices.push({ tone: "warn", text: `This computer refreshes as ${mine}, which is not a trusted machine in this list.` });
+  }
+  return { why, notices, rows: ca?.pullOnly ? [] : machineRows(st, now), local: localLines(st, now), canRefresh: st.local?.installed !== false };
+}
+
+// -- what is typed --
+
+/** A pasted public key: exactly one line, `ssh-ed25519 BASE64 [comment]`, the base64 an ed25519
+ *  key's exactly. What is sent is the type and the base64 alone: the comment stays here (ship-
+ *  fleet keeps nothing from it). No options before it, no certificate, no private key, no
+ *  second line; trailing line breaks and spaces, as a copied .pub file has, are let go. */
+export function checkPublicKey(text) {
+  const s = String(text ?? "").replace(/[\s]+$/, "").replace(/^[ \t]+/, "");
+  if (!s) throw new Error("Paste the new machine's public key: the one line of its .pub file.");
+  if (/-----BEGIN|PRIVATE KEY/.test(s)) throw new Error("That is a private key: paste the .pub file's line, and keep the private key on its machine.");
+  if (/[\r\n]/.test(s)) throw new Error("Paste one line only: a public key is one line.");
+  const line = s.replace(/\t/g, " "); // ssh-keygen writes spaces; a tab between words is one too
+  if (CONTROL.test(line)) throw new Error("The key has a control character in it.");
+  const [type, blob] = line.split(/ +/);
+  if (type !== "ssh-ed25519") throw new Error(`${JSON.stringify(type).slice(0, 40)} is not a key ship-fleet trusts: an ed25519 public key's line starts with ssh-ed25519 (make one with ssh-keygen -t ed25519).`);
+  if (!ED25519_BLOB.test(blob ?? "")) throw new Error("That is not a whole ed25519 public key: its second word is cut or changed.");
+  return `${type} ${blob}`;
+}
+
+/** The scopes chosen and typed (`tag:work ship:ship-03`, by spaces or commas), each one ship-
+ *  fleet takes; `all` alone. */
+export function checkScopes(chosen = [], typed = "") {
+  const all = [...chosen, ...String(typed ?? "").split(/[\s,]+/)].map((s) => String(s).trim()).filter(Boolean);
+  const scopes = [...new Set(all)];
+  if (!scopes.length) throw new Error("Choose what it may reach: all, a tag or a Ship.");
+  for (const s of scopes) if (!SCOPE.test(s)) throw new Error(`${JSON.stringify(s).slice(0, 40)} is not a scope: all, tag:TAG or ship:NAME`);
+  if (scopes.includes("all") && scopes.length > 1) throw new Error("all already reaches every Ship: choose it alone.");
+  return scopes;
+}
+
+/** A device's name for `ui link --name`: spaces folded, as FleetLedger folds them. */
+export function checkDevice(value) {
+  const s = String(value ?? "").split(/ +/).filter(Boolean).join(" ");
+  if (CONTROL.test(s) || !DEVICE.test(s)) throw new Error("A device name is up to 40 letters, digits, spaces and . _ ' ( ) -, starting with a letter or digit.");
+  return s;
+}
+
+/** Why the Machines view offers no job just now, or null: it does. */
+export function machineGate(st) {
+  const gate = actionGate(st);
+  if (gate) return gate;
+  if (!st.ca?.machines) return st.ca?.pullOnly ?? "The trusted machines have not been read: Reload.";
+  return null;
+}
+
+/** Trust a machine: one job running `ship-fleet trust NAME --key 'ssh-ed25519 …' --scope … --logins …`
+ *  on FleetLedger, which prints there the one line to paste on that machine. Or what is wrong
+ *  with what is typed, and nothing is built. form: {name, key, scope: [chosen], scopeTyped, logins}. */
+export function trustJob(st, form) {
+  const gate = machineGate(st);
+  if (gate) return { errors: [gate] };
+  const errors = [];
+  const guard = (fn) => {
+    try {
+      return fn();
+    } catch (e) {
+      errors.push(firstLine(e?.message ?? e));
+      return null;
+    }
+  };
+  const name = String(form.name ?? "").trim();
+  if (!name) errors.push("Give it a name (laptop, say).");
+  else if (!NAME.test(name)) errors.push(`${JSON.stringify(name).slice(0, 40)} is not a machine name: lower-case letters, digits and dashes, up to 31`);
+  else if (st.ca.machines.some((m) => m.name === name)) errors.push(`${name} is already a machine here (names are never reused): choose another.`);
+  const key = guard(() => checkPublicKey(form.key));
+  const scopes = guard(() => checkScopes(form.scope, form.scopeTyped));
+  const logins = String(form.logins ?? "");
+  if (!LOGIN_CHOICES.includes(logins)) errors.push("Choose its logins: agent, owner or both.");
+  if (errors.length) return { errors };
+  const args = ["trust", name, "--key", key, ...scopes.flatMap((s) => ["--scope", s]), "--logins", logins];
+  try {
+    return { job: job(st.where, `trust ${name}`, [args], { kind: "trust", machine: name }), errors: [] };
+  } catch (e) {
+    return { errors: [firstLine(e?.message ?? e)] };
+  }
+}
+
+/** A machine's menu: Allow again (only while it is refused for being idle) and Untrust, each a
+ *  job; or why there is none. `row` is one of machineRows(). */
+export function machineMenu(st, row, now = Date.now()) {
+  if (!row || !NAME.test(row.name)) return { why: "Not a name this panel uses.", items: [] };
+  const gate = machineGate(st);
+  if (gate) return { why: gate, items: [] };
+  const m = st.ca.machines.find((x) => x.name === row.name);
+  if (!m) return { why: "Not in the list just read.", items: [] };
+  if (m.revoked) return { why: `Untrusted ${when(m.revoked, now)}; it stays so. Trust the machine again under a new name with a new key.`, items: [] };
+  const items = [];
+  const make = (id, label, args, note) => {
+    try {
+      items.push({ id, label, job: job(st.where, `${id} ${m.name}`, [args], { kind: id, machine: m.name }), note });
+    } catch (e) {
+      items.push({ id, label, job: null, why: firstLine(e?.message ?? e) });
+    }
+  };
+  if (m.idleRefused) make("allow-again", "Allow again", ["trust", m.name, "--allow-again"], "lets it fetch its bundle again; signs nothing");
+  make("untrust", "Untrust", ["untrust", m.name], "cannot be undone: ship-fleet asks you to type the machine's name in the terminal");
+  return { why: null, items };
+}
+
+/** Pair a phone's browser with the remote web UI: `ship-fleet ui link --name NAME --qr` in a
+ *  terminal, which shows the one-time link and its QR code there. Only while the remote web UI
+ *  is on. */
+export function pairJob(st, device) {
+  const gate = actionGate(st);
+  if (gate) return { errors: [gate] };
+  if (!st.about?.webUi) return { errors: ["The web UI is not on for other devices (ship-fleet ui remote), so there is nothing to pair with."] };
+  let name;
+  try {
+    name = checkDevice(device);
+  } catch (e) {
+    return { errors: [firstLine(e?.message ?? e)] };
+  }
+  return { job: job(st.where, `pair ${name}`, [["ui", "link", "--name", name, "--qr"]], { kind: "pair" }), errors: [] };
+}
