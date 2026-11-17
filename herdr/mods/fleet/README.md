@@ -120,7 +120,7 @@ when it ends, whether it may refresh (or was refused for being idle 30 days), wh
 
 | Where | Action | Runs on FleetLedger |
 |---|---|---|
-| **Trust a machine** | Trust | `ship-fleet trust NAME --key 'ssh-ed25519 …' --scope SCOPE… --logins agent\|owner\|both`. `ship-fleet` prints the one line to paste on that machine in the terminal. |
+| **Trust a machine** | Trust | `ship-fleet trust NAME --key 'ssh-ed25519 …' --scope SCOPE… --logins agent\|owner\|both`. On FleetLedger's own VM, `ship-fleet` prints the one line to paste on that machine in the terminal (elsewhere it writes the machine's bundle instead). |
 | A machine's **⋯** | Allow again | `ship-fleet trust NAME --allow-again`, only while it is refused for being idle |
 | | Untrust | `ship-fleet untrust NAME` (`ship-fleet` asks you to type the machine's name; it cannot be undone) |
 | **Pair a phone's browser** | Pair | `ship-fleet ui link --name DEVICE --qr`: a one-time link and its QR code, in the terminal. Only while the remote web UI is on. |

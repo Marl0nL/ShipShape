@@ -465,3 +465,29 @@ test("after a trust job ends, the list is read again once", async () => {
   await s.fleet.checkJobs([term("exited")]);
   assert.equal(verbs(s.calls).filter((v) => v === "ca").length, 1);
 });
+
+test("an impossible date in state.json is refused, not shown as healthy", () => {
+  const ok = example("refresh-state", "ok.json");
+  assert.match(readRefreshState(JSON.stringify({ ...ok, certificate_valid_before: "2026-99-99T09:00:00Z" })).error, /certificate_valid_before/);
+});
+
+test("another FleetLedger or key in settings.json drops the list read from the last one", async () => {
+  const s = await opened();
+  assert.equal(s.fleet.state.ca.machines.length, 3);
+  s.disk[SETTINGS] = JSON.stringify({ ssh: "fleetledger@other.example.invalid" });
+  await s.fleet.refresh();
+  assert.equal(s.fleet.state.ca, null);
+  assert.match(machinesView(s.fleet.state, NOW).why, /not read yet: Reload/);
+  assert.match(trustJob(s.fleet.state, FORM).errors[0], /have not been read/);
+});
+
+test("a trust job lost from sight still brings one read of the list", async () => {
+  const s = await opened();
+  const plan = trustJob(s.fleet.state, FORM);
+  const LOCAL = { id: "s1", machine: null, tabs: [{ id: "t1", active: true }] };
+  s.fleet.startJob(plan.job, { panes: [], spaces: [LOCAL] });
+  s.fleet.state.jobs[0].startedAt = NOW - 10 * 60 * 1000; // past LOST_MS, never seen
+  s.calls.length = 0;
+  await s.fleet.checkJobs([]);
+  assert.equal(verbs(s.calls).filter((v) => v === "ca").length, 1);
+});

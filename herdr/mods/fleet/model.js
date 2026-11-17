@@ -353,6 +353,7 @@ export class Fleet {
     st.fleetFile = fleetText.error ? { error: fleetText.error } : readFleetFile(fleetText.text);
     st.where = st.settings.ssh ? { ssh: st.settings.ssh, identity: st.settings.identity } : null;
     const key = whereKey(st.where);
+    if (st.ca && !st.ca.loading && st.ca.key !== key) st.ca = null; // read from another FleetLedger or key
 
     const machines = this.readMachines();
     // A key that got this machine's bundle is not used again (each ask counts as a refresh):
@@ -492,7 +493,8 @@ export class Fleet {
       } else notes.push(s ? `${j.ship}: ${s.state}${s.message ? `, ${s.message}` : ""}.` : `${j.ship} is not in FleetLedger's list: see its terminal.`);
     }
     // A machine trusted, untrusted or allowed again: read the list again, if it was read.
-    if (ended.some((j) => MACHINE_KINDS.has(j.kind) && !j.lost) && st.ca?.machines) await this.loadCa();
+    // One lost from sight may have ended too: one read either way.
+    if (ended.some((j) => MACHINE_KINDS.has(j.kind)) && st.ca?.machines) await this.loadCa();
     st.jobNote = notes.join(" ") || null;
     return ended;
   }
@@ -551,15 +553,16 @@ export class Fleet {
   async loadCa() {
     const st = this.state;
     const pull = this.pullOnly();
+    const key = whereKey(st.where);
     if (pull) {
-      st.ca = { pullOnly: pull };
+      st.ca = { pullOnly: pull, key };
       return;
     }
-    const last = st.ca?.machines ? { machines: st.ca.machines, refused: st.ca.refused, at: st.ca.at } : {};
-    st.ca = { ...last, loading: true };
+    const last = st.ca?.machines && st.ca.key === key ? { machines: st.ca.machines, refused: st.ca.refused, at: st.ca.at } : {};
+    st.ca = { ...last, key, loading: true };
     const r = await ask(this.host, st.where, ["ca", "show", "--json"]);
     const got = r.ok ? readCa(r.stdout) : { error: r.error };
-    st.ca = got.error ? { ...last, error: got.error } : { ...got, at: this.now() };
+    st.ca = got.error ? { ...last, key, error: got.error } : { ...got, key, at: this.now() };
   }
 
   /** Refresh now: runs the refresher, then reads again (state.json, fleet.json, Herdr's machines
@@ -1157,7 +1160,7 @@ const MACHINE_KINDS = new Set(["trust", "untrust", "allow-again"]);
 export const NO_REFRESHER = "No refresher on this computer (~/.ssh/shipshape/refresh), so it does not keep itself current. To get one: on the computer that runs ship-fleet, Trust a machine for this one (the one line of its ~/.ssh/shipshape/id_ed25519.pub), then paste here, in a terminal, the line ship-fleet trust prints.";
 
 const whereKey = (where) => where && `${where.ssh}\n${where.identity ?? ""}`;
-const stamp = (v) => typeof v === "string" && TIMESTAMP.test(v);
+const stamp = (v) => typeof v === "string" && TIMESTAMP.test(v) && !Number.isNaN(Date.parse(v));
 const stampOrNull = (v) => v === null || stamp(v);
 const sentenceOrNull = (v) => v === null || (typeof v === "string" && v.length <= 2000 && /^[ -~]*$/.test(v));
 
@@ -1341,7 +1344,7 @@ export function machinesView(st, now) {
   const ca = st.ca;
   const notices = [];
   let why = null;
-  if (!ca) why = "Reading the trusted machines…";
+  if (!ca) why = "The trusted machines are not read yet: Reload.";
   else if (ca.pullOnly) why = ca.pullOnly;
   else {
     if (ca.loading) notices.push({ tone: "dim", text: "Reading the trusted machines…" });

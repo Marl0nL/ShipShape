@@ -147,7 +147,7 @@ export default class FleetPanel extends View {
   start(job) {
     const r = fleet.startJob(job, { panes: panes(), spaces: spaces(), terminals: terminals() });
     this.note = r.error ?? `Opened a terminal tab: ${job.title}. What ship-fleet asks, it asks there.`;
-    if (job.kind === "trust" && r.ok) this.note += " The line to paste on the new machine is printed there.";
+    if (job.kind === "trust" && r.ok) this.note += " On FleetLedger's own VM it prints there the line to paste on the new machine.";
     if (r.ok) {
       this.menu = null;
       this.form = null;
@@ -410,7 +410,7 @@ export default class FleetPanel extends View {
         f.logins = l;
       }, f.logins === l)), div().text_size(11.5).text_color(t.dim).child("agent: attach to the agent; owner: your own login, with sudo")))
       .children(plan.errors.map((e, i) => div().id(`t-err-${i}`).text_size(12).text_color(t.dim).child(e)))
-      .when(Boolean(plan.job), (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Trust opens a terminal tab that runs this; ship-fleet prints there the one line to paste on the new machine:")).child(mono(t, plan.job?.shown ?? "")))
+      .when(Boolean(plan.job), (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Trust opens a terminal tab that runs this; on FleetLedger's own VM, ship-fleet prints there the one line to paste on the new machine:")).child(mono(t, plan.job?.shown ?? "")))
       .child(
         h_flex()
           .gap(8)
