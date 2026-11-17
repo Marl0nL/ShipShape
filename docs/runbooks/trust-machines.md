@@ -3,14 +3,18 @@
 ## Set up or update
 
 ```sh
-ship-fleet self-update        # on FleetLedger's VM
-./shipshape-setup --herdr-client --fleetledger fleetledger@fleetledger.example.invalid   # on a computer that runs Herdr
+# 1. On FleetLedger's VM:
+ship-fleet self-update
+# 2. On a computer that runs Herdr (later, to update: shipshape-setup):
+ssh fleetledger@fleetledger.example.invalid ship-fleet machine-setup --installer | sh -s -- --herdr-client --fleetledger fleetledger@fleetledger.example.invalid
 ```
 
 The first runs on the VM, as ever: it updates FleetLedger, brings its own state up to
-date (the trusted machines' bundle keys) and restarts it. The second runs on your desktop
-or laptop, from the root of a ShipShape checkout; it installs a copy of itself, so later
-`shipshape-setup` with nothing after it updates everything and asks nothing. It:
+date (the trusted machines' bundle keys) and restarts it. The second runs the installer,
+`shipshape-setup`, that FleetLedger's VM has (the version it runs; from a ShipShape
+checkout, `./shipshape-setup --herdr-client --fleetledger fleetledger@HOST` is the same).
+It installs a copy of itself, so later `shipshape-setup` with nothing after it updates
+everything and asks nothing; nothing updates it unattended. It:
 
 - pins the VM's host key: one `~/.ssh/known_hosts` already has is used; otherwise it shows
   the fingerprint and asks you to confirm it (or `--host-key-fingerprint SHA256:...`);
@@ -25,10 +29,9 @@ or laptop, from the root of a ShipShape checkout; it installs a copy of itself, 
   and fills in the panel's `settings.json` where you have not; and opens the Fleet tab
   (`--no-open` not to).
 
-Without a checkout, a computer whose ssh has a shell on the VM gets the installer from
-there: `ssh fleetledger@HOST ship-fleet machine-setup --installer > shipshape-setup`, then
-`sh shipshape-setup --herdr-client --fleetledger fleetledger@HOST`. No Ship needs updating
-for any of this. The rest of this page is how it works, and the steps by hand.
+A computer with no key that logs in to the VM cannot fetch the installer that way: run
+it from a ShipShape checkout instead, and it says the one step to take. No Ship needs
+updating for any of this. The rest of this page is how it works, and the steps by hand.
 
 From phase 3 FleetLedger is the fleet's SSH certificate authority (CA). That
 gives you two things:

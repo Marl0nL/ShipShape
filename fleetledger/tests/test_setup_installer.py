@@ -525,3 +525,33 @@ def test_a_newer_installer_from_fleetledger_does_the_rest_itself(vm, desktop, tm
     assert (m.home / ".local" / "bin" / "shipshape-setup").read_text() == newer
     assert (m.d / "refresh").read_bytes() == SCRIPT.read_bytes()
     assert not list(m.tmp.iterdir())  # the handed-over copy went with it
+
+
+def test_the_installer_piped_from_fleetledger_needs_no_checkout(vm, desktop):
+    """ssh ... ship-fleet machine-setup --installer | sh -s -- ...: not a file, no checkout."""
+    m = desktop
+    line = (f"cat {INSTALLER} | sh -s -- --herdr-client --fleetledger {vm.dest} "
+            f"--host-key-fingerprint {vm.fp} --no-open")
+    proc = m.run(["sh", "-c", line])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (m.d / "refresh").read_bytes() == SCRIPT.read_bytes()
+    assert (m.herdr / "mods" / "fleet" / "mod.json").is_file()
+    assert (m.home / ".local" / "bin" / "shipshape-setup").read_bytes() == INSTALLER.read_bytes()
+    assert "another version" not in proc.stdout  # what runs is what FleetLedger serves
+
+
+def test_a_package_with_a_link_in_it_is_not_installed(vm, desktop, tmp_path):
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w:gz") as tar:
+        info = tarfile.TarInfo("herdr/mods/fleet/main.js")
+        info.type, info.linkname = tarfile.SYMTYPE, "/etc/passwd"
+        tar.addfile(info)
+    pkg = raw.getvalue()
+    (vm.d / "package.tgz").write_bytes(pkg)
+    doc = json.loads((vm.d / "setup.json").read_text())
+    doc["package"] = {"sha256": hashlib.sha256(pkg).hexdigest(), "bytes": len(pkg)}
+    (vm.d / "setup.json").write_text(json.dumps(doc, indent=2))
+    m = desktop
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp)
+    assert proc.returncode == 1 and "other than plain files" in proc.stderr
+    assert not m.herdr.joinpath("mods").exists()

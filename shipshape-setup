@@ -446,6 +446,11 @@ logins_said() {
   case $1 in agent) echo "agent" ;; owner) echo "you (owner)" ;; *) echo "agent and you (owner)" ;; esac
 }
 
+# The one step for a computer with no credential that has a shell on FleetLedger. It is
+# kept apart on purpose: a pairing by code (this computer asks, a trusted device approves)
+# can replace this function alone, ending as trust_here does, with FleetLedger trusting
+# this computer's own key; everything after it (fetch_setup, identify, the refresher, the
+# mods) stays as it is.
 no_credentials() {
   own_key
   name=${want_name:-$(suggest_name)}
@@ -530,6 +535,9 @@ fetch_package() {
     && [ "$(sha256 "$stage/package.tgz")" = "$package_sha" ] \
     || die "FleetLedger's package is not the one its setup data names: not installed."
   tar -tzf "$stage/package.tgz" >"$stage/package.list" 2>/dev/null || die "FleetLedger's package does not unpack."
+  # Plain files only: no link, device or folder entry that could point outside it.
+  tar -tvzf "$stage/package.tgz" 2>/dev/null | cut -c 1 | grep -qv '^-$' \
+    && die "FleetLedger's package holds something other than plain files: not installed."
   while IFS= read -r x; do
     case $x in
       shipshape-setup | herdr/*) ;;

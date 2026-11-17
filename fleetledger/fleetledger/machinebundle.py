@@ -19,7 +19,8 @@ name. So it must be safe to be the only thing such a key can run:
 The bundle is data: the machine's certificate, the CA lines for its known_hosts, each
 Ship's host names (the one that resolves on the FleetLedger computer and the overlay one)
 with its tags and runtime, and FleetLedger's own host key. It also carries the refresher
-script, base64, which only the first-install line `ship-fleet trust` prints ever decodes
+script, base64, which only an install a person runs ever decodes (the first-install line
+`ship-fleet trust` prints, or the installer shipshape-setup)
 (fleetledger/refresher): the refresher never reads it. A new
 certificate is signed only once the current one is past half its life, by the same
 code and for the same lifetime as `ship-fleet trust`. While the vault is locked
@@ -341,7 +342,7 @@ def add_parsers(sub, add) -> None:
             "(contracts/machine-bundle.schema.json): its certificate, the CA lines for\n"
             "its known_hosts, the Ships its scope reaches with their host names, tags and\n"
             "runtime, and FleetLedger's own host key; and the refresher script, which\n"
-            "only the first-install line ship-fleet trust prints decodes (the refresher\n"
+            "only an install you run (trust's line, shipshape-setup) decodes (the refresher\n"
             "applies the rest as data and never reads it).\n\n"
             "A new certificate is signed only past half the current one's life. While the\n"
             "vault is locked it signs nothing and says so. A machine untrusted, unknown,\n"
