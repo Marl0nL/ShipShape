@@ -150,7 +150,7 @@ read_conf() {
     is_host "$h" || fail "$CONF: hosts has a name that is not a host name."
     n=$((n + 1))
   done
-  [ "$n" -ge 1 ] && [ "$n" -le 8 ] || fail "$CONF: hosts names 1 to 8 host names."
+  if [ "$n" -lt 1 ] || [ "$n" -gt 8 ]; then fail "$CONF: hosts names 1 to 8 host names."; fi
   case $host_key in "ssh-ed25519 "*) ;; *) fail "$CONF: host_key is not an ed25519 host key." ;; esac
   is_blob "${host_key#ssh-ed25519 }" || fail "$CONF: host_key is not an ed25519 host key."
   case $hc in on | off) ;; *) fail "$CONF: hc is on or off." ;; esac
@@ -689,8 +689,8 @@ sync_hc() {
 
 # --- refresh ------------------------------------------------------------------------------------
 refresh() {
-  [ -n "${HOME:-}" ] && [ -d "$HOME" ] || { echo "HOME is not set." >&2; exit 1; }
-  [ -d "$D" ] && [ ! -L "$D" ] || { echo "There is no folder $D (or it is a link): paste the line ship-fleet trust prints for this machine." >&2; exit 1; }
+  if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then echo "HOME is not set." >&2; exit 1; fi
+  if [ ! -d "$D" ] || [ -L "$D" ]; then echo "There is no folder $D (or it is a link): paste the line ship-fleet trust prints for this machine." >&2; exit 1; fi
   read_conf
   take_lock
   trap 'cleanup; exit 1' HUP INT TERM
@@ -837,7 +837,7 @@ first_install() {
   is_user "$i_user" || usage "Not a user name: $i_user"
   for h in $i_hosts; do is_host "$h" || usage "Not a host name: $h"; done
   case $i_hostkey in "ssh-ed25519 "*) is_blob "${i_hostkey#ssh-ed25519 }" || usage "Not an ed25519 host key." ;; *) usage "Not an ed25519 host key." ;; esac
-  [ -n "${HOME:-}" ] && [ -d "$HOME" ] || usage "HOME is not set."
+  if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then usage "HOME is not set."; fi
   [ ! -L "$D" ] || usage "$D is a link; this refresher writes only into a real folder."
   { mkdir -p "$HOME/.ssh" "$D" && chmod 700 "$HOME/.ssh" "$D"; } || usage "Could not make $D."
 
