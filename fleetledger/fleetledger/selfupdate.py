@@ -67,7 +67,8 @@ CATCH_UP = ("import sys; from shipfleet_launch import main; "
 def run_catch_up(app: Any, root: str) -> int:
     """The new version's catch-up, said by itself; 0 when it worked."""
     try:
-        code = subprocess.run([sys.executable, "-c", CATCH_UP], cwd="/", check=False,
+        # -P: no current folder on its import path, so nothing beside it shadows the install.
+        code = subprocess.run([sys.executable, "-P", "-c", CATCH_UP], cwd="/", check=False,
                               timeout=600).returncode
     except subprocess.TimeoutExpired:
         app.note("ship-fleet: the new version's catch-up did not finish in 10 minutes.")

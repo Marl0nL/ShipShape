@@ -603,3 +603,49 @@ def test_fleetledger_out_of_reach_still_updates_a_computer_set_up_before(vm, des
     assert proc.returncode == 0, proc.stdout + proc.stderr  # its refresh uses machine.conf
     assert "Could not reach FleetLedger" in proc.stderr
     assert "the Desk and the Fleet panel: kept as they are" in proc.stdout
+
+
+# --- the adversarial review's hardening -----------------------------------------------------------
+def test_a_host_known_under_another_key_type_is_never_a_first_contact(vm, desktop, tmp_path):
+    subprocess.run(["ssh-keygen", "-q", "-t", "ecdsa", "-N", "", "-f", str(tmp_path / "ec")],
+                   check=True)
+    ec = " ".join((tmp_path / "ec.pub").read_text().split()[:2])
+    known = desktop.home / ".ssh" / "known_hosts"
+    known.write_text(f"127.0.0.1 {ec}\n")
+    proc = desktop.setup("--herdr-client", "--fleetledger", vm.dest,
+                         "--host-key-fingerprint", vm.fp)
+    assert proc.returncode == 1
+    assert "First contact" not in proc.stdout and "ssh refused the host key" in proc.stderr
+    assert known.read_text() == f"127.0.0.1 {ec}\n"  # nothing added beside it
+
+
+def test_two_trusted_keys_and_a_stale_machine_conf_are_never_a_guess(vm, desktop):
+    m = desktop
+    spare = m.home / ".ssh" / "old" / "id_ed25519"
+    spare.parent.mkdir()
+    keygen(spare, "spare")
+    assert vm.run("trust", "spare", "--key", str(spare) + ".pub")[0] == 0
+    publish(vm)
+    m.d.mkdir(parents=True)
+    (m.d / "machine.conf").write_text("name=gone\n")
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp)
+    assert proc.returncode == 1 and "more than one trusted machine" in proc.stderr
+    assert not (m.d / "refresh").exists()
+
+
+def test_a_pub_file_beside_another_key_is_never_trusted(vm, tmp_path):
+    m = computer(vm, tmp_path, "workdesk", hostname="workdesk")
+    shell = m.home / ".ssh" / "id_ed25519"
+    shell.parent.mkdir(parents=True)
+    keygen(shell, "you")
+    add_line(shell_line(vm, shell.with_name("id_ed25519.pub"), "you"))
+    own = m.home / ".ssh" / "shipshape" / "id_ed25519"
+    own.parent.mkdir()
+    keygen(own, "own")
+    keygen(tmp_path / "planted", "planted")
+    shutil.copy(tmp_path / "planted.pub", str(own) + ".pub")
+    publish(vm)
+    proc = m.setup("--herdr-client", "--fleetledger", vm.dest, "--host-key-fingerprint", vm.fp,
+                   "--yes")
+    assert proc.returncode == 1 and "is not the public half of" in proc.stderr
+    assert not any(a.startswith("trust") for a in asked(vm))

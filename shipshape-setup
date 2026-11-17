@@ -78,8 +78,10 @@ cleanup() {
   [ -n "$stage" ] && rm -rf "$stage"
   stage=
   # The copy an older installer handed over to (hand_over) goes with it.
-  case ${SHIPSHAPE_SETUP_HANDED:-} in
-    "${TMPDIR:-/tmp}"/shipshape-setup.*) rm -rf "$SHIPSHAPE_SETUP_HANDED" ;;
+  h=${SHIPSHAPE_SETUP_HANDED:-}
+  case ${h#"${TMPDIR:-/tmp}"/shipshape-setup.} in
+    "$h" | '' | *[!A-Za-z0-9]*) ;;
+    *) rm -rf "$h" ;;
   esac
 }
 
@@ -243,8 +245,11 @@ pin_host_key() {
   elif [ "$port" = 22 ]; then kh_name=$hn
   else kh_name="[$hn]:$port"; fi
   known_hosts="$HOME/.ssh/known_hosts"
-  host_blobs=$(ssh-keygen -F "$kh_name" -f "$known_hosts" 2>/dev/null | awk '$2 == "ssh-ed25519" { print $3 }' | tr '\n' ' ')
-  [ -n "$host_blobs" ] && return 0
+  # Known under any key type (or a CA line): ssh decides on every connection, and this never
+  # calls it a first contact, whatever a scan would say.
+  known_any=$(ssh-keygen -F "$kh_name" -f "$known_hosts" 2>/dev/null | grep -v '^#')
+  host_blobs=$(printf '%s\n' "$known_any" | awk '$2 == "ssh-ed25519" { print $3 }' | tr '\n' ' ')
+  [ -n "$known_any" ] && return 0
   scanned=$(ssh-keyscan -T 10 -t ed25519 -p "$port" "$hn" 2>/dev/null | awk '$2 == "ssh-ed25519" { print $3; exit }')
   if [ -z "$scanned" ]; then
     unreachable="Could not reach FleetLedger at $DEST ($hn, port $port). Is this computer on the same network (your LAN or tailnet) as FleetLedger's VM? Name it with --fleetledger USER@HOST."
@@ -334,7 +339,9 @@ read_setup() {
   case $hk in "ssh-ed25519 "*) ;; *) die "FleetLedger's host key is out of place." ;; esac
   fl_blob=${hk#ssh-ed25519 }
   is_blob "$fl_blob" || die "FleetLedger's host key is out of place."
-  has "$fl_blob" "$host_blobs" || die "$DEST is not the VM FleetLedger records as its own (its host key differs): not going on."
+  # Known as ed25519: it must be the key FleetLedger records for itself. Known only as
+  # another type, ssh checked that one, and the refresher's own fetch pins this one.
+  [ -z "$host_blobs" ] || has "$fl_blob" "$host_blobs" || die "$DEST is not the VM FleetLedger records as its own (its host key differs): not going on."
   refresher_sha=$(field "$f" refresher_sha256)
   is_hex64 "$refresher_sha" || die "FleetLedger's refresher digest is out of place."
   package_sha=$(field "$f" package.sha256)
@@ -375,7 +382,7 @@ local_keys() {
 }
 
 identify() {
-  me='' me_key='' found=''
+  me='' me_key='' found='' conf_found=''
   conf_name=$(sed -n 's/^name=//p' "$CONF" 2>/dev/null | head -n 1)
   local_keys >"$stage/keys"
   while read -r mn mb ma; do
@@ -383,9 +390,11 @@ identify() {
     [ -n "$k" ] || continue
     found="${found:+$found }$mn"
     if [ -n "$want_name" ] && [ "$mn" != "$want_name" ]; then continue; fi
+    [ "$mn" = "$conf_name" ] && conf_found=1
     if [ -z "$me" ] || [ "$mn" = "$conf_name" ]; then me=$mn me_key=$k; fi
   done <"$stage/machines"
-  if [ -z "$want_name" ] && [ -z "$conf_name" ] && [ "$(printf '%s' "$found" | wc -w)" -gt 1 ]; then
+  # More than one, and neither --name nor machine.conf names one of them: never a guess.
+  if [ -z "$want_name" ] && [ -z "$conf_found" ] && [ "$(printf '%s' "$found" | wc -w)" -gt 1 ]; then
     die "This computer holds the keys of more than one trusted machine ($found): say which it is with --name NAME."
   fi
   if [ -n "$want_name" ] && [ -z "$me" ] && grep -q "^$want_name " "$stage/machines"; then
@@ -411,9 +420,15 @@ own_key() {
     say "Made this computer's key for ShipShape: $key_path (no passphrase, so its timer can use it)."
   fi
   [ -f "$key_path.pub" ] || die "$key_path has no .pub file beside it."
-  t='' key_blob=''
-  read -r t key_blob _ <"$key_path.pub"
-  if [ "$t" != ssh-ed25519 ] || ! is_blob "$key_blob"; then die "$key_path.pub is not an ed25519 key."; fi
+  # The public half from the private key itself: a .pub file beside another key is never
+  # what gets trusted.
+  derived=$(ssh-keygen -y -f "$key_path" </dev/null 2>/dev/null)
+  t=${derived%% *} key_blob=${derived#* }
+  key_blob=${key_blob%% *}
+  if [ "$t" != ssh-ed25519 ] || ! is_blob "$key_blob"; then die "$key_path is not an ed25519 key this installer can read (one with no passphrase)."; fi
+  t='' b=''
+  read -r t b _ <"$key_path.pub"
+  [ "$b" = "$key_blob" ] || die "$key_path.pub is not the public half of $key_path: fix or remove it, then run this again."
 }
 
 trust_here() {
