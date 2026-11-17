@@ -24,7 +24,8 @@ follow Herdr's updates.
 | `mods/desk/` | the desk itself, in parts (`props.part`): `head`, `assistant`, `manager`, `coder`, `crew`, `none`, plus the window's `bar` and `brand` corner |
 | `mods/desk/bin/desk` | the agents' CLI (one Python 3 file, no dependencies), linked as `~/.local/bin/desk` |
 | `mods/desk-spaces/`, `mods/desk-agents/` | clones of Herdr's shipped `spaces` and `agents` sidebar mods, changed where marked `Desk:` (tag colours; the agents list's hierarchy view) |
-| `install-desk.sh` | copies all of it into Herdr's folder and links the CLI |
+| `mods/desk/shiptags.js` | each Ship's FleetLedger tags (below); `fleet-model.js` beside it is a link to the Fleet panel's `mods/fleet/model.js`, whose checks it reads with |
+| `install-desk.sh` | copies all of it into Herdr's folder (with the Fleet panel, `install-fleet.sh`) and links the CLI |
 
 ```
 root (row; terminal_opacity 0.88)
@@ -92,9 +93,18 @@ Herdr reads the board back over the same connection.
 
 ## Where it touches ShipShape
 
-- **Tags:** `ship-fleet ls --json --offline` every five minutes (FleetLedger's last known status,
-  no SSH). A space on another machine takes the tags of the Ship of the same name. Without
-  FleetLedger, agents have only their own `desk.tags`.
+- **Tags:** a space on another machine takes the tags of the Ship of the same name, from
+  `~/.ssh/shipshape/fleet.json`, which a trusted machine's self-refresh keeps current
+  (`contracts/machine-bundle.schema.json`; read every 30 s, so a change shows within that). A
+  computer with no `fleet.json` that runs FleetLedger itself is asked instead,
+  `ship-fleet ls --json --offline` every five minutes (FleetLedger's last known status, no SSH).
+  Both are checked with the Fleet panel's own reader: a malformed `fleet.json` is ignored, a
+  Ship with a name outside `[a-z0-9-]` is left out, and so is a tag outside the contract's
+  pattern. When an agent is on another machine and there are no Ship tags (or `fleet.json` was
+  ignored), the head says so in a quiet line ("No Ship tags"; the reason in its tooltip).
+  Agents on this computer have only their own `desk.tags`.
+- **The Fleet panel:** the top bar has a **Fleet** button when `mods/fleet` is installed; it opens
+  the Fleet tab, or selects it if one is open (`herdr/mods/fleet/README.md`).
 - **Ships as machines:** everything else reaches a Ship only as a Herdr machine (`hc` and
   `readTextFile` with `on`).
 

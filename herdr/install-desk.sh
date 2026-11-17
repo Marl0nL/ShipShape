@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Installs the Desk layout into Herdr: the layout, its themes, its three mods, and the agents' `desk`
-# CLI (linked as ~/.local/bin/desk). It has no art to build.
+# Installs the Desk layout into Herdr: the layout, its themes, its three mods, the Fleet panel
+# (install-fleet.sh, which the Desk's Fleet button opens), and the agents' `desk` CLI (linked as
+# ~/.local/bin/desk). It has no art to build. Run it again to update.
 #
 #   herdr/install-desk.sh       into ${HERDR_APP_HOME:-~/.config/herdr-app}
 #   herdr-app do layout.switch '{"name":"desk"}'   (or ctrl-shift-l)
 #
 # Herdr docks a new mod into the layout on screen if it sees main.js before a mod.json saying
-# "place": "none", so each mod's mod.json is copied in before the rest of it.
+# "place": "none", so each mod's mod.json is copied in before the rest of it. mods/desk/fleet-model.js
+# is a link to mods/fleet/model.js in the repo; tar -h installs a copy of the file.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -18,8 +20,11 @@ cp "$here"/themes/desk-*.json "$home/themes/"
 for m in desk desk-agents desk-spaces; do
   mkdir -p "$home/mods/$m"
   cp "$here/mods/$m/mod.json" "$home/mods/$m/mod.json"
-  (cd "$here/mods/$m" && tar --exclude=__pycache__ -cf - .) | (cd "$home/mods/$m" && tar -xf -)
+  (cd "$here/mods/$m" && tar -h --exclude=__pycache__ -cf - .) | (cd "$home/mods/$m" && tar -xf -)
 done
+
+"$here/install-fleet.sh" >/dev/null
+echo "also installed the Fleet panel, which the Desk's Fleet button opens: see mods/fleet/README.md for its settings.json"
 
 # The agents' CLI. Leave some other `desk` alone.
 bin="$HOME/.local/bin"
