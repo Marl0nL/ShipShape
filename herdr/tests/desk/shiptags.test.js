@@ -174,3 +174,17 @@ test("one read at a time", async () => {
   assert.deepEqual([a, b], [true, false]);
   assert.equal(s.calls.length, 1);
 });
+
+test("entries ship-fleet's reader refuses (an older or newer FleetLedger) are said, not dropped silently", async () => {
+  const old = { code: 0, stdout: JSON.stringify([{ name: "ship-01", tags: ["work"] }]), stderr: "" };
+  const s = stand({ ls: old });
+  await s.tags.read();
+  assert.equal(s.tags.from, "ship-fleet");
+  assert.deepEqual(s.tags.get("ship-01"), []);
+  assert.match(s.tags.problem, /^ship-fleet ls: left out no "schema" field: this FleetLedger is older/);
+  // Some kept, some refused: the kept tags, and why the rest were left out.
+  const mixed = stand({ ls: { code: 0, stdout: JSON.stringify([lsEntry("ship-01", ["work"]), { ...lsEntry("ship-02", ["personal"]), schema: "shipshape.fleetledger-ship/2" }]), stderr: "" } });
+  await mixed.tags.read();
+  assert.deepEqual(mixed.tags.get("ship-01"), ["work"]);
+  assert.match(mixed.tags.problem, /^ship-fleet ls: left out shape shipshape\.fleetledger-ship\/2 is newer/);
+});

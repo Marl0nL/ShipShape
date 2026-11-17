@@ -557,9 +557,10 @@ export default class Desk extends View {
               .overflow_hidden()
               .child(kindBtn)
               .children((s?.tags ?? []).map((tag) => chip(t, L, tag, tagColor(t, tag))))
-              // An agent on another machine with no Ship tags (or a fleet.json ignored): say why.
+              // An agent on another machine with no Ship tags, or some left out (a fleet.json ignored, an
+              // older FleetLedger's entries refused): say why.
               .when(Boolean(s?.machine && shipTags.problem), (e) =>
-                e.child(div().id("ship-tags").flex_none().text_size(10.5).text_color(t.dim).tooltip(`Ship tags: ${shipTags.problem}`).child(shipTags.from ? "fleet.json ignored" : "No Ship tags")),
+                e.child(div().id("ship-tags").flex_none().text_size(10.5).text_color(t.dim).tooltip(`Ship tags: ${shipTags.problem}`).child(shipTags.tags.size ? "Some Ship tags left out" : "No Ship tags")),
               )
               .when(Boolean(updated), (e) => e.child(div().flex_none().text_size(10.5).text_color(t.dim).child(updated))),
           ),

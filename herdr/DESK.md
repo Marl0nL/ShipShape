@@ -100,8 +100,10 @@ Herdr reads the board back over the same connection.
   `ship-fleet ls --json --offline` every five minutes (FleetLedger's last known status, no SSH).
   Both are checked with the Fleet panel's own reader: a malformed `fleet.json` is ignored, a
   Ship with a name outside `[a-z0-9-]` is left out, and so is a tag outside the contract's
-  pattern. When an agent is on another machine and there are no Ship tags (or `fleet.json` was
-  ignored), the head says so in a quiet line ("No Ship tags"; the reason in its tooltip).
+  pattern. When an agent is on another machine and there are no Ship tags, the head says so in a
+  quiet line ("No Ship tags"; the reason in its tooltip); "Some Ship tags left out" when the local
+  `ship-fleet` answered but `fleet.json` was ignored or some of its entries were refused (an older
+  or newer FleetLedger).
   Agents on this computer have only their own `desk.tags`.
 - **The Fleet panel:** the top bar has a **Fleet** button when `mods/fleet` is installed; it opens
   the Fleet tab, or selects it if one is open (`herdr/mods/fleet/README.md`).

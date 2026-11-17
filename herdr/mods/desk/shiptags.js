@@ -76,7 +76,8 @@ export class ShipTags {
     const ls = this.ls;
     this.tags = ls.ships ? new Map(ls.ships.map((s) => [s.name, tagsOf(s.tags)])) : new Map();
     this.from = ls.ships ? "ship-fleet" : null;
-    this.problem = ls.ships ? ignored : `${ignored ?? `no ${path} (this computer has no self-refresh)`}; ${ls.error}`;
+    const why = ls.ships ? [ignored, ls.refused].filter(Boolean).join("; ") : `${ignored ?? `no ${path} (this computer has no self-refresh)`}; ${ls.error}`;
+    this.problem = why || null;
     return this.key() !== before;
   }
 
@@ -89,6 +90,8 @@ export class ShipTags {
     }
     if (r.code !== 0) return { error: `ship-fleet ls failed: ${firstLine(r.stderr, r.stdout) || `exit ${r.code}`}` };
     const ls = readShips(r.stdout);
-    return ls.error ? { error: ls.error } : { ships: ls.ships };
+    if (ls.error) return { error: ls.error };
+    // Entries the reader refused (an older or newer FleetLedger): say so, never drop them silently.
+    return { ships: ls.ships, refused: ls.refused.length ? `ship-fleet ls: left out ${ls.refused.join("; ")}` : null };
   }
 }
