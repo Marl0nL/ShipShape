@@ -186,7 +186,7 @@ test("readMachineConf: only its name, and only a machine name", () => {
 
 test("checkPublicKey: one ed25519 line; the comment is dropped, never sent", () => {
   assert.equal(checkPublicKey(KEY), KEY);
-  assert.equal(checkPublicKey(`${KEY} agent@laptop\n`), KEY);
+  assert.equal(checkPublicKey(`${KEY} agent-laptop\n`), KEY);
   assert.equal(checkPublicKey(`  ${KEY} it's "mine"; $(rm -rf ~) \`x\`\r\n\n`), KEY);
   assert.equal(checkPublicKey(`ssh-ed25519\t${BLOB}\tcomment`), KEY);
   assert.ok(ED25519_BLOB.test(BLOB));
@@ -205,7 +205,7 @@ test("checkPublicKey: refuses a second line, options, other types, a private key
     [`ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ laptop`, /not a key ship-fleet trusts/],
     [`ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAI laptop`, /not a key ship-fleet trusts/],
     [`ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29t`, /not a key ship-fleet trusts/],
-    [`sk-ssh-ed25519@openssh.com ${BLOB}`, /not a key ship-fleet trusts/],
+    [`sk-ssh-ed25519@openssh.com ${BLOB}`, /not a key ship-fleet trusts/], // an OpenSSH key type, not an address: hygiene: allow
     ["-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----", /private key/],
     ["ssh-ed25519", /cut or changed/],
     [`ssh-ed25519 ${BLOB.slice(0, -1)}`, /cut or changed/],

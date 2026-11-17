@@ -125,9 +125,9 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
 
     from fleetledger.drivers.base import SNAPSHOT_NAME
     from fleetledger.lifecycle import size_limits
+    from fleetledger.web import devices
 
     from fleetledger import ca, github, ops, signinreg
-    from fleetledger.web import devices
 
     ships_toml = json.loads((ROOT / "contracts" / "ships.toml.schema.json").read_text("utf-8"))
     signin = json.loads((ROOT / "contracts" / "fleetledger-signin.schema.json").read_text("utf-8"))
@@ -152,7 +152,7 @@ def test_a_key_it_sends_is_one_ship_fleet_takes_as_a_line():
     if node is None:
         pytest.skip("node is not installed")
     blob = "AAAAC3NzaC1lZDI1NTE5AAAAI" + "B" + "x" * 42
-    pasted = [f"ssh-ed25519 {blob}", f"ssh-ed25519 {blob} me@laptop\n",
+    pasted = [f"ssh-ed25519 {blob}", f"ssh-ed25519 {blob} my-laptop\n",
               f"ssh-ed25519\t{blob}\tit's \"mine\"", f"  ssh-ed25519 {blob}\r\n"]
     script = ("const m = await import(process.argv[1]); "
               "console.log(JSON.stringify(JSON.parse(process.argv[2]).map(m.checkPublicKey)))")
