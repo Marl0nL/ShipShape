@@ -535,7 +535,8 @@ def test_ca_show_prints_and_gives_json_from_the_same_rows(caenv, tmp_path):
     assert "ship-01" in out and "laptop" in out and "tag:work" in out
     code, out, _ = caenv.run("ca", "show", "--json")
     doc = json.loads(out)
-    assert set(doc) == {"schema", "host_ca", "user_ca", "ships", "machines"}
+    assert set(doc) == {"schema", "host_ca", "user_ca", "ships", "machines", "pairing"}
+    assert doc["pairing"] == {"on": False, "pending": []}  # off by default
     assert [r["ship"] for r in doc["ships"]] == ["ship-01", "ship-02"]
     assert doc["machines"][0]["machine"] == "laptop"
 
