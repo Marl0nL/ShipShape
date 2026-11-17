@@ -485,3 +485,62 @@ def test_the_phone_is_out_of_scope_and_said_so(vm, capsys):  # noqa: F811
     assert "A phone is out of scope" in capsys.readouterr().out
     text = (REPO / "docs" / "runbooks" / "trust-machines.md").read_text()
     assert "A phone is out of scope" in text
+
+
+# --- found in review -----------------------------------------------------------------------------
+def test_a_scoped_ipv6_source_is_kept_without_its_zone(on, monkeypatch):
+    request(on, monkeypatch, new_key(on, "laptop"), source="fe80::1%eth0")
+    (row,) = pairing.listing()
+    assert row["source"] == "fe80::1"
+    code, out, err = on.run("ca", "show", "--json")
+    assert schemas.errors("fleetledger-ca", json.loads(out)) == []
+
+
+def test_an_approval_in_the_last_seconds_is_still_heard(on, monkeypatch):
+    doc = request(on, monkeypatch, new_key(on, "laptop"))
+    later(monkeypatch, 9.9)
+    code, out, err = on.run("pair", "approve", doc["id"], "--code", doc["code"], "--yes")
+    assert code == 0, out + err
+    later(monkeypatch, 0.6)  # 10.5 minutes in: past when the request would have lapsed
+    assert asks(on, monkeypatch, f"status {doc['token']}")[1]["state"] == "approved"
+
+
+def test_a_trust_that_fails_after_recording_the_machine_says_approved(on, monkeypatch):
+    from fleetledger.errors import FleetError
+
+    from fleetledger import trustcmd
+
+    def fail(*a, **kw):
+        raise FleetError("The CA could not sign (a test).")
+
+    monkeypatch.setattr(trustcmd, "_sign_machine", fail)
+    blob = new_key(on, "laptop")
+    doc = request(on, monkeypatch, blob)
+    code, out, err = on.run("pair", "approve", doc["id"], "--code", doc["code"], "--yes")
+    assert code == 1 and "laptop is trusted all the same" in err
+    assert ca.machine(on.store.load(), "laptop").public_key == f"ssh-ed25519 {blob}"
+    assert pairing.listing() == []  # not shown as waiting, nor refusable as if nothing happened
+    assert asks(on, monkeypatch, f"status {doc['token']}")[1]["state"] == "approved"
+
+
+def test_an_internal_failure_is_audited_at_most_once_a_minute(on, monkeypatch):
+    from fleetledger.concierge import audit
+
+    def broken(*a, **kw):
+        raise RuntimeError("a test")
+
+    monkeypatch.setattr(pairing, "answer", broken)
+    for _ in range(5):
+        code, doc = asks(on, monkeypatch, "status " + "0" * 32)
+        assert (code, doc) == (1, {"schema": pairing.SCHEMA, "state": "refused",
+                                   "why": pairing.FAILED})
+    failed = [x for x in audit.read() if x["action"] == "pair-request"]
+    assert len(failed) == 1 and failed[0]["outcome"] == "failed: RuntimeError"
+
+
+def test_a_copy_on_standby_answers_off_and_says_nothing_else(on, monkeypatch):
+    from fleetledger import handover
+
+    handover.write(on.store, handover.Marker("retired", handover.now(), "vm.example", 1))
+    code, doc = asks(on, monkeypatch, f"request {new_key(on, 'laptop')} laptop")
+    assert (code, doc["state"]) == (1, "off") and "vm.example" not in json.dumps(doc)

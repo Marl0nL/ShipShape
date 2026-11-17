@@ -235,17 +235,38 @@ def pair_approve(args, app, store) -> int:
     still = pairing.read().by_id(r.id, ca.utc_now())
     if still is None or still.key != r.key:
         raise FleetError(f"Request {r.id} lapsed or was withdrawn meanwhile: nothing approved.")
-    rc = trustcmd.cmd_trust(targs, app)  # FleetError (a rule of trust's): it still waits
-    with pairing.locked() as p:
-        for x in p.requests:
-            if x.id == r.id and x.state == "pending":
-                x.state, x.machine = "approved", name
-                x.key = x.host = x.source = x.nonce = None
+    try:
+        rc = trustcmd.cmd_trust(targs, app)
+    except FleetError as exc:
+        # A rule of trust's refused it before anything was recorded: it still waits. Past
+        # that point (the machine recorded with this key, then signing or the bundle
+        # failed), it is trusted, so the request says so rather than "pending".
+        m = ca.machine(store.load(), name)
+        if m is None or m.revoked or sshkeys.blob(m.public_key) != r.blob():
+            raise
+        _approved(r, name)
+        audit.record("-", "pair-approve", r.id, f"approved: {name} (trust failed after)")
+        raise FleetError(f"{exc.message} {name} is trusted all the same (its key may fetch its "
+                         "own bundle here, which signs its certificate once this is fixed).",
+                         hint=exc.hint) from None
+    _approved(r, name)
     audit.record("-", "pair-approve", r.id, f"approved: {name}")
     app.say(f"Approved: {name}. Its installer, waiting there, finishes by itself within "
             "seconds (its key may fetch its own bundle here and nothing else)."
             + ("" if rc == 0 else " Trust did not finish everything, though: see above."))
     return rc
+
+
+def _approved(r: pairing.Request, name: str) -> None:
+    """The request, approved: kept (no key, claim or address) for TTL from now, so a computer
+    approved in its last seconds still hears of it at its next ask."""
+    now = ca.utc_now()
+    with pairing.locked() as p:
+        for x in p.requests:
+            if x.id == r.id and x.state == "pending":
+                x.state, x.machine = "approved", name
+                x.key = x.host = x.source = x.nonce = None
+                x.expires = ca.stamp(now + pairing.TTL)
 
 
 def secrets_equal(a: str, b: str) -> bool:

@@ -876,6 +876,13 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
             handed_over()  # again under the lock: a migrate may have ended in between
             return handler(args, app) or 0
     except FleetError as exc:
+        if args.command == "machine-pair":
+            # Refused before it began (a copy on standby or retired, a move under way): the
+            # unknown computer gets the same fixed answer as pairing off, none of these words.
+            from fleetledger import pairing
+
+            app.say(pairing.off_answer())
+            return 1
         app.note(f"ship-fleet: {exc.message}")
         if exc.hint:
             app.note(f"  {exc.hint}")

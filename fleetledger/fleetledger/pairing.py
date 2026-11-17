@@ -284,11 +284,39 @@ class _Answer(Exception):
 
 
 def _source() -> str | None:
+    """The address sshd saw, without an IPv6 zone (fe80::1%eth0 is fe80::1): digits, a-f,
+    dots and colons only, as the contract says."""
     words = os.environ.get("SSH_CONNECTION", "").split()
     try:
-        return str(ipaddress.ip_address(words[0])) if words else None
+        return str(ipaddress.ip_address(words[0].split("%", 1)[0])) if words else None
     except ValueError:
         return None
+
+
+def off_answer() -> str:
+    return json.dumps({"schema": SCHEMA, "state": "off", "why": OFF})
+
+
+FAILURE_MARK = ".last-failure"  # in the store's folder: when a failure was last audited
+
+
+def _audit_failure(what: str) -> None:
+    """One audit line for an internal failure, at most once a minute, however often an
+    unknown computer asks while it lasts."""
+    from fleetledger.concierge import audit
+
+    mark = folder() / FAILURE_MARK
+    try:
+        import time
+
+        if mark.exists() and time.time() - mark.stat().st_mtime < 60:
+            return
+        paths.private_dir(folder())
+        mark.touch(mode=0o600)
+        os.utime(mark)
+    except OSError:
+        pass
+    audit.record("-", "pair-request", "-", f"failed: {what}")
 
 
 def _accepting(store) -> None:
@@ -398,15 +426,13 @@ def cmd_machine_pair(args, app) -> int:
     """The forced command. Prints one JSON document, whatever happens; exit 0 when it was
     answered, 1 when refused. No traceback and none of FleetLedger's own words reach the
     caller: a failure says FAILED, and its reason stays here, in the audit log."""
-    from fleetledger.concierge import audit
-
     store = app.store_factory()
     try:
         doc, code = answer(store, os.environ.get("SSH_ORIGINAL_COMMAND"), _source()), 0
     except _Answer as exc:
         doc, code = {"schema": SCHEMA, "state": exc.state, "why": exc.why}, 1
     except Exception as exc:  # noqa: BLE001 - the caller learns nothing of it
-        audit.record("-", "pair-request", "-", f"failed: {type(exc).__name__}")
+        _audit_failure(type(exc).__name__)
         doc, code = {"schema": SCHEMA, "state": "refused", "why": FAILED}, 1
     app.say(json.dumps(doc))
     return code

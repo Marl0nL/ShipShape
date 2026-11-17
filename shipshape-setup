@@ -566,31 +566,29 @@ pair_here() {
   case $token$nonce in *[!0-9a-f]*) die "FleetLedger's pairing answer is out of place." ;; esac
   { [ "${#token}" -eq 32 ] && [ "${#nonce}" -eq 32 ]; } || die "FleetLedger's pairing answer is out of place."
   case $left in '' | *[!0-9]*) die "FleetLedger's pairing answer is out of place." ;; esac
-  [ "$left" -ge 1 ] && [ "$left" -le 900 ] || die "FleetLedger's pairing answer is out of place."
+  { [ "$left" -ge 1 ] && [ "$left" -le 900 ]; } || die "FleetLedger's pairing answer is out of place."
   pair_token=$token
   # The code is this computer's own work, from its key: one that differs is not this request.
   mine=$(pair_code "$nonce" "$key_blob")
   [ "$mine" = "$code" ] || die "FleetLedger's code for this request is not the one this computer's key gives: not going on."
   printf 'ssh-ed25519 %s\n' "$key_blob" >"$stage/me.pub"
   my_fp=$(ssh-keygen -l -f "$stage/me.pub" 2>/dev/null | awk '{ print $2 }')
-  fl_fp=''
-  for b in $host_blobs; do
-    printf 'ssh-ed25519 %s\n' "$b" >"$stage/fl.pub"
-    fl_fp=$(ssh-keygen -l -f "$stage/fl.pub" 2>/dev/null | awk '{ print $2 }')
-    break
-  done
+  # FleetLedger's host key as ~/.ssh/known_hosts has it (whatever its type), shown so the
+  # approving side, which shows its own, can be checked against it.
+  fl_fp=$(ssh-keygen -l -F "$kh_name" -f "$HOME/.ssh/known_hosts" 2>/dev/null \
+    | awk '$1 != "#" { print $(NF - 1) " " $NF; exit }')
   say "This computer is not trusted by FleetLedger yet, and no key here has a shell there, so it asked to be paired by code (request $pid)."
   say ""
   say "  Code:                   ${mine%???} ${mine#???}"
   say "  This computer's key:    ED25519 $my_fp ($key_path.pub)"
-  [ -n "$fl_fp" ] && say "  FleetLedger's host key: ED25519 $fl_fp (pinned here)"
+  [ -n "$fl_fp" ] && say "  FleetLedger's host key: $fl_fp (pinned here)"
   say ""
   say "Approve it on a device that has a shell on FleetLedger: the Fleet panel's Machines page > Approve, or in a terminal:"
   say "  ssh $DEST ship-fleet pair approve $pid"
   say "and type the code above there. It shows this computer's key and its own host key: check they are the ones above."
   say "Waiting for it (up to $((left / 60)) minutes; Ctrl-C withdraws the request)..."
   now=$(date +%s)
-  deadline=$((now + left + 5))
+  deadline=$((now + left + 30))
   while :; do
     sleep "$PAIR_WAIT"
     pair_ask status "$token"
