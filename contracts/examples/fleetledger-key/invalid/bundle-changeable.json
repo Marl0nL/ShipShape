@@ -1,0 +1,14 @@
+{
+  "schema": "shipshape.fleetledger-key/1",
+  "file": "authorized_keys",
+  "line": 4,
+  "name": "laptop",
+  "type": "ssh-ed25519",
+  "fingerprint": "SHA256:PiPoFgA5WUoziU9lZOGxNIu9egCI1CxKy3PurtWcAJ0",
+  "access": "bundle",
+  "machine": "laptop",
+  "command": null,
+  "options": "restrict,command=\"/home/fleetledger/.local/bin/ship-fleet machine-bundle laptop\"",
+  "this_session": false,
+  "changeable": true
+}

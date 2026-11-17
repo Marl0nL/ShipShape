@@ -26,7 +26,7 @@ COMMANDS = (
     "signins", "owner", "set", "agent", "runtime", "tag", "tools", "toolkit", "update",
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
-    "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle",
+    "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle", "keys",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -35,7 +35,8 @@ EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetle
                          "fleetledger.inbox", "fleetledger.migrate", "fleetledger.service",
                          "fleetledger.vaultcmd", "fleetledger.appliance", "fleetledger.backup",
                          "fleetledger.selfupdate", "fleetledger.toolkitcmd",
-                         "fleetledger.about", "fleetledger.machinebundle")
+                         "fleetledger.about", "fleetledger.machinebundle",
+                         "fleetledger.loginkeys")
 
 
 @dataclass
@@ -63,6 +64,9 @@ class App:
     # (argv) -> (exit code, stdout, stderr) of systemctl or loginctl (service.py)
     system: Callable[[list[str]], tuple[int, str, str]] | None = None
     stdin_isatty: Callable[[], bool] = field(default_factory=lambda: sys.stdin.isatty)
+    # () -> who runs this command, for its audit lines (loginkeys.actor: the ssh key sshd
+    # says the session logged in with); None where nobody can be named (the web UI).
+    actor: Callable[[], dict] | None = None
 
     def __post_init__(self) -> None:
         from fleetledger import scan
@@ -84,6 +88,10 @@ class App:
         self.resolves = self.resolves or _resolves
         self.sleep = self.sleep or time.sleep
         self.keyscan = self.keyscan or scan.keyscan
+        if self.actor is None:
+            from fleetledger import loginkeys
+
+            self.actor = loginkeys.actor
         if self.http_factory is None:
             from fleetledger.pins import Http
 
@@ -796,6 +804,8 @@ def _vault_locked(args, app) -> None:
         return  # stepping aside needs no secret, and must not wait for an unlock
     if args.command == "toolkit" and args.action in ("ls", "check", "show"):
         return  # reads your toolkit folders and ships.toml only
+    if args.command == "keys" and args.action == "ls":
+        return  # reads ~/.ssh/authorized_keys only
     if (args.command == "signins" and getattr(args, "accounts", False)
             and not (args.set_account or args.clear_account)):
         return  # lists tag accounts from ships.toml only
@@ -846,6 +856,13 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
                 exc.exit_code = 2
             raise
 
+    from fleetledger.concierge import audit
+
+    # A command run in a terminal: its audit lines say which key logged in, when sshd
+    # says. Never the web UI's (its jobs run through here with an app that names nobody).
+    serves_ui = args.command == "ui" and getattr(args, "ui_command", None) is None
+    who = getattr(app, "actor", None)
+    actor = audit.ACTOR.set((who() or None) if callable(who) and not serves_ui else None)
     try:
         handed_over()
         _vault_locked(args, app)
@@ -860,6 +877,8 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
     except KeyboardInterrupt:
         app.note("ship-fleet: interrupted")
         return 130
+    finally:
+        audit.ACTOR.reset(actor)
 
 
 if __name__ == "__main__":

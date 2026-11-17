@@ -59,7 +59,9 @@ WRAPPER_PATH = "/usr/local/bin/ship-fleet"
 WRAPPER_FIX = (f"sudo tee {WRAPPER_PATH} >/dev/null <<'EOF'\n{WRAPPER}EOF\n"
                f"sudo chmod 0755 {WRAPPER_PATH}")
 SSHD = ("# FleetLedger's VM: keys only, its two users only.\nPasswordAuthentication no\n"
-        "KbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers fleetledger vmadmin\n")
+        "KbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers fleetledger vmadmin\n"
+        "# Tell a session which key let it in (SSH_USER_AUTH, a file only that user reads),\n"
+        "# so ship-fleet's audit lines name it (ship-fleet keys).\nExposeAuthInfo yes\n")
 
 
 # --- [fleet] self: the guard ------------------------------------------------------------------
