@@ -164,12 +164,15 @@ take_lock() {
   until mkdir "$D/.lock" 2>/dev/null; do
     pid=$(cat "$D/.lock/pid" 2>/dev/null)
     case $pid in '' | *[!0-9]*) pid= ;; esac
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-      rm -rf "$D/.lock" # left by a refresh that is no longer running
+    # Left by a refresh that is no longer running: its process is gone, or the lock is older
+    # than any refresh may take (systemd stops one after 5 minutes; a PID can be reused).
+    if { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; } \
+      || [ -n "$(find "$D/.lock" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then
+      rm -rf "$D/.lock"
       continue
     fi
     tries=$((tries + 1))
-    [ "$tries" -le 90 ] || { printf '%s\n' "Another refresh is still running; this one gave up after 90 seconds." >&2; exit 1; }
+    [ "$tries" -le 90 ] || fail "Another refresh is still running; this one gave up after 90 seconds."
     sleep 1
   done
   locked=1
@@ -315,7 +318,7 @@ function host_ok(x) { return x ~ /^[A-Za-z0-9][A-Za-z0-9.-]*$/ && length(x) <= 2
 function stamp_ok(x) { return x ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9](\.[0-9]+)?Z$/ }
 function blob_ok(x) { return x ~ /^AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+\/]*=?=?$/ && length(x) <= 120 }
 function certblob_ok(x) { return x ~ /^AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29t[A-Za-z0-9+\/]*=?=?$/ && length(x) <= 4000 }
-function fl_host(x) { return index(" " flhosts " ", " " x " ") > 0 }
+function fl_host(x) { return index(" " tolower(flhosts) " ", " " tolower(x) " ") > 0 }
 function need(path, type) { if (!(path in T)) bad("no " path); if (T[path] != type) bad(path " is not what it should be") }
 function names_ok(list,   k, i, a) {
   k = split(list, a, ",")
@@ -347,7 +350,6 @@ END {
       else if (top == "certificate" || top == "ssh" || top == "idle_limit") { if (t != "o") bad(top) }
       else if (top == "scope" || top == "logins" || top == "known_hosts" || top == "ships") { if (t != "a") bad(top) }
       else if (top == "fleetledger") { if (t != "o" && t != "z") bad(top) }
-      else if (top == "refresher") { if (t != "s" || v !~ /^[A-Za-z0-9+\/=]*$/) bad(top) }
       else bad("an unknown field, " path)
       continue
     }
@@ -377,13 +379,13 @@ END {
     }
     if (top == "ships" && k >= 3) {
       f = a[3]
-      if (k == 3 && f == "name") { if (t != "s" || !name_ok(v) || fl_host(v)) bad("a Ship name"); continue }
+      if (k == 3 && f == "name") { if (t != "s" || !name_ok(v) || fl_host(v) || v == "localhost") bad("a Ship name"); continue }
       if (k == 3 && f == "tags") { if (t != "a") bad("a Ship'"'"'s tags"); continue }
       if (k == 4 && f == "tags") { if (t != "s" || !name_ok(v)) bad("a Ship'"'"'s tag"); continue }
       if (k == 3 && f == "runtime") { if (t != "s" || (v != "core" && v != "herdr")) bad("a Ship'"'"'s runtime"); continue }
       if (k == 3 && f == "host_names") { if (t != "o") bad("a Ship'"'"'s host names"); continue }
-      if (k == 4 && f == "host_names" && a[4] == "lan") { if (t != "s" || !host_ok(v)) bad("a Ship'"'"'s host name"); continue }
-      if (k == 4 && f == "host_names" && a[4] == "overlay") { if (t == "z") continue; if (t != "s" || !host_ok(v)) bad("a Ship'"'"'s host name"); continue }
+      if (k == 4 && f == "host_names" && a[4] == "lan") { if (t != "s" || !host_ok(v) || fl_host(v)) bad("a Ship'"'"'s host name"); continue }
+      if (k == 4 && f == "host_names" && a[4] == "overlay") { if (t == "z") continue; if (t != "s" || !host_ok(v) || fl_host(v)) bad("a Ship'"'"'s host name"); continue }
       if (k == 3 && f == "host_certificate") { if (t != "b") bad("a Ship'"'"'s host_certificate"); continue }
       bad("an unknown field, " path)
     }
@@ -539,10 +541,10 @@ build_files() {
   [ "$cert_type" != - ] || fail "FleetLedger has no certificate for $name; the files here are unchanged."
 
   printf '%s %s %s\n' "$cert_type" "$cert_blob" "$name" >"$stage/cert"
+  got=$(ssh-keygen -L -f "$stage/cert" 2>/dev/null | sed -n 's/^ *Public key: [A-Z0-9-]* //p' | head -n 1)
+  [ -n "$got" ] || fail "FleetLedger's certificate does not read as one; refused, and the files here are unchanged."
   if [ -f "$key.pub" ]; then
     want=$(ssh-keygen -l -f "$key.pub" 2>/dev/null | cut -d ' ' -f 2)
-    got=$(ssh-keygen -L -f "$stage/cert" 2>/dev/null | sed -n 's/^ *Public key: [A-Z0-9-]* //p' | head -n 1)
-    [ -n "$got" ] || fail "FleetLedger's certificate does not read as one; refused, and the files here are unchanged."
     [ "$want" = "$got" ] || fail "FleetLedger's certificate is for another key than $key; refused, and the files here are unchanged."
   fi
 

@@ -36,7 +36,7 @@ SSHD = os.environ.get("FLEETLEDGER_TEST_SSHD") or shutil.which("sshd") or "/usr/
 SCRIPT = Path(refresher.__file__).with_name(refresher.SCRIPT)
 TOOLS = ("sh", "sed", "tr", "head", "cut", "grep", "mkdir", "mv", "rm", "cat", "date",
          "mktemp", "chmod", "wc", "cp", "id", "sleep", "readlink", "base64", "ssh-keygen", "env",
-         "ls", "touch", "tail")
+         "ls", "touch", "tail", "find")
 REAL_SSH = shutil.which("ssh") or "/usr/bin/ssh"
 
 pytestmark = [
@@ -443,6 +443,17 @@ def test_a_refresh_writes_nothing_outside_its_own_files(fl, laptop):
     assert changed and changed <= own
 
 
+def test_an_old_lock_is_taken_over_even_when_its_pid_lives_again(fl, laptop):
+    (laptop.d / ".lock").mkdir()
+    (laptop.d / ".lock" / "pid").write_text(f"{os.getpid()}\n")  # alive: a reused PID
+    old = laptop.d / ".lock"
+    os.utime(old, (old.stat().st_atime - 3600, old.stat().st_mtime - 3600))
+    serve(fl)
+    proc = laptop.refresh()
+    assert proc.returncode == 0, proc.stderr
+    assert not (laptop.d / ".lock").exists()
+
+
 def test_a_stale_lock_is_taken_over(fl, laptop):
     (laptop.d / ".lock").mkdir()
     (laptop.d / ".lock" / "pid").write_text("999999999\n")
@@ -569,6 +580,10 @@ HOSTILE = {
                                                   "AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGU="]),
     "CA line naming FleetLedger": (("known_hosts",), ["@cert-authority 127.0.0.1 ssh-ed25519 "
                                                       "AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGU="]),
+    "CA line naming FleetLedger in capitals": (("known_hosts",), [
+        "@cert-authority FLEETLEDGER,ship-01 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGU="]),
+    "a Ship's host name is FleetLedger's": (("ships", 0, "host_names", "lan"), "127.0.0.1"),
+    "a Ship named localhost": (("ships", 0, "name"), "localhost"),
     "two CA lines": (("known_hosts",),
                      ["@cert-authority a ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA==",
                       "@cert-authority b ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA=="]),

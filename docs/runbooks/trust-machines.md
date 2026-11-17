@@ -98,7 +98,9 @@ line again (`ship-fleet trust laptop` prints it).
 
 Your main machine (whose own key logs in to the VM with a shell) gets the same line
 from `ship-fleet trust desktop --key ~/.ssh/id_ed25519.pub` and runs the same
-refresher, which asks for its bundle by name.
+refresher, which asks for its bundle by name. Its timer runs without your ssh-agent, so
+a key with a passphrase works only when you run the refresher yourself (or the Fleet
+panel does, with your agent); give the timer a key it can open.
 
 Without the refresher (FleetLedger on your desktop, or you would rather not), the
 bundle works as before:
@@ -289,7 +291,7 @@ and changes `hc` only to add herdr-core Ships and remove the ones it added. When
 FleetLedger cannot be reached, refuses the laptop (untrusted, or idle 30 days), or
 cannot sign a certificate that is due (its vault locked), the refresher keeps the last
 good files, exits 1 and says why in one sentence, also in
-`~/.ssh/shipshape/state.json`, which the Fleet panel shows. `fleet.json` beside it is
+`~/.ssh/shipshape/state.json` (for the Fleet panel). `fleet.json` beside it is
 the last bundle it applied, for the Fleet panel and the Desk. The bundle also carries
 the refresher itself, base64: only the pasted line ever decodes it, so a FleetLedger
 that was taken over cannot run code on the laptop through a refresh (it can still sign
