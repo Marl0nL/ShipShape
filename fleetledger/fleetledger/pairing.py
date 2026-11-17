@@ -261,11 +261,12 @@ def read() -> Pending:
 
 
 def clear() -> None:
-    """Every request gone (pair off)."""
-    try:
-        requests_path().unlink(missing_ok=True)
-    except OSError:
-        pass
+    """Every request gone (pair off), under the store's lock, so a request being filed
+    meanwhile is not written back after."""
+    if not folder().exists():
+        return
+    with locked() as p:
+        p.requests, p.filed = [], []
 
 
 # --- the forced command: what an unknown computer may do ------------------------------------
@@ -426,13 +427,21 @@ def cmd_machine_pair(args, app) -> int:
     """The forced command. Prints one JSON document, whatever happens; exit 0 when it was
     answered, 1 when refused. No traceback and none of FleetLedger's own words reach the
     caller: a failure says FAILED, and its reason stays here, in the audit log."""
+    import contextlib
+    import io
+
     store = app.store_factory()
+    # Whatever FleetLedger would say on stderr here (an audit log it cannot write, say)
+    # stays here: stderr goes to the caller.
+    quiet = contextlib.redirect_stderr(io.StringIO())
     try:
-        doc, code = answer(store, os.environ.get("SSH_ORIGINAL_COMMAND"), _source()), 0
+        with quiet:
+            doc, code = answer(store, os.environ.get("SSH_ORIGINAL_COMMAND"), _source()), 0
     except _Answer as exc:
         doc, code = {"schema": SCHEMA, "state": exc.state, "why": exc.why}, 1
     except Exception as exc:  # noqa: BLE001 - the caller learns nothing of it
-        _audit_failure(type(exc).__name__)
+        with quiet:
+            _audit_failure(type(exc).__name__)
         doc, code = {"schema": SCHEMA, "state": "refused", "why": FAILED}, 1
     app.say(json.dumps(doc))
     return code

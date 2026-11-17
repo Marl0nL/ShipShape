@@ -92,7 +92,7 @@ withdraws it. Nothing of a refused, withdrawn or lapsed request is kept.
 Being on the same network is never an approval. While pairing is on, anybody who reaches
 the VM's ssh may ask (with the installer's well-known pairing key, whose line may run only
 `ship-fleet machine-pair`), but a request grants nothing, at most 4 wait at once, and none
-is trusted until you type its code. `ship-fleet pair off` closes it again; `ship-fleet
+is trusted until you type its code. Somebody who keeps asking can use those bounds up (the installer then says FleetLedger is busy, and falls back to the step by hand): `ship-fleet pair off`, then `on`, starts them afresh. `ship-fleet pair off` closes it again; `ship-fleet
 doctor` checks its line (`fleet.pairing`). See [docs/security.md](../security.md#pairing-by-code)
 and `contracts/ship-fleet.md` ("ship-fleet pair").
 

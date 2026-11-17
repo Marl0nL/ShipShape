@@ -756,6 +756,11 @@ def _in_use(args, app):
 
     if args.command == "migrate":
         return nullcontext()  # it takes the lock exclusively itself
+    if args.command == "machine-pair":
+        # An unknown computer's request writes only the pending store, which no move copies,
+        # so it holds no lock that anybody on the network could keep a move from starting
+        # with (pairing.py); the handover gate still refuses on a copy that does not act.
+        return nullcontext()
     if args.command == "about":
         return nullcontext()  # it only reads, and must answer during a move too
     store = app.store_factory()
@@ -830,6 +835,11 @@ def main(argv: Sequence[str] | None = None, app: App | None = None) -> int:
         parser = build_parser()
     except FleetError as exc:
         app = app or App()
+        if list(sys.argv[1:] if argv is None else argv)[:1] == ["machine-pair"]:
+            from fleetledger import pairing  # an unknown computer: none of FleetLedger's words
+
+            app.say(pairing.off_answer())
+            return 1
         app.note(f"ship-fleet: {exc.message}")
         if exc.hint:
             app.note(f"  {exc.hint}")

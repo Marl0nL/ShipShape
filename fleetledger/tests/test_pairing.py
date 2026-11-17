@@ -544,3 +544,46 @@ def test_a_copy_on_standby_answers_off_and_says_nothing_else(on, monkeypatch):
     handover.write(on.store, handover.Marker("retired", handover.now(), "vm.example", 1))
     code, doc = asks(on, monkeypatch, f"request {new_key(on, 'laptop')} laptop")
     assert (code, doc["state"]) == (1, "off") and "vm.example" not in json.dumps(doc)
+
+
+# --- found in the adversarial review ----------------------------------------------------------
+def test_a_caller_holds_no_lock_that_could_keep_a_move_from_starting(on, monkeypatch):
+    from fleetledger import inuse
+
+    seen = []
+    real = pairing.answer
+
+    def during(*a, **kw):
+        with inuse.exclusive(on.store):  # what migrate takes: free while a request runs
+            seen.append(True)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(pairing, "answer", during)
+    asks(on, monkeypatch, "status " + "0" * 32)
+    assert seen == [True]
+
+
+def test_nothing_fleetledger_says_on_stderr_reaches_the_caller(on, monkeypatch):
+    from fleetledger.concierge import audit
+
+    log = audit.paths.audit_log_path()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("")
+    log.chmod(0o400)  # it cannot write its audit line: it would say so on stderr
+    try:
+        request(on, monkeypatch, new_key(on, "laptop"))  # asks() checks stderr is empty
+    finally:
+        log.chmod(0o600)
+
+
+def test_pair_off_takes_the_store_lock(on, monkeypatch):
+    request(on, monkeypatch, new_key(on, "laptop"))
+    with pairing.locked():
+        import threading
+
+        done = threading.Event()
+        t = threading.Thread(target=lambda: (pairing.clear(), done.set()))
+        t.start()
+        assert not done.wait(0.3)  # it waits for a request being filed to finish
+    t.join(5)
+    assert done.is_set() and pairing.read().requests == []
