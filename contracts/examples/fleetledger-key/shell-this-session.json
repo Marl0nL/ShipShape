@@ -1,0 +1,14 @@
+{
+  "schema": "shipshape.fleetledger-key/1",
+  "file": "authorized_keys",
+  "line": 1,
+  "name": "you@desktop",
+  "type": "ssh-ed25519",
+  "fingerprint": "SHA256:ypeBEsobvcr6wjGzmiPcTaeG7/gUfE5yuYB3ha/uSLs",
+  "access": "shell",
+  "machine": null,
+  "command": null,
+  "options": "",
+  "this_session": true,
+  "changeable": true
+}

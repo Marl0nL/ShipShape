@@ -10,6 +10,12 @@ record them: create and destroy (service: the driver), forget, snapshot-rollback
 and snapshot-delete (service: the snapshot's name), re-pin (service: host-key),
 and untrust (Ship "-", service: the machine's name). Outcome: ok, failed, or
 steps (the manual driver: the person does it by hand).
+
+A command run in a terminal adds who ran it, when that can be known honestly:
+`actor_key`, the SHA256 fingerprint of the ssh key the session logged in with as sshd
+reports it (ExposeAuthInfo), and `actor`, the name that key's line in
+~/.ssh/authorized_keys gives it (loginkeys.py). Neither is written when it cannot be
+known (no ExposeAuthInfo, a local login, the web UI): never a guess.
 """
 
 from __future__ import annotations
@@ -19,9 +25,14 @@ import os
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from fleetledger import paths
 from fleetledger.inventory import now_timestamp
+
+# Who runs the command this thread runs ({"actor_key": ..., "actor": ...}), set by
+# cli.main for a command run in a terminal; None (the default) everywhere else.
+ACTOR: ContextVar[dict | None] = ContextVar("fleetledger_audit_actor", default=None)
 
 
 def record(
@@ -38,6 +49,7 @@ def record(
         "outcome": outcome,
         "account": account,
     }
+    entry.update(ACTOR.get() or {})
     path = paths.audit_log_path()
     try:
         paths.private_dir(path.parent)

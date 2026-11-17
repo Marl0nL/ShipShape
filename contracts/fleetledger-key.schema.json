@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-key.schema.json",
+  "title": "One key that may log in to the FleetLedger computer (ship-fleet keys ls --json entries, version 1)",
+  "description": "Each entry of `ship-fleet keys ls --json`, a list of every line with a key in the FleetLedger user's ~/.ssh/authorized_keys, then authorized_keys2, in the order sshd tries them. It only reads, and answers while the vault is locked. Never the key itself: its type and fingerprint. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "file", "line", "name", "type", "fingerprint", "access", "machine", "command", "options", "this_session", "changeable"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-key/1" },
+    "file": { "enum": ["authorized_keys", "authorized_keys2"], "description": "The file in ~/.ssh it is in." },
+    "line": { "type": "integer", "minimum": 1, "description": "Its line number in that file." },
+    "name": { "type": ["string", "null"], "minLength": 1, "description": "The line's comment (what follows the key), as written: ship-fleet keys name sets it. Any text a hand edit put there; null when there is none." },
+    "type": { "type": "string", "minLength": 1, "description": "The key's type as the line gives it (ssh-ed25519, ssh-rsa, ecdsa-sha2-nistp256, a security key's sk- types, ...)." },
+    "fingerprint": {
+      "oneOf": [{ "$ref": "#/$defs/sshFingerprint" }, { "type": "null" }],
+      "description": "As ssh-keygen -l prints it; null for a key that is not valid base64 (sshd lets nobody in with it)."
+    },
+    "access": {
+      "enum": ["shell", "command", "bundle", "cert-authority"],
+      "description": "What the line lets the key do. shell: log in and run anything (its options may still turn off a terminal or forwarding); command: only the command its command= option forces; bundle: a trusted machine's line in FleetLedger's block, only `ship-fleet machine-bundle <machine>` (ship-fleet untrust removes it); cert-authority: it is a CA, and any certificate it signs logs in."
+    },
+    "machine": {
+      "oneOf": [{ "$ref": "#/$defs/shipName" }, { "type": "null" }],
+      "description": "access bundle: the trusted machine; else null."
+    },
+    "command": { "type": ["string", "null"], "description": "access command: the command it forces, unquoted; else null." },
+    "options": { "type": "string", "description": "The line's options as written (from=, no-pty, ...); empty for none." },
+    "this_session": { "type": ["boolean", "null"], "description": "The key the ssh session running this command logged in with, as sshd says (ExposeAuthInfo); null when sshd does not say." },
+    "changeable": { "type": "boolean", "description": "ship-fleet keys name and revoke may change this line: on FleetLedger's own VM, in authorized_keys, outside FleetLedger's block, and the block's markers intact." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "access": { "const": "bundle" } } },
+      "then": { "properties": { "machine": { "$ref": "#/$defs/shipName" }, "file": { "const": "authorized_keys" }, "changeable": { "const": false } } },
+      "else": { "properties": { "machine": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "access": { "const": "command" } } },
+      "then": { "properties": { "command": { "type": "string" } } },
+      "else": { "properties": { "command": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "file": { "const": "authorized_keys2" } } },
+      "then": { "properties": { "changeable": { "const": false } } }
+    }
+  ],
+  "$defs": {
+    "shipName": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+    },
+    "sshFingerprint": {
+      "type": "string",
+      "pattern": "^SHA256:[A-Za-z0-9+/]{43}$"
+    }
+  }
+}
