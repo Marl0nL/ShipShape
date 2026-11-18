@@ -96,6 +96,9 @@ and who supervises it. The point is that you talk to the manager, not the crew.
   (`state/<id>.status`), plus the harness's live status line. **Ask <manager> to set it up**
   types the request into the manager's prompt rather than the crew's.
 - "crew of" is its `desk.parent` label or board's `crew.parent`, else the manager in its space.
+- `https://` addresses in its findings and its reports are links (a PR shows as `⇄ #418`; the
+  full address is the tooltip), as they are in a task's note and a board's notes. Nothing but
+  `https://` opens.
 - The triangle needs the layout's `terminal_opacity` below 1 (0.88): only the crew pane's frame
   has an image behind it, so other terminals look the same.
 

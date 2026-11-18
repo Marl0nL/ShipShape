@@ -5,8 +5,8 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, hc, setShared, panes, machines, layout, shared, spaces, terminals } from "herdr";
 import { STATUSES, STATUS_LABEL, KIND_LABEL, agentNamed, ago, toolsOn, messageFor, docFor } from "./model.js";
-import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openUrl, openHttps, button, code, stop } from "./ui.js";
-import { taskLinks, diffMenu, findNode } from "./links.js";
+import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openUrl, openHttps, button, code, stop, linked } from "./ui.js";
+import { taskLinks, diffMenu, findNode, urlsIn } from "./links.js";
 import { cardLive, tabIndex, span } from "./dash.js";
 
 const go = (a) => a && run("pane.focus", { pane: a.pane });
@@ -192,7 +192,7 @@ function listsOf(t, L, b, idp) {
 function notesOf(t, L, b) {
   if (!b?.notes) return null;
   const k = card(t, L, t.border, "notes");
-  return v_flex().gap(4).child(label(t, L, "Notes")).child(k.finish(k.inner.child(body(t, L, b.notes))));
+  return v_flex().gap(4).child(label(t, L, "Notes")).child(k.finish(k.inner.child(linked(t, L, b.notes, "notes-text"))));
 }
 
 function linksOf(t, L, b, idp) {
@@ -318,7 +318,7 @@ function taskCard(t, L, task, idp, view) {
             e.child(div().id(`${idp}-${task.id}-stale`).flex_none().tooltip(`${task.agent} has been ${who.status} for ${span(live.still)} while this task is in Doing`).child(chip(t, L, "stale", t.ansi3 ?? t.working, { h: 18 }))),
           ),
       )
-      .when(Boolean(task.note), (e) => e.child(body(t, L, task.note)))
+      .when(Boolean(task.note), (e) => e.child(linked(t, L, task.note, `${idp}-${task.id}-note`)))
       // Right now: how long its agent has been at it, and what it says (when Herdr's report says).
       .when(Boolean(live), (e) =>
         e.child(
@@ -589,7 +589,7 @@ function findingsOf(t, L, b) {
           .gap(8)
           .items_start()
           .child(div().size(7).mt(6).flex_none().rounded(4).bg(f.tone ? toneColor(t, f.tone) : t.dim))
-          .child(div().flex_1().min_w(0).text_size(L.d.text - 0.5).line_height(`${Math.round((L.d.text - 0.5) * 1.45)}px`).text_color(i === 0 ? t.foreground : t.muted).child(f.text ?? ""))
+          .child(linked(t, L, f.text ?? "", `find-${i}-text`, { color: i === 0 ? t.foreground : t.muted }).flex_1())
           .child(div().flex_none().text_size(10.5).text_color(t.dim).mt(2).child(ago(f.at))),
       ),
     );
@@ -615,6 +615,16 @@ function nextOf(t, L, b) {
     );
 }
 
+// A report cut to fit, but never through the middle of an address it names.
+function clip(text) {
+  if (text.length <= 220) return text;
+  const cut = urlsIn(text).reduce((end, u) => {
+    const at = text.indexOf(u);
+    return at < 220 && at + u.length > end ? at + u.length : end;
+  }, 220);
+  return cut >= text.length ? text : `${text.slice(0, cut)}…`;
+}
+
 function logOf(t, L, info) {
   const log = info?.log ?? [];
   if (!log.length) return null;
@@ -628,7 +638,7 @@ function logOf(t, L, info) {
           .gap(7)
           .items_start()
           .child(div().flex_none().w(96).child(chip(t, L, x.verb, t[VERB[x.verb]] ?? t.idle, { h: 18 })))
-          .child(div().flex_1().min_w(0).text_size(11.5).line_height("16px").text_color(i === 0 ? t.foreground : t.muted).child(x.text.length > 220 ? `${x.text.slice(0, 220)}…` : x.text))
+          .child(linked(t, L, clip(x.text), `log-${i}-text`, { size: 11.5, lineHeight: "16px", color: i === 0 ? t.foreground : t.muted }).flex_1())
           .child(div().flex_none().text_size(10.5).text_color(t.dim).mt(1).child(ago(x.at))),
       ),
     );

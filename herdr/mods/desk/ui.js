@@ -4,7 +4,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec } from "herdr";
-import { checkHttps } from "./links.js";
+import { checkHttps, linkify } from "./links.js";
 
 const ICON = "mods/workspace-chrome";
 export const icon = (name, size, color) => svg(`${ICON}/${name}.svg`).size(size).flex_none().text_color(color);
@@ -87,6 +87,37 @@ export function openHttps(url) {
   const u = checkHttps(url);
   if (u) exec("xdg-open", [u]).catch(() => {});
   return Boolean(u);
+}
+
+// Agent-written text with its https:// addresses clickable (a PR as "⇄ #418"), the full
+// address as each link's tooltip. Text without one is drawn as before. `id`: unique on the page.
+export function linked(t, L, text, id, style = {}) {
+  const size = style.size ?? L.d.text - 0.5;
+  const color = style.color ?? t.muted;
+  const base = (el) => el.min_w(0).text_size(size).line_height(style.lineHeight ?? `${Math.round(size * 1.45)}px`).text_color(color);
+  const parts = linkify(text);
+  if (!parts.some((p) => p.url)) return base(div()).child(text ?? "");
+  // Words one by one so the line wraps where it would in plain text.
+  const words = parts.flatMap((p, i) => (p.url ? [p] : p.text.split(/\s+/).filter(Boolean).map((w) => ({ text: w, i }))));
+  return base(h_flex().id(id).flex_wrap().gap(4).items_center()).children(
+    words.map((w, i) =>
+      w.url
+        ? div()
+            .id(`${id}-u${i}`)
+            .flex_none()
+            .text_color(t.accent)
+            .cursor_pointer()
+            .hover((s) => s.text_color(t.foreground))
+            .tooltip(w.url)
+            .on_mouse_down("left", stop)
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              openHttps(w.url);
+            })
+            .child(w.label)
+        : div().flex_none().child(w.text),
+    ),
+  );
 }
 
 // A strip across the top, blended from one colour to the other in short steps.

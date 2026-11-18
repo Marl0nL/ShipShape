@@ -89,6 +89,9 @@ desk show                    # what's on the board;  desk show --json
 desk clear                   # empty it, keeping kind and tags
 ```
 
+Write addresses in full (`https://...`): in a note, a finding or a task's note the desk makes an
+`https://` address a link, and shows a pull request's as `⇄ #412`.
+
 Blocked on the person? Say so where they'll see it: a `bad` card, or the task in `blocked`
 with a note saying exactly what you need from them.
 

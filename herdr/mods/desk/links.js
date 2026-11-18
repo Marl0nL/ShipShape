@@ -132,3 +132,23 @@ export function diffMenu(task, links, who, { machine = null, machineState = "rea
     },
   ];
 }
+
+/** Text cut into words and links, for drawing with the links clickable: [{text}] and
+ *  [{url, label, pr}]. Only https:// addresses become links; a PR shows as "⇄ #418", another
+ *  address without its "https://", shortened. The full address is always the tooltip. */
+export function linkify(text) {
+  if (typeof text !== "string" || !text) return [];
+  const out = [];
+  let at = 0;
+  for (const m of text.matchAll(URLS)) {
+    const url = trimUrl(m[0]);
+    if (!checkHttps(url)) continue;
+    if (m.index > at) out.push({ text: text.slice(at, m.index) });
+    const pr = prOf(url);
+    const bare = url.slice("https://".length);
+    out.push({ url, pr: Boolean(pr), label: pr ? `⇄ #${pr.number}` : bare.length > 48 ? `${bare.slice(0, 47)}…` : bare });
+    at = m.index + url.length;
+  }
+  if (at < text.length) out.push({ text: text.slice(at) });
+  return out;
+}
