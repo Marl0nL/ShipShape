@@ -32,6 +32,7 @@ names shows as a problem, never as looks.
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import io
 import ipaddress
@@ -445,7 +446,10 @@ class FolderReader:
                     fd = os.open(part, flags, dir_fd=at)
                 except FileNotFoundError:
                     return None
-                except OSError:  # a link (ELOOP), or not a folder where one should be
+                except OSError as exc:
+                    if exc.errno not in (errno.ELOOP, errno.ENOTDIR):  # unreadable, say
+                        _bad(f"{'/'.join(parts[:i + 1])} could not be opened "
+                             f"({exc.strerror or exc})")
                     _bad(f"{'/'.join(parts[:i + 1])} is not a "
                          f"{'regular file' if last else 'folder'} (a link is never followed)")
                 opened.append(fd)
@@ -605,8 +609,9 @@ def load() -> Stored | None:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
     except FileNotFoundError:
         return None
-    except OSError:
-        _bad(f"{STORE} is not a regular file")
+    except OSError as exc:
+        _bad(f"{STORE} is not a regular file" if exc.errno == errno.ELOOP
+             else f"{STORE} could not be opened ({exc.strerror or exc})")
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             _bad(f"{STORE} is not a regular file")

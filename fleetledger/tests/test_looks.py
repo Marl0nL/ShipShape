@@ -279,6 +279,22 @@ def test_where_it_came_from_is_kept_as_one_short_line(env, tmp_path):  # noqa: F
     assert src["actor_key"] == "SHA256:" + "A" * 43
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads anything")
+def test_a_file_it_may_not_read_is_said_as_such(env, tmp_path):  # noqa: F811
+    folder = tmp_path / "desk-looks"
+    shutil.copytree(EXAMPLE, folder)
+    (folder / "looks.json").chmod(0)
+    code, _, err = env.run("looks", "publish", str(folder))
+    assert code == 1 and "looks.json could not be opened (Permission denied)" in err
+    (folder / "looks.json").chmod(0o600)
+    (folder / "logos").chmod(0)
+    try:
+        code, _, err = env.run("looks", "publish", str(folder))
+        assert code == 1 and "logos could not be opened (Permission denied)" in err
+    finally:
+        (folder / "logos").chmod(0o700)
+
+
 def test_a_missing_folder_is_said_plainly(env, tmp_path):  # noqa: F811
     code, _, err = env.run("looks", "publish", str(tmp_path / "nowhere"))
     assert code == 1 and "is not there" in err
