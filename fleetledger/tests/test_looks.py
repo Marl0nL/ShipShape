@@ -369,6 +369,41 @@ def test_a_bad_tar_stream_is_refused_whole_and_the_stored_one_stays(env, case): 
     assert sorted(p.name for p in looks.store_path().parent.iterdir()) == [looks.STORE]
 
 
+def _empty_pax_headers(n: int) -> bytes:
+    info = tarfile.TarInfo("././@PaxHeader")
+    info.type = tarfile.XHDTYPE
+    return info.tobuf(format=tarfile.USTAR_FORMAT) * n
+
+
+def _bad_sparse(headers: dict[str, str], body: bytes) -> bytes:
+    info = tarfile.TarInfo("looks.json")
+    info.size = len(body)
+    info.pax_headers = headers
+    return tar_of([(info, body)])
+
+
+CRAFTED = {  # each once made tarfile raise something other than TarError
+    "many pax headers in a row": _empty_pax_headers(1500) + example_tar(),
+    "many GNU long names in a row": b"".join(
+        tarfile.TarInfo("x" * 200).tobuf(format=tarfile.GNU_FORMAT)[:1024] for _ in range(900))
+    + example_tar(),
+    "a sparse map that is not numbers": _bad_sparse(
+        {"GNU.sparse.major": "1", "GNU.sparse.minor": "0", "GNU.sparse.name": "looks.json"},
+        b"zz\nqq\n"),
+    "a sparse size that is not a number": _bad_sparse(
+        {"GNU.sparse.map": "a,b,c", "GNU.sparse.size": "q"}, b"x"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(CRAFTED))
+def test_a_crafted_header_is_a_refusal_never_a_traceback(env, case):  # noqa: F811
+    assert len(CRAFTED[case]) <= looks.STREAM_BYTES
+    code, out, err = publish_stream(env, CRAFTED[case])
+    assert code == 1 and out == ""
+    assert "The looks folder is refused, and nothing changed" in err, err
+    assert audited() == [("looks-publish", "-", "refused")]
+
+
 def test_the_stream_is_read_with_a_hard_limit(env):  # noqa: F811
     class Endless(io.RawIOBase):
         def __init__(self):
@@ -408,7 +443,8 @@ def test_a_failed_write_leaves_the_stored_one(env, monkeypatch):  # noqa: F811
     monkeypatch.setattr(os, "replace", cut_short)
     files = {**example_files(), "looks.json": json.dumps(doc).encode()}
     with pytest.raises(OSError):
-        looks.save(looks.read_folder(looks.from_files(files)), {"how": "stdin"}, "now")
+        looks.save(looks.read_folder(looks.from_files(files)),
+                   dict.fromkeys(looks.SOURCE_FIELDS) | {"how": "stdin"}, "now")
     monkeypatch.setattr(os, "replace", real)
     assert looks.store_path().read_bytes() == before
     assert sorted(p.name for p in looks.store_path().parent.iterdir()) == [looks.STORE]
@@ -442,6 +478,41 @@ def test_a_hand_edited_store_is_a_problem_never_looks(env):  # noqa: F811
     path.unlink()
     path.symlink_to(EXAMPLE / "looks.json")
     assert "not a regular file" in show(env)["problem"]
+
+
+@pytest.mark.parametrize("field,value,why", [
+    ("published_at", "\x1b]0;pwn\x07", "published_at"),
+    ("published_at", "x\nship-fleet: all good", "published_at"),
+    ("version", True, "version"),
+    ("version", 1.0, "version"),
+    ("how", "carrier pigeon", "how"),
+    ("how", "stdin\u202e", "how"),
+    ("actor", "desk\x9btop", "actor"),
+    ("actor_key", "not a fingerprint", "actor_key"),
+    ("address", "\u2066192.0.2.1", "address"),
+    ("address", "somewhere", "address"),
+    ("folder", "/etc", "folder"),  # a folder for a stream
+])
+def test_where_a_store_came_from_is_checked_too(env, monkeypatch, field, value, why):  # noqa: F811
+    publish_stream(env, example_tar())
+    path = looks.store_path()
+    doc = json.loads(path.read_text())
+    (doc["from"] if field in looks.SOURCE_FIELDS else doc)[field] = value
+    path.write_text(json.dumps(doc))
+    shown = show(env)
+    assert why in shown["problem"]
+    code, out, _ = env.run("looks", "show")
+    assert code == 1 and "\x1b" not in out and "all good" not in out.split("\n", 1)[1]
+
+
+def test_something_else_in_the_stores_place_is_said_not_thrown(env):  # noqa: F811
+    looks.store_path().mkdir(parents=True)
+    assert "not a regular file" in show(env)["problem"]
+    code, _, err = env.run("looks", "publish", str(EXAMPLE))
+    assert code == 1 and "Couldn't store the looks" in err and "Traceback" not in err
+    assert [a[2] for a in audited()] == ["failed"]
+    code, _, err = env.run("looks", "clear")
+    assert code == 1 and "Couldn't clear the looks" in err
 
 
 # --- who may, and when ----------------------------------------------------------------------

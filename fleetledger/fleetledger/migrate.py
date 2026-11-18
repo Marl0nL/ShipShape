@@ -1123,7 +1123,8 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
         if member.startswith("data/"):
             parts = member[5:].split("/")
             if parts[0] not in DATA_TOPS or not all(
-                    SEGMENT.match(p) and p not in (".", "..") for p in parts):
+                    SEGMENT.match(p) and p not in (".", "..") for p in parts) or (
+                    parts[0] == looks.FOLDER and member[5:] not in LOOKS_FILES):
                 raise bad(f"file entry {member!r}")
         if member.startswith("images/") and not FILE_NAME.match(member[7:]):
             raise bad(f"file entry {member!r}")

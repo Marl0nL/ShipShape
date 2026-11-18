@@ -606,8 +606,10 @@ none.
 as compact JSON built from the values that passed (never the sent text; never longer than
 it), each logo as it came (a checked picture). It is one file,
 `~/.local/share/fleetledger/looks/published.json` (mode 0600), written atomically (a
-temporary file, then a rename), with when and from where it came. Reading it back checks
-it all again, so a hand edit shows as a `problem`, never as looks. Nothing kept is ever
+temporary file, then a rename), with when and from where it came (each a short line of
+plain text, or null). Reading it back checks it all again, the where and when included, so a
+hand edit shows as a `problem`, never as looks. A tar member that tarfile cannot read
+(crafted headers included) is a refusal like any other. Nothing kept is ever
 run, or put into a command or a path: file names come from the format's patterns alone.
 
 **`looks show --json`** prints one document (`fleetledger-looks.schema.json`; examples in
@@ -625,7 +627,8 @@ contents, labels included.
 add` does. A copy on standby or retired (`ship-fleet migrate`) refuses all three. Each
 `publish` writes an audit line (`looks-publish`; service: the first 12 hex digits of the
 digest, or `-` for one refused), each `clear` that removed something one
-(`looks-clear`). `ship-fleet migrate` moves the kept folder to the new computer;
+(`looks-clear`). `ship-fleet migrate` moves the kept folder to the new computer (that one file, and a
+receive refuses any other under `looks/`);
 `migrate wipe` deletes it with the rest of FleetLedger's own files.
 
 Nothing sends the folder to a computer yet; a later change adds that, opt-in per machine,

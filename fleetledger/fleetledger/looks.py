@@ -19,7 +19,8 @@ Two ways in, both read in full and checked before anything is written:
   be a folder of the format (., palettes, logos) or a regular file with a name the format
   could give it; a link, a device, a sparse file, an absolute or `..` path, a name twice, or
   more members or bytes than the format's limits allow refuses the whole stream. Nothing in
-  it is ever extracted.
+  it is ever extracted. A palette or logo looks.json does not name is dropped unchecked, as
+  the Desk never reads it either; nothing unchecked is stored.
 
 What is stored is the checked folder, rewritten from its checked values (the JSON files; the
 logos as they are, being checked pictures), as one file written atomically (a temporary file
@@ -33,6 +34,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import ipaddress
 import json
 import os
 import re
@@ -476,15 +478,17 @@ def _member_name(raw: str) -> str:
 
 def tar_files(data: bytes) -> dict[str, bytes]:
     """The files of a looks folder from a tar stream (`tar -cf - -C FOLDER .`), checked
-    member by member and never extracted. Refused whole for anything a looks folder cannot
-    hold."""
+    member by member and never extracted. Refused whole for any member a looks folder
+    cannot hold, or any it cannot read; read_folder then takes only what looks.json names."""
     caps = {"looks.json": LOOKS_BYTES, "palettes": PALETTE_BYTES, "logos": LOGO_BYTES}
     files: dict[str, bytes] = {}
     counts = {"palettes": 0, "logos": 0}
     members = total = 0
     try:
         tar = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
-    except tarfile.TarError:
+    except Refused:
+        raise
+    except Exception:  # noqa: BLE001 - tarfile raises more than TarError on crafted headers
         _bad("the input is not a tar stream (make one with tar -cf - -C FOLDER .)")
     try:
         while (m := tar.next()) is not None:
@@ -520,7 +524,9 @@ def tar_files(data: bytes) -> dict[str, bytes]:
             if len(body) != m.size:
                 _bad(f"{name} is cut short in the tar stream")
             files[name] = body
-    except tarfile.TarError:
+    except Refused:
+        raise
+    except Exception:  # noqa: BLE001 - RecursionError, ValueError, ... from crafted headers
         _bad("the tar stream could not be read (cut short or damaged)")
     return files
 
@@ -545,6 +551,7 @@ class Stored:
 
 def save(folder: Folder, source: dict[str, Any], published_at: str) -> None:
     """Stores the checked folder in place of what was there, atomically."""
+    source = check_source(source, "from")
     doc = {"version": STORE_VERSION, "published_at": published_at, "from": source,
            "sha256": folder.sha256,
            "files": {n: base64.b64encode(b).decode("ascii") for n, b in folder.files.items()}}
@@ -563,7 +570,31 @@ def clear() -> bool:
 
 
 SOURCE_FIELDS = ("how", "folder", "address", "actor", "actor_key")
-SOURCE_TEXT = re.compile(r"[^\x00-\x1f\x7f]{1,200}")
+SOURCE_TEXT = re.compile(r"[^\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]{1,200}")
+TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+FINGERPRINT = re.compile(r"SHA256:[A-Za-z0-9+/]{43}")
+
+
+def check_source(src: Any, where: str = f"{STORE}: from") -> dict[str, Any]:
+    """Where a publish came from, as kept: each field null or one short line of plain text
+    (no control or direction characters), and of its own shape."""
+    _only(src, where, SOURCE_FIELDS, SOURCE_FIELDS)
+    for k in SOURCE_FIELDS:
+        v = src[k]
+        if v is not None and not (isinstance(v, str) and SOURCE_TEXT.fullmatch(v)):
+            _bad(f"{where}.{k} is not a short line of text")
+    if src["how"] not in ("folder", "stdin"):
+        _bad(f"{where}.how is neither folder nor stdin")
+    if src["folder"] is not None and src["how"] != "folder":
+        _bad(f"{where}.folder is given for a stream")
+    if src["actor_key"] is not None and not FINGERPRINT.fullmatch(src["actor_key"]):
+        _bad(f"{where}.actor_key is not a key's fingerprint")
+    if src["address"] is not None:
+        try:
+            ipaddress.ip_address(src["address"])
+        except ValueError:
+            _bad(f"{where}.address is not an address")
+    return {k: src[k] for k in SOURCE_FIELDS}
 
 
 def load() -> Stored | None:
@@ -587,17 +618,11 @@ def load() -> Stored | None:
     doc = parse_json(raw, STORE)
     _only(doc, STORE, ("version", "published_at", "from", "sha256", "files"),
           ("version", "published_at", "from", "sha256", "files"))
-    if doc["version"] != STORE_VERSION:
+    if type(doc["version"]) is not int or doc["version"] != STORE_VERSION:
         _bad(f"{STORE} is not a version this FleetLedger knows")
-    if not isinstance(doc["published_at"], str) or len(doc["published_at"]) > 40:
+    if not (isinstance(doc["published_at"], str) and TIMESTAMP.fullmatch(doc["published_at"])):
         _bad(f"{STORE}: published_at is not a time")
-    _only(doc["from"], f"{STORE}: from", SOURCE_FIELDS, ("how",))
-    source = {}
-    for k in SOURCE_FIELDS:
-        v = doc["from"].get(k)
-        if v is not None and not (isinstance(v, str) and SOURCE_TEXT.fullmatch(v)):
-            _bad(f"{STORE}: from.{k} is not a short line of text")
-        source[k] = v
+    source = check_source(doc["from"])
     if not isinstance(doc["files"], dict):
         _bad(f"{STORE}: files is not an object")
     files = {}

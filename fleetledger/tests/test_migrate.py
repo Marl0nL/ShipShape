@@ -1182,6 +1182,13 @@ def _tamper(stream: bytes, how: str) -> bytes:
     elif how == "extra":
         extra = tarfile.TarInfo("data/net/extra.json")
         members.insert(2, (extra, b"{}"))
+    elif how == "looks extra":  # listed and carried, but not a file the Desk looks store has
+        data = b"{}"
+        manifest = json.loads(members[0][1])
+        manifest["files"].append({"member": "data/looks/other.json", "size": len(data),
+                                  "sha256": hashlib.sha256(data).hexdigest()})
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+        members.insert(2, (tarfile.TarInfo("data/looks/other.json"), data))
     elif how == "manifest":
         manifest = json.loads(members[0][1])
         manifest["files"][0]["member"] = "../../outside"
@@ -1253,7 +1260,7 @@ def _tamper(stream: bytes, how: str) -> bytes:
                                  "control character", "..", "config", "missing key",
                                  "agent member", "ssh source", "cut in the manifest",
                                  "pub half", "root source", "folder source", "unclaimed key",
-                                 "listed twice", "truncated"])
+                                 "listed twice", "truncated", "looks extra"])
 def test_a_stream_that_is_not_what_was_sent_writes_nothing(computers, monkeypatch, how):
     a, b, world = computers
     bad = _tamper(send_bytes(a, monkeypatch), how)

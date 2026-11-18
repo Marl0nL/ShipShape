@@ -13,6 +13,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import re
 import sys
 
 from fleetledger import looks, paths
@@ -21,6 +22,7 @@ from fleetledger.errors import FleetError
 from fleetledger.inventory import now_timestamp
 
 DOC = "contracts/desk-looks.md"
+UNPLAIN = re.compile(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 SEND = ("tar -cf - -C ~/.config/herdr-app/desk-looks . | ssh FLEETLEDGER "
         "ship-fleet looks publish -")
 
@@ -72,16 +74,19 @@ def _source(how: str, folder: str | None) -> dict:
     and who ran it, when sshd says (audit.ACTOR)."""
     actor = audit.ACTOR.get() or {}
     return {"how": how, "folder": _line(folder), "address": _address(),
-            "actor": _line(actor.get("actor")), "actor_key": _line(actor.get("actor_key"))}
+            "actor": _line(actor.get("actor")), "actor_key": _key(actor.get("actor_key"))}
+
+
+def _key(fp: str | None) -> str | None:
+    return fp if isinstance(fp, str) and looks.FINGERPRINT.fullmatch(fp) else None
 
 
 def _line(text: str | None) -> str | None:
-    """Text kept with the folder, as one short line (looks.SOURCE_TEXT): control characters
-    shown as ?, at most 200 characters, none when there is nothing to say."""
+    """Text kept with the folder, as one short line of plain text (looks.SOURCE_TEXT): control
+    and direction characters shown as ?, at most 200 characters, none for nothing."""
     if not text:
         return None
-    clean = "".join("?" if ord(c) < 0x20 or ord(c) == 0x7F else c for c in str(text))
-    clean = clean.encode("utf-8", "replace").decode("utf-8")[:200]
+    clean = UNPLAIN.sub("?", str(text)).encode("utf-8", "replace").decode("utf-8")[:200]
     return clean if looks.SOURCE_TEXT.fullmatch(clean) else None
 
 
@@ -110,7 +115,14 @@ def _publish(app, where: str) -> int:
         raise FleetError(f"The looks folder is refused, and nothing changed: {exc.why}.",
                          hint=f"Its format is {DOC}.") from None
     before = _current()
-    looks.save(folder, source, now_timestamp())
+    try:
+        looks.save(folder, source, now_timestamp())
+    except OSError as exc:
+        audit.record("-", "looks-publish", folder.sha256[:12], "failed")
+        raise FleetError(f"Couldn't store the looks: {exc.strerror or exc}.",
+                         hint=f"{paths.tilde(looks.store_path())} is FleetLedger's own file; "
+                         "if something else is in its place, remove it, then publish again."
+                         ) from None
     audit.record("-", "looks-publish", folder.sha256[:12], "ok")
     same = before is not None and before.folder.sha256 == folder.sha256
     app.say(("Published again, unchanged" if same else "Published") + f": {_summary(folder)}.")
@@ -125,7 +137,12 @@ def _current() -> looks.Stored | None:
 
 
 def _clear(app) -> int:
-    if looks.clear():
+    try:
+        cleared = looks.clear()
+    except OSError as exc:
+        raise FleetError(f"Couldn't clear the looks: {exc.strerror or exc}.",
+                         hint=f"Remove {paths.tilde(looks.store_path())} by hand.") from None
+    if cleared:
         audit.record("-", "looks-clear", "-", "ok")
         app.say("Cleared: FleetLedger keeps no Desk looks now.")
     else:
