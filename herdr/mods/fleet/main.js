@@ -14,8 +14,8 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand } from "herdr";
-import { Fleet, rows, header, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout } from "herdr";
+import { Fleet, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -83,6 +83,7 @@ export default class FleetPanel extends View {
   init(_props, cx) {
     this.note = null;
     this.menu = null; // the Ship whose menu is open, or FLEETLEDGER
+    this.alertOpen = null; // the Needs you item whose menu is open (its key)
     this.form = null; // the New Ship form while open: {tag, signins}
     this.page = "ships"; // or "machines"
     this.trust = null; // the Trust a machine form while open: {scope, logins}
@@ -151,6 +152,7 @@ export default class FleetPanel extends View {
     if (job.kind === "trust" && r.ok) this.note += " On FleetLedger's own VM it prints there the line to paste on the new machine.";
     if (r.ok) {
       this.menu = null;
+      this.alertOpen = null;
       this.form = null;
       this.trust = null;
       this.pair = false;
@@ -355,6 +357,78 @@ export default class FleetPanel extends View {
             this.form = null;
           })),
       );
+  }
+
+  // ---- the Needs you list ----
+
+  alertAct(cx, a) {
+    const act = a.act;
+    if (act.goto) {
+      const r = rows(fleet.state, { spaces: spaces(), machines: machines() }).find((x) => x.name === act.ship);
+      const plan = r ? selectPlan(r) : { note: `${act.ship} is not in the list.` };
+      if (plan.run) run(...plan.run);
+      this.note = plan.note ?? null;
+    } else if (act.page) this.showPage(cx, act.page);
+    else if (act.menu === "fleetledger") this.toggleMenu(cx, FLEETLEDGER);
+    else if (act.ship) {
+      this.alertOpen = this.alertOpen === a.key ? null : a.key;
+      this.menu = null;
+      this.inputs.snap.set_value("");
+      if (!this.alertOpen || actionGate(fleet.state)) return;
+      cx.spawn(async (cx) => {
+        const reading = fleet.loadSignins(act.ship);
+        cx.notify(); // "reading its sign-ins…"
+        await reading;
+        cx.notify();
+      });
+    }
+  }
+
+  alertRow(t, a) {
+    const open = this.alertOpen === a.key;
+    const color = toneColor(t, a.tone);
+    return h_flex()
+      .id(`alert-${a.key}`)
+      .w_full()
+      .min_h(30)
+      .px(8)
+      .py(4)
+      .gap(10)
+      .items_center()
+      .rounded(6)
+      .hover((s) => s.bg(t.hover))
+      .child(h_flex().flex_none().w(78).child(chip(t, a.severity, color)))
+      .child(div().flex_none().w(130).truncate().text_color(a.ship ? t.foreground : t.muted).child(a.ship ?? "FleetLedger"))
+      .child(div().flex_1().min_w(0).text_size(12).text_color(t.muted).child(a.text))
+      .when(Boolean(a.act), (el) => el.child(button(t, `alert-go-${a.key}`, a.act?.label ?? "", (_e, cx) => this.alertAct(cx, a), open)));
+  }
+
+  alertsView(t, list) {
+    const st = fleet.state;
+    const count = (sev) => list.filter((a) => a.severity === sev).length;
+    const summary = ["high", "medium", "low"].filter((sev) => count(sev)).map((sev) => `${count(sev)} ${sev}`).join(" · ");
+    const items = list.flatMap((a) => {
+      const row = this.alertRow(t, a);
+      if (this.alertOpen !== a.key || !a.act?.ship || a.act.goto) return [row];
+      const ship = (st.ships ?? []).find((s) => s.name === a.act.ship);
+      return [row, this.menuBox(t, a.key, alertMenu(st, ship, a.act, this.inputs.snap.value()))];
+    });
+    return v_flex()
+      .id("alerts")
+      .w_full()
+      .flex_none()
+      .gap(2)
+      .pb(4)
+      .border_b_1()
+      .border_color(t.border)
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(div().flex_none().text_size(13).font_weight(600).child("Needs you"))
+          .child(div().text_size(12).text_color(list.length ? t.dim : t.done).child(list.length ? summary : "nothing: every Ship and the fleet are fine")),
+      )
+      .when(list.length > 0, (el) => el.child(v_flex().id("alert-rows").w_full().max_h(280).overflow_y_scrollbar().children(items)));
   }
 
   row(t, r) {
@@ -564,12 +638,17 @@ export default class FleetPanel extends View {
     const h = header(st, Date.now(), { settings: settingsPath(host) });
     const list = rows(st, { spaces: spaces(), machines: machines() });
     const notice = (n, i) => div().id(`notice-${i}`).w_full().text_size(12).text_color(toneColor(t, n.tone)).child(n.text);
+    // Room for a pane header Herdr draws over the panel on hover (a layout's "reveal": "hover"), so it never
+    // covers the buttons on the top row.
+    const inset = frameInset(layout());
     return v_flex()
       .id("fleet")
       .size_full()
       .min_h(0)
       .bg(t.canvas)
       .p(12)
+      .pt(12 + inset.top)
+      .pb(12 + inset.bottom)
       .gap(8)
       .text_size(13)
       .text_color(t.foreground)
@@ -593,6 +672,8 @@ export default class FleetPanel extends View {
       .when(Boolean(st.jobNote), (el) => el.child(div().text_size(12).text_color(t.muted).child(st.jobNote ?? "")))
       .when(st.jobs.length > 0, (el) => el.child(div().text_size(12).text_color(t.dim).child(`In terminal tabs now: ${st.jobs.map((j) => j.title).join(", ")}`)))
       .when(this.page === "machines", (el) => el.child(this.machinesPage(t)))
+      // Needs you: only from a read that answered (else "nothing" would be a guess; the notices say why).
+      .when(this.page === "ships" && Boolean(st.where) && st.readAt !== null && !st.error && !st.attentionError, (el) => el.child(this.alertsView(t, alerts(st))))
       .when(this.page === "ships" && Boolean(h.empty) && !list.length, (el) => el.child(div().pt(8).text_color(t.dim).child(h.empty ?? "")))
       .when(this.page === "ships", (el) => el.child(v_flex().id("ships").flex_1().min_h(0).overflow_y_scrollbar().children(list.flatMap((r) => (this.menu === r.name ? [this.row(t, r), this.shipMenuView(t, r)] : [this.row(t, r)])))));
   }

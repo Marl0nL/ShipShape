@@ -5,6 +5,14 @@ first attention item, and Herdr's own connection to it), and above them where th
 FleetLedger's version, whether its vault is locked, and when the list was read. Click a row to go
 to that Ship's space in Herdr.
 
+**Needs you**, above the Ships, is everything `ship-fleet attention` lists, the Ships' items and
+the fleet's own, most urgent first (high, medium, low), each with its fix: sign-ins missing,
+expiring or on the wrong account, reboots and restarts pending, tooling behind, failed units, a
+locked vault, a machine's certificate lapsing. An item's button opens what deals with it, and
+never runs anything itself: **Sign in…**, **Reboot…** and **Update…** open the Ship's menu with
+just those actions (each with its exact command), **Actions…** its whole menu, **Go to** its space
+(an agent waiting), **Unlock…** the FleetLedger menu and **Machines** the Machines page.
+
 What changes anything runs in a terminal tab, never in the panel: **New Ship**, a Ship's **⋯**
 menu and the **FleetLedger** menu each show the exact command, and clicking opens one terminal
 tab on this computer that runs it, where `ship-fleet` asks its own questions (see Actions).
@@ -161,7 +169,7 @@ when it opens and on its buttons.
 | Command | For |
 |---|---|
 | `ssh -o BatchMode=yes -o ConnectTimeout=8 [-i KEY -o IdentitiesOnly=yes] -- DEST 'ship-fleet' 'ls' '--json' '--offline'` | The Ships, as FleetLedger last fetched them (it asks no Ship, and answers while the vault is locked) |
-| the same, `'attention' '--offline' '--json'` | The fleet's own items: vault locked, a machine certificate or the Proxmox token about to lapse |
+| the same, `'attention' '--offline' '--json'` | Needs you: every Ship's items and the fleet's own (vault locked, a machine certificate or the Proxmox token about to lapse), ranked |
 | the same, `'about' '--json'` | FleetLedger's version and its vault's state |
 | `hc machine ls --json` | Herdr's connection to each Ship |
 | the same ssh, `'signins' NAME '--offline' '--json'` | When a Ship's menu opens: the sign-ins it uses |

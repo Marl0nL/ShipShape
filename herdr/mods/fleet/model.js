@@ -174,23 +174,27 @@ export function readShips(stdout) {
 
 const SEVERITY = new Set(["high", "medium", "low"]);
 
-/** `ship-fleet attention --offline --json`: the fleet's own items (those about no Ship). */
+/** `ship-fleet attention --offline --json`: every item (`items`, in ship-fleet's order, most urgent
+ *  first), and the fleet's own among them (`fleet`, those about no Ship). */
 export function readAttention(stdout) {
   const p = parse(stdout, "ship-fleet attention");
   if (p.error) return { error: p.error };
   if (!Array.isArray(p.value)) return { error: `ship-fleet attention: not a list (${checkSchema(p.value, SCHEMA.attention) ?? "one document"})` };
   const refused = refuser();
   const fleet = [];
+  const items = [];
   for (const e of p.value) {
     const why = checkSchema(e, SCHEMA.attention) ?? (typeof e.code !== "string" || typeof e.message !== "string" || !SEVERITY.has(e.severity) ? "lacks its code, message or severity" : null);
     if (why) {
       refused.add(why);
       continue;
     }
-    if (e.ship !== null) continue; // a Ship's own: its row shows it, from ls
-    fleet.push({ code: e.code, message: e.message, fix: typeof e.fix === "string" ? e.fix : "", severity: e.severity, subject: e.subject ?? null });
+    const ship = typeof e.ship === "string" ? e.ship : null;
+    const item = { ship, code: e.code, message: e.message, fix: typeof e.fix === "string" ? e.fix : "", severity: e.severity, subject: typeof e.subject === "string" ? e.subject : null };
+    items.push(item);
+    if (ship === null) fleet.push(item);
   }
-  return { fleet, refused: refused.list() };
+  return { items, fleet, refused: refused.list() };
 }
 
 /** The remote web UI's address as `about` gives it: https, a host name, nothing else. */
@@ -313,6 +317,7 @@ export class Fleet {
       refused: [],
       error: null, // why the list could not be read just now
       fleetItems: [],
+      attention: [], // every item ship-fleet attention lists, the Ships' and the fleet's: the Needs you list
       attentionError: null,
       about: null,
       aboutError: null,
@@ -386,6 +391,7 @@ export class Fleet {
         const a = att.ok ? readAttention(att.stdout) : { error: att.error };
         st.attentionError = a.error ?? null;
         st.fleetItems = a.error ? [] : a.fleet;
+        st.attention = a.error ? [] : a.items;
         if (!a.error && a.refused.length) st.attentionError = `ship-fleet attention: left out ${a.refused.join("; ")}`;
         const b = about.ok ? readAbout(about.stdout) : { error: about.error, older: about.older };
         st.about = b.error ? null : b;
@@ -393,6 +399,7 @@ export class Fleet {
         older ||= Boolean(b.older);
       } else {
         st.fleetItems = [];
+        st.attention = [];
         st.attentionError = null;
         st.about = null;
         st.aboutError = null;
@@ -403,6 +410,7 @@ export class Fleet {
       st.error = null;
       st.refused = [];
       st.fleetItems = [];
+      st.attention = [];
       st.attentionError = null;
       st.about = null;
       st.aboutError = null;
@@ -689,11 +697,9 @@ export function header(state, now, paths) {
   }
   if (st.fleetFile?.error) notices.push({ tone: "warn", text: st.fleetFile.error });
   if (st.error) notices.push({ tone: "bad", text: st.error });
-  if (locked) {
-    const item = st.fleetItems.find((i) => i.code === "vault-locked");
-    notices.push({ tone: "bad", text: `Vault locked. ${item?.fix || "Unlock it on the FleetLedger computer: ship-fleet unlock."}` });
-  }
-  for (const i of st.fleetItems) if (i.code !== "vault-locked") notices.push({ tone: i.severity === "high" ? "bad" : "warn", text: i.fix ? `${i.message} ${i.fix}` : i.message });
+  // The fleet's own items are in the Needs you list (alerts()); a vault that about says is locked
+  // with no item for it (an older FleetLedger) is said here.
+  if (locked && !st.fleetItems.some((i) => i.code === "vault-locked")) notices.push({ tone: "bad", text: "Vault locked. Unlock it on the FleetLedger computer: ship-fleet unlock." });
   for (const r of st.refused) notices.push({ tone: "warn", text: `Left out of the list: ${r}` });
   if (st.attentionError) notices.push({ tone: "warn", text: st.attentionError });
   if (st.aboutError) notices.push({ tone: "dim", text: st.aboutError });
@@ -710,6 +716,84 @@ export function header(state, now, paths) {
   return { facts, notices, empty, locked };
 }
 
+// ---- the Needs you list ----------------------------------------------------------------------
+
+const RANK = { high: 0, medium: 1, low: 2 };
+const SEVERITY_TONE = { high: "bad", medium: "warn", low: "dim" };
+
+/** What a Ship's item asks for, by code: the Ship menu's actions that deal with it (`only`: the
+ *  menu's item ids, `signin` for every Sign in), or `goto` its space. Codes not here open the whole
+ *  menu. From the codes in ship-status.schema.json and FleetLedger's own (fleetledger/ops.py). */
+const SHIP_ACT = {
+  "signin-missing": { label: "Sign in…", only: ["signin"] },
+  "signin-expiring": { label: "Sign in…", only: ["signin"] },
+  "signin-expired": { label: "Sign in…", only: ["signin"] },
+  "signin-wrong-account": { label: "Sign in…", only: ["signin"] },
+  "signin-scopes-differ": { label: "Sign in…", only: ["signin"] },
+  "agent-repo-waiting": { label: "Sign in…", only: ["signin"] }, // its agent starts once GitHub is signed in
+  "reboot-required": { label: "Reboot…", only: ["reboot"] },
+  "herdr-restart-pending": { label: "Reboot…", only: ["reboot"] },
+  "core-restart-pending": { label: "Reboot…", only: ["reboot"] },
+  "tmp-reboot-pending": { label: "Reboot…", only: ["reboot"] },
+  "behind-tooling": { label: "Update…", only: ["update"] },
+  "not-enrolled": { label: "Finish…", only: ["finish"] },
+  "agent-waiting": { label: "Go to", goto: true },
+  "tool-waiting": { label: "Go to", goto: true },
+};
+
+/** What a fleet item asks for: the FleetLedger menu, or the Machines page. */
+const FLEET_ACT = {
+  "vault-locked": { label: "Unlock…", menu: "fleetledger" },
+  "machine-cert-expiring": { label: "Machines", page: "machines" },
+  "machine-cert-lapsed": { label: "Machines", page: "machines" },
+  "machine-refresh-stopped": { label: "Machines", page: "machines" },
+  "machine-refresh-refused": { label: "Machines", page: "machines" },
+};
+
+/** The Needs you list: every item ship-fleet attention lists, most urgent first (high, medium,
+ *  low; within each, ship-fleet's own order, the Ships' before the fleet's), each with what its
+ *  button does. A button only ever opens something (a menu showing the exact command, a page or
+ *  the Ship's space); nothing runs from the list itself. */
+export function alerts(state) {
+  const known = new Set((state.ships ?? []).map((s) => s.name));
+  const seen = new Map();
+  // A key that stays with its item across reads, so a menu opened from it stays open.
+  const keyOf = (item) => {
+    const base = [item.ship ?? ":fleet", item.code, item.subject ?? ""].join("|");
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return n ? `${base}|${n}` : base;
+  };
+  return (state.attention ?? [])
+    .map((item, i) => ({ item, i }))
+    .sort((a, b) => (RANK[a.item.severity] ?? 3) - (RANK[b.item.severity] ?? 3) || a.i - b.i)
+    .map(({ item }) => {
+      const ship = item.ship;
+      let act = null;
+      if (ship === null) act = FLEET_ACT[item.code] ?? null;
+      else if (NAME.test(ship) && known.has(ship)) act = { ship, ...(SHIP_ACT[item.code] ?? { label: "Actions…" }) };
+      return {
+        key: keyOf(item),
+        severity: item.severity,
+        tone: SEVERITY_TONE[item.severity] ?? "dim",
+        ship,
+        code: item.code,
+        subject: item.subject,
+        text: item.fix ? `${item.message} ${item.fix}` : item.message,
+        act,
+      };
+    });
+}
+
+/** A Ship's menu as an item of the Needs you list opens it: only the actions that deal with that
+ *  item, when it names them (each still with its exact command, or why it is not offered). */
+export function alertMenu(st, ship, act, snap = "") {
+  const m = shipMenu(st, ship, snap);
+  if (!act?.only) return m;
+  const items = m.items.filter((i) => act.only.some((id) => i.id === id || i.id.startsWith(`${id}:`)));
+  return { why: m.why, items: items.length ? items : m.items }; // none of them here: the whole menu
+}
+
 // ---- commands -------------------------------------------------------------------------------
 
 /** Is this mod on show? A tab of it in the shown tab of the shown space. When it is in no tab
@@ -720,6 +804,35 @@ export function isShown(panes, spaces, mod = "fleet") {
   const shownTabs = new Set();
   for (const s of spaces) if (s.active) for (const t of s.tabs ?? []) if (t.active) shownTabs.add(t.id);
   return mine.some((p) => shownTabs.has(p.tab));
+}
+
+/** The pane frame of the shown tab block in a layout tree (`layout()`), as Herdr's `pane` mod finds
+ *  it: in a stack, only the active child counts. */
+function paneFrame(node) {
+  if (!node || typeof node !== "object" || node.hidden) return null;
+  if (node.content?.tab && node.content.pane) return node.content.pane;
+  let children = Array.isArray(node.children) ? node.children : [];
+  if (node.type === "stack") {
+    const visible = children.filter((c) => !c?.hidden);
+    children = [visible.find((c) => c.id === node.active) ?? visible[0]];
+  }
+  for (const child of children) {
+    const frame = paneFrame(child);
+    if (frame) return frame;
+  }
+  return null;
+}
+
+/** Room the panel leaves for a pane header that Herdr draws over it: a header with
+ *  `"reveal": "hover"` appears on top of the pane while the pointer is on it, so without this room
+ *  it covers the panel's top row of buttons just as they are reached for. A header that is always
+ *  shown (the Desk layout's, and Herdr's main) takes its own room, so it needs none. */
+export function frameInset(tree) {
+  const header = paneFrame(tree)?.header;
+  const none = { top: 0, bottom: 0 };
+  if (!header?.content || header.reveal !== "hover") return none;
+  const height = Number.isFinite(header.height) && header.height > 0 ? header.height : 30;
+  return header.position === "bottom" ? { ...none, bottom: height } : { ...none, top: height };
 }
 
 /** `fleet.open`: the Fleet tab if there is one, else a new one. A list of Herdr commands to run. */
