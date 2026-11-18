@@ -127,7 +127,7 @@ export function diffMenu(task, links, who, { machine = null, machineState = "rea
     {
       id: "changes",
       label: `Go to ${name} + Changes`,
-      detail: "Focuses it and opens Herdr's Changes panel beside it, on its folder",
+      detail: "Focuses it and opens Herdr's Changes panel",
       off: goOff,
     },
   ];

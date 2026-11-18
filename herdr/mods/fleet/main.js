@@ -22,7 +22,8 @@ const host = { exec, hc, run, notify, readTextFile, home, appHome };
 const fleet = new Fleet(host);
 const TICK_MS = 15000;
 
-// The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing).
+// The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing):
+// every path that awaits fleet.refresh() publishes when it is done; unchanged, it sets nothing.
 let published = null;
 function publish() {
   const summary = fleetSummary(fleet.state);
@@ -139,7 +140,10 @@ export default class FleetPanel extends View {
   tick(cx) {
     if (fleet.state.jobs.length) {
       cx.spawn(async (cx) => {
-        if ((await fleet.checkJobs(terminals())).length) cx.notify();
+        if ((await fleet.checkJobs(terminals())).length) {
+          publish(); // a job that ended brought a read
+          cx.notify();
+        }
       });
     }
     if (!isShown(panes(), spaces())) return;
@@ -199,6 +203,7 @@ export default class FleetPanel extends View {
       const reading = fleet.openMachines();
       cx.notify(); // "reading the trusted machines…"
       await reading;
+      publish();
       cx.notify();
     });
   }
@@ -217,6 +222,7 @@ export default class FleetPanel extends View {
       const running = fleet.refreshNow();
       cx.notify(); // "Refreshing…"
       await running;
+      publish();
       cx.notify();
     });
   }

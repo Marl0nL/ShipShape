@@ -62,7 +62,8 @@ changed)** in the browser and **Go to <agent> + Changes** (focus it, open Herdr'
 panel); each says what it does, or why it is off ("No PR yet", "<agent> isn't running here",
 "ship-01 is unreachable"). A board is the agent's to write, so these are checked before they
 are shown or opened (`links.js`): a branch must look like a git ref, a folder must be absolute
-or `~/`, and only `https://` addresses open. A field that fails is left out, with a `?` saying so.
+or `~/`, and only `https://` addresses open (a card's or task's `link` too: another scheme is
+shown but not opened). A field that fails is left out, with a `?` saying so.
 
 ## Dashboard
 

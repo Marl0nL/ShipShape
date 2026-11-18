@@ -97,11 +97,14 @@ export function linked(t, L, text, id, style = {}) {
   const base = (el) => el.min_w(0).text_size(size).line_height(style.lineHeight ?? `${Math.round(size * 1.45)}px`).text_color(color);
   const parts = linkify(text);
   if (!parts.some((p) => p.url)) return base(div()).child(text ?? "");
-  // Words one by one so the line wraps where it would in plain text.
-  const words = parts.flatMap((p, i) => (p.url ? [p] : p.text.split(/\s+/).filter(Boolean).map((w) => ({ text: w, i }))));
+  // Words one by one so the line wraps where it would in plain text; a line break in the text
+  // stays one (a full-width break in the row).
+  const words = parts.flatMap((p) => (p.url ? [p] : p.text.split(/(\n)|[^\S\n]+/).filter(Boolean).map((w) => (w === "\n" ? { br: true } : { text: w }))));
   return base(h_flex().id(id).flex_wrap().gap(4).items_center()).children(
     words.map((w, i) =>
-      w.url
+      w.br
+        ? div().w_full().h(0)
+        : w.url
         ? div()
             .id(`${id}-u${i}`)
             .flex_none()

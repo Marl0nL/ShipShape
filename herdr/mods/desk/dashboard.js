@@ -49,6 +49,7 @@ export function dashboardData(filter = {}) {
   const summary = machineSummary(rows, ms, lastSeen).map((m) => (m.state === "unavailable" && m.name ? { ...m, fleet: fleetView(fleet, m.name, now) } : m));
   const boardOf = (r) => boards.boardOf(r);
   const crewOf = (r) => (r.task ? boards.crewOf(r, homeOf(r)) : null);
+  const names = new Map(rows.map((r) => [r.address, r.name]));
   const recent = [...transitions.list, ...boardRecent(rows, boardOf, crewOf)].sort((a, b) => b.at - a.at).slice(0, 15);
   return {
     now,
@@ -60,6 +61,7 @@ export function dashboardData(filter = {}) {
     since: transitions.startedAt,
     boardOf,
     crewOf,
+    nameOf: (address) => (address ? names.get(address) ?? null : null),
     tasks: blockedTasks(rows, boardOf).filter(({ row }) => applyOne(row, filter)),
     fleetOnly: fleetOnly(rows, summary, now).filter((r) => applyOne(r, filter)),
     fleet,
@@ -151,6 +153,8 @@ function row(t, L, d, r, depth, idp) {
     .when(Boolean(r.color), (e) => e.child(div().w(3).h(14).flex_none().rounded_full().bg(r.color)))
     .child(pip(t, dim ? "idle" : r.status, 7))
     .child(div().flex_none().max_w(200).truncate().font_family(L.ty.labels).font_weight(600).text_size(12.5).text_color(t.foreground).child(r.name))
+    // Its manager, when that one is in another section (an idle manager's working crews).
+    .when(depth === 0 && Boolean(d.nameOf?.(r.parent)), (e) => e.child(div().flex_none().max_w(140).truncate().text_size(11).text_color(t.dim).child(`of ${d.nameOf(r.parent)}`)))
     .child(div().flex_none().max_w(170).truncate().text_size(11).text_color(t.dim).child(where(r)))
     .child(div().flex_none().w(84).text_size(11).text_color(r.status === "blocked" ? t.blocked : t.muted).child(dur))
     .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).when(Boolean(line), (e) => e.tooltip(line)).child(line ?? ""))
@@ -209,13 +213,17 @@ function filters(t, L, d, view) {
   const pick = (patch) => () => {
     view.dash.filter = { ...f, ...patch };
   };
-  const tagChips = [["all", null], ...d.choices.tags.map((x) => [x, x])];
-  const machineChips = d.choices.machines.length > 1 ? [["all", undefined], ...d.choices.machines.map((k) => [k || "this computer", k])] : [];
+  // A chosen tag or machine stays offered (and "all" with it) after its last agent has gone,
+  // so a filter can always be cleared.
+  const tags = [...new Set([...d.choices.tags, ...(f.tag ? [f.tag] : [])])];
+  const ms = [...new Set([...d.choices.machines, ...(f.machine !== undefined && f.machine !== null ? [f.machine] : [])])];
+  const tagChips = [["all", null], ...tags.map((x) => [x, x])];
+  const machineChips = ms.length > 1 || (f.machine !== undefined && f.machine !== null) ? [["all", undefined], ...ms.map((k) => [k || "this computer", k])] : [];
   return h_flex()
     .gap(6)
     .items_center()
     .flex_wrap()
-    .when(d.choices.tags.length > 0, (e) =>
+    .when(tags.length > 0, (e) =>
       e.child(div().text_size(11).text_color(t.dim).child("tag")).children(tagChips.map(([text, v]) => button(t, L, `f-tag-${text}`, text, pick({ tag: v }), { h: 22, on: (f.tag ?? null) === v }))),
     )
     .when(machineChips.length > 0, (e) =>

@@ -108,6 +108,9 @@ export function liveRows(live, nameOf = (a) => a.tab_name || a.address) {
   });
 }
 
+/** How long a machine must be ready with no agents before its last-seen rows are forgotten. */
+export const EMPTY_MS = 60000;
+
 /** Rows for machines Herdr cannot reach just now. Herdr's machines() says `unavailable`; whether
  *  such a machine's agents stay in agents() is not documented, so both cases are covered: rows
  *  still listed are marked unreachable, and when they drop out the last ones seen stand in,
@@ -117,6 +120,7 @@ export class LastSeen {
     this.now = now;
     this.seen = new Map(); // machine key -> {rows, at}
     this.down = new Map(); // machine key -> since (ms)
+    this.empty = new Map(); // machine key -> since when it has been ready with no agents
   }
 
   /** Live rows in; rows to show out (live ones, then stand-ins for unreachable machines). */
@@ -142,8 +146,13 @@ export class LastSeen {
         out.push(...list);
       }
     }
-    // A reachable machine with no agents left: nothing to stand in for it if it goes later.
-    for (const [k, state] of layout) if (state === "ready" && !byMachine.has(k)) this.seen.delete(k);
+    // A reachable machine with no agents left for EMPTY_MS: nothing to stand in for it if it goes
+    // later. Not at once: Herdr may drop a machine's agents a moment before it calls it unavailable.
+    for (const [k, state] of layout) {
+      if (state !== "ready" || byMachine.has(k)) this.empty.delete(k);
+      else if (!this.empty.has(k)) this.empty.set(k, now);
+      else if (now - this.empty.get(k) >= EMPTY_MS) this.seen.delete(k);
+    }
     for (const [k, since] of this.down) {
       if (byMachine.has(k)) continue;
       const last = this.seen.get(k);

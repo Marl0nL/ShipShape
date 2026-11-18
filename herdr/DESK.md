@@ -83,10 +83,12 @@ Herdr reaches, from Herdr's live state alone (`agents()`, `spaces()`, `panes()`,
 
 - **Needs you:** blocked agents, the longest blocked first, then those done while nobody looked.
 - **In progress** and **Idle** (folded): by machine, this computer first, each agent nested under
-  the one it reports to. A row shows where it runs, how long it has been in its state (its tab's
-  `working_since` or `changed_at`), what it reports (`terminals()`'s `report`, when that carries a
+  the one it reports to (or "of <manager>" when that one is in another section). A row shows where
+  it runs, how long it has been in its state (its tab's `working_since` or `changed_at`: Herdr
+  times tabs, not agents, so two agents sharing a tab share a clock), what it reports (`terminals()`'s `report`, when that carries a
   message) and its branch (`panes()`).
-- **Recent:** status changes this Herdr has seen since it started, in memory only (the last 50).
+- **Recent:** status changes this Herdr has seen since it started, in memory only (50 kept, the
+  latest 15 shown with the boards' findings and crews' reports).
 - **Machines:** each machine's agents, or "unreachable since 10:05" when `machines()` says so.
   That machine's agents stay, greyed and dated (the last ones seen when Herdr drops them), and
   their Go and Peek are off.

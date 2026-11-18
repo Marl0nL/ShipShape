@@ -5,7 +5,7 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, hc, setShared, panes, machines, layout, shared, spaces, terminals } from "herdr";
 import { STATUSES, STATUS_LABEL, KIND_LABEL, agentNamed, ago, toolsOn, messageFor, docFor } from "./model.js";
-import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openUrl, openHttps, button, code, stop, linked } from "./ui.js";
+import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openHttps, button, code, stop, linked } from "./ui.js";
 import { taskLinks, diffMenu, findNode, urlsIn } from "./links.js";
 import { cardLive, tabIndex, span } from "./dash.js";
 
@@ -156,7 +156,7 @@ function cardsOf(t, L, b, W, idp) {
         .when(Boolean(c.body), (e) => e.child(body(t, L, c.body)))
         .when(Boolean(c.tags?.length), (e) => e.child(h_flex().gap(4).flex_wrap().children(c.tags.map((tag) => chip(t, L, tag, tagColor(t, tag), { h: 18 }))))),
     );
-    if (c.link) el = el.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(c.link).on_click(() => openUrl(c.link));
+    if (c.link) el = el.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(c.link).on_click(() => openHttps(c.link));
     return el;
   };
   // Two columns when there's room (cards dealt left, right, left...), else one.
@@ -213,7 +213,7 @@ function linksOf(t, L, b, idp) {
           .text_color(t.accent)
           .hover((s) => s.text_color(t.foreground))
           .tooltip(l.url)
-          .on_click(() => openUrl(l.url))
+          .on_click(() => openHttps(l.url))
           .child(icon("file-text", 12, t.dim))
           .child(div().truncate().child(l.title ?? l.url)),
       ),
@@ -359,7 +359,7 @@ function taskCard(t, L, task, idp, view) {
           )
           .when(Boolean(who), (r) => r.child(peekButton(t, L, who, task.agent, `${idp}-${task.id}-peek`)))
           .child(div().flex_1())
-          .when(Boolean(task.link), (r) => r.child(div().id(`${idp}-${task.id}-link`).cursor_pointer().tooltip(task.link).on_click(() => openUrl(task.link)).child(icon("file-text", 12, t.dim))))
+          .when(Boolean(task.link), (r) => r.child(div().id(`${idp}-${task.id}-link`).cursor_pointer().tooltip(task.link).on_click(() => openHttps(task.link)).child(icon("file-text", 12, t.dim))))
           .when(Boolean(task.updated), (r) => r.child(div().text_size(10.5).text_color(t.dim).child(ago(task.updated)))),
       ),
   );
@@ -443,7 +443,7 @@ function gitRows(t, L, g) {
         .hover((s) => s.bg(t.hover))
         .rounded(4)
         .tooltip(g.pr.url)
-        .on_click(() => openUrl(g.pr.url))
+        .on_click(() => openHttps(g.pr.url))
         .child(icon("git-compare", 14, t.accent))
         .child(div().flex_none().font_family(L.ty.labels).text_color(t.foreground).child(`#${g.pr.number}`))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(g.pr.title))
