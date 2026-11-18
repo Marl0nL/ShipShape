@@ -52,6 +52,10 @@ stores or carries a folder:
 
 ## For carrying it
 
+FleetLedger keeps one folder for the fleet (`ship-fleet looks publish`, `contracts/ship-fleet.md`,
+"ship-fleet looks"), checked by these same rules on the way in; nothing carries it to a
+computer from there yet.
+
 Every key in `looks.json` and the palette files is a-z and `_`, and nothing nests more than
 four deep, so the refresher's strict JSON reader (`fleetledger/fleetledger/refresher/refresh.sh`)
 can read it as it is. The binary files are the logos alone.

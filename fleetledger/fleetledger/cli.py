@@ -27,7 +27,7 @@ COMMANDS = (
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
     "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle", "keys",
-    "machine-setup", "pair", "machine-pair",
+    "machine-setup", "pair", "machine-pair", "looks",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -38,7 +38,7 @@ EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetle
                          "fleetledger.selfupdate", "fleetledger.toolkitcmd",
                          "fleetledger.about", "fleetledger.machinebundle",
                          "fleetledger.loginkeys", "fleetledger.machinesetup",
-                         "fleetledger.paircmd")
+                         "fleetledger.paircmd", "fleetledger.lookscmd")
 
 
 @dataclass
@@ -817,6 +817,8 @@ def _vault_locked(args, app) -> None:
         return  # reads ~/.ssh/authorized_keys only
     if args.command == "pair" and args.action in ("ls", "refuse"):
         return  # reads or empties the pending pairing requests only (pairing.py)
+    if args.command == "looks" and args.action == "show":
+        return  # reads the stored Desk looks only (looks.py); publish and clear wait
     if (args.command == "signins" and getattr(args, "accounts", False)
             and not (args.set_account or args.clear_account)):
         return  # lists tag accounts from ships.toml only

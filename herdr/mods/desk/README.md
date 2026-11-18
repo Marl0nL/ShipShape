@@ -206,6 +206,13 @@ scp -r ~/.config/herdr-app/desk-looks other-computer:.config/herdr-app/
 
 Then open the Look popup there (or `herdr-app do desk.looks-reload`).
 
+**Keep one copy in FleetLedger** (it checks it as the Desk does, and keeps the last good one):
+`ship-fleet looks publish ~/.config/herdr-app/desk-looks` on the FleetLedger computer, or from
+a computer whose key has a shell there,
+`tar -cf - -C ~/.config/herdr-app/desk-looks . | ssh fleetledger@HOST ship-fleet looks publish -`;
+`ship-fleet looks show` says what it keeps (`contracts/ship-fleet.md`, "ship-fleet looks").
+FleetLedger does not send it to your computers yet: copy it to each as above.
+
 ## Files
 
 | File | |

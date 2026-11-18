@@ -1,0 +1,17 @@
+{
+  "schema": "shipshape.fleetledger-looks/1",
+  "stored": true,
+  "problem": null,
+  "published_at": "2026-05-04T09:30:00Z",
+  "from": { "how": "stdin", "folder": null, "address": "192.0.2.10", "actor": "desktop", "actor_key": "SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcdefg" },
+  "sha256": "2079c0f30032252f0bd7e6a99904ed0edb14dfa62056de1dfdb0f0dc6a52065f",
+  "bytes": 1332,
+  "palettes": [{ "id": "looks-example-dark", "dark": true }],
+  "presets": ["example"],
+  "tag_looks": [{ "tag": "work", "preset": "example" }],
+  "files": [
+    { "name": "logos/example.png", "bytes": 268 },
+    { "name": "looks.json", "bytes": 417 },
+    { "name": "palettes/looks-example-dark.json", "bytes": 647 }
+  ]
+}

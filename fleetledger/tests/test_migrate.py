@@ -1182,6 +1182,13 @@ def _tamper(stream: bytes, how: str) -> bytes:
     elif how == "extra":
         extra = tarfile.TarInfo("data/net/extra.json")
         members.insert(2, (extra, b"{}"))
+    elif how == "looks extra":  # listed and carried, but not a file the Desk looks store has
+        data = b"{}"
+        manifest = json.loads(members[0][1])
+        manifest["files"].append({"member": "data/looks/other.json", "size": len(data),
+                                  "sha256": hashlib.sha256(data).hexdigest()})
+        members[0] = (members[0][0], json.dumps(manifest).encode())
+        members.insert(2, (tarfile.TarInfo("data/looks/other.json"), data))
     elif how == "manifest":
         manifest = json.loads(members[0][1])
         manifest["files"][0]["member"] = "../../outside"
@@ -1253,7 +1260,7 @@ def _tamper(stream: bytes, how: str) -> bytes:
                                  "control character", "..", "config", "missing key",
                                  "agent member", "ssh source", "cut in the manifest",
                                  "pub half", "root source", "folder source", "unclaimed key",
-                                 "listed twice", "truncated"])
+                                 "listed twice", "truncated", "looks extra"])
 def test_a_stream_that_is_not_what_was_sent_writes_nothing(computers, monkeypatch, how):
     a, b, world = computers
     bad = _tamper(send_bytes(a, monkeypatch), how)
@@ -2785,6 +2792,32 @@ def test_toolkit_folders_are_named_in_the_plan_and_never_copied(computers, monke
     handover.wipe(a.store, gone)
     assert (inside / "toolkit.toml").exists() and (inside / "files").is_dir()
     assert not a.store.path.exists()
+
+
+def test_the_fleets_desk_looks_move_and_a_wipe_deletes_them(computers, monkeypatch):
+    from fleetledger import looks
+
+    a, b, world = computers
+    example = Path(__file__).resolve().parents[2] / "herdr" / "desk-looks.example"
+    code, out, err = a.run("looks", "publish", str(example))
+    assert code == 0, out + err
+    kept = looks.store_path().read_bytes()
+    stray = looks.store_path().with_name("notes.txt")  # nothing looks.py writes
+    stray.write_text("x")
+    code, out, err = a.run("migrate", "check")
+    assert code != 0 and "looks/notes.txt" in out + err
+    stray.unlink()
+    code, out, err = a.run("migrate", "check")
+    assert code == 0, out + err
+    assert "the fleet's Desk looks" in out
+    stream = send_bytes(a, monkeypatch)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED
+    assert (b.root / "data" / "looks" / looks.STORE).read_bytes() == kept
+    assert looks.load().folder.looks.presets == ["example"]  # checked again there, and whole
+
+    a.use(monkeypatch)
+    gone, _kept = handover.wipe_plan(a.store)
+    assert str(a.root / "data" / "looks" / looks.STORE) in [g.where for g in gone]
 
 
 # --- the trusted machines' bundle keys (authkeys.py) ----------------------------------------

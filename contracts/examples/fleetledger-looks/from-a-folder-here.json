@@ -1,0 +1,13 @@
+{
+  "schema": "shipshape.fleetledger-looks/1",
+  "stored": true,
+  "problem": null,
+  "published_at": "2026-05-04T09:30:00Z",
+  "from": { "how": "folder", "folder": "~/.config/herdr-app/desk-looks", "address": null, "actor": null, "actor_key": null },
+  "sha256": "2079c0f30032252f0bd7e6a99904ed0edb14dfa62056de1dfdb0f0dc6a52065f",
+  "bytes": 417,
+  "palettes": [],
+  "presets": [],
+  "tag_looks": [{ "tag": "personal", "preset": "moss" }],
+  "files": [{ "name": "looks.json", "bytes": 417 }]
+}
