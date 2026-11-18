@@ -111,7 +111,7 @@
                         "content": {
                           "mod": "pane"
                         },
-                        "reveal": "hover",
+                        "reveal": "always",
                         "height": 30,
                         "position": "top"
                       },
@@ -162,7 +162,7 @@
                             "content": {
                               "mod": "pane"
                             },
-                            "reveal": "hover",
+                            "reveal": "always",
                             "height": 30,
                             "position": "top"
                           },

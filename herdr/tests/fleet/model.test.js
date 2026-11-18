@@ -17,6 +17,7 @@ import {
   checkSchema,
   connection,
   firstLine,
+  frameInset,
   header,
   isShown,
   openPlan,
@@ -294,10 +295,12 @@ test("a read: the three offline reads, exactly, and the rows", async () => {
   const h = header(fleet.state, 1_000_000 + 4 * 60_000, paths);
   assert.deepEqual(h.facts, [`FleetLedger: ${DEST}`, "version 0.1.0", "vault off", "read 4 min ago"]);
   assert.equal(h.locked, false);
-  assert.ok(h.notices.some((n) => /certificate/.test(n.text) && n.tone === "warn"));
+  // The fleet's own items are in the Needs you list (alerts.test.js), not the header.
+  assert.ok(!h.notices.some((n) => /certificate/.test(n.text)));
+  assert.deepEqual(fleet.state.attention.map((i) => i.code), ["machine-cert-expiring"]);
 });
 
-test("a locked vault shows in the header, with the fix", async () => {
+test("a locked vault shows in the header; its item, with the fix, in the Needs you list", async () => {
   const { fleet } = stand({
     files: settings({ ssh: DEST }),
     answers: answersFor(ships(), { attention: [example("fleetledger-attention", "vault-locked.json")], about: example("fleetledger-about", "vm-locked.json") }),
@@ -306,7 +309,14 @@ test("a locked vault shows in the header, with the fix", async () => {
   const h = header(fleet.state, 1_000_000, paths);
   assert.equal(h.locked, true);
   assert.ok(h.facts.includes("vault locked"));
-  const n = h.notices.find((x) => /^Vault locked/.test(x.text));
+  assert.ok(!h.notices.some((x) => /^Vault locked/.test(x.text)));
+  assert.match(fleet.state.attention[0].fix, /ship-fleet unlock/);
+});
+
+test("a vault about says is locked, with no item for it: the header says so", async () => {
+  const { fleet } = stand({ files: settings({ ssh: DEST }), answers: answersFor(ships(), { about: example("fleetledger-about", "vm-locked.json") }) });
+  await fleet.refresh();
+  const n = header(fleet.state, 1_000_000, paths).notices.find((x) => /^Vault locked/.test(x.text));
   assert.equal(n.tone, "bad");
   assert.match(n.text, /ship-fleet unlock/);
 });
@@ -534,4 +544,43 @@ test("ago", () => {
   assert.equal(ago(4 * 60_000), "4 min ago");
   assert.equal(ago(3 * 3600_000), "3 h ago");
   assert.equal(ago(3 * 86400_000), "3 days ago");
+});
+
+test("frameInset: room for a pane header drawn over the panel on hover, none otherwise", () => {
+  const frame = (header) => ({ type: "block", content: { tab: "active", pane: { header } } });
+  const hover = { content: { mod: "pane" }, height: 30, position: "top", reveal: "hover" };
+  const tree = (block) => ({ type: "row", children: [{ type: "block", id: "sidebar", content: { mod: "spaces" } }, block] });
+  assert.deepEqual(frameInset(tree(frame(hover))), { top: 30, bottom: 0 });
+  assert.deepEqual(frameInset(tree(frame({ ...hover, position: "bottom", height: 24 }))), { top: 0, bottom: 24 });
+  assert.deepEqual(frameInset(tree(frame({ ...hover, height: undefined }))), { top: 30, bottom: 0 });
+  // A header always shown takes its own room; no header, no frame or no layout: nothing.
+  assert.deepEqual(frameInset(tree(frame({ ...hover, reveal: "always" }))), { top: 0, bottom: 0 });
+  assert.deepEqual(frameInset(tree(frame(undefined))), { top: 0, bottom: 0 });
+  assert.deepEqual(frameInset({ type: "row", children: [] }), { top: 0, bottom: 0 });
+  assert.deepEqual(frameInset(null), { top: 0, bottom: 0 });
+  // In a stack only the shown child counts (the Desk's main-stack: main, or a crew's sheet).
+  const stack = (active) => ({ type: "stack", active, children: [
+    { id: "main", ...frame({ ...hover, reveal: "always" }) },
+    { id: "crew", type: "column", children: [frame(hover)] },
+  ] });
+  assert.deepEqual(frameInset(stack("main")), { top: 0, bottom: 0 });
+  assert.deepEqual(frameInset(stack("crew")), { top: 30, bottom: 0 });
+  // A hidden block is skipped.
+  assert.deepEqual(frameInset({ type: "row", children: [{ hidden: true, ...frame(hover) }, frame({ ...hover, reveal: "always" })] }), { top: 0, bottom: 0 });
+});
+
+test("the Desk layout's pane headers take their own room, so they cover no terminal's first line", () => {
+  const desk = JSON.parse(readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "../../layouts/desk.json"), "utf8"));
+  const headers = [];
+  const walk = (n) => {
+    if (Array.isArray(n)) n.forEach(walk);
+    else if (n && typeof n === "object") {
+      if (n.pane?.header) headers.push(n.pane.header);
+      Object.values(n).forEach(walk);
+    }
+  };
+  walk(desk);
+  assert.equal(headers.length, 2); // the tabs' frame and the crew terminal's
+  for (const h of headers) assert.equal(h.reveal, "always");
+  assert.deepEqual(frameInset(desk), { top: 0, bottom: 0 });
 });
