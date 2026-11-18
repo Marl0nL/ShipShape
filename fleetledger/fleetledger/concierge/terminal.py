@@ -6,6 +6,7 @@ from __future__ import annotations
 import getpass
 import re
 import sys
+import termios
 import webbrowser
 from typing import TextIO
 
@@ -34,11 +35,26 @@ def received(code: str) -> str:
     return f"  Received {shown} ({len(code)} characters)."
 
 
-def _read_stdin_line(prompt: str, stream: TextIO) -> str:
-    """One line from stdin, echoed by the terminal as usual; the prompt on stream."""
-    stream.write(prompt)
-    stream.flush()
-    line = sys.stdin.readline()
+def _read_tty_line(prompt: str, stream: TextIO) -> str:
+    """One line from the terminal, echoed as usual; the prompt on stream.
+
+    Like getpass: from /dev/tty (stdin only without one), so a redirected stdin can
+    neither answer nor swallow it, and with keys typed before the prompt dropped,
+    so an Enter pressed while waiting does not cancel the sign-in."""
+    try:
+        tty = open("/dev/tty", encoding="utf-8", errors="replace")  # noqa: SIM115
+    except OSError:
+        tty = None
+    source = tty or sys.stdin
+    try:
+        if source.isatty():
+            termios.tcflush(source.fileno(), termios.TCIFLUSH)
+        stream.write(prompt)
+        stream.flush()
+        line = source.readline()
+    finally:
+        if tty is not None:
+            tty.close()
     if not line:
         raise EOFError
     return line.rstrip("\r\n")
@@ -63,7 +79,7 @@ class TerminalPrompter:
         self.read_secret = read_secret
         self.read_line = read_line
         # (prompt) -> the line typed, echoed: the one-time code
-        self.read_code = read_code or (lambda prompt: _read_stdin_line(prompt, self.stream))
+        self.read_code = read_code or (lambda prompt: _read_tty_line(prompt, self.stream))
         self._ticking = False
 
     def _say(self, text: str = "") -> None:
@@ -119,7 +135,9 @@ class TerminalPrompter:
             return None
         answer = _PASTE_MARKS.sub("", answer).strip()
         if answer:
-            self._say(received(answer))
+            # The code itself only on a screen: never into a file stderr was sent to.
+            self._say(received(answer) if self._isatty()
+                      else f"  Received {len(answer)} characters.")
         return answer
 
     def waiting(self, remaining: float) -> None:

@@ -66,7 +66,7 @@ def test_only_a_plain_url_becomes_a_hyperlink(url):
 
 
 def test_a_one_time_code_is_shown_as_it_is_pasted_and_confirmed():
-    stream = io.StringIO()
+    stream = Tty()
     asked = []
     p = TerminalPrompter("ship-01", "Claude Code", stream=stream,
                          read_secret=lambda prompt: pytest.fail("read without echo"),
@@ -80,11 +80,20 @@ def test_a_one_time_code_is_shown_as_it_is_pasted_and_confirmed():
 def test_a_long_code_is_confirmed_by_its_ends():
     code = "EXAMPLE-CODE-0123456789abcdef0123456789abcdef#example-state"
     assert received(code) == f"  Received EXAMPLE-CODE-012…xample-state ({len(code)} characters)."
-    stream = io.StringIO()
+    stream = Tty()
     p = TerminalPrompter("ship-01", "Claude Code", stream=stream,
                          read_code=lambda prompt: "\x1b[200~ABCD-1234\x1b[201~")
     assert p.ask_one_time_code() == "ABCD-1234"  # bracketed-paste marks are dropped
     assert "Received ABCD-1234 (9 characters)" in stream.getvalue()
+
+
+def test_the_code_is_not_confirmed_into_a_file():
+    """stderr sent to a file or a pipe (2>login.log): the confirmation gives the length only."""
+    stream = io.StringIO()
+    p = TerminalPrompter("ship-01", "Claude Code", stream=stream,
+                         read_code=lambda prompt: "4/0EXAMPLE-code")
+    assert p.ask_one_time_code() == "4/0EXAMPLE-code"
+    assert "EXAMPLE" not in stream.getvalue() and "Received 15 characters." in stream.getvalue()
 
 
 def test_the_first_ctrl_c_at_the_paste_prompt_asks_for_a_second():
