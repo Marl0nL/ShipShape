@@ -4,6 +4,7 @@ import json
 import re
 import stat
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,73 @@ def test_claude_paste_back(monkeypatch, tmp_path):
     assert code is None and 590 < expires_in <= 600
     assert typed.read_text() == CLAUDE_CODE + "\n"  # typed into the terminal, trimmed
     assert CLAUDE_CODE not in result.detail
+
+
+class ShowingPrompter(Prompter):
+    """The terminal's prompter: a one-time code is asked for shown, a secret hidden."""
+
+    def __init__(self, code):
+        super().__init__(code=code)
+        self.asked = []
+
+    def ask_code(self):
+        self.asked.append("hidden")
+        return self.code
+
+    def ask_one_time_code(self):
+        self.asked.append("shown")
+        return self.code
+
+
+@pytest.mark.parametrize("name,fixture,code", [("claude", "claude.txt", CLAUDE_CODE),
+                                               ("gcloud", "gcloud.txt", GCLOUD_CODE)])
+def test_a_one_time_code_is_asked_for_shown(monkeypatch, tmp_path, name, fixture, code):
+    assert provider(name).one_time_code
+    child, typed = play(fixture, monkeypatch, tmp_path)
+    prompter = ShowingPrompter(code)
+    result = Flow(provider(name), child, prompter).run()
+    assert result.outcome == "completed", result
+    assert prompter.asked == ["shown"]
+    assert typed.read_text() == code + "\n"
+    assert code not in result.detail
+
+
+def test_the_terminal_shows_the_link_then_the_paste_prompt(monkeypatch, tmp_path):
+    """The recorded claude session through the real terminal prompter, as a terminal shows it."""
+    import io
+
+    from fleetledger.concierge.terminal import TerminalPrompter, hyperlink
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    screen = Tty()
+    prompter = TerminalPrompter("ship-01", "Claude Code", stream=screen,
+                                read_secret=lambda prompt: pytest.fail("read without echo"),
+                                read_code=lambda prompt: screen.write(prompt) and CLAUDE_CODE)
+    child, typed = play("claude.txt", monkeypatch, tmp_path)
+    assert Flow(provider("claude"), child, prompter).run().outcome == "completed"
+    lines = screen.getvalue().splitlines()
+    at = lines.index(hyperlink(CLAUDE_URL))
+    assert lines[at - 1].startswith("  Open this URL (valid for about 10 minutes)")
+    assert lines[at + 1:at + 4] == [
+        "  Approve, then copy the code the page shows and paste it below.",
+        "  Paste the code here and press Enter (empty to cancel):",
+        "  >   Received EXAMPLE-CODE-012…xample-state (43 characters).",  # Enter not echoed here
+    ]
+    assert typed.read_text() == CLAUDE_CODE + "\n"
+
+
+def test_a_pasted_answer_is_hidden_unless_the_file_says_one_time_code(monkeypatch, tmp_path):
+    """No answer key (a toolkit's own paste-back flow, say): read without echo."""
+    hidden = replace(provider("claude"), one_time_code=False)
+    child, typed = play("claude.txt", monkeypatch, tmp_path)
+    prompter = ShowingPrompter(CLAUDE_CODE)
+    assert Flow(hidden, child, prompter).run().outcome == "completed"
+    assert prompter.asked == ["hidden"] and typed.read_text() == CLAUDE_CODE + "\n"
+    example = providers.parse(EXAMPLES / "exampledocs.toml")
+    assert example.mode == "paste-back" and not example.one_time_code
 
 
 def test_escape_sequences_and_hyperlinks(monkeypatch, tmp_path):

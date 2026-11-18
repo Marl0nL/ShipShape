@@ -280,10 +280,14 @@ or `--tag work` for every Ship with a tag):
    cursor report. Every gcloud command runs with
    `CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1`: gcloud's own debug log would
    otherwise store the sign-in code.
-4. **You.** FleetLedger shows the link and how long it stays valid, plus the
-   code for device flows. Paste-back flows read your code with `getpass`, so it
-   is not echoed, and type it into the Ship's terminal. It is never on a command
-   line, in `ps`, or in shell history. A code pasted after the sign-in window
+4. **You.** FleetLedger shows the link, after "Open this URL" on a line of its
+   own (an OSC 8 hyperlink when stderr is a terminal, plain text otherwise), how
+   long it stays valid, and the code for device flows. Paste-back flows read your
+   answer and type it into the Ship's terminal. A one-time code (the sign-in
+   file's `answer = "one-time-code"`) is echoed as you paste it and confirmed in
+   one line; any other answer is read with `getpass`, not echoed. The first
+   Ctrl+C at the prompt asks for a second before it cancels. The answer is never
+   on a command line, in `ps`, or in shell history. A code pasted after the sign-in window
    has closed is not typed. Once a code is typed, the engine waits for the
    tool's verdict even if the window closes meanwhile. Device flows show a
    countdown until gh finishes.

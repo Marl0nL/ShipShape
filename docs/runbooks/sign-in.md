@@ -45,9 +45,26 @@ For each service:
 | gcloud-adc (alone) | the same, for Application Default Credentials only |
 | GitHub | open github.com/login/device, type the code FleetLedger shows, approve; FleetLedger waits |
 
-The pasted code is read without echo and typed into the Ship's terminal: it never
-appears on a command line, in a log or in shell history. Each link stays valid
-for a few minutes (FleetLedger says how long); GitHub's code for 15.
+In a terminal FleetLedger prints the link on a line of its own after "Open this
+URL", as a hyperlink: click it, or select and copy the line. Then
+paste the code at the `>` prompt right under it and press Enter. The code is a
+one-time code, so it is shown as you paste it, and FleetLedger confirms what it
+received in one line (all of a short code, the two ends of a long one). It is
+typed into the Ship's terminal: it never appears on a command line, in a log or
+in shell history. Ctrl+C once at that prompt asks for a second Ctrl+C before it
+cancels the sign-in, so a copy that misses Shift does not end it; an empty line
+or Ctrl+D cancels at once. Each link stays valid for a few minutes (FleetLedger
+says how long); GitHub's code for 15.
+
+```
+Claude Code sign-in for ship-01
+  Open this URL (valid for about 10 minutes):
+https://claude.com/cai/oauth/authorize?code=true&client_id=...&state=...
+  Approve, then copy the code the page shows and paste it below.
+  Paste the code here and press Enter (empty to cancel):
+  > EXAMPLE-CODE-0123456789abcdef#example-state
+  Received EXAMPLE-CODE-012…xample-state (43 characters).
+```
 
 Afterwards FleetLedger checks who is signed in:
 
