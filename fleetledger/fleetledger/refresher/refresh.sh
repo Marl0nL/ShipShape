@@ -854,6 +854,9 @@ check_looks() {
       *.png) [ "$(first_bytes "$stage/looks/$nm" 8)" = 89504e470d0a1a0a ] || refuse_looks "$nm is not a PNG picture" ;;
       *.jpg) [ "$(first_bytes "$stage/looks/$nm" 3)" = ffd8ff ] || refuse_looks "$nm is not a JPEG picture" ;;
       *.json)
+        # No control byte but tab and line ends (the reader takes those only between values).
+        [ "$(tr -d '\011\012\015\040-\176\200-\377' <"$stage/looks/$nm" | wc -c)" -eq 0 ] \
+          || refuse_looks "$nm holds a control character"
         CANON=/dev/null awk "$JSON_AWK" <"$stage/looks/$nm" >"$stage/lk.flat" || refuse_looks "$nm is not JSON this refresher reads"
         if [ "$nm" = looks.json ]; then
           grep -qx "schema${tab}s${tab}shipshape.desk-looks/1" "$stage/lk.flat" || refuse_looks "looks.json is not shipshape.desk-looks/1"
@@ -879,26 +882,45 @@ ours() { # folder
   printf '%s' "$dg"
 }
 
-mark_looks() { # digest... (none: there is no folder of ours)
+# looks-applied: the digests of the folders this refresher wrote, the latest first, at most 8
+# (so a folder it wrote under another Herdr folder, with HERDR_APP_HOME set or not, stays its
+# own). Each line is 64 hex digits; anything else in the file is dropped.
+mark_looks() { # digest... to put first
   : >"$D/.looks-applied.tmp" || return 1
   for x in "$@"; do [ -n "$x" ] && echo "$x" >>"$D/.looks-applied.tmp"; done
-  if [ -s "$D/.looks-applied.tmp" ]; then
-    mv -f "$D/.looks-applied.tmp" "$LOOKS_MARK"
-  else
-    rm -f "$D/.looks-applied.tmp" "$LOOKS_MARK"
-  fi
+  [ -f "$LOOKS_MARK" ] && grep -xE '[0-9a-f]{64}' "$LOOKS_MARK" >>"$D/.looks-applied.tmp"
+  awk '!seen[$0]++' "$D/.looks-applied.tmp" | head -n 8 >"$D/.looks-applied.new" \
+    && mv -f "$D/.looks-applied.new" "$LOOKS_MARK"
+  rm -f "$D/.looks-applied.tmp" "$D/.looks-applied.new"
+}
+
+# A refresh stopped between the two renames of a replacement leaves no desk-looks and the old
+# folder aside: put it back (only a folder of this refresher's own, by its digest).
+recover_looks() {
+  [ -e "$target" ] || [ -L "$target" ] && return 0
+  for x in "$hh"/.shipshape-looks-old.*; do
+    [ -d "$x" ] && [ ! -L "$x" ] || continue
+    dg=$(folder_digest "$x") || continue
+    grep -qxF "$dg" "$LOOKS_MARK" 2>/dev/null || continue
+    mv "$x" "$target" && return 0
+  done
+  return 0
 }
 
 apply_looks() {
-  [ -n "$looks_mode" ] || return 0
   hh=$(herdr_home)
+  target="$hh/desk-looks"
+  if [ -d "$hh" ] && [ -f "$LOOKS_MARK" ] && find_looks_tools; then
+    recover_looks
+    # What a refresh stopped half way left: only the names this refresher gives its own.
+    find "$hh" -maxdepth 1 \( -name '.shipshape-looks-new.??????' -o -name '.shipshape-looks-old.*' \) \
+      -mmin +15 -exec rm -rf {} + 2>/dev/null
+  fi
+  [ -n "$looks_mode" ] || return 0
   if [ ! -d "$hh" ]; then
     [ "$looks_mode" = none ] || add_warning "The fleet's looks were not written: there is no Herdr folder here ($hh)."
     return 0
   fi
-  target="$hh/desk-looks"
-  find "$hh" -maxdepth 1 \( -name '.desk-looks.new.*' -o -name '.desk-looks.old.*' \) -mmin +15 \
-    -exec rm -rf {} + 2>/dev/null
   have=
   if [ -e "$target" ] || [ -L "$target" ]; then
     if ! have=$(ours "$target"); then
@@ -907,9 +929,9 @@ apply_looks() {
       return 0
     fi
   fi
+  old="$hh/.shipshape-looks-old.$$"
   if [ "$looks_mode" = none ]; then
     if [ -n "$have" ]; then
-      old="$hh/.desk-looks.old.$$"
       if ! mv "$target" "$old"; then
         add_warning "Could not remove the fleet's looks from $target."
         return 0
@@ -917,38 +939,34 @@ apply_looks() {
       rm -rf "$old"
       echo "Removed the fleet's looks from $target: FleetLedger keeps none now."
     fi
-    mark_looks
     return 0
   fi
   if [ "$have" = "$looks_mode" ]; then
-    [ "$(cat "$LOOKS_MARK")" = "$looks_mode" ] || mark_looks "$looks_mode"
+    [ "$(head -n 1 "$LOOKS_MARK")" = "$looks_mode" ] || mark_looks "$looks_mode"
     return 0
   fi
-  new=$(mktemp -d "$hh/.desk-looks.new.XXXXXX") || { add_warning "Could not write the fleet's looks in $hh."; return 0; }
+  new=$(mktemp -d "$hh/.shipshape-looks-new.XXXXXX") || { add_warning "Could not write the fleet's looks in $hh."; return 0; }
   if ! cp -R "$stage/looks/." "$new/" || [ "$(folder_digest "$new")" != "$looks_mode" ] \
-    || ! mark_looks "$have" "$looks_mode"; then
+    || ! mark_looks "$looks_mode" "$have"; then
     rm -rf "$new"
     add_warning "Could not write the fleet's looks to $target; what was there is unchanged."
     return 0
   fi
-  if [ -n "$have" ]; then
-    old="$hh/.desk-looks.old.$$"
-    if ! mv "$target" "$old"; then
-      rm -rf "$new"
-      mark_looks "$have"
-      add_warning "Could not replace the fleet's looks in $target; what was there is unchanged."
-      return 0
-    fi
-  fi
-  if [ -e "$target" ] || [ -L "$target" ] || ! mv "$new" "$target"; then
-    [ -n "$have" ] && [ ! -e "$target" ] && mv "$old" "$target"
+  if [ -n "$have" ] && ! mv "$target" "$old"; then
     rm -rf "$new"
-    mark_looks "$have"
+    add_warning "Could not replace the fleet's looks in $target; what was there is unchanged."
+    return 0
+  fi
+  # Two renames: for a moment there is no desk-looks (the Desk then wears its own looks), never
+  # half of one. A desk-looks that appeared meanwhile is yours: mv would put this one inside it.
+  if [ -e "$target" ] || [ -L "$target" ] || ! mv "$new" "$target" || [ -e "$target/${new##*/}" ]; then
+    [ -d "$target/${new##*/}" ] && mv "$target/${new##*/}" "$new"
+    [ -n "$have" ] && [ ! -e "$target" ] && [ ! -L "$target" ] && mv "$old" "$target"
+    rm -rf "$new"
     add_warning "Could not write the fleet's looks to $target."
     return 0
   fi
   [ -n "$have" ] && rm -rf "$old"
-  mark_looks "$looks_mode"
   echo "Wrote the fleet's looks to $target (the Desk wears them when its Look popup opens, or at herdr-app do desk.looks-reload)."
 }
 

@@ -231,7 +231,19 @@ def opt_in(e, name="laptop"):
 
 
 def stray(m: Machine) -> list[str]:
-    return sorted(p.name for p in herdr(m).iterdir() if p.name.startswith(".desk-looks"))
+    return sorted(p.name for p in herdr(m).iterdir() if p.name.startswith(".shipshape-looks"))
+
+
+def applied(m: Machine) -> list[str]:
+    return (m.d / "looks-applied").read_text().split()
+
+
+def newer_folder(m: Machine, label: str) -> Path:
+    other = m.root / f"looks-{label.lower()}"
+    shutil.copytree(EXAMPLE, other)
+    (other / "looks.json").write_text((other / "looks.json").read_text().replace(
+        '"Example"', f'"{label}"'))
+    return other
 
 
 @pytest.mark.local_sshd
@@ -279,14 +291,13 @@ def test_new_looks_replace_the_ones_it_wrote_and_none_removes_them(fl, laptop, t
     assert proc.returncode == 0 and "Wrote the fleet's looks" in proc.stdout, proc.stderr
     assert desk_files(laptop) == looks.load().folder.files
     assert b"Another" in desk_files(laptop)["looks.json"]
-    assert (laptop.d / "looks-applied").read_text().split() == [doc["looks"]["digest"]]
+    assert applied(laptop)[0] == doc["looks"]["digest"]
     assert stray(laptop) == []
     assert fl.run("looks", "clear")[0] == 0
     assert serve(fl)["looks"] is None
     proc = laptop.refresh()
     assert proc.returncode == 0 and "Removed the fleet's looks" in proc.stdout
     assert not (herdr(laptop) / "desk-looks").exists()
-    assert not (laptop.d / "looks-applied").exists()
     assert stray(laptop) == []
     assert laptop.refresh().returncode == 0  # and again: nothing to do
 
@@ -339,34 +350,79 @@ def test_a_desk_looks_folder_of_your_own_is_never_changed_or_removed(fl, laptop,
 
 
 @pytest.mark.local_sshd
-def test_a_write_cut_short_is_finished_by_the_next_refresh(fl, laptop):  # noqa: F811
-    """looks-applied names the old and the new digest from just before the swap until just
-    after it, so a refresh stopped in between still knows the folder there is its own."""
+def test_a_refresh_stopped_between_the_renames_is_mended_by_the_next(fl, laptop):  # noqa: F811
+    """Stopped after the old folder went aside and before the new one came in: the next
+    refresh puts the old one back, even when its bundle has no looks; what a stopped refresh
+    left is removed after 15 minutes, and only the names the refresher gives its own."""
     h = herdr(laptop)
     publish(fl)
     opt_in(fl)
-    old = serve(fl)["looks"]["digest"]
+    serve(fl)
     assert laptop.refresh().returncode == 0
-    new = "0" * 64
-    # Stopped before the swap: the old folder, both digests.
-    (laptop.d / "looks-applied").write_text(f"{old}\n{new}\n")
-    (h / ".desk-looks.new.abcdef").mkdir()
-    os.utime(h / ".desk-looks.new.abcdef", (time.time() - 3600, time.time() - 3600))
-    other = laptop.root / "other"
-    shutil.copytree(EXAMPLE, other)
-    (other / "looks.json").write_text((other / "looks.json").read_text().replace(
-        '"Example"', '"Newer"'))
-    publish(fl, other)
-    newer = serve(fl)["looks"]["digest"]
+    before = desk_files(laptop)
+    (h / "desk-looks").rename(h / ".shipshape-looks-old.4242")
+    for name in (".shipshape-looks-new.abcdef", ".desk-looks.old.backup"):
+        (h / name).mkdir()
+        (h / name / "mine.txt").write_text("mine")
+        os.utime(h / name, (time.time() - 3600, time.time() - 3600))
+    assert fl.run("trust", "laptop", "--looks", "off")[0] == 0
+    serve(fl)
     proc = laptop.refresh()
-    assert proc.returncode == 0 and "Wrote the fleet's looks" in proc.stdout, proc.stderr
-    assert (laptop.d / "looks-applied").read_text().split() == [newer]
-    assert stray(laptop) == []  # a temporary folder left over 15 minutes ago is removed
-    # Stopped after the swap: the new folder, both digests: nothing to write, and tidied.
-    (laptop.d / "looks-applied").write_text(f"{old}\n{newer}\n")
+    assert proc.returncode == 0, proc.stderr
+    assert desk_files(laptop) == before
+    assert stray(laptop) == []
+    assert (h / ".desk-looks.old.backup" / "mine.txt").read_text() == "mine"
+
+
+@pytest.mark.local_sshd
+def test_a_folder_written_under_another_herdr_folder_stays_its_own(fl, laptop):  # noqa: F811
+    """HERDR_APP_HOME set for one run (the Fleet panel's, say) and not for the timer's."""
+    herdr(laptop)
+    elsewhere = laptop.home / "herdr-elsewhere"
+    elsewhere.mkdir()
+    publish(fl)
+    opt_in(fl)
+    serve(fl)
+    assert laptop.refresh().returncode == 0
+    publish(fl, newer_folder(laptop, "Newer"))
+    serve(fl)
+    plain = laptop.env
+    laptop.env = lambda: {**plain(), "HERDR_APP_HOME": str(elsewhere)}
+    assert laptop.refresh().returncode == 0
+    laptop.env = plain
     proc = laptop.refresh()
-    assert proc.returncode == 0 and "Wrote" not in proc.stdout
-    assert (laptop.d / "looks-applied").read_text().split() == [newer]
+    assert proc.returncode == 0 and proc.stderr == "", proc.stderr
+    assert desk_files(laptop) == desk_files(laptop, elsewhere / "desk-looks")
+    assert b"Newer" in desk_files(laptop)["looks.json"]
+    assert fl.run("looks", "clear")[0] == 0
+    serve(fl)
+    assert laptop.refresh().returncode == 0
+    assert not (herdr(laptop) / "desk-looks").exists()
+
+
+@pytest.mark.local_sshd
+def test_a_desk_looks_that_appears_during_the_write_is_left_as_it_is(fl, laptop):  # noqa: F811
+    """mv onto a folder moves into it: one made between the check and the rename is yours."""
+    h = herdr(laptop)
+    real = shutil.which("mv")
+    (laptop.bin / "mv").unlink()
+    shim = laptop.bin / "mv"
+    shim.write_text(f"""#!/bin/sh
+for last in "$@"; do :; done
+case "$1 $last" in
+  *.shipshape-looks-new.*" {h}/desk-looks") mkdir -p "$last" && echo mine >"$last/looks.json" ;;
+esac
+exec {real} "$@"
+""")
+    shim.chmod(0o755)
+    publish(fl)
+    opt_in(fl)
+    serve(fl)
+    proc = laptop.refresh()
+    assert proc.returncode == 0
+    assert "Could not write the fleet's looks" in proc.stderr
+    assert desk_files(laptop) == {"looks.json": b"mine\n"}
+    assert stray(laptop) == []
 
 
 @pytest.mark.local_sshd
@@ -500,6 +556,10 @@ def _hostile():
         "looks.json not JSON": (set_looks_json(b"#!/bin/sh\ntouch PWNED\n"), "not JSON"),
         "looks.json another schema": (set_looks_json(b'{"schema":"shipshape.other/1"}'),
                                       "not shipshape.desk-looks/1"),
+        "a control byte in a string": (set_looks_json(
+            b'{"schema":"shipshape.desk-looks/1","x":"\x1b]0;title\x07"}'), "control character"),
+        "a NUL in a string": (set_looks_json(
+            b'{"schema":"shipshape.desk-looks/1","x":"a\x00b"}'), "control character"),
         "a palette too deep": (add(_file("palettes/looks-deep.json",
                                          b"[" * 20 + b"]" * 20)), "not JSON"),
         "17 palettes": (add(*[_file(f"palettes/looks-p{i}.json", b"{}") for i in range(17)]),

@@ -408,14 +408,14 @@ refresher a machine runs, and `trust --looks on` says what to check. Refresher 2
   only; names as `desk-looks.md` gives them (`looks.json`, `palettes/looks-<id>.json`,
   `logos/<name>.png|.jpg`), none twice, `looks.json` once; each size within its limit and 512
   KiB in all, at most 16 palettes and 16 logos; base64 decoded to exactly its size (`base64
-  --decode`, or `-d`); each logo by its first bytes; each JSON file through its strict reader,
-  `looks.json` as `shipshape.desk-looks/1`; and the folder against `digest` (`sha256sum`, or
+  --decode`, or `-d`); each logo by its first bytes; each JSON file free of control bytes and through its strict
+  reader, `looks.json` as `shipshape.desk-looks/1`; and the folder against `digest` (`sha256sum`, or
   `shasum -a 256`). One out of place refuses the bundle whole;
 - writes the folder into Herdr's folder (`$HERDR_APP_HOME`, else `~/.config/herdr-app`; never
   made) as `desk-looks`, from a new folder beside it checked again by its digest, by rename;
-  with the same digest as the folder there, it writes nothing. It records each digest it
-  writes in `~/.ssh/shipshape/looks-applied`, and changes or removes a `desk-looks` only when
-  the digest of what is there now is one of those: a folder of your own, a link, or its folder
+  with the same digest as the folder there, it writes nothing. It records the digests of the
+  last eight folders it wrote in `~/.ssh/shipshape/looks-applied`, and changes or removes a
+  `desk-looks` only when the digest of what is there now is one of those: a folder of your own, a link, or its folder
   after you changed it is never touched (a warning says the fleet's were not written). For
   null it removes the folder it wrote;
 - with no Herdr folder, or no `base64`, `sha256sum`/`shasum` or `od` to check with, leaves

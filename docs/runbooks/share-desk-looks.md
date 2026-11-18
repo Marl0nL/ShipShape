@@ -100,7 +100,8 @@ computer whose fleet folder you edit keeps your edit, and gets no more of the fl
 
 ## Your own looks folder is never touched
 
-The refresher keeps the digest of each folder it writes in `~/.ssh/shipshape/looks-applied`.
+The refresher keeps the digests of the folders it wrote (the latest eight) in
+`~/.ssh/shipshape/looks-applied`.
 Before it replaces or removes `desk-looks`, it computes the digest of what is there now (over
 each file's name, size and bytes, as FleetLedger computes it) and goes on only when that is a
 digest it wrote. So a `desk-looks` folder you made yourself, a link, or the fleet's folder
@@ -123,13 +124,15 @@ The bundle is refused whole, as for any other value out of place, when its `look
 - a file over its limit (`looks.json` and each logo 64 KiB, each palette 16 KiB), more than 16
   palettes or 16 logos, or more than 512 KiB in all;
 - data that is not base64 of exactly the size it says; a logo whose first bytes are not the
-  picture its name says (PNG or JPEG); a JSON file the refresher's strict reader refuses, or a
-  `looks.json` that is not `shipshape.desk-looks/1`;
+  picture its name says (PNG or JPEG); a JSON file with a control character, or one the
+  refresher's strict reader refuses, or a `looks.json` that is not `shipshape.desk-looks/1`;
 - files that do not match the folder's digest.
 
 The folder is then decoded in the refresher's own folder, copied into a new folder beside
-`desk-looks` and checked again by its digest, and put in place by rename, so the Desk never
-reads half a folder. Each file goes under its checked name; nothing else from the bundle
+`desk-looks` (`.shipshape-looks-new.*`) and checked again by its digest, and put in place by
+rename, so the Desk never reads half a folder (between the two renames of a replacement there
+is, for a moment, none). A refresh stopped between them is mended by the next one, which puts
+the folder it set aside back if nothing new comes. Each file goes under its checked name; nothing else from the bundle
 becomes a path, and nothing is run. `fleet.json` (the Fleet panel's copy of the bundle) never
 holds the looks. A computer without `base64`, `sha256sum` (or `shasum`) or `od` leaves its
 looks as they are and says so.
