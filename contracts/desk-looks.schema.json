@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/desk-looks.schema.json",
+  "title": "Your own Desk looks (desk-looks/looks.json, version 1)",
+  "description": "The index of a looks folder: palettes (each a Herdr theme in palettes/<id>.json, desk-palette.schema.json), presets (a palette pair, the Desk's finish, type and density, an optional band and an optional brand whose logo is a file in logos/), and which tag wears which preset. Data only. Every key is a-z and _ and it nests at most four deep, so a refresher's strict JSON reader can carry it as it is. What a schema cannot say (a preset's palettes and a tag look's preset must exist; ids are unique; the folder's size limits; a logo is the picture its name says) is in contracts/desk-looks.md, and the Desk checks it (herdr/mods/desk/lookfolder.js).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shipshape.desk-looks/1"
+    },
+    "palettes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "dark"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^looks-[a-z0-9][a-z0-9-]{0,30}$",
+            "description": "Its Herdr theme name: the Desk installs palettes/<id>.json as themes/<id>.json."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]{1,40}$"
+          },
+          "dark": {
+            "type": "boolean",
+            "description": "A palette for dark appearance (true) or light (false)."
+          }
+        }
+      }
+    },
+    "presets": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "palette",
+          "light",
+          "finish",
+          "type",
+          "density"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
+            "description": "A preset of the Desk's with the same id is replaced."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]{1,40}$"
+          },
+          "palette": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,40}$",
+            "description": "A dark palette: one of the Desk's, or one in palettes."
+          },
+          "light": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,40}$",
+            "description": "A light palette: one of the Desk's, or one in palettes."
+          },
+          "finish": {
+            "enum": [
+              "soft",
+              "outline",
+              "ledger",
+              "index",
+              "glow"
+            ]
+          },
+          "type": {
+            "enum": [
+              "geist",
+              "geist-mono",
+              "ubuntu",
+              "lato",
+              "noto",
+              "mono",
+              "urbanist"
+            ]
+          },
+          "density": {
+            "enum": [
+              "cozy",
+              "compact"
+            ]
+          },
+          "band": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "description": "A strip across the top of the desk, left colour to right."
+          },
+          "brand": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "logo"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]{1,40}$"
+              },
+              "logo": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,30}\\.(png|jpg)$",
+                "description": "A file in logos/, by name alone (never a path)."
+              },
+              "w": {
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 64,
+                "default": 20
+              },
+              "h": {
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 64,
+                "default": 20
+              },
+              "round": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 32,
+                "default": 0
+              },
+              "font": {
+                "enum": [
+                  "Geist",
+                  "Geist Mono",
+                  "Ubuntu Sans",
+                  "Ubuntu Sans Mono",
+                  "Lato",
+                  "Noto Serif",
+                  "Noto Sans",
+                  "JetBrains Mono",
+                  "Urbanist"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "tag_looks": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tag",
+          "preset"
+        ],
+        "properties": {
+          "tag": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+          },
+          "preset": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+          }
+        }
+      }
+    }
+  }
+}

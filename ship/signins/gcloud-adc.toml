@@ -7,6 +7,7 @@ schema = 1
 id = "gcloud-adc"
 label = "Google ADC"
 mode = "paste-back"
+answer = "one-time-code"  # shown as it is pasted: spent once used, not a secret
 run = "CLOUDSDK_CORE_DISABLE_FILE_LOGGING=1 gcloud auth application-default login --no-launch-browser"
 timeout = 600
 

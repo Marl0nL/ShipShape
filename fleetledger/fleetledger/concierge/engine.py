@@ -4,7 +4,9 @@ The CLI runs in a real terminal (`ssh -tt`), because these tools behave
 differently without one. The engine reads its output itself (escape sequences
 stripped), matches the provider's patterns, shows you the link (and device
 code), and for paste-back flows types the code you paste into the terminal,
-so it never appears in a command line, ps or shell history.
+so it never appears in a command line, ps or shell history. A one-time code
+(the sign-in file's `answer = "one-time-code"`) is shown as you paste it;
+anything else is read without echo.
 
 Nothing is logged and no transcript is kept: the buffer lives in memory for
 the length of the flow. If the patterns miss (a CLI changed its wording), you
@@ -59,8 +61,11 @@ class Prompter(Protocol):
     def show_link(self, url: str, code: str | None, expires_in: float) -> None: ...
 
     def ask_code(self) -> str | None:
-        """The code you pasted, or None to cancel. Never echoed or stored."""
+        """The answer you pasted, or None to cancel. Never echoed or stored."""
         ...
+
+    # Optional: ask_one_time_code() -> str | None, the same for a one-time code, which
+    # may be shown as it is pasted (never stored). A prompter without it gets ask_code.
 
     def waiting(self, remaining: float) -> None: ...
 
@@ -171,7 +176,10 @@ class Flow:
         """
         if not (self.p.prompt and self.p.prompt.search(self.buffer)):
             return None
-        typed = (self.prompter.ask_code() or "").strip()
+        ask = self.prompter.ask_code
+        if self.p.one_time_code:
+            ask = getattr(self.prompter, "ask_one_time_code", ask)
+        typed = (ask() or "").strip()
         if not typed:
             return "Cancelled; nothing was typed."
         if self.clock() > self.deadline:

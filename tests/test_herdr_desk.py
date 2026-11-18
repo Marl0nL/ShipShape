@@ -198,3 +198,20 @@ def test_the_desk_cli_and_the_card_check_a_task_the_same_way(tmp_path):
                                  capture_output=True, text=True, timeout=60)
             assert (cli.returncode == 0) == ok, (field, value, cli.stderr)
     assert js["branch"][:2] == [True, True] and not any(js["branch"][2:])
+
+
+def test_the_placeholder_looks_folder_is_the_contracts_example():
+    """herdr/desk-looks.example is what contracts/desk-looks.md describes: its looks.json and
+    palette are the contract's own valid examples, and its logo is a small real PNG. Nothing
+    installs it: without a folder the Desk wears its own looks."""
+    example = HERDR / "desk-looks.example"
+    contract = ROOT / "contracts" / "examples"
+    assert json.loads((example / "looks.json").read_text("utf-8")) == json.loads(
+        (contract / "desk-looks" / "example.json").read_text("utf-8"))
+    assert json.loads((example / "palettes" / "looks-example-dark.json").read_text("utf-8")) == \
+        json.loads((contract / "desk-palette" / "example-dark.json").read_text("utf-8"))
+    logo = (example / "logos" / "example.png").read_bytes()
+    assert logo.startswith(b"\x89PNG\r\n\x1a\n") and len(logo) <= 65536
+    assert sorted(p.relative_to(example).as_posix() for p in example.rglob("*") if p.is_file()) == [
+        "logos/example.png", "looks.json", "palettes/looks-example-dark.json"]
+    assert "desk-looks" not in (HERDR / "install-desk.sh").read_text("utf-8")

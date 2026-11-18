@@ -17,8 +17,8 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents, machines } from "herdr";
-import { subject, full, refresh, boardOf, lookFor, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
-import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, resolve } from "./looks.js";
+import { subject, full, refresh, boardOf, lookFor, loadLooks, syncLooks, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
+import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, FOLDER_TAG_LOOKS, tagLooksOf, resolve } from "./looks.js";
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
 import { assistant, manager, coder, none, crewSheet } from "./views.js";
 import { openPlan } from "./fleet-model.js";
@@ -47,8 +47,16 @@ function find(node, id) {
   return null;
 }
 
+// Your own looks folder (lookfolder.js), read again and published for every part: when the
+// desk starts, when the Look popup opens, and on desk.looks-reload. Never on a timer.
+async function publishLooks() {
+  const v = await loadLooks();
+  if (JSON.stringify(v) !== JSON.stringify(shared("desk.lookFolder") ?? null)) setShared("desk.lookFolder", v);
+}
+
 // The look in effect, with tag looks paused while you review your own.
 function currentLook(s) {
+  syncLooks(); // before resolve(): your own look may be a preset of your looks folder
   if (shared("desk.tagLooksOff")) return { ...resolve(shared("desk.look")), tag: null, paused: lookFor(s).tag };
   return lookFor(s);
 }
@@ -73,6 +81,7 @@ export default class Desk extends View {
     }
     if (this.part === "looks") {
       cx.spawn(async (cx) => {
+        await publishLooks();
         this.appear = JSON.parse((await readTextFile(`${appHome()}/settings.json`)) ?? "{}").appearance ?? "system";
         cx.notify();
       });
@@ -98,6 +107,8 @@ export default class Desk extends View {
       //   desk.looks                                           open the Look popup
       //   desk.dashboard                                       the Dashboard tab, or a new one
       //   desk.next-blocked                                    go to the next blocked agent
+      //   desk.looks-reload                                    read your looks folder again
+      cx.spawn(async (cx) => (await publishLooks(), cx.notify()));
       cx.spawn(async (cx) => {
         for (;;) {
           let c;
@@ -110,6 +121,7 @@ export default class Desk extends View {
           if (c.startsWith("look-") && PRESETS[c.slice(5)]) setShared("desk.look", { preset: c.slice(5) });
           if (c === "taglooks") setShared("desk.tagLooksOff", !shared("desk.tagLooksOff"));
           if (c === "toggle") run("layout.toggle", { id: "desk" });
+          if (c === "looks-reload") await publishLooks();
           if (c === "looks") openOverlay({ mod: "desk", kind: "popup", width: 360, height: 560, props: { part: "looks" } });
           if (c === "dashboard") dashboardPlan(panes(), spaces()).forEach(([command, args]) => run(command, args));
           if (c === "next-blocked") goNextBlocked();
@@ -656,7 +668,7 @@ export default class Desk extends View {
     const mine = (labels["desk.tags"] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
     const others = s.tags.filter((x) => !mine.includes(x));
     // Tags already in use elsewhere, offered for one click.
-    const known = new Set(["work", "personal", ...Object.keys(shared("desk.tagLooks") ?? DEFAULT_TAG_LOOKS)]);
+    const known = new Set(["work", "personal", ...Object.keys(tagLooksOf(shared("desk.tagLooks")))]);
     for (const x of terminals()) for (const tag of (x.labels?.["desk.tags"] ?? "").split(",")) if (tag.trim()) known.add(tag.trim());
     return v_flex()
       .size_full()
@@ -704,10 +716,11 @@ export default class Desk extends View {
         .gap(5)
         .child(label(t, L, name))
         .child(h_flex().gap(5).flex_wrap().children(items.map(([id, text]) => button(t, L, `${name}-${id}`, text, () => pick(id), { on: current === id, h: 24 }))));
-    const tagLooks = shared("desk.tagLooks") ?? DEFAULT_TAG_LOOKS;
+    const tagLooks = tagLooksOf(shared("desk.tagLooks"));
     const tags = new Set([...Object.keys(tagLooks), ...(s?.tags ?? [])]);
     for (const x of terminals()) for (const tag of (x.labels?.["desk.tags"] ?? "").split(",")) if (tag.trim()) tags.add(tag.trim());
     const cycle = [null, ...Object.keys(PRESETS)];
+    const folder = shared("desk.lookFolder");
     const wearing = L.tag ? `${PRESETS[L.preset]?.label} is on because ${s?.name} is tagged ${L.tag}. Edits here change your own look, which shows on untagged agents.` : null;
     return v_flex()
       .id("looks")
@@ -738,14 +751,24 @@ export default class Desk extends View {
         [...tags].sort().map((tag) => {
           const cur = tagLooks[tag] ?? null;
           const next = cycle[(cycle.indexOf(cur) + 1) % cycle.length];
+          // A tag your looks folder gives a look keeps it: change it in looks.json.
+          if (FOLDER_TAG_LOOKS[tag])
+            return h_flex()
+              .gap(8)
+              .items_center()
+              .child(chip(t, L, tag, tagColor(t, tag)))
+              .child(div().flex_1())
+              .child(button(t, L, `tl-${tag}`, PRESETS[cur]?.label ?? cur, () => {}, { on: true, tip: "Set by your looks folder (desk-looks/looks.json)" }));
           return h_flex()
             .gap(8)
             .items_center()
             .child(chip(t, L, tag, tagColor(t, tag)))
             .child(div().flex_1())
-            .child(button(t, L, `tl-${tag}`, cur ? PRESETS[cur]?.label ?? cur : "Your look", () => setShared("desk.tagLooks", { ...tagLooks, [tag]: next }), { on: Boolean(cur), tip: `Next: ${next ? PRESETS[next].label : "your own look"}` }));
+            .child(button(t, L, `tl-${tag}`, cur ? PRESETS[cur]?.label ?? cur : "Your look", () => setShared("desk.tagLooks", { ...(shared("desk.tagLooks") ?? DEFAULT_TAG_LOOKS), [tag]: next }), { on: Boolean(cur), tip: `Next: ${next ? PRESETS[next].label : "your own look"}` }));
         }),
       )
-      .child(body(t, L, "Palettes are themes in themes/ (desk-*); presets and parts are in mods/desk/looks.js."));
+      .child(body(t, L, "Palettes are themes in themes/ (desk-*); presets and parts are in mods/desk/looks.js. Your own go in desk-looks/ beside Herdr's settings (mods/desk/README.md)."))
+      .when(Boolean(folder?.looks), (e) => e.child(body(t, L, `From your looks folder: ${folder.looks.presets.length} presets, ${folder.looks.palettes.length} palettes, ${folder.looks.tag_looks.length} tag looks.`)))
+      .when(Boolean(folder?.problem), (e) => e.child(div().text_size(11.5).text_color(t.blocked).child(folder.problem)));
   }
 }

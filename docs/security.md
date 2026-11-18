@@ -294,10 +294,12 @@ rotation and recovery: [vault.md](vault.md).
 ## The login concierge
 
 - Each tool's own sign-in runs on the Ship, as `agent`, in a terminal over SSH.
-- The code you paste is read without echo and typed into that terminal: it is
-  never on a command line (so not in `ps` or shell history), in an argument, in
-  a log or in an exception. A code pasted after its sign-in window has closed is
-  not typed.
+- The code you paste is typed into that terminal: it is never on a command line
+  (so not in `ps` or shell history), in an argument, in a log or in an exception.
+  A code pasted after its sign-in window has closed is not typed. A one-time code
+  (spent once used; the sign-in file's `answer = "one-time-code"`: Claude Code's
+  and gcloud's) is shown as you paste it, so you can see it arrived; any other
+  pasted answer is a secret, read without echo, and that is the default.
 - No terminal transcript is kept. On failure a few lines are shown with typed
   codes, URL query strings and long token-like strings removed.
 - The audit log (`~/.local/share/fleetledger/audit.log`, 0600) records time,

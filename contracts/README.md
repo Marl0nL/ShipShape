@@ -37,6 +37,7 @@ not part of the interface: ask for a contract change instead of guessing.
 | Every doctor check (`ship-fleet doctor --json`) | `fleetledger-doctor.schema.json` | Fleet: `ship-fleet doctor` | other programs on your computers (a Fleet panel, over ssh) |
 | A Ship's snapshots (`ship-fleet snapshot ls NAME --json` entries) | `fleetledger-snapshot.schema.json` | Fleet: `ship-fleet snapshot ls` | other programs on your computers (a Fleet panel, over ssh) |
 | The keys that may log in to FleetLedger's computer (`ship-fleet keys ls --json` entries) | `fleetledger-key.schema.json` | Fleet: `ship-fleet keys` | other programs on your computers (a Fleet panel, over ssh) |
+| Your own Desk looks (`desk-looks/` in Herdr's folder) | `desk-looks.schema.json`, `desk-palette.schema.json` | you (by hand on one computer) | the Herdr Desk (`herdr/mods/desk/lookfolder.js`) |
 
 Prose documents:
 
@@ -49,6 +50,7 @@ Prose documents:
 - `settings.md`: what each `ship.toml` field does on the Ship, and how `ships.toml` becomes a Ship's `ship.toml`.
 - `tools.md`: how recipes and profiles are run.
 - `toolkit.md`: your own toolkits: their layout, ids, the rules FleetLedger checks, and how they reach Ships (the archive, `ship-ctl toolkit`, the allow-list).
+- `desk-looks.md`: your own Desk looks as a folder of data: its layout, the rules a schema cannot say, and what the Desk does with it.
 - `image.md`: what a baked image holds, how `ship/image/bake` is called, image ids, pinning and rollout (phase 4).
 
 Examples live in `examples/<contract>/`. Every file there must validate, and every
