@@ -22,7 +22,7 @@ import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, resol
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
 import { assistant, manager, coder, none, crewSheet } from "./views.js";
 import { openPlan } from "./fleet-model.js";
-import { dashboardData, dashboardView, watch } from "./dashboard.js";
+import { dashboardData, dashboardView, watch, readBoards } from "./dashboard.js";
 import { dashboardPlan, dashboardShown } from "./dash.js";
 
 const WIDTHS = { assistant: 440, manager: 760, coder: 500, crew: 360, none: 400 };
@@ -137,10 +137,15 @@ export default class Desk extends View {
     });
   }
 
-  // The Dashboard redraws while on show (its durations move); hidden, it does nothing.
+  // The Dashboard redraws while on show (its durations move) and reads the boards then, each
+  // machine every 15 s at most (dashboard.js); hidden, it does nothing.
   dashTick(cx) {
     if (!this.shown()) return;
     const moved = watch();
+    cx.spawn(async (cx) => {
+      const changed = await readBoards().catch(() => false);
+      if (changed) cx.notify();
+    });
     this.dashN = ((this.dashN ?? 0) + 1) % 2;
     if (moved || this.dashN === 0) cx.notify();
   }

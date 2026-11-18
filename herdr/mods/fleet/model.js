@@ -140,6 +140,27 @@ function refuser() {
   };
 }
 
+const AGENT_STATES = new Set(["idle", "working", "blocked", "done", "unknown"]);
+const text = (v, max) => (typeof v === "string" && v.length <= max ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").trim() || null : null);
+
+/** The agents a Ship's last status document lists (ship-status.schema.json, herdr.agents): what
+ *  FleetLedger last saw, the one word on agents Herdr cannot reach. Entries that are not the
+ *  contract's are left out; null when the document has no list (no status, an older Ship). */
+export function shipAgents(status) {
+  const list = status?.herdr?.agents;
+  if (!Array.isArray(list)) return null;
+  return list
+    .filter((a) => a && typeof a === "object" && AGENT_STATES.has(a.state) && (a.name === null || typeof a.name === "string"))
+    .slice(0, 100)
+    .map((a) => ({ name: text(a.name, 200), state: a.state, message: text(a.message, 500), blockedKind: text(a.blocked_kind, 40) }));
+}
+
+/** When a Ship's status document was made (ms), or null. */
+const statusAt = (status) => {
+  const t = typeof status?.generated_at === "string" ? Date.parse(status.generated_at) : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
 /** `ship-fleet ls --json --offline`: the Ships, and why any entry was left out. */
 export function readShips(stdout) {
   const p = parse(stdout, "ship-fleet ls");
@@ -167,6 +188,8 @@ export function readShips(stdout) {
       message: e.message ?? null,
       attention: first ? { code: String(first.code ?? ""), message: first.message } : null,
       more: Math.max(0, e.attention.length - 1),
+      agents: shipAgents(e.status),
+      statusAt: statusAt(e.status),
     });
   }
   return { ships, refused: refused.list(), older };
@@ -417,7 +440,7 @@ export class Fleet {
     }
     // No list from FleetLedger (a machine that may only pull, or none read yet): the refresher's.
     if (st.shipsFrom !== "FleetLedger" && st.fleetFile.ships) {
-      st.ships = st.fleetFile.ships.map((s) => ({ name: s.name, tags: s.tags, state: null, problem: null, message: null, attention: null, more: 0 }));
+      st.ships = st.fleetFile.ships.map((s) => ({ name: s.name, tags: s.tags, state: null, problem: null, message: null, attention: null, more: 0, agents: null, statusAt: null }));
       st.shipsFrom = "fleet.json";
       st.shipsAt = null;
     }
@@ -714,6 +737,21 @@ export function header(state, now, paths) {
   else if (!st.ships && st.where) empty = "No list read yet.";
   else if (!st.ships) empty = "No Ships to show.";
   return { facts, notices, empty, locked };
+}
+
+// ---- what the Desk's Dashboard reads ---------------------------------------------------------
+
+/** Shared "fleet.summary", published after each read: the Ships as FleetLedger last saw them
+ *  (with the agents their last status lists) and how many items need you. The Dashboard reads
+ *  it and never asks FleetLedger itself, so it is as fresh as this panel's last read (`readAt`). */
+export function fleetSummary(state) {
+  return {
+    readAt: state.shipsAt ?? null,
+    from: state.shipsFrom ?? null,
+    needs: (state.attention ?? []).length,
+    high: (state.attention ?? []).filter((a) => a.severity === "high").length,
+    ships: (state.ships ?? []).map((s) => ({ name: s.name, state: s.state, problem: s.problem, statusAt: s.statusAt ?? null, agents: s.agents ?? null })),
+  };
 }
 
 // ---- the Needs you list ----------------------------------------------------------------------

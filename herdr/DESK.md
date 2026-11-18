@@ -92,7 +92,24 @@ Herdr reaches, from Herdr's live state alone (`agents()`, `spaces()`, `panes()`,
 - Filter chips by tag and machine. **Go** focuses the agent (`pane.focus`); **Peek** shows its
   terminal over the Dashboard (`terminal.peek`), and warns before you peek at a crew.
 
-It redraws every three seconds while on show and does nothing while hidden.
+What agents keep comes on top, and only while the Dashboard is on show:
+
+- **Boards:** one `sh` per machine every 15 s, through Herdr's connection (`exec` with `on`), that
+  prints every board its agents' `desk.file` labels name (else the desk's default place), at
+  most 60 a machine and 256 KiB each. For a firstmate crew with no board yet, the same batch
+  prints firstmate's `state/<id>.meta` (kind, branch, worktree) and the last lines of its
+  `state/<id>.status`. Each path and id is checked first and goes to `sh` only as an argument; a
+  marker made for each read separates the files, so a board cannot pass for the next one. A
+  machine `machines()` does not report `ready` is not asked, so reads never pile up against one
+  that is down. Rows then show each board's summary and next-steps tally; a manager's blocked
+  tasks go in Needs you (even while the manager is idle); findings and crews' reports go in
+  Recent.
+- **The fleet:** the Fleet panel publishes `fleet.summary` after each of its reads. The Dashboard
+  shows "Fleet: 2 need you ›" (it opens the Fleet tab) and, for a Ship Herdr cannot reach,
+  FleetLedger's last word on its agents, dated ("FleetLedger (8m ago): 2 working, 1 blocked"),
+  with **Open in Fleet ›**. It asks FleetLedger nothing itself.
+
+It redraws every three seconds while on show and does nothing while hidden: no read, no redraw.
 
 ## How agents feed it
 
@@ -168,6 +185,7 @@ without tags of their own wear their boss's, and secondmates go by their space's
 | `desk.look` | the Look popup | the person's own look (a preset, parts on top) |
 | `desk.tagLooks`, `desk.tagLooksOff` | the Look popup | which tag wears which preset; paused or not |
 | `desk.sample` | `desk.sample-*` commands | a sample board in place of the focused agent |
+| `fleet.summary` | the Fleet panel, after each read | the Ships as FleetLedger last saw them, their listed agents, how many items need you: read by the Dashboard |
 | `sidebar.width`, `sidebar.collapsed` | the brand corner's toggle | the sidebar fold |
 
 ## Editor support

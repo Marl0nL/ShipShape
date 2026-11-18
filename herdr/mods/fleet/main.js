@@ -14,13 +14,23 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout } from "herdr";
-import { Fleet, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
+import { Fleet, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
 const fleet = new Fleet(host);
 const TICK_MS = 15000;
+
+// The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing).
+let published = null;
+function publish() {
+  const summary = fleetSummary(fleet.state);
+  const json = JSON.stringify(summary);
+  if (json === published) return;
+  published = json;
+  setShared("fleet.summary", summary);
+}
 
 const stop = (_e, cx) => cx.stop_propagation();
 const toneColor = (t, tone) => ({ good: t.done, warn: t.ansi3 ?? t.working, bad: t.blocked, dim: t.dim })[tone] ?? t.muted;
@@ -142,6 +152,7 @@ export default class FleetPanel extends View {
       const reading = fleet.refresh();
       cx.notify(); // "asking…"
       await reading;
+      publish();
       cx.notify();
     });
   }

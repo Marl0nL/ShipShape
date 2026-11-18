@@ -46,8 +46,14 @@ first; then done), **In progress** and **Idle** by machine with crews nested und
 manager, **Recent** (status changes since Herdr started) and **Machines** (an unreachable one's
 agents stay, greyed, with Go and Peek off). Each row says where the agent runs, how long it has
 been in its state, what it reports and its branch; **Go** goes to it, **Peek** shows it over the
-Dashboard. Filter by tag or machine. It is drawn from Herdr's live state only, and only while on
-show (`../../DESK.md`, "The Dashboard").
+Dashboard. Filter by tag or machine.
+
+While it is on show, and only then, it also reads every agent's board (one batch per machine
+every 15 s, never from a machine Herdr does not report ready): rows get each board's summary and
+next-steps tally, a manager's blocked tasks join Needs you, and findings join Recent. From the
+Fleet panel's last read (shared `fleet.summary`) it shows "Fleet: N need you ›" and, for a Ship
+Herdr cannot reach, FleetLedger's last word on its agents. `../../DESK.md`, "The Dashboard",
+has the details.
 
 ## Crews
 
