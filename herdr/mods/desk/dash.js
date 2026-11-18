@@ -556,3 +556,28 @@ export function fleetView(summary, machine, now) {
   const first = blocked.find((a) => a.message)?.message;
   return { line: `FleetLedger (${age}): ${parts.join(", ") || `${ship.agents.length} idle`}${first ? `: «${oneLine(first, 120)}»` : ""}`, agents: ship.agents, blocked, at };
 }
+
+// ---- the bar's "N need you": the blocked agents, and the next one to go to -------------------
+
+/** Every blocked agent Herdr can take you to, the longest blocked first: agents() with status
+ *  blocked, timed by their tab's last change; none on a machine machines() calls unavailable. */
+export function blockedQueue(agents, spaces, machines) {
+  const tabs = tabIndex(spaces);
+  const down = new Set((machines ?? []).filter((m) => m.layout === "unavailable").map((m) => machineKey(m.name)));
+  const rows = (agents ?? [])
+    .filter((a) => a.status === "blocked")
+    .map((a) => {
+      const at = tabs.get(a.tab);
+      return { address: a.address, pane: a.pane, status: a.status, since: sinceOf(a.status, at?.tab), machine: at?.space ? at.space.machine ?? null : machineOfAddress(a.address), name: a.tab_name || a.space_name || a.address };
+    })
+    .filter((r) => !down.has(machineKey(r.machine)));
+  return needsOrder(rows);
+}
+
+/** The one to go to after `last` (the one the last click went to): the next in the queue, else
+ *  the first. Null when nobody is blocked. */
+export function nextAfter(queue, last) {
+  if (!queue.length) return null;
+  const i = queue.findIndex((r) => r.address === last);
+  return queue[(i + 1) % queue.length] ?? queue[0];
+}

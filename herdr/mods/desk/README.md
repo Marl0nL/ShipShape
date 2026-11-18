@@ -18,8 +18,10 @@ Around it, the parts of `main` that said little are replaced:
 
 - **The top bar** (the desk mod's `bar` part, instead of Herdr's tab strip) says where you are:
   `space › agent`, named by the agent's tab or session title rather than the program, with its tag
-  colour. Tabs appear only when a space has more than one, named by what's in them. A
-  **Dashboard** button opens the Dashboard tab (below), and a **Fleet** button the Fleet panel's
+  colour. Tabs appear only when a space has more than one, named by what's in them. When any
+  agent on any machine is blocked, **N need you** says how many: a click goes to the one blocked
+  longest, the next click to the next (`desk.next-blocked` from a key; none on a machine Herdr
+  cannot reach). A **Dashboard** button opens the Dashboard tab (below), and a **Fleet** button the Fleet panel's
   tab when that mod is installed (`install-desk.sh` installs it).
   New, Files, Changes and the window buttons are as before.
 - **The sidebar's lists** are clones of Herdr's (`mods/desk-spaces`, `mods/desk-agents`). Both
@@ -138,7 +140,7 @@ so switching agents never disturbs your sizes. Fonts change only the desk, unles
 
 Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-manager`,
 `desk.sample-coder`, `desk.sample-crew`, `desk.sample-off`, `desk.look-<preset>`, `desk.taglooks`, `desk.toggle`, `desk.looks`,
-`desk.dashboard` (the Dashboard tab, or a new one).
+`desk.dashboard` (the Dashboard tab, or a new one), `desk.next-blocked` (go to the next blocked agent).
 
 ## Files
 

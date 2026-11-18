@@ -16,18 +16,27 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents } from "herdr";
+import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents, machines } from "herdr";
 import { subject, full, refresh, boardOf, lookFor, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
 import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, resolve } from "./looks.js";
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
 import { assistant, manager, coder, none, crewSheet } from "./views.js";
 import { openPlan } from "./fleet-model.js";
 import { dashboardData, dashboardView, watch, readBoards } from "./dashboard.js";
-import { dashboardPlan, dashboardShown } from "./dash.js";
+import { dashboardPlan, dashboardShown, blockedQueue, nextAfter, span } from "./dash.js";
 
 const WIDTHS = { assistant: 440, manager: 760, coder: 500, crew: 360, none: 400 };
 // The desk body each kind shows (a crew's sheet is over its terminal; beside it, its branch).
 const BODY = { crew: "desk-coder" };
+
+// The bar's "N need you": where its last click went, so the next one goes to the next agent.
+let lastBlocked = null;
+function goNextBlocked() {
+  const next = nextAfter(blockedQueue(agents(), spaces(), machines()), lastBlocked);
+  if (!next) return;
+  lastBlocked = next.address;
+  run("pane.focus", { pane: next.pane });
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -88,6 +97,7 @@ export default class Desk extends View {
       //   desk.toggle                                          show or hide the desk
       //   desk.looks                                           open the Look popup
       //   desk.dashboard                                       the Dashboard tab, or a new one
+      //   desk.next-blocked                                    go to the next blocked agent
       cx.spawn(async (cx) => {
         for (;;) {
           let c;
@@ -102,6 +112,7 @@ export default class Desk extends View {
           if (c === "toggle") run("layout.toggle", { id: "desk" });
           if (c === "looks") openOverlay({ mod: "desk", kind: "popup", width: 360, height: 560, props: { part: "looks" } });
           if (c === "dashboard") dashboardPlan(panes(), spaces()).forEach(([command, args]) => run(command, args));
+          if (c === "next-blocked") goNextBlocked();
           cx.notify();
         }
       });
@@ -389,6 +400,8 @@ export default class Desk extends View {
     const body = find(root, "panel-body");
     const enabled = shared("workspace.panels") ?? ["files", "changes"];
     const w = win();
+    const blocked = blockedQueue(crew, spaces(), machines());
+    const next = nextAfter(blocked, lastBlocked);
     const btn = (id, child, act, tip) =>
       div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.hover).text_color(t.foreground)).when(Boolean(tip), (e) => e.tooltip(tip)).on_mouse_down("left", stop).on_click(act).child(child);
     const panelButton = (id, label, iconPath) => {
@@ -471,6 +484,35 @@ export default class Desk extends View {
         ),
       )
       .child(div().flex_1())
+      // Who is waiting on you, on any machine: a click goes to the longest blocked, the next
+      // click to the next (desk.next-blocked does the same from a key).
+      .when(blocked.length > 0, (e) =>
+        e.child(
+          h_flex()
+            .id("bar-needs")
+            .h(24)
+            .px(8)
+            .gap(5)
+            .flex_none()
+            .items_center()
+            .rounded(6)
+            .bg(`${t.blocked}26`)
+            .border_1()
+            .border_color(`${t.blocked}66`)
+            .text_size(12)
+            .text_color(t.foreground)
+            .cursor_pointer()
+            .hover((st) => st.bg(`${t.blocked}40`))
+            .tooltip(`Go to ${next.name}, blocked${Number.isFinite(next.since) ? ` ${span(Date.now() - next.since)}` : ""}${blocked.length > 1 ? "; click again for the next" : ""}`)
+            .on_mouse_down("left", stop)
+            .on_click((_e, cx) => {
+              goNextBlocked();
+              cx.notify();
+            })
+            .child(div().size(7).flex_none().rounded(4).bg(t.blocked))
+            .child(`${blocked.length} need${blocked.length === 1 ? "s" : ""} you`),
+        ),
+      )
       .child(
         h_flex().id("bar-dashboard").h(26).px(8).flex_none().items_center().rounded(6).text_size(12).text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip("Open the Dashboard: every agent on every machine").on_mouse_down("left", stop)
           .on_click(() => dashboardPlan(panes(), spaces()).forEach(([command, args]) => run(command, args)))
