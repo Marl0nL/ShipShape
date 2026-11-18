@@ -185,6 +185,12 @@ is quoted for its shell, a value with a line break is refused, and a Ship name o
 the contract) is left out with a line saying so. When a command fails the panel shows the first
 line of what it said on stderr.
 
+After each read it publishes shared `fleet.summary` for the Desk's Dashboard: when it read, how
+many items need you, and each Ship's state with the agents its last status document lists
+(`ship-status.schema.json`, `herdr.agents`: name, state, and while blocked what it waits for).
+The Dashboard only reads that, so it is as fresh as this panel's last read, and the Dashboard
+asks FleetLedger nothing.
+
 ## Code
 
 `model.js` holds all of the logic and imports nothing; `main.js` only draws, and hands `model.js`

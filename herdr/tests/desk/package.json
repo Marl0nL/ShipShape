@@ -1,13 +1,13 @@
 {
   "name": "herdr-desk-tests",
   "version": "0.1.0",
-  "description": "Tests for the Herdr Desk's Ship tags (herdr/mods/desk/shiptags.js) and looks folder (lookfolder.js), with a stand-in for Herdr",
+  "description": "Tests for the Herdr Desk: its Ship tags, looks folder, Dashboard and task cards (herdr/mods/desk), with stand-ins for Herdr and gpui",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.15"
   },
   "scripts": {
-    "test": "node --test *.test.js"
+    "test": "node --import ./stand-in/register.js --test *.test.js"
   }
 }

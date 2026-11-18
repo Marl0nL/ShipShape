@@ -14,14 +14,17 @@
       "status": "review",
       "note": "PR #412 open, CI green",
       "agent": "fix-login",
-      "link": "https://example.com/pr/412"
+      "link": "https://example.com/pr/412",
+      "branch": "fix/login-redirect",
+      "pr": "https://example.com/org/repo/pull/412"
     },
     {
       "id": "search-api",
       "title": "Search API pagination",
       "status": "doing",
       "note": "Halfway: cursor done, tests next",
-      "agent": "search"
+      "agent": "search",
+      "branch": "feat/search-cursor"
     },
     {
       "id": "flaky-e2e",

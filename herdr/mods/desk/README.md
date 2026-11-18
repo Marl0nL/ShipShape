@@ -6,7 +6,7 @@ on the right that follows the agent you focus and shows what that agent keeps fo
 | Agent kind | Its desk |
 |---|---|
 | Assistant | summary, cards, checklists, notes, links |
-| Manager | a kanban of the tasks it hands out, each with the live status of the agent doing it |
+| Manager | a kanban of the tasks it hands out, each with the live status of the agent doing it (Peek shows that agent over the board), its branch and PR, and a Diff menu |
 | Coder | branch, PR and CI, recent commits, its plan; Herdr's Changes panel below |
 | Crew | a sheet over its terminal (what it's on, what it found, what's next, what its manager heard); its branch and PR on the desk |
 | Untyped | buttons to set its kind, and sample boards to preview |
@@ -18,8 +18,11 @@ Around it, the parts of `main` that said little are replaced:
 
 - **The top bar** (the desk mod's `bar` part, instead of Herdr's tab strip) says where you are:
   `space › agent`, named by the agent's tab or session title rather than the program, with its tag
-  colour. Tabs appear only when a space has more than one, named by what's in them. A **Fleet**
-  button opens the Fleet panel's tab when that mod is installed (`install-desk.sh` installs it).
+  colour. Tabs appear only when a space has more than one, named by what's in them. When any
+  agent on any machine is blocked, **N need you** says how many: a click goes to the one blocked
+  longest, the next click to the next (`desk.next-blocked` from a key; none on a machine Herdr
+  cannot reach). A **Dashboard** button opens the Dashboard tab (below), and a **Fleet** button the Fleet panel's
+  tab when that mod is installed (`install-desk.sh` installs it).
   New, Files, Changes and the window buttons are as before.
 - **The sidebar's lists** are clones of Herdr's (`mods/desk-spaces`, `mods/desk-agents`). Both
   colour by tag: a tagged space's avatar takes its tag's colour, and each tagged agent gets a bar
@@ -38,6 +41,46 @@ Around it, the parts of `main` that said little are replaced:
 - **The corner** shows the look's brand (below).
 - **Pane headers** show on hover only; the coder view hides Herdr's Changes panel outside git.
 
+## Task cards: right now, Peek, branch, PR and Diff
+
+Under a card's note, a live line says how long its agent has been in its state ("working 41m",
+from its tab's `working_since` or `changed_at`) and, when Herdr's report for its terminal
+carries one, what it says right now. A task in Doing whose agent has been idle (or done) for
+ten minutes is marked **stale**; when Herdr has seen no change since it started, the card's own
+`updated` decides. All of it is Herdr's live state: nothing is read for it.
+
+Beside the agent on a card, **Peek** shows that agent's terminal over the board
+(`terminal.peek`): read it or answer it, close the peek, and you are still on the kanban. For a
+crew the button is amber and its tooltip warns that what you type steers the crew directly;
+while the agent's machine is unreachable it is off and says so.
+
+A manager's task card shows the work's branch and PR, taken from the first that answers: the
+task's own `branch`, `pr`, `folder` and `base` (`desk task set ID --branch ... --pr ...`); the
+live terminal of the agent on it (Herdr's `panes()`: its branch and folder); a PR address
+(`/pull/N`, `/merge_requests/N`) in its link or note. **Diff ▾** offers **Open PR #N (files
+changed)** in the browser and **Go to <agent> + Changes** (focus it, open Herdr's Changes
+panel); each says what it does, or why it is off ("No PR yet", "<agent> isn't running here",
+"ship-01 is unreachable"). A board is the agent's to write, so these are checked before they
+are shown or opened (`links.js`): a branch must look like a git ref, a folder must be absolute
+or `~/`, and only `https://` addresses open (a card's or task's `link` too: another scheme is
+shown but not opened). A field that fails is left out, with a `?` saying so.
+
+## Dashboard
+
+One tab with every agent on every machine Herdr reaches: **Needs you** (blocked, the longest
+first; then done), **In progress** and **Idle** by machine with crews nested under their
+manager, **Recent** (status changes since Herdr started) and **Machines** (an unreachable one's
+agents stay, greyed, with Go and Peek off). Each row says where the agent runs, how long it has
+been in its state, what it reports and its branch; **Go** goes to it, **Peek** shows it over the
+Dashboard. Filter by tag or machine.
+
+While it is on show, and only then, it also reads every agent's board (one batch per machine
+every 15 s, never from a machine Herdr does not report ready): rows get each board's summary and
+next-steps tally, a manager's blocked tasks join Needs you, and findings join Recent. From the
+Fleet panel's last read (shared `fleet.summary`) it shows "Fleet: N need you ›" and, for a Ship
+Herdr cannot reach, FleetLedger's last word on its agents. `../../DESK.md`, "The Dashboard",
+has the details.
+
 ## Crews
 
 A crew is a worker another agent dispatched and supervises: a firstmate crewmate, say. Focus one
@@ -54,6 +97,9 @@ and who supervises it. The point is that you talk to the manager, not the crew.
   (`state/<id>.status`), plus the harness's live status line. **Ask <manager> to set it up**
   types the request into the manager's prompt rather than the crew's.
 - "crew of" is its `desk.parent` label or board's `crew.parent`, else the manager in its space.
+- `https://` addresses in its findings and its reports are links (a PR shows as `⇄ #418`; the
+  full address is the tooltip), as they are in a task's note and a board's notes. Nothing but
+  `https://` opens.
 - The triangle needs the layout's `terminal_opacity` below 1 (0.88): only the crew pane's frame
   has an image behind it, so other terminals look the same.
 
@@ -108,7 +154,7 @@ so switching agents never disturbs your sizes. Fonts change only the desk, unles
 
 Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-manager`,
 `desk.sample-coder`, `desk.sample-crew`, `desk.sample-off`, `desk.look-<preset>`, `desk.taglooks`, `desk.toggle`, `desk.looks`,
-`desk.looks-reload`.
+`desk.looks-reload`, `desk.dashboard` (the Dashboard tab, or a new one), `desk.next-blocked` (go to the next blocked agent).
 
 ### Your own looks: a folder of data
 
@@ -166,6 +212,8 @@ Then open the Look popup there (or `herdr-app do desk.looks-reload`).
 |---|---|
 | `main.js` | the header and controller (view, width, look), the Kind and Look popups |
 | `views.js` | assistant, manager (kanban), coder, crew sheet and untyped bodies |
+| `links.js` | a task's branch and PR, the Diff menu, and the checks on what a board names (no gpui or herdr imports) |
+| `dashboard.js`, `dash.js` | the Dashboard tab: its view, and its logic (no gpui or herdr imports; tested in `herdr/tests/desk/`) |
 | `model.js` | the focused agent, its kind, tags and board (read from its own machine) |
 | `looks.js` | palettes, finishes, type, density, presets, tag looks; your folder merged over them |
 | `lookfolder.js` | your looks folder, read and checked (`contracts/desk-looks.md`) |

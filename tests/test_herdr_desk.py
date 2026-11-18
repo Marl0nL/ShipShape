@@ -151,6 +151,55 @@ def test_install_desk_installs_the_fleet_panel_too_and_again(tmp_path):
     assert (tmp_path / "home" / ".local" / "bin" / "desk").is_symlink()
 
 
+def test_the_desk_cli_keeps_a_tasks_branch_and_pr(tmp_path):
+    board = tmp_path / "board.json"
+    desk(tmp_path, "task", "add", "login", "--title", "Fix login", "--status", "doing",
+         "--agent", "fm-fix-login", "--branch", "fix/login", "--folder", "~/wt/login",
+         "--pr", "https://example.com/org/repo/pull/412", "--base", "main", board=board)
+    task = json.loads(board.read_text("utf-8"))["tasks"][0]
+    assert {k: task[k] for k in ("branch", "folder", "pr", "base")} == {
+        "branch": "fix/login", "folder": "~/wt/login",
+        "pr": "https://example.com/org/repo/pull/412", "base": "main"}
+    desk(tmp_path, "task", "set", "login", "--branch", "", "--base", "", board=board)
+    task = json.loads(board.read_text("utf-8"))["tasks"][0]
+    assert "branch" not in task and "base" not in task and task["pr"].endswith("/412")
+    assert "pr: https://example.com/org/repo/pull/412" in desk(tmp_path, "show", board=board).stdout
+
+
+# What the card shows and opens: the CLI and links.js take and refuse the same values.
+LINK_VALUES = {
+    "branch": ["fix/login", "release/2.4.1", "-x", "a..b", "a//b", "a@{1}", "a/", "a.lock",
+               "a b", "$(touch x)", "x" * 201],
+    "folder": ["/home/agent/wt", "~/wt/x", "relative", "~user/x", "/a/../b", "-C"],
+    "pr": ["https://example.com/org/repo/pull/1", "https://example.com:8443/x?y=1#z",
+           "http://example.com/", "javascript:alert(1)", "https://example.com/a b",
+           "https://-x.example.com/", "file:///etc/passwd"],
+}
+
+
+def test_the_desk_cli_and_the_card_check_a_task_the_same_way(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = ("const m = await import(process.argv[1]); const v = JSON.parse(process.argv[2]);"
+              "const f = {branch: m.checkRef, folder: m.checkFolder, pr: m.checkHttps};"
+              "console.log(JSON.stringify(Object.fromEntries(Object.entries(v).map(([k, xs]) =>"
+              " [k, xs.map((x) => f[k](x) !== null)]))))")
+    r = subprocess.run([node, "--input-type=module", "-e", script, (DESK / "links.js").as_uri(),
+                        json.dumps(LINK_VALUES)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    js = json.loads(r.stdout)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("HC_", "DESK_"))}
+    env["DESK_FILE"] = str(tmp_path / "board.json")
+    for field, values in LINK_VALUES.items():
+        for value, ok in zip(values, js[field], strict=True):
+            cli = subprocess.run([sys.executable, str(DESK / "bin" / "desk"), "task", "add", "x",
+                                  "--title", "X", f"--{field}={value}"], env=env,
+                                 capture_output=True, text=True, timeout=60)
+            assert (cli.returncode == 0) == ok, (field, value, cli.stderr)
+    assert js["branch"][:2] == [True, True] and not any(js["branch"][2:])
+
+
 def test_the_placeholder_looks_folder_is_the_contracts_example():
     """herdr/desk-looks.example is what contracts/desk-looks.md describes: its looks.json and
     palette are the contract's own valid examples, and its logo is a small real PNG. Nothing

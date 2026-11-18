@@ -3,11 +3,130 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, hc, setShared } from "herdr";
+import { run, hc, setShared, panes, machines, layout, shared, spaces, terminals } from "herdr";
 import { STATUSES, STATUS_LABEL, KIND_LABEL, agentNamed, ago, toolsOn, messageFor, docFor } from "./model.js";
-import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openUrl, button, code, stop } from "./ui.js";
+import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openHttps, button, code, stop, linked } from "./ui.js";
+import { taskLinks, diffMenu, findNode, urlsIn } from "./links.js";
+import { cardLive, tabIndex, span } from "./dash.js";
 
 const go = (a) => a && run("pane.focus", { pane: a.pane });
+const machineOf = (a) => (a?.address?.includes("/") ? a.address.split("/")[0] : null);
+const machineState = (m) => machines().find((x) => (x.name ?? null) === m)?.layout ?? "ready";
+
+// Herdr's Changes panel, as the bar's Changes button opens it: only in a layout that has one.
+function hasChanges() {
+  const root = layout();
+  const enabled = shared("workspace.panels") ?? ["files", "changes"];
+  return Boolean(findNode(root, "panel") && findNode(root, "panel-body")) && enabled.includes("changes");
+}
+// Peek: the agent's terminal over this tab (terminal.peek), so you can read or answer it and
+// close the peek to be back on the kanban. A crew is typed into directly: its tooltip says so,
+// in the crew terminal's amber.
+function peekButton(t, L, who, name, id) {
+  const machine = machineOf(who);
+  const off = machineState(machine) === "unavailable" ? `${machine} is unreachable` : null;
+  const crew = Boolean((shared("desk.tagIndex") ?? {}).crews?.[who.address]);
+  const tip = crew ? `Peek at ${name} here. Careful: it's the crew's own terminal; what you type steers it directly, so talk to its manager instead` : `Peek at ${name} over the board; close the peek to come back`;
+  return h_flex()
+    .id(id)
+    .h(20)
+    .px(6)
+    .gap(4)
+    .flex_none()
+    .items_center()
+    .rounded(Math.min(L.f.radius, 8))
+    .border_1()
+    .border_color(crew ? `${CAUTION}88` : t.border)
+    .text_size(11)
+    .text_color(off ? t.dim : crew ? CAUTION : t.muted)
+    .tooltip(off ?? tip)
+    .on_mouse_down("left", stop)
+    .when(!off, (e) =>
+      e
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => {
+          cx.stop_propagation();
+          try {
+            run("terminal.peek", { terminal: who.address });
+          } catch {}
+        }),
+    )
+    .when(crew, (e) => e.child(caution(10, CAUTION)))
+    .child("Peek");
+}
+
+function goChanges(who) {
+  go(who);
+  run("layout.select", { stack: "panel-body", child: "changes" });
+  run("layout.show", { id: "panel" });
+}
+
+// A task's branch and PR (links.js: the task's own fields, else the live agent's pane, else a PR
+// address in its link or note), and the Diff menu: open the PR's changed files in the browser,
+// or go to the agent with Herdr's Changes panel open. Each item says what it does, or why not.
+function linksRow(t, L, task, who, key, view) {
+  const pane = who ? panes().find((p) => p.pane === who.pane) : null;
+  const links = taskLinks(task, pane);
+  if (!links.branch && !links.pr && !links.refused.length) return null;
+  const machine = machineOf(who);
+  const open = view?.open?.diff === key;
+  const items = diffMenu(task, links, who, { machine, machineState: machineState(machine), changes: hasChanges() });
+  const b = links.branch;
+  const branchTip = b ? `${b.value}${links.base ? ` against ${links.base}` : ""}${links.folder ? `, in ${links.folder.value}` : ""}${machine ? ` on ${machine}` : ""} (${b.from === "task" ? "from the task" : `from ${task.agent}'s terminal`})` : null;
+  const pr = links.pr;
+  const row = h_flex()
+    .gap(8)
+    .items_center()
+    .text_size(11)
+    .when(Boolean(b), (r) => r.child(h_flex().id(`${key}-branch`).min_w(0).gap(4).items_center().text_color(t.muted).tooltip(branchTip).child(icon("git-branch", 11, t.dim)).child(div().max_w(170).truncate().child(b.value))))
+    .when(Boolean(pr), (r) =>
+      r.child(
+        h_flex()
+          .id(`${key}-pr`)
+          .flex_none()
+          .gap(4)
+          .items_center()
+          .text_color(t.foreground)
+          .cursor_pointer()
+          .hover((s) => s.text_color(t.accent))
+          .tooltip(`${pr.url} (from the task's ${pr.from === "task" ? "pr" : pr.from})`)
+          .on_mouse_down("left", stop)
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            openHttps(pr.url);
+          })
+          .child(icon("git-compare", 11, t.accent))
+          .child(pr.number ? `#${pr.number}` : "PR"),
+      ),
+    )
+    .when(links.refused.length > 0, (r) => r.child(div().id(`${key}-refused`).flex_none().text_color(t.ansi3 ?? t.working).tooltip(`Left out: the task's ${links.refused.join(", ")} (not a value the desk uses)`).child("?")))
+    .child(div().flex_1())
+    .child(button(t, L, `${key}-diff`, open ? "Diff ▴" : "Diff ▾", () => {
+      view.open.diff = open ? null : key;
+    }, { h: 20, tip: "Ways to see this task's changes" }));
+  if (!open) return row;
+  const menu = v_flex()
+    .gap(5)
+    .p(6)
+    .rounded(Math.min(L.f.radius, 6))
+    .bg(t.canvas)
+    .border_1()
+    .border_color(t.border)
+    .children(
+      items.map((it) =>
+        v_flex()
+          .gap(2)
+          .child(button(t, L, `${key}-diff-${it.id}`, it.label, () => {
+            view.open.diff = null;
+            if (it.id === "pr-files") openHttps(it.url);
+            if (it.id === "changes") goChanges(who);
+          }, { h: 22, off: it.off, tip: it.detail }))
+          .child(div().text_size(10.5).text_color(t.dim).child(it.off ?? it.detail ?? "")),
+      ),
+    );
+  return v_flex().gap(5).child(row).child(menu);
+}
 
 function scroll(id, t, L) {
   return v_flex().id(id).size_full().min_h(0).overflow_y_scrollbar().p(L.d.pad + 2).gap(L.d.gap + 4);
@@ -37,7 +156,7 @@ function cardsOf(t, L, b, W, idp) {
         .when(Boolean(c.body), (e) => e.child(body(t, L, c.body)))
         .when(Boolean(c.tags?.length), (e) => e.child(h_flex().gap(4).flex_wrap().children(c.tags.map((tag) => chip(t, L, tag, tagColor(t, tag), { h: 18 }))))),
     );
-    if (c.link) el = el.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(c.link).on_click(() => openUrl(c.link));
+    if (c.link) el = el.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(c.link).on_click(() => openHttps(c.link));
     return el;
   };
   // Two columns when there's room (cards dealt left, right, left...), else one.
@@ -73,7 +192,7 @@ function listsOf(t, L, b, idp) {
 function notesOf(t, L, b) {
   if (!b?.notes) return null;
   const k = card(t, L, t.border, "notes");
-  return v_flex().gap(4).child(label(t, L, "Notes")).child(k.finish(k.inner.child(body(t, L, b.notes))));
+  return v_flex().gap(4).child(label(t, L, "Notes")).child(k.finish(k.inner.child(linked(t, L, b.notes, "notes-text"))));
 }
 
 function linksOf(t, L, b, idp) {
@@ -94,7 +213,7 @@ function linksOf(t, L, b, idp) {
           .text_color(t.accent)
           .hover((s) => s.text_color(t.foreground))
           .tooltip(l.url)
-          .on_click(() => openUrl(l.url))
+          .on_click(() => openHttps(l.url))
           .child(icon("file-text", 12, t.dim))
           .child(div().truncate().child(l.title ?? l.url)),
       ),
@@ -180,16 +299,41 @@ export function assistant(t, L, s, state, W, view) {
     );
 }
 
-// One task: its title, note, who's on it (live), and when it last moved.
-function taskCard(t, L, task, idp) {
+// One task: its title, note, who's on it (live), its branch and PR, and when it last moved.
+function taskCard(t, L, task, idp, view) {
   const color = statusColor(t, task.status);
   const who = agentNamed(task.agent);
   const k = card(t, L, color, `${idp}-${task.id}`);
+  const links = linksRow(t, L, task, who, `${idp}-${task.id}`, view);
+  const live = who ? cardLive(task, who, tabIndex(spaces()).get(who.tab)?.tab, terminals().find((x) => x.address === who.address), Date.now()) : null;
   let el = k.finish(
     k.inner
       .gap(5)
-      .child(title(t, L, task.title ?? task.id ?? "", 13))
-      .when(Boolean(task.note), (e) => e.child(body(t, L, task.note)))
+      .child(
+        h_flex()
+          .gap(6)
+          .items_start()
+          .child(title(t, L, task.title ?? task.id ?? "", 13).flex_1())
+          .when(Boolean(live?.stale), (e) =>
+            e.child(div().id(`${idp}-${task.id}-stale`).flex_none().tooltip(`${task.agent} has been ${who.status} for ${span(live.still)} while this task is in Doing`).child(chip(t, L, "stale", t.ansi3 ?? t.working, { h: 18 }))),
+          ),
+      )
+      .when(Boolean(task.note), (e) => e.child(linked(t, L, task.note, `${idp}-${task.id}-note`)))
+      // Right now: how long its agent has been at it, and what it says (when Herdr's report says).
+      .when(Boolean(live), (e) =>
+        e.child(
+          h_flex()
+            .id(`${idp}-${task.id}-live`)
+            .gap(6)
+            .items_center()
+            .min_w(0)
+            .text_size(11)
+            .child(pip(t, who.status, 6))
+            .child(div().flex_none().text_color(who.status === "blocked" ? t.blocked : t.muted).child(live.text))
+            .when(Boolean(live.msg), (r) => r.tooltip(`Right now: ${live.msg}`).child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`“${live.msg}”`))),
+        ),
+      )
+      .when(Boolean(links), (e) => e.child(links))
       .child(
         h_flex()
           .gap(6)
@@ -213,8 +357,9 @@ function taskCard(t, L, task, idp) {
                 .when(Boolean(who), (c) => c.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(`Go to ${task.agent} (${who.status})`).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); go(who); })),
             ),
           )
+          .when(Boolean(who), (r) => r.child(peekButton(t, L, who, task.agent, `${idp}-${task.id}-peek`)))
           .child(div().flex_1())
-          .when(Boolean(task.link), (r) => r.child(div().id(`${idp}-${task.id}-link`).cursor_pointer().tooltip(task.link).on_click(() => openUrl(task.link)).child(icon("file-text", 12, t.dim))))
+          .when(Boolean(task.link), (r) => r.child(div().id(`${idp}-${task.id}-link`).cursor_pointer().tooltip(task.link).on_click(() => openHttps(task.link)).child(icon("file-text", 12, t.dim))))
           .when(Boolean(task.updated), (r) => r.child(div().text_size(10.5).text_color(t.dim).child(ago(task.updated)))),
       ),
   );
@@ -256,7 +401,7 @@ export function manager(t, L, s, state, W, view) {
           .child(div().text_size(11).text_color(t.dim).child(String(list.length)))
           .when(st === "done" && list.length > 0, (e) => e.child(div().flex_1()).child(icon(folded ? "chevron-right" : "chevron-down", 12, t.dim))),
       )
-      .when(!folded, (e) => e.children(list.map((task) => taskCard(t, L, task, `t-${st}`))))
+      .when(!folded, (e) => e.children(list.map((task) => taskCard(t, L, task, `t-${st}`, view))))
       .when(!list.length && st !== "done", (e) => e.child(div().py(6).text_size(11).text_color(t.dim).child("Nothing here")));
   };
   if (wide) {
@@ -298,7 +443,7 @@ function gitRows(t, L, g) {
         .hover((s) => s.bg(t.hover))
         .rounded(4)
         .tooltip(g.pr.url)
-        .on_click(() => openUrl(g.pr.url))
+        .on_click(() => openHttps(g.pr.url))
         .child(icon("git-compare", 14, t.accent))
         .child(div().flex_none().font_family(L.ty.labels).text_color(t.foreground).child(`#${g.pr.number}`))
         .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(g.pr.title))
@@ -336,7 +481,7 @@ export function coder(t, L, s, state, W, git, view) {
     .when(git?.error, (e) => e.child(body(t, L, git.error)))
     .children(listsOf(t, L, b, "c"))
     .child(cardsOf(t, L, b, W, "c") ?? div())
-    .when(Boolean(b?.tasks?.length), (e) => e.child(label(t, L, "Tasks")).children(b.tasks.map((task) => taskCard(t, L, task, "ct"))));
+    .when(Boolean(b?.tasks?.length), (e) => e.child(label(t, L, "Tasks")).children(b.tasks.map((task) => taskCard(t, L, task, "ct", view))));
 }
 
 export function none(t, L, s, view) {
@@ -444,7 +589,7 @@ function findingsOf(t, L, b) {
           .gap(8)
           .items_start()
           .child(div().size(7).mt(6).flex_none().rounded(4).bg(f.tone ? toneColor(t, f.tone) : t.dim))
-          .child(div().flex_1().min_w(0).text_size(L.d.text - 0.5).line_height(`${Math.round((L.d.text - 0.5) * 1.45)}px`).text_color(i === 0 ? t.foreground : t.muted).child(f.text ?? ""))
+          .child(linked(t, L, f.text ?? "", `find-${i}-text`, { color: i === 0 ? t.foreground : t.muted }).flex_1())
           .child(div().flex_none().text_size(10.5).text_color(t.dim).mt(2).child(ago(f.at))),
       ),
     );
@@ -470,6 +615,16 @@ function nextOf(t, L, b) {
     );
 }
 
+// A report cut to fit, but never through the middle of an address it names.
+function clip(text) {
+  if (text.length <= 220) return text;
+  const cut = urlsIn(text).reduce((end, u) => {
+    const at = text.indexOf(u);
+    return at < 220 && at + u.length > end ? at + u.length : end;
+  }, 220);
+  return cut >= text.length ? text : `${text.slice(0, cut)}…`;
+}
+
 function logOf(t, L, info) {
   const log = info?.log ?? [];
   if (!log.length) return null;
@@ -483,7 +638,7 @@ function logOf(t, L, info) {
           .gap(7)
           .items_start()
           .child(div().flex_none().w(96).child(chip(t, L, x.verb, t[VERB[x.verb]] ?? t.idle, { h: 18 })))
-          .child(div().flex_1().min_w(0).text_size(11.5).line_height("16px").text_color(i === 0 ? t.foreground : t.muted).child(x.text.length > 220 ? `${x.text.slice(0, 220)}…` : x.text))
+          .child(linked(t, L, clip(x.text), `log-${i}-text`, { size: 11.5, lineHeight: "16px", color: i === 0 ? t.foreground : t.muted }).flex_1())
           .child(div().flex_none().text_size(10.5).text_color(t.dim).mt(1).child(ago(x.at))),
       ),
     );

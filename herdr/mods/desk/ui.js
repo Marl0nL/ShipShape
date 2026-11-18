@@ -4,6 +4,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec } from "herdr";
+import { checkHttps, linkify } from "./links.js";
 
 const ICON = "mods/workspace-chrome";
 export const icon = (name, size, color) => svg(`${ICON}/${name}.svg`).size(size).flex_none().text_color(color);
@@ -81,6 +82,47 @@ export function openUrl(url) {
   if (url) exec("xdg-open", [url]).catch(() => {});
 }
 
+// What a board names and the desk opens (a PR, a link in a finding): https:// only, else nothing.
+export function openHttps(url) {
+  const u = checkHttps(url);
+  if (u) exec("xdg-open", [u]).catch(() => {});
+  return Boolean(u);
+}
+
+// Agent-written text with its https:// addresses clickable (a PR as "⇄ #418"), the full
+// address as each link's tooltip. Text without one is drawn as before. `id`: unique on the page.
+export function linked(t, L, text, id, style = {}) {
+  const size = style.size ?? L.d.text - 0.5;
+  const color = style.color ?? t.muted;
+  const base = (el) => el.min_w(0).text_size(size).line_height(style.lineHeight ?? `${Math.round(size * 1.45)}px`).text_color(color);
+  const parts = linkify(text);
+  if (!parts.some((p) => p.url)) return base(div()).child(text ?? "");
+  // Words one by one so the line wraps where it would in plain text; a line break in the text
+  // stays one (a full-width break in the row).
+  const words = parts.flatMap((p) => (p.url ? [p] : p.text.split(/(\n)|[^\S\n]+/).filter(Boolean).map((w) => (w === "\n" ? { br: true } : { text: w }))));
+  return base(h_flex().id(id).flex_wrap().gap(4).items_center()).children(
+    words.map((w, i) =>
+      w.br
+        ? div().w_full().h(0)
+        : w.url
+        ? div()
+            .id(`${id}-u${i}`)
+            .flex_none()
+            .text_color(t.accent)
+            .cursor_pointer()
+            .hover((s) => s.text_color(t.foreground))
+            .tooltip(w.url)
+            .on_mouse_down("left", stop)
+            .on_click((_e, cx) => {
+              cx.stop_propagation();
+              openHttps(w.url);
+            })
+            .child(w.label)
+        : div().flex_none().child(w.text),
+    ),
+  );
+}
+
 // A strip across the top, blended from one colour to the other in short steps.
 export function band(L) {
   if (!L.band) return null;
@@ -94,8 +136,27 @@ export function band(L) {
     .children(Array.from({ length: N }, (_, i) => div().flex_1().h_full().bg(`#${a.map((x, k) => hex(x + ((b[k] - x) * i) / (N - 1))).join("")}`)));
 }
 
-// A small pill button.
+// A small pill button. `opts.off`: shown but does nothing, its tooltip says why.
 export function button(t, L, id, text, act, opts = {}) {
+  if (opts.off) {
+    return h_flex()
+      .id(id)
+      .flex_none()
+      .h(opts.h ?? 24)
+      .px(opts.icon && !text ? 5 : 8)
+      .gap(5)
+      .items_center()
+      .rounded(Math.min(L.f.radius, 8))
+      .border_1()
+      .border_color(t.border)
+      .text_size(11.5)
+      .text_color(t.dim)
+      .opacity(0.6)
+      .tooltip(opts.off)
+      .on_mouse_down("left", stop)
+      .when(Boolean(opts.icon), (el) => el.child(icon(opts.icon, 13, t.dim)))
+      .when(Boolean(text), (el) => el.child(text));
+  }
   return h_flex()
     .id(id)
     .flex_none()
@@ -114,6 +175,7 @@ export function button(t, L, id, text, act, opts = {}) {
     .when(Boolean(opts.tip), (el) => el.tooltip(opts.tip))
     .on_mouse_down("left", stop)
     .on_click((e, cx) => {
+      cx.stop_propagation(); // a button on a clickable row (the Dashboard's) is not a click on the row
       act(e, cx);
       cx.notify();
     })

@@ -216,6 +216,20 @@ const labelReader = () => {
   return (addr) => m.get(addr) ?? {};
 };
 
+/** A firstmate crew's home folder: the agent on its machine whose folder hashes to the tag its
+ *  firstmate.home label ends in (as bossOf matches it), else what the crew sheet found. */
+export function fmHomeOf(address) {
+  const labelsOf = labelReader();
+  const tag = labelsOf(address)["firstmate.home"]?.match(/-([0-9a-f]{8})$/)?.[1];
+  if (tag) {
+    const machine = machineOfAddr(address);
+    const cwdOf = cwdReader();
+    const hit = agents().find((x) => machineOfAddr(x.address) === machine && x.address !== address && homeHash(cwdOf(x.address)) === tag);
+    if (hit) return cwdOf(hit.address);
+  }
+  return crews.get(address)?.home ?? null;
+}
+
 export function parentOf(s, board) {
   if (!s?.agent) return null;
   return bossOf(s.agent, labelReader(), s.crew?.parent ?? board?.crew?.parent ?? null);

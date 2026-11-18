@@ -10,21 +10,33 @@
 //   crew        a dispatched worker's sheet, over its (short) terminal: the head swaps the main
 //               area's stack to "crew" while one is focused; the desk beside it shows its branch
 //   kind, looks popups (props.part), opened from the head
+//   dashboard   a tab with every agent on every machine (dashboard.js), from the bar's Dashboard
 //
 // Agents feed it through labels and one board file each: see AGENTS.md, and bin/desk.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents } from "herdr";
+import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents, machines } from "herdr";
 import { subject, full, refresh, boardOf, lookFor, loadLooks, syncLooks, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
 import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, FOLDER_TAG_LOOKS, tagLooksOf, resolve } from "./looks.js";
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
 import { assistant, manager, coder, none, crewSheet } from "./views.js";
 import { openPlan } from "./fleet-model.js";
+import { dashboardData, dashboardView, watch, readBoards } from "./dashboard.js";
+import { dashboardPlan, dashboardShown, blockedQueue, nextAfter, span } from "./dash.js";
 
 const WIDTHS = { assistant: 440, manager: 760, coder: 500, crew: 360, none: 400 };
 // The desk body each kind shows (a crew's sheet is over its terminal; beside it, its branch).
 const BODY = { crew: "desk-coder" };
+
+// The bar's "N need you": where its last click went, so the next one goes to the next agent.
+let lastBlocked = null;
+function goNextBlocked() {
+  const next = nextAfter(blockedQueue(agents(), spaces(), machines()), lastBlocked);
+  if (!next) return;
+  lastBlocked = next.address;
+  run("pane.focus", { pane: next.pane });
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -58,6 +70,7 @@ export default class Desk extends View {
     this.git = null;
     this.gitKey = null;
     this.widths = { ...WIDTHS, ...JSON.parse(localStorage.getItem("widths") ?? "{}") };
+    this.dash = { filter: {}, open: { idle: false } };
     if (this.part === "kind") {
       this.input = InputState.new({ placeholder: "Add a tag, then Enter" });
       this.input.on("submit", (_e, cx) => {
@@ -92,6 +105,8 @@ export default class Desk extends View {
       //   desk.taglooks                                        pause / resume looks by tag
       //   desk.toggle                                          show or hide the desk
       //   desk.looks                                           open the Look popup
+      //   desk.dashboard                                       the Dashboard tab, or a new one
+      //   desk.next-blocked                                    go to the next blocked agent
       //   desk.looks-reload                                    read your looks folder again
       cx.spawn(async (cx) => (await publishLooks(), cx.notify()));
       cx.spawn(async (cx) => {
@@ -108,6 +123,8 @@ export default class Desk extends View {
           if (c === "toggle") run("layout.toggle", { id: "desk" });
           if (c === "looks-reload") await publishLooks();
           if (c === "looks") openOverlay({ mod: "desk", kind: "popup", width: 360, height: 560, props: { part: "looks" } });
+          if (c === "dashboard") dashboardPlan(panes(), spaces()).forEach(([command, args]) => run(command, args));
+          if (c === "next-blocked") goNextBlocked();
           cx.notify();
         }
       });
@@ -116,6 +133,7 @@ export default class Desk extends View {
 
   shown() {
     if (this.part === "head") return true;
+    if (this.part === "dashboard") return dashboardShown(panes(), spaces());
     if (this.part === "crew") return find(layout(), "main-stack")?.active === "crew";
     const body = find(layout(), "desk-body");
     return body?.active === `desk-${this.part}`;
@@ -124,6 +142,9 @@ export default class Desk extends View {
   tick(cx) {
     // Ship tags: fleet.json every 30 s, the local ship-fleet every 5 minutes (shiptags.js).
     if (this.part === "head") cx.spawn(async (cx) => (await readLedger()) && cx.notify());
+    // The Dashboard's Recent: status changes as Herdr shows them (no reads), from the start.
+    if (this.part === "head") watch();
+    if (this.part === "dashboard") return this.dashTick(cx);
     if (!this.shown()) return;
     const s = subject();
     if (!s) return;
@@ -137,6 +158,19 @@ export default class Desk extends View {
       }
       if (this.part === "coder") this.readGit(s, cx);
     });
+  }
+
+  // The Dashboard redraws while on show (its durations move) and reads the boards then, each
+  // machine every 15 s at most (dashboard.js); hidden, it does nothing.
+  dashTick(cx) {
+    if (!this.shown()) return;
+    const moved = watch();
+    cx.spawn(async (cx) => {
+      const changed = await readBoards().catch(() => false);
+      if (changed) cx.notify();
+    });
+    this.dashN = ((this.dashN ?? 0) + 1) % 2;
+    if (moved || this.dashN === 0) cx.notify();
   }
 
   // The coder's strip: git here or on the agent's machine; the PR through gh when it's there.
@@ -295,6 +329,7 @@ export default class Desk extends View {
     if (part === "bar") return this.bar(t, L);
     if (part === "kind") return this.kindPopup(t, L, s);
     if (part === "looks") return this.looksPopup(t, L, s);
+    if (part === "dashboard") return v_flex().id("root").size_full().min_w(0).min_h(0).bg(t.canvas).font_family(L.ty.ui).text_color(t.foreground).child(dashboardView(t, L, dashboardData(this.dash.filter), { dash: this.dash }));
     const state = boardOf(s);
     // The desk's own width: a copy hidden in the stack misses size changes, the layout doesn't.
     const W = find(layout(), "desk")?.size?.px ?? this.size.width;
@@ -377,6 +412,8 @@ export default class Desk extends View {
     const body = find(root, "panel-body");
     const enabled = shared("workspace.panels") ?? ["files", "changes"];
     const w = win();
+    const blocked = blockedQueue(crew, spaces(), machines());
+    const next = nextAfter(blocked, lastBlocked);
     const btn = (id, child, act, tip) =>
       div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover((st) => st.bg(t.hover).text_color(t.foreground)).when(Boolean(tip), (e) => e.tooltip(tip)).on_mouse_down("left", stop).on_click(act).child(child);
     const panelButton = (id, label, iconPath) => {
@@ -459,6 +496,40 @@ export default class Desk extends View {
         ),
       )
       .child(div().flex_1())
+      // Who is waiting on you, on any machine: a click goes to the longest blocked, the next
+      // click to the next (desk.next-blocked does the same from a key).
+      .when(blocked.length > 0, (e) =>
+        e.child(
+          h_flex()
+            .id("bar-needs")
+            .h(24)
+            .px(8)
+            .gap(5)
+            .flex_none()
+            .items_center()
+            .rounded(6)
+            .bg(`${t.blocked}26`)
+            .border_1()
+            .border_color(`${t.blocked}66`)
+            .text_size(12)
+            .text_color(t.foreground)
+            .cursor_pointer()
+            .hover((st) => st.bg(`${t.blocked}40`))
+            .tooltip(`Go to ${next.name}, blocked${Number.isFinite(next.since) ? ` ${span(Date.now() - next.since)}` : ""}${blocked.length > 1 ? "; click again for the next" : ""}`)
+            .on_mouse_down("left", stop)
+            .on_click((_e, cx) => {
+              goNextBlocked();
+              cx.notify();
+            })
+            .child(div().size(7).flex_none().rounded(4).bg(t.blocked))
+            .child(`${blocked.length} need${blocked.length === 1 ? "s" : ""} you`),
+        ),
+      )
+      .child(
+        h_flex().id("bar-dashboard").h(26).px(8).flex_none().items_center().rounded(6).text_size(12).text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip("Open the Dashboard: every agent on every machine").on_mouse_down("left", stop)
+          .on_click(() => dashboardPlan(panes(), spaces()).forEach(([command, args]) => run(command, args)))
+          .child("Dashboard"),
+      )
       .when(Boolean(this.fleetMod), (e) =>
         e.child(
           h_flex().id("bar-fleet").h(26).px(8).flex_none().items_center().rounded(6).text_size(12).text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip("Open the Fleet panel").on_mouse_down("left", stop)

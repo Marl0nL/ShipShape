@@ -21,9 +21,11 @@ follow Herdr's updates.
 | `layouts/desk.json` | the window (a clone of Herdr's `main`; tree below) |
 | `layouts/desk.svg` | its picture in Herdr's settings |
 | `themes/desk-*.json` | palettes: Slate, Ember and Linen (the `work` tag wears Slate; `personal` wears Herdr's own Moss) |
-| `mods/desk/` | the desk itself, in parts (`props.part`): `head`, `assistant`, `manager`, `coder`, `crew`, `none`, plus the window's `bar` and `brand` corner |
+| `mods/desk/` | the desk itself, in parts (`props.part`): `head`, `assistant`, `manager`, `coder`, `crew`, `none`, plus the window's `bar` and `brand` corner, and the `dashboard` tab |
 | `mods/desk/bin/desk` | the agents' CLI (one Python 3 file, no dependencies), linked as `~/.local/bin/desk` |
 | `mods/desk-spaces/`, `mods/desk-agents/` | clones of Herdr's shipped `spaces` and `agents` sidebar mods, changed where marked `Desk:` (tag colours; the agents list's hierarchy view) |
+| `mods/desk/links.js` | task cards' branch, PR and Diff menu, and the checks on what a board names before the desk shows or opens it |
+| `mods/desk/dash.js`, `dashboard.js` | the Dashboard: its logic (no gpui or herdr imports, tested in `tests/desk/`) and its view |
 | `mods/desk/lookfolder.js` | your own looks, from a folder of data in Herdr's folder (`desk-looks/`, below) |
 | `desk-looks.example/` | a placeholder looks folder to start from (nothing installs it) |
 | `mods/desk/shiptags.js` | each Ship's FleetLedger tags (below); `fleet-model.js` beside it is a link to the Fleet panel's `mods/fleet/model.js`, whose checks it reads with |
@@ -74,6 +76,46 @@ The head part then moves the layout to match, by clicks rather than by rewriting
 (which would throw away the person's dragged sizes): `layout.select` for `desk-body` and
 `main-stack`, `layout.resize` for the desk's width (each kind keeps the width last given it), and
 `app.theme` for the palette.
+
+## The Dashboard
+
+The bar's **Dashboard** button (or `desk.dashboard`) opens one tab, or selects it when it is open,
+in a space on this computer so it stays when a Ship goes. It lists every agent on every machine
+Herdr reaches, from Herdr's live state alone (`agents()`, `spaces()`, `panes()`, `terminals()`,
+`machines()` and `desk.tagIndex`): no file is read and nothing runs for it.
+
+- **Needs you:** blocked agents, the longest blocked first, then those done while nobody looked.
+- **In progress** and **Idle** (folded): by machine, this computer first, each agent nested under
+  the one it reports to (or "of <manager>" when that one is in another section). A row shows where
+  it runs, how long it has been in its state (its tab's `working_since` or `changed_at`: Herdr
+  times tabs, not agents, so two agents sharing a tab share a clock), what it reports (`terminals()`'s `report`, when that carries a
+  message) and its branch (`panes()`).
+- **Recent:** status changes this Herdr has seen since it started, in memory only (50 kept, the
+  latest 15 shown with the boards' findings and crews' reports).
+- **Machines:** each machine's agents, or "unreachable since 10:05" when `machines()` says so.
+  That machine's agents stay, greyed and dated (the last ones seen when Herdr drops them), and
+  their Go and Peek are off.
+- Filter chips by tag and machine. **Go** focuses the agent (`pane.focus`); **Peek** shows its
+  terminal over the Dashboard (`terminal.peek`), and warns before you peek at a crew.
+
+What agents keep comes on top, and only while the Dashboard is on show:
+
+- **Boards:** one `sh` per machine every 15 s, through Herdr's connection (`exec` with `on`), that
+  prints every board its agents' `desk.file` labels name (else the desk's default place), at
+  most 60 a machine and 256 KiB each. For a firstmate crew with no board yet, the same batch
+  prints firstmate's `state/<id>.meta` (kind, branch, worktree) and the last lines of its
+  `state/<id>.status`. Each path and id is checked first and goes to `sh` only as an argument; a
+  marker made for each read separates the files, so a board cannot pass for the next one. A
+  machine `machines()` does not report `ready` is not asked, so reads never pile up against one
+  that is down. Rows then show each board's summary and next-steps tally; a manager's blocked
+  tasks go in Needs you (even while the manager is idle); findings and crews' reports go in
+  Recent.
+- **The fleet:** the Fleet panel publishes `fleet.summary` after each of its reads. The Dashboard
+  shows "Fleet: 2 need you ›" (it opens the Fleet tab) and, for a Ship Herdr cannot reach,
+  FleetLedger's last word on its agents, dated ("FleetLedger (8m ago): 2 working, 1 blocked"),
+  with **Open in Fleet ›**. It asks FleetLedger nothing itself.
+
+It redraws every three seconds while on show and does nothing while hidden: no read, no redraw.
 
 ## How agents feed it
 
@@ -150,6 +192,7 @@ without tags of their own wear their boss's, and secondmates go by their space's
 | `desk.tagLooks`, `desk.tagLooksOff` | the Look popup | which tag wears which preset; paused or not |
 | `desk.lookFolder` | the desk (head and Look popup) | your looks folder as checked (`{looks, problem}`); each part checks it again |
 | `desk.sample` | `desk.sample-*` commands | a sample board in place of the focused agent |
+| `fleet.summary` | the Fleet panel, after each read | the Ships as FleetLedger last saw them, their listed agents, how many items need you: read by the Dashboard |
 | `sidebar.width`, `sidebar.collapsed` | the brand corner's toggle | the sidebar fold |
 
 ## Editor support
