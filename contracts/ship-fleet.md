@@ -34,9 +34,10 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `machine-bundle NAME` (always JSON) | one document | `shipshape.machine-bundle/1` |
 | `machine-pair` (the pairing key's forced command; always JSON) | one document | `shipshape.machine-pair/1` |
 | `keys ls --json` | a list, one per key line | `shipshape.fleetledger-key/1` |
+| `looks show --json` | one document | `shipshape.fleetledger-looks/1` |
 
 `--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
-`about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls`, `machine-bundle` (which then signs
+`about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls`, `looks show`, `machine-bundle` (which then signs
 nothing) and `machine-pair` (a request waits; approving it does not), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
 
 ## `ship-fleet ls --json` and `ship-fleet status NAME --json`
@@ -559,3 +560,73 @@ A shell inside `tmux` or `screen` keeps the `SSH_USER_AUTH` of the session that 
 it while that session lasts. The name is the first line's for that key, even where sshd
 skipped it (a `from=` that did not match) and let the key in through a later one: the
 fingerprint is right either way. A `machine-bundle` call names its machine as before.
+
+## `ship-fleet looks`
+
+One looks folder for the Herdr Desk (`desk-looks.md`: palettes, presets, tag looks and
+logos), kept by FleetLedger for every computer of yours:
+
+```sh
+ship-fleet looks publish ~/.config/herdr-app/desk-looks    # a folder on this computer
+tar -cf - -C ~/.config/herdr-app/desk-looks . | ssh fleetledger@HOST ship-fleet looks publish -
+ship-fleet looks show [--json]                              # what is kept
+ship-fleet looks clear                                      # keep none
+```
+
+**Who may publish.** Only someone with a shell on the FleetLedger computer, as for every
+`ship-fleet` command: the second line works from a computer whose own key has a shell
+there. The keys FleetLedger writes into its `authorized_keys` cannot: a trusted machine's
+key runs `machine-bundle NAME` and the pairing key `machine-pair`, whatever the client asks
+for, and neither reads stdin or runs another command.
+
+**Checked on the way in, whole.** Every rule of `desk-looks.md` is checked again in
+FleetLedger, never trusted from the computer that sent it: known fields only, the id, tag
+and colour patterns, what a preset may name (the Desk's own palettes, finishes, types,
+densities and fonts, or the folder's palettes), the size and count limits, and each logo by
+its first bytes. A few corners are stricter than the Desk: a field named twice in one
+object, a field given as `null`, text that is not valid Unicode, and JSON that is not UTF-8
+are refused. Files are found by name from `looks.json`, never by listing the folder:
+
+- a folder: each file is opened without following a link (a link anywhere below the folder
+  you name is refused), must be a regular file, and is read with a hard limit;
+- `-`: at most 1 MiB is read from stdin, then parsed in memory and never extracted. Each
+  member must be `.`, `palettes` or `logos` (folders), or a regular file named as the
+  format names one (`looks.json`, `palettes/looks-<id>.json`, `logos/<name>.png|.jpg`, a
+  leading `./` allowed). A link, hard link, device, FIFO, sparse file, absolute or `..`
+  path, any other name (a README, macOS's `._` files: `COPYFILE_DISABLE=1 tar ...` leaves
+  them out), a name twice, more than 16 palettes or 16 logos, more than 36 members, a
+  file over its limit or more than 512 KiB of files refuses the whole stream. A palette
+  or logo looks.json does not name is ignored.
+
+A folder with one thing out of place is refused whole (exit 1, stderr says what), and what
+was kept before stays as it was. A folder without `looks.json` is refused: `clear` keeps
+none.
+
+**What is kept.** The checked folder, rewritten from its checked values: each JSON file
+as compact JSON built from the values that passed (never the sent text; never longer than
+it), each logo as it came (a checked picture). It is one file,
+`~/.local/share/fleetledger/looks/published.json` (mode 0600), written atomically (a
+temporary file, then a rename), with when and from where it came. Reading it back checks
+it all again, so a hand edit shows as a `problem`, never as looks. Nothing kept is ever
+run, or put into a command or a path: file names come from the format's patterns alone.
+
+**`looks show --json`** prints one document (`fleetledger-looks.schema.json`; examples in
+`examples/fleetledger-looks/`): whether a folder is kept (`stored`), and for one that is,
+`problem` (null, or why it cannot be used), `published_at`, `from` (`how`: `folder` or
+`stdin`; the `folder` for one here; the ssh session's `address`; the `actor` and
+`actor_key` as the audit log names them), `sha256` (over each file's name, a newline, its
+length, a newline and its bytes, in name order: it changes exactly when what a computer
+would receive changes), `bytes`, and what it names: `palettes` (`id`, `dark`), `presets`
+(ids), `tag_looks` (`tag`, `preset`) and `files` (`name`, `bytes`). Never a file's
+contents, labels included.
+
+**Rules.** `show` answers while the vault is locked (it reads one non-secret file);
+`publish` and `clear` change FleetLedger's state, so they wait for the unlock, as `toolkit
+add` does. A copy on standby or retired (`ship-fleet migrate`) refuses all three. Each
+`publish` writes an audit line (`looks-publish`; service: the first 12 hex digits of the
+digest, or `-` for one refused), each `clear` that removed something one
+(`looks-clear`). `ship-fleet migrate` moves the kept folder to the new computer;
+`migrate wipe` deletes it with the rest of FleetLedger's own files.
+
+Nothing sends the folder to a computer yet; a later change adds that, opt-in per machine,
+through its refresher (`machine-bundle`), and says so here.

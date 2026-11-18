@@ -67,7 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from fleetledger import __version__, ca, handover, inuse, keys, pairing, paths, vault
+from fleetledger import __version__, ca, handover, inuse, keys, looks, pairing, paths, vault
 from fleetledger.errors import ConfigError, FleetError
 
 SCHEMA = "fleetledger.migrate/1"
@@ -107,7 +107,10 @@ MEMBER = re.compile(r"^(manifest\.json|secrets\.json|config/ships\.toml|"
                     r"keys/(admin|host-ca|user-ca)(\.pub)?|keys/agent-[0-9]{1,3}\.pub|"
                     r"data/[^\x00]{1,1000}|images/[^/\x00]{1,200})$")
 # What may sit in the receiving computer's data dir (data/<top>/...).
-DATA_TOPS = ("audit.log", "status", "history.sqlite3", "attempts.json", "net", "ca", "trust")
+DATA_TOPS = ("audit.log", "status", "history.sqlite3", "attempts.json", "net", "ca", "trust",
+             looks.FOLDER)
+# The fleet's Desk looks (ship-fleet looks, looks.py): one file, which moves.
+LOOKS_FILES = (f"{looks.FOLDER}/{looks.STORE}",)
 TOOLKIT_ARCHIVES = "toolkit-archives"  # toolkitpack.CACHE: packed toolkits, rebuilt
 BACKUP_LAST = "backup-last.json"  # the last ship-fleet backup's result (backup.py)
 # The remote web UI's paired browsers and pairing links (web/devices.py): they stay.
@@ -495,7 +498,8 @@ def _plan_data(plan: Plan, inv, moving: set[Path]) -> None:
         elif _temp(f.name):
             plan.leave(f, "a leftover of a write that was cut short")
         elif top not in DATA_TOPS or (top == "ca" and rel not in (
-                "ca/revoked-keys.krl", "ca/revoked-keys.spec-sha256")) or f.is_symlink():
+                "ca/revoked-keys.krl", "ca/revoked-keys.spec-sha256")) or (
+                top == looks.FOLDER and rel not in LOOKS_FILES) or f.is_symlink():
             plan.skip(paths.tilde(f), "FleetLedger does not know this file, so migrate will not "
                        "guess whether it matters: move it out of the folder first")
         elif not all(SEGMENT.match(s) and s not in (".", "..") for s in rel.split("/")):
@@ -527,7 +531,7 @@ def _data_label(rel: str) -> str:
     return {"audit.log": "audit log", "status": "last status", "history.sqlite3":
             "charts and Activity history", "attempts.json": "failed Ship attempts (and their "
             "leftovers)", "net": "network summaries", "ca": "revocation list",
-            "trust": "trust bundle"}.get(top, top)
+            "trust": "trust bundle", looks.FOLDER: "the fleet's Desk looks"}.get(top, top)
 
 
 def print_plan(say: Callable[[str], None], plan: Plan) -> None:

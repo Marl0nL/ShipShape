@@ -2787,6 +2787,32 @@ def test_toolkit_folders_are_named_in_the_plan_and_never_copied(computers, monke
     assert not a.store.path.exists()
 
 
+def test_the_fleets_desk_looks_move_and_a_wipe_deletes_them(computers, monkeypatch):
+    from fleetledger import looks
+
+    a, b, world = computers
+    example = Path(__file__).resolve().parents[2] / "herdr" / "desk-looks.example"
+    code, out, err = a.run("looks", "publish", str(example))
+    assert code == 0, out + err
+    kept = looks.store_path().read_bytes()
+    stray = looks.store_path().with_name("notes.txt")  # nothing looks.py writes
+    stray.write_text("x")
+    code, out, err = a.run("migrate", "check")
+    assert code != 0 and "looks/notes.txt" in out + err
+    stray.unlink()
+    code, out, err = a.run("migrate", "check")
+    assert code == 0, out + err
+    assert "the fleet's Desk looks" in out
+    stream = send_bytes(a, monkeypatch)
+    assert receive(b, monkeypatch, stream) == migrate.VERIFIED
+    assert (b.root / "data" / "looks" / looks.STORE).read_bytes() == kept
+    assert looks.load().folder.looks.presets == ["example"]  # checked again there, and whole
+
+    a.use(monkeypatch)
+    gone, _kept = handover.wipe_plan(a.store)
+    assert str(a.root / "data" / "looks" / looks.STORE) in [g.where for g in gone]
+
+
 # --- the trusted machines' bundle keys (authkeys.py) ----------------------------------------
 
 

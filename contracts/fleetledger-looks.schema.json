@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-looks.schema.json",
+  "title": "The fleet's Desk looks FleetLedger keeps (ship-fleet looks show --json, version 1)",
+  "description": "What `ship-fleet looks show --json` prints: whether FleetLedger keeps a looks folder for the Herdr Desk (contracts/desk-looks.md), and if so when and from where it was published, its digest and size, and what it names (palettes, presets, tag looks, file names and sizes). Never a file's contents. It only reads, and answers while the vault is locked. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "stored"],
+  "properties": {
+    "schema": { "const": "shipshape.fleetledger-looks/1" },
+    "stored": { "type": "boolean", "description": "FleetLedger keeps a looks folder (ship-fleet looks publish); false after looks clear, or before any publish." },
+    "problem": {
+      "type": ["string", "null"],
+      "description": "stored: null when the folder kept is checked and usable; else why it is not (a hand-edited store, or a Desk that no longer offers what a preset names), and nothing else is given."
+    },
+    "published_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "description": "When it was published, UTC." },
+    "from": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["how", "folder", "address", "actor", "actor_key"],
+      "properties": {
+        "how": { "enum": ["folder", "stdin"], "description": "folder: a folder on the FleetLedger computer; stdin: a tar stream (from another computer, over ssh)." },
+        "folder": { "type": ["string", "null"], "description": "how folder: that folder (~/... when under the home folder); else null." },
+        "address": { "type": ["string", "null"], "description": "The address the ssh session that published it came from, as sshd saw it; null outside an ssh session." },
+        "actor": { "type": ["string", "null"], "description": "The name of the key that session logged in with (as the audit log's actor); null when sshd did not say." },
+        "actor_key": { "type": ["string", "null"], "pattern": "^SHA256:[A-Za-z0-9+/]{43}$", "description": "That key's fingerprint; null when sshd did not say." }
+      }
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "One digest of the stored folder: SHA-256 over each file's name, a newline, its length in bytes, a newline and its bytes, files in name order. It changes exactly when what a computer would receive changes." },
+    "bytes": { "type": "integer", "minimum": 0, "maximum": 524288, "description": "The stored files' size in all." },
+    "palettes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "dark"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^looks-[a-z0-9][a-z0-9-]{0,30}$" },
+          "dark": { "type": "boolean" }
+        }
+      }
+    },
+    "presets": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+      "description": "The folder's preset ids, in its order."
+    },
+    "tag_looks": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tag", "preset"],
+        "properties": {
+          "tag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+          "preset": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "maxItems": 33,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "bytes"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^(looks\\.json|palettes/looks-[a-z0-9][a-z0-9-]{0,30}\\.json|logos/[a-z0-9][a-z0-9-]{0,30}\\.(png|jpg))$", "description": "Its name in the folder." },
+          "bytes": { "type": "integer", "minimum": 0, "maximum": 65536 }
+        }
+      },
+      "description": "Every file kept, by name: looks.json, each palette it lists and each logo its presets name. Names only, never contents."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "stored": { "const": false } } },
+      "then": { "maxProperties": 2 }
+    },
+    {
+      "if": { "properties": { "stored": { "const": true } } },
+      "then": { "required": ["problem"] }
+    },
+    {
+      "if": { "properties": { "stored": { "const": true }, "problem": { "type": "null" } }, "required": ["problem"] },
+      "then": { "required": ["published_at", "from", "sha256", "bytes", "palettes", "presets", "tag_looks", "files"] }
+    },
+    {
+      "if": { "properties": { "problem": { "type": "string" } }, "required": ["problem"] },
+      "then": { "maxProperties": 3 }
+    }
+  ]
+}
