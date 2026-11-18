@@ -114,6 +114,36 @@
       "maxLength": 1000000,
       "description": "The refresher script (FleetLedger's fleetledger/refresher/refresh.sh), base64. Only the first-install line ship-fleet trust prints decodes it, once, when a person pastes that line on the machine; the refresher never reads this field and never replaces itself, so a refresh applies data only. Absent from a FleetLedger older than the refresher."
     },
+    "looks": {
+      "description": "The fleet's Desk looks (ship-fleet looks; the folder of contracts/desk-looks.md), only in the bundle of a machine opted in with `ship-fleet trust NAME --looks on`: a machine not opted in gets no such field, so its bundle is exactly as before. Absent also when FleetLedger keeps a folder it cannot use (`looks show` says why) or the bundle would be over 1 MiB with it: the refresher then leaves the looks it has. null: FleetLedger keeps none, and the refresher removes the looks it wrote before (never a folder of your own). Data: the refresher checks every file against the format's names and limits, each logo by its first bytes and the folder against digest, and writes each file under its checked name into Herdr's desk-looks folder; nothing in it is run.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["digest", "files"],
+          "properties": {
+            "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 over each file's name, a newline, its size, a newline and its bytes, in name order: the sha256 ship-fleet looks show prints. The refresher skips a folder it already wrote with this digest." },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 33,
+              "description": "Every file of the folder, in name order: looks.json, a palette per palette it lists, a logo per logo its presets name.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "size", "data"],
+                "properties": {
+                  "name": { "type": "string", "pattern": "^(looks\\.json|palettes/looks-[a-z0-9][a-z0-9-]{0,30}\\.json|logos/[a-z0-9][a-z0-9-]{0,30}\\.(png|jpg))$", "description": "Its name in the folder, as the format names it: never a path beyond that." },
+                  "size": { "type": "integer", "minimum": 1, "maximum": 65536, "description": "Its length in bytes: looks.json and each logo at most 64 KiB, each palette 16 KiB, 512 KiB for all." },
+                  "data": { "type": "string", "pattern": "^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$", "maxLength": 87384, "description": "Its bytes, base64 (standard alphabet, padded, one line)." }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "idle_limit": {
       "type": "object",
       "additionalProperties": false,

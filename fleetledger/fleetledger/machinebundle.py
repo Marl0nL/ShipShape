@@ -29,17 +29,25 @@ valid, and says why it was not renewed.
 
 FleetLedger's own computer renews itself (trustcmd.renew_this_computer_if_due); it may
 ask here too, and the idle limit never applies to it.
+
+A machine opted in (ship-fleet trust NAME --looks on) also gets the fleet's Desk looks
+(looks.load(), the folder `ship-fleet looks publish` kept), as data, under `looks`: its
+files base64 and the folder's digest, or null when none is kept. Every other machine's
+bundle has no such field and is exactly as before, since every refresher refuses a field it
+does not know. A kept folder FleetLedger cannot use (looks.Refused) is not sent, and the
+bundle is otherwise the same: the audit line says why.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
 from datetime import datetime, timedelta
 from typing import Any
 
-from fleetledger import appliance, attach, ca, paths, refresher, sshkeys, trustcmd, vault
+from fleetledger import appliance, attach, ca, looks, paths, refresher, sshkeys, trustcmd, vault
 from fleetledger.concierge import audit
 from fleetledger.errors import FleetError
 from fleetledger.inventory import Inventory, Ship
@@ -50,6 +58,10 @@ ACTION = "machine-bundle"
 # kept to the minute it matters at (the 30-day idle limit), however often it asks.
 RECORD_EVERY = timedelta(minutes=5)
 NOT_TRUSTED = "No trusted machine called {name}: FleetLedger gives it no bundle."
+# What the refresher reads at most (refresh.sh MAX_BUNDLE): a bundle that would be longer with
+# the looks goes without them.
+MAX_BUNDLE = 1024 * 1024
+NO_LOOKS = object()  # the bundle has no `looks` field: the machine is not opted in, or none sent
 
 
 class _Refused(FleetError):
@@ -253,6 +265,46 @@ def bundle(app, inv: Inventory, cfg: ca.CAConfig, m: ca.Machine, *, now: datetim
     }
 
 
+def looks_for(m: ca.Machine) -> tuple[Any, str | None]:
+    """What machine m's bundle carries as `looks`, and what the audit line says of it.
+    NO_LOOKS (and no note) for a machine not opted in: its bundle stays exactly as before.
+    For one opted in: null when FleetLedger keeps no looks; the kept folder (each file
+    base64, under its checked name, and the folder's digest); or NO_LOOKS when the kept
+    folder fails its checks (the note says why: ship-fleet looks show says it too)."""
+    if not m.looks:
+        return NO_LOOKS, None
+    try:
+        stored = looks.load()
+    except looks.Refused as exc:
+        return NO_LOOKS, f"looks not sent: {exc.why[:200]}"
+    except (FleetError, OSError, ValueError) as exc:
+        return NO_LOOKS, f"looks not sent: {type(exc).__name__}"
+    if stored is None:
+        return None, "looks: none kept"
+    folder = stored.folder
+    return {
+        "digest": folder.sha256,
+        "files": [{"name": name, "size": len(data),
+                   "data": base64.b64encode(data).decode("ascii")}
+                  for name, data in sorted(folder.files.items())],
+    }, f"looks {folder.sha256[:12]}"
+
+
+def with_looks(doc: dict[str, Any], value: Any) -> dict[str, Any]:
+    """The bundle with `looks` after `at`: early, so the refresher's reader has the long
+    strings behind it before it reads the rest field by field."""
+    out: dict[str, Any] = {}
+    for key, v in doc.items():
+        out[key] = v
+        if key == "at":
+            out["looks"] = value
+    return out
+
+
+def printed(doc: dict[str, Any]) -> str:
+    return json.dumps(doc, indent=2)
+
+
 LOCKED_WHY = ("FleetLedger's vault is locked, so no certificate is signed until it is "
               "unlocked (ship-fleet unlock on the FleetLedger computer).")
 
@@ -266,9 +318,10 @@ FAILED = ("FleetLedger could not make this machine's bundle; the reason is in it
           "log, on the FleetLedger computer.")
 
 
-def serve(app, name: str) -> tuple[dict[str, Any], str | None]:
-    """The bundle for machine `name`, and why a due certificate could not be signed
-    (for the audit log only); or _Refused. Audits nothing: cmd_ does."""
+def serve(app, name: str) -> tuple[dict[str, Any], str | None, str | None]:
+    """The bundle for machine `name`, why a due certificate could not be signed, and what
+    it carries of the fleet's looks (both for the audit log only); or _Refused. Audits
+    nothing: cmd_ does."""
     store = app.store_factory()
     now = ca.utc_now()
     inv, cfg, m = _trusted(store, name)
@@ -299,25 +352,35 @@ def serve(app, name: str) -> tuple[dict[str, Any], str | None]:
     if m is None or m.revoked:  # untrusted meanwhile
         raise _not_trusted(name, "untrusted")
     cert = current_cert(cfg, m, now)
-    return bundle(app, inv, cfg, m, now=now, cert=cert, renewed=renewed,
-                  not_renewed=not_renewed), detail
+    doc = bundle(app, inv, cfg, m, now=now, cert=cert, renewed=renewed,
+                 not_renewed=not_renewed)
+    value, note = looks_for(m)
+    if value is not NO_LOOKS:
+        sent = with_looks(doc, value)
+        if len(printed(sent)) + 1 <= MAX_BUNDLE:
+            doc = sent
+        else:
+            note = "looks not sent: the bundle would be over 1 MiB with them"
+    return doc, detail, note
 
 
-def _outcome(doc: dict[str, Any], detail: str | None) -> str:
+def _outcome(doc: dict[str, Any], detail: str | None, looks_note: str | None = None) -> str:
     cert = doc["certificate"]
     if cert["renewed"]:
-        return "renewed"
-    if cert["not_renewed"]:
+        said = "renewed"
+    elif cert["not_renewed"]:
         said = f"returned, not renewed: {cert['not_renewed']['code']}"
-        return f"{said} ({detail[:300]})" if detail else said
-    return "returned"
+        said = f"{said} ({detail[:300]})" if detail else said
+    else:
+        said = "returned"
+    return f"{said}; {looks_note}" if looks_note else said
 
 
 def cmd_machine_bundle(args, app) -> int:
     name = args.machine
     shown = name if trustcmd.MACHINE_RE.fullmatch(name) else "-"
     try:
-        doc, detail = serve(app, name)
+        doc, detail, looks_note = serve(app, name)
     except _Refused as exc:
         audit.record("-", ACTION, shown, f"refused: {exc.reason}")
         raise
@@ -330,8 +393,8 @@ def cmd_machine_bundle(args, app) -> int:
     except BaseException:
         audit.record("-", ACTION, shown, "failed")
         raise
-    audit.record("-", ACTION, shown, _outcome(doc, detail))
-    app.say(json.dumps(doc, indent=2))
+    audit.record("-", ACTION, shown, _outcome(doc, detail, looks_note))
+    app.say(printed(doc))
     return 0
 
 
@@ -343,7 +406,9 @@ def add_parsers(sub, add) -> None:
             "its known_hosts, the Ships its scope reaches with their host names, tags and\n"
             "runtime, and FleetLedger's own host key; and the refresher script, which\n"
             "only an install you run (trust's line, shipshape-setup) decodes (the refresher\n"
-            "applies the rest as data and never reads it).\n\n"
+            "applies the rest as data and never reads it). For a machine opted in with\n"
+            "ship-fleet trust NAME --looks on, also the fleet's Desk looks (ship-fleet\n"
+            "looks), for its refresher to write into Herdr's desk-looks folder.\n\n"
             "A new certificate is signed only past half the current one's life. While the\n"
             "vault is locked it signs nothing and says so. A machine untrusted, unknown,\n"
             f"or that has not asked for {ca.IDLE_LIMIT.days} days (ship-fleet trust NAME\n"

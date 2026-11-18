@@ -53,8 +53,11 @@ stores or carries a folder:
 ## For carrying it
 
 FleetLedger keeps one folder for the fleet (`ship-fleet looks publish`, `contracts/ship-fleet.md`,
-"ship-fleet looks"), checked by these same rules on the way in; nothing carries it to a
-computer from there yet.
+"ship-fleet looks"), checked by these same rules on the way in, and sends it to the computers
+you opt in (`ship-fleet trust NAME --looks on`) in their bundle (`machine-bundle.schema.json`,
+`looks`). Their refresher checks the names, sizes, logos, JSON and digest again and writes the
+folder here as `desk-looks`, whole, by rename, never over a folder of your own
+(`docs/runbooks/share-desk-looks.md`).
 
 Every key in `looks.json` and the palette files is a-z and `_`, and nothing nests more than
 four deep, so the refresher's strict JSON reader (`fleetledger/fleetledger/refresher/refresh.sh`)

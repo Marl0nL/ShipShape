@@ -67,6 +67,8 @@ permission mode: `ship-fleet agent restart`),
 runtime`, with an automatic rollback; classic herdr is deprecated, so the move is one-way),
 [send files to its agents](docs/runbooks/send-files.md) (`ship-fleet put`, or drop them on
 the web UI's Inbox tab),
+[one Desk look on all your computers](docs/runbooks/share-desk-looks.md) (`ship-fleet looks`,
+`ship-fleet trust NAME --looks on`),
 [the web UI](docs/web-ui.md),
 [run it as a service](docs/runbooks/fleetledger-service.md) (always on, no terminal:
 `ship-fleet service install`),

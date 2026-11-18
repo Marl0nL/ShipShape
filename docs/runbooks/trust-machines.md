@@ -408,6 +408,10 @@ A machine that has never asked (one trusted before this existed, say) starts its
 days at its first ask. FleetLedger's own computer has no idle limit. `ship-fleet ca
 show` says when each machine last asked.
 
+`ship-fleet trust laptop --looks on` adds the fleet's Desk looks to the laptop's bundle, so
+its refresher writes them into Herdr's folder there, and its restricted key then reads them
+too. The laptop must run refresher 2 first: [share-desk-looks.md](share-desk-looks.md).
+
 ## 5. Revoke
 
 ```sh

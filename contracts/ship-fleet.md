@@ -118,7 +118,7 @@ init`) it prints nothing on stdout and exits 2. Schema: `fleetledger-ca.schema.j
 |---|---|
 | `host_ca`, `user_ca` | Fingerprints of the key that signs Ships' host certificates and of the user CA keys Ships accept (the current one first). |
 | `ships` | Per Ship: `certificate_valid_before`, `principals`, `needs` (why `ca sign` would sign it again, or null), `trust_behind` (its CA keys or revocation list are old) and `seen` (a status was ever fetched). |
-| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `logins` (what its certificates log in as: `agent`, `owner` or both; `ship-fleet trust NAME --logins`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit` and `idle_refused` (when it was refused for being idle, or null); on FleetLedger's own VM only, `bundle_key` for a trusted machine: `installed`, `own-line` (its key has a line of yours in `authorized_keys`, so FleetLedger adds none) or `missing` (see "The bundle keys" under `machine-bundle`). |
+| `machines` | Per machine, untrusted ones too: `scope` (`all`, `tag:TAG`, `ship:NAME`), `logins` (what its certificates log in as: `agent`, `owner` or both; `ship-fleet trust NAME --logins`), `valid_before` (its last certificate's end), `revoked`, `fingerprint`, `state` (`ok`, `expiring`, `lapsed`, `none`, `revoked`), `this_computer` (the FleetLedger computer, which renews its own), and for `machine-bundle`: `last_refreshed` (when it last asked; null: never), `idle_limit`, `idle_refused` (when it was refused for being idle, or null) and `looks` (its bundle carries the fleet's Desk looks: `ship-fleet trust NAME --looks on`); on FleetLedger's own VM only, `bundle_key` for a trusted machine: `installed`, `own-line` (its key has a line of yours in `authorized_keys`, so FleetLedger adds none) or `missing` (see "The bundle keys" under `machine-bundle`). |
 | `pairing` | Pairing by code (`ship-fleet pair`, below): `on`, and `pending`, the computers waiting (none while off), each with `id`, `host` (the name it gives itself: its own claim), `fingerprint` (its key's), `source` (the address sshd saw, or null), `asked` and `expires`. Never its code. Added in this version; a FleetLedger from before prints none. |
 
 No two entries that are not `revoked` share a key (`trust NAME --key` refuses one
@@ -267,6 +267,7 @@ Always JSON; there is no text form and no option.
 | `ships` | Every Ship the machine's scope reaches, and only those: `name` (its `Host` alias and `hc` machine name), `tags`, `runtime` (`core` or `herdr`, from its last status), `host_names` (`lan`: the first of its non-overlay names that resolves on the FleetLedger computer; `overlay`: its overlay name, or null) and `host_certificate` (its last status shows one). |
 | `idle_limit` | `on`: after `days` without asking, the machine is refused until allowed again. |
 | `refresher` | The refresher script, base64 (optional: absent from a FleetLedger older than it). Only the first-install line `ship-fleet trust` prints decodes it; see "The refresher on a trusted machine" below. |
+| `looks` | Only for a machine opted in (`ship-fleet trust NAME --looks on`), right after `at`: the fleet's Desk looks (`ship-fleet looks`, below), as `digest` (the `sha256` `looks show` prints) and `files` (each `name` as the format names it, `size`, and `data`, base64, in name order); or null when FleetLedger keeps none. Absent for every other machine, so its bundle is exactly as before looks; absent too when the kept folder fails its checks or the bundle would be over 1 MiB with it (the audit line says which). See "The fleet's looks" below. |
 
 Everything but `refresher` is data, and the machine checks every field against the
 schema's patterns (and tighter) before writing a file from it. `refresher` is read only
@@ -307,7 +308,8 @@ person installs by hand (`ship-fleet trust`, `install.sh`) is unchanged.
 - Every call it answers writes one line to the audit log: the machine, and
   `returned`, `renewed`, `returned, not renewed: <code>` (with the reason for
   `sign-failed`), `refused: <why>` (unknown, untrusted, not a machine name, idle since
-  ...) or `failed: <why>`.
+  ...) or `failed: <why>`; for a machine opted in to looks, followed by `; looks
+  <first 12 hex digits of the digest>`, `; looks: none kept` or `; looks not sent: <why>`.
 - On a copy on standby or retired (`ship-fleet migrate`) it refuses, as every command
   but a few does, saying where the fleet is; that copy writes nothing, not even an
   audit line. During a move it refuses until the move ends.
@@ -316,7 +318,8 @@ person installs by hand (`ship-fleet trust`, `install.sh`) is unchanged.
 nothing from stdin, never looks at `SSH_ORIGINAL_COMMAND`, runs no shell, and has no
 option, so a key whose `authorized_keys` line forces `ship-fleet machine-bundle NAME`
 gets NAME's bundle and nothing else: no other machine's, no secret, no Ship outside
-NAME's scope. It writes only NAME's record in `ships.toml` (`last_refreshed`; a new
+NAME's scope. For a machine opted in to looks (`--looks on`), that bundle also carries the
+fleet's Desk looks, so that key then reads them too: every file of the kept folder. It writes only NAME's record in `ships.toml` (`last_refreshed`; a new
 certificate's serial, date, lifetime and `issued` entry; `idle_refused`), the new certificate
 beside NAME's bundle (`~/.local/share/fleetledger/trust/NAME/NAME-cert.pub`), and its
 audit line; asked again within five minutes it does not rewrite `ships.toml`.
@@ -379,7 +382,9 @@ in `~/.ssh/config` is left out (with a warning), so a bundle can never take over
 your aliases. It then writes, each by rename, only
 `NAME-cert.pub`, `known_hosts`, `config` (from its own template: no text from the
 bundle becomes a directive), `fleet.json` (the bundle as checked, compact, without
-`refresher`), `hc-added` and `state.json`, all in `~/.ssh/shipshape`. It adds each
+`refresher` and `looks`), `hc-added`, `state.json` and `looks-applied`, all in
+`~/.ssh/shipshape`, and, for a bundle with `looks`, the folder `desk-looks` in Herdr's folder
+(below). It adds each
 herdr-core Ship with a host certificate to `hc` (when the bundle's login is `agent`)
 and removes only the `hc` machines it added itself, once their Ship has left the bundle
 or stopped running herdr-core. It never replaces itself: only an install you run (the
@@ -390,6 +395,33 @@ sentence on stderr and in `state.json`: FleetLedger unreachable, the machine ref
 untrusted, a certificate due and not signed (`vault-locked`, `sign-failed`), no
 certificate, or a document it refuses. Exit 2: wrong usage. `state.json`:
 `refresh-state.schema.json` (`"schema": "shipshape.refresh-state/1"`).
+
+**The fleet's looks.** `ship-fleet trust NAME --looks on|off` (signs nothing; changes only
+`ships.toml`'s `looks` for the machine; audited as `trust-looks-on`/`-off`) decides whether
+NAME's bundle carries `looks`; off is the default. Refresher 2 (`refresh --version`; the
+`refresher` field of `state.json`) reads it; refresher 1 refuses every bundle that has it
+(`an unknown field, looks`), keeping its last files, so a machine is opted in only after
+`shipshape-setup` (or the pasted line) has put refresher 2 there: FleetLedger cannot tell which
+refresher a machine runs, and `trust --looks on` says what to check. Refresher 2:
+
+- checks `looks` whole, with the rest of the bundle, before writing anything: known fields
+  only; names as `desk-looks.md` gives them (`looks.json`, `palettes/looks-<id>.json`,
+  `logos/<name>.png|.jpg`), none twice, `looks.json` once; each size within its limit and 512
+  KiB in all, at most 16 palettes and 16 logos; base64 decoded to exactly its size (`base64
+  --decode`, or `-d`); each logo by its first bytes; each JSON file through its strict reader,
+  `looks.json` as `shipshape.desk-looks/1`; and the folder against `digest` (`sha256sum`, or
+  `shasum -a 256`). One out of place refuses the bundle whole;
+- writes the folder into Herdr's folder (`$HERDR_APP_HOME`, else `~/.config/herdr-app`; never
+  made) as `desk-looks`, from a new folder beside it checked again by its digest, by rename;
+  with the same digest as the folder there, it writes nothing. It records each digest it
+  writes in `~/.ssh/shipshape/looks-applied`, and changes or removes a `desk-looks` only when
+  the digest of what is there now is one of those: a folder of your own, a link, or its folder
+  after you changed it is never touched (a warning says the fleet's were not written). For
+  null it removes the folder it wrote;
+- with no Herdr folder, or no `base64`, `sha256sum`/`shasum` or `od` to check with, leaves
+  the looks (a warning). A bundle without `looks` leaves whatever is there.
+
+Runbook: `docs/runbooks/share-desk-looks.md`.
 
 **Attention.** A machine that has asked at least once refreshes itself, so FleetLedger
 says when it stops (fleet-level items in `ship-fleet attention`, the web UI and
@@ -631,5 +663,7 @@ digest, or `-` for one refused), each `clear` that removed something one
 receive refuses any other under `looks/`);
 `migrate wipe` deletes it with the rest of FleetLedger's own files.
 
-Nothing sends the folder to a computer yet; a later change adds that, opt-in per machine,
-through its refresher (`machine-bundle`), and says so here.
+**Sent to the machines you opt in.** `ship-fleet trust NAME --looks on` puts the kept folder
+in NAME's bundle (`machine-bundle`, "The fleet's looks"), for its refresher to write into
+Herdr's `desk-looks` there; `looks show` lists those machines ("sent to"). Every other machine's
+bundle is as before. A kept folder with a `problem` is sent to none.

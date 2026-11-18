@@ -77,6 +77,10 @@
             "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }],
             "description": "When ship-fleet machine-bundle first refused it for being idle; null unless it is refused now."
           },
+          "looks": {
+            "type": "boolean",
+            "description": "true: its bundle carries the fleet's Desk looks (ship-fleet trust NAME --looks on), so its refresh key reads them too; false (the default): its bundle is as it was before looks. Added in this version; a FleetLedger from before prints none."
+          },
           "bundle_key": {
             "enum": ["installed", "own-line", "missing"],
             "description": "Only on FleetLedger's own VM (or where its block is in ~/.ssh/authorized_keys), for a trusted machine: installed (its key has FleetLedger's one line there, forced to fetch its own bundle); own-line (its key has a line of yours, so FleetLedger adds none and your line decides what it may do); missing (no line yet: ship-fleet trust --sync-keys). Absent elsewhere."

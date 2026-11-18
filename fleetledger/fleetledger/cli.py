@@ -546,7 +546,9 @@ def build_parser() -> argparse.ArgumentParser:
              "  ship-fleet trust laptop --print-cert     renew: just the new certificate\n\n"
              "On FleetLedger's own VM it also gives the machine's key one line in\n"
              "~/.ssh/authorized_keys, limited to fetching its own bundle\n"
-             "(ship-fleet machine-bundle NAME); untrust removes it.")
+             "(ship-fleet machine-bundle NAME); untrust removes it. With --looks on, that\n"
+             "bundle also carries the fleet's Desk looks (ship-fleet looks), so that key\n"
+             "then reads them too.")
     p.add_argument("machine", nargs="?", help="a name for the machine (e.g. laptop)")
     p.add_argument("--this-computer", action="store_true",
                    help="trust this computer with your own key and install it here, so "
@@ -579,6 +581,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="whether a machine that has not asked for its bundle in 30 days is "
                    "refused it (on, the default) or stays trusted until untrusted (off); "
                    "signs nothing")
+    p.add_argument("--looks", choices=("on", "off"),
+                   help="whether the machine's bundle carries the fleet's Desk looks "
+                   "(ship-fleet looks), for its refresher to write into Herdr's desk-looks "
+                   "folder: on, and its restricted refresh key also reads them; off, the "
+                   "default, and its bundle is as before. Its refresher must be version 2 "
+                   "or later (on it: ~/.ssh/shipshape/refresh --version; older: run "
+                   "shipshape-setup there first). Signs nothing")
     p.add_argument("--sync-keys", action="store_true",
                    help="on FleetLedger's own VM: rewrite FleetLedger's block in "
                    "~/.ssh/authorized_keys (each trusted machine's key, forced to fetch its "

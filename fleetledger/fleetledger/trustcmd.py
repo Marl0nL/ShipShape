@@ -199,7 +199,9 @@ def ca_rows(inv: Inventory, krl: bytes | None) -> dict:
          "this_computer": bool(here and here["machine"] == m.name),
          # ship-fleet machine-bundle: when it last got its bundle, and the idle limit
          "last_refreshed": m.last_refreshed, "idle_limit": m.idle_limit,
-         "idle_refused": m.idle_refused}
+         "idle_refused": m.idle_refused,
+         # its bundle carries the fleet's Desk looks (trust NAME --looks on)
+         "looks": m.looks}
         for m in ca.machines(inv)
     ]
     return {"host_ca": ca.fingerprint(cfg.host_public),
@@ -256,6 +258,8 @@ def ca_show(args, app) -> int:
                 what += f"; last asked {m['last_refreshed'][:16].replace('T', ' ')} UTC"
             if not m["idle_limit"]:
                 what += "; no idle limit"
+            if m["looks"]:
+                what += "; gets the fleet's looks"
             if m.get("bundle_key"):
                 what += f"; bundle key: {BUNDLE_KEY_SAID[m['bundle_key']]}"
         app.say(f"  {m['machine']:<14} {','.join(m['scope']):<20} {what}")
@@ -289,20 +293,51 @@ def _read_key(text_or_path: str) -> str:
     return line
 
 
-# trust options that sign or write a bundle: --allow-again and --idle-limit take none.
+# trust options that sign or write a bundle: --allow-again, --idle-limit and --looks take none.
 SIGNING_OPTIONS = ("this_computer", "key", "scope", "logins", "hours", "out", "print_cert",
                    "install", "no_herdr")
+# trust options that change only the machine's record of what its bundle may be and carry.
+RECORD_OPTIONS = ("allow_again", "idle_limit", "looks")
+
+
+def looks_on_said(name: str) -> list[str]:
+    """What trust NAME --looks on says: what it changes, what the key then reads, and what
+    to run on NAME first (FleetLedger cannot know which refresher NAME runs)."""
+    return [
+        f"{name}'s bundle now carries the fleet's Desk looks (ship-fleet looks show), from "
+        "its next refresh; while FleetLedger keeps none, it tells the refresher to remove "
+        "looks it put there.",
+        f"So {name}'s restricted refresh key on this computer now also reads the fleet's "
+        "looks (palettes, presets, tag looks and logos). It still runs only "
+        f"ship-fleet machine-bundle {name}.",
+        f"{name} needs refresher 2 or later: on {name}, ~/.ssh/shipshape/refresh --version "
+        "must say 2 or more. If it says 1 (or nothing), run shipshape-setup there (or paste "
+        f"the line ship-fleet trust {name} prints) now: an older refresher refuses every "
+        "bundle that carries looks, saying \"an unknown field, looks\", keeps its last "
+        f"files and stops renewing {name}'s certificate. ship-fleet trust {name} --looks off "
+        "undoes this.",
+    ]
+
+
+def looks_off_said(name: str) -> list[str]:
+    return [
+        f"{name}'s bundle no longer carries the fleet's looks; its restricted refresh key "
+        "reads them no more.",
+        f"Looks it received before stay on {name} as they are: to remove them, delete "
+        "desk-looks in Herdr's folder there (~/.config/herdr-app/desk-looks).",
+    ]
 
 
 def set_refresh(args, app, store) -> int:
-    """--allow-again and --idle-limit: change only the machine's record of who may ask
-    for its bundle (ship-fleet machine-bundle); nothing is signed or written besides."""
+    """--allow-again, --idle-limit and --looks: change only the machine's record of who may
+    ask for its bundle (ship-fleet machine-bundle) and what it carries; nothing is signed or
+    written besides."""
     given = [f"--{o.replace('_', '-')}" for o in SIGNING_OPTIONS if getattr(args, o, None)]
     if args.hostnames != "here":
         given.append("--hostnames")
     if given:
-        raise FleetError(f"--allow-again and --idle-limit change only the record; give "
-                         f"{', '.join(given)} in a separate ship-fleet trust.")
+        raise FleetError(f"--allow-again, --idle-limit and --looks change only the record; "
+                         f"give {', '.join(given)} in a separate ship-fleet trust.")
     name = args.machine
     if not name:
         raise FleetError("Which machine? ship-fleet trust NAME --allow-again.")
@@ -310,6 +345,7 @@ def set_refresh(args, app, store) -> int:
     if m is None or m.revoked:
         raise FleetError(f"No trusted machine called {name}.")
     now = now_timestamp()
+    looks_opt = getattr(args, "looks", None)
     with store.edit() as ed:
         if args.allow_again:
             ed.set_machine_field(name, "refresh_allowed", now)
@@ -319,6 +355,10 @@ def set_refresh(args, app, store) -> int:
             ed.set_machine_field(name, "idle_refused", None)
         elif args.idle_limit == "on":
             ed.set_machine_field(name, "idle_limit", None)  # on is the default
+        if looks_opt == "on":
+            ed.set_machine_field(name, "looks", True)
+        elif looks_opt == "off":
+            ed.set_machine_field(name, "looks", None)  # off is the default
     days = ca.IDLE_LIMIT.days
     if args.allow_again:
         audit.record("-", "trust-allow-again", name, "ok")
@@ -332,13 +372,17 @@ def set_refresh(args, app, store) -> int:
         else:
             app.say(f"{name} is refused its bundle after {days} days without asking for it, "
                     f"until you allow it again (ship-fleet trust {name} --allow-again).")
+    if looks_opt:
+        audit.record("-", f"trust-looks-{looks_opt}", name, "ok")
+        for line in (looks_on_said if looks_opt == "on" else looks_off_said)(name):
+            app.say(line)
     return 0
 
 
 def sync_keys(args, app, store) -> int:
     """trust --sync-keys: FleetLedger's block in authorized_keys rewritten to match the
     trusted machines (authkeys.py); nothing else."""
-    given = [f"--{o.replace('_', '-')}" for o in (*SIGNING_OPTIONS, "allow_again", "idle_limit")
+    given = [f"--{o.replace('_', '-')}" for o in (*SIGNING_OPTIONS, *RECORD_OPTIONS)
              if getattr(args, o, None)]
     if args.machine or given or args.hostnames != "here":
         raise FleetError("--sync-keys takes no machine and no other option: it rewrites only "
@@ -385,7 +429,7 @@ def cmd_trust(args, app) -> int:
     if getattr(args, "sync_keys", False):
         ca.require(store.load())
         return sync_keys(args, app, store)
-    if getattr(args, "allow_again", False) or getattr(args, "idle_limit", None):
+    if any(getattr(args, o, None) for o in RECORD_OPTIONS):
         ca.require(store.load())
         return set_refresh(args, app, store)
     inv = store.load()
