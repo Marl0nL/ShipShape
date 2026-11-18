@@ -311,8 +311,11 @@ def looks_on_said(name: str) -> list[str]:
         "looks (palettes, presets, tag looks and logos). It still runs only "
         f"ship-fleet machine-bundle {name}.",
         f"{name} needs refresher 2 or later: on {name}, ~/.ssh/shipshape/refresh --version "
-        "must say 2 or more. If it says 1 (or nothing), run shipshape-setup there (or paste "
-        f"the line ship-fleet trust {name} prints) now: an older refresher refuses every "
+        "must say 2 or more. If it says 1 (or nothing), put refresher 2 there now: run "
+        f"ship-fleet trust {name} on FleetLedger's VM and paste the line it prints on "
+        f"{name} (any machine), or run shipshape-setup on {name} if its own key has a shell "
+        "here (a computer paired by code keeps its refresher through setup). An older "
+        "refresher refuses every "
         "bundle that carries looks, saying \"an unknown field, looks\", keeps its last "
         f"files and stops renewing {name}'s certificate. ship-fleet trust {name} --looks off "
         "undoes this.",

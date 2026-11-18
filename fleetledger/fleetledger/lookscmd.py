@@ -197,7 +197,7 @@ def _say_receivers(app, sent: bool) -> None:
                 "its refresher)")
     elif sent:
         app.say(f"  sent to: {', '.join(names)} (each through its refresher; its refresh key "
-                "reads them)")
+                "reads them; the audit log's machine-bundle line says when one went without)")
     else:
         app.say(f"  not sent to {', '.join(names)} until then: their bundles come without "
                 "looks, and each keeps what it has")

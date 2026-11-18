@@ -40,10 +40,16 @@ folder with anything out of place is refused whole, saying why; `contracts/ship-
 ~/.ssh/shipshape/refresh --version     # must say: ShipShape refresher 2 (or later)
 ```
 
-If it says 1, or nothing, put the new refresher in place first: run `shipshape-setup` there
-again (from a ShipShape checkout of this version), or paste the line `ship-fleet trust NAME`
-prints on FleetLedger's VM again. Both install the refresher FleetLedger serves, after
-checking its SHA-256; the refresher never replaces itself.
+If it says 1, or nothing, put the new refresher in place first; the refresher never
+replaces itself:
+
+- **Any computer:** on FleetLedger's VM run `ship-fleet trust NAME` (it also renews NAME's
+  certificate) and paste the one line it prints in a terminal on NAME. The line installs the
+  refresher FleetLedger serves only when its SHA-256 is the one the line names.
+- **A computer whose own key has a shell on FleetLedger** (your main computer): running
+  `shipshape-setup` there again, from a ShipShape checkout of this version, does the same.
+  On a computer paired by code, `shipshape-setup` only runs the refresher it has: use the
+  line.
 
 **Why first.** Every refresher refuses a bundle with a field it does not know, and refresher
 1 does not know `looks`. FleetLedger cannot tell which refresher a computer runs (a refresh
@@ -105,7 +111,8 @@ The refresher keeps the digests of the folders it wrote (the latest eight) in
 Before it replaces or removes `desk-looks`, it computes the digest of what is there now (over
 each file's name, size and bytes, as FleetLedger computes it) and goes on only when that is a
 digest it wrote. So a `desk-looks` folder you made yourself, a link, or the fleet's folder
-after you changed a byte or added a file is yours from then on: never replaced and never
+after you changed a byte or added a file (a `.DS_Store` that Finder leaves is not counted) is
+yours from then on: never replaced and never
 removed. When FleetLedger sends looks, the refresher says so instead:
 
 ```

@@ -104,6 +104,7 @@ def test_looks_on_sends_the_kept_folder_after_at(caenv, tmp_path):  # noqa: F811
     assert code == 0, err
     assert "also reads the fleet's looks" in out
     assert "refresh --version" in out and "shipshape-setup" in out
+    assert "run ship-fleet trust laptop on FleetLedger's VM and paste the line" in out
     assert '"an unknown field, looks"' in out
     assert caenv.store.load().doc["machine"]["laptop"]["looks"] is True
     doc = json.loads(bundle_text(caenv))
@@ -453,13 +454,58 @@ def test_herdr_app_home_is_where_the_looks_go(fl, laptop):  # noqa: F811
 def test_without_the_tools_to_check_them_the_looks_are_left(fl, laptop):  # noqa: F811
     herdr(laptop)
     (laptop.bin / "od").unlink()
+    # Another warning in the same refresh (a Ship left out) does not hide the looks'.
+    with (laptop.home / ".ssh" / "config").open("a") as f:
+        f.write("Host ship-02\n  HostName example.invalid\n")
     publish(fl)
     opt_in(fl)
     serve(fl)
     proc = laptop.refresh()
     assert proc.returncode == 0
-    assert "no base64, sha256sum (or shasum) or od" in proc.stderr
+    warning = laptop.state_doc()["warning"]
+    for said in (proc.stderr, warning):
+        assert "no base64, sha256sum (or shasum) or od" in said and "Left out: ship-02" in said
     assert not (herdr(laptop) / "desk-looks").exists()
+
+
+@pytest.mark.local_sshd
+def test_a_finder_ds_store_does_not_make_the_folder_your_own(fl, laptop):  # noqa: F811
+    herdr(laptop)
+    publish(fl)
+    opt_in(fl)
+    serve(fl)
+    assert laptop.refresh().returncode == 0
+    target = herdr(laptop) / "desk-looks"
+    for where in (target, target / "logos"):
+        (where / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+    publish(fl, newer_folder(laptop, "Newer"))
+    serve(fl)
+    proc = laptop.refresh()
+    assert proc.returncode == 0 and "Wrote the fleet's looks" in proc.stdout, proc.stderr
+    assert desk_files(laptop) == looks.load().folder.files
+
+
+@pytest.mark.local_sshd
+def test_looks_applied_that_cannot_be_written_leaves_the_folder_as_it_was(fl, laptop):  # noqa: F811
+    """Swapped in without its digest recorded, the folder would be "your own" from then on."""
+    herdr(laptop)
+    publish(fl)
+    opt_in(fl)
+    serve(fl)
+    assert laptop.refresh().returncode == 0
+    before = desk_files(laptop)
+    marks = applied(laptop)
+    (laptop.d / ".looks-applied.new").mkdir()  # in the way of the new file
+    publish(fl, newer_folder(laptop, "Newer"))
+    serve(fl)
+    proc = laptop.refresh()
+    assert proc.returncode == 0
+    assert "what was there is unchanged" in proc.stderr
+    assert desk_files(laptop) == before and applied(laptop) == marks
+    assert stray(laptop) == []
+    (laptop.d / ".looks-applied.new").rmdir()
+    proc = laptop.refresh()
+    assert proc.returncode == 0 and "Wrote the fleet's looks" in proc.stdout, proc.stderr
 
 
 @pytest.mark.local_sshd

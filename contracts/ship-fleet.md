@@ -401,7 +401,8 @@ certificate, or a document it refuses. Exit 2: wrong usage. `state.json`:
 NAME's bundle carries `looks`; off is the default. Refresher 2 (`refresh --version`; the
 `refresher` field of `state.json`) reads it; refresher 1 refuses every bundle that has it
 (`an unknown field, looks`), keeping its last files, so a machine is opted in only after
-`shipshape-setup` (or the pasted line) has put refresher 2 there: FleetLedger cannot tell which
+the line `ship-fleet trust NAME` prints (or, where NAME's own key has a shell on FleetLedger,
+`shipshape-setup`) has put refresher 2 there: FleetLedger cannot tell which
 refresher a machine runs, and `trust --looks on` says what to check. Refresher 2:
 
 - checks `looks` whole, with the rest of the bundle, before writing anything: known fields

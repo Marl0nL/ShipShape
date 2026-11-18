@@ -776,7 +776,9 @@ sync_hc() {
 # never changed or removed. Nothing in it is run, and the only paths made from it are the names
 # checked here.
 
-add_warning() { warning="${warning:+$warning }$1"; }
+# The looks' own warnings, said after the others (which some steps set outright).
+looks_warning=
+add_warning() { looks_warning="${looks_warning:+$looks_warning }$1"; }
 
 # The tools the checks need; when one is missing the looks are left (said), never unchecked.
 find_looks_tools() {
@@ -797,13 +799,15 @@ first_bytes() { # file count -> those bytes in hex
 # size, a newline and its bytes, in name order. Only for a real folder holding nothing but the
 # format's folders and files (no link, nothing else); otherwise it prints nothing and fails.
 folder_digest() { # folder
-  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  { [ -d "$1" ] && [ ! -L "$1" ]; } || return 1
   ( cd "$1" 2>/dev/null && find . ! -name . -print ) >"$stage/lk.list" || return 1
   : >"$stage/lk.files"
   while IFS= read -r e; do
     e=${e#./}
     case $e in
-      palettes | logos) [ -d "$1/$e" ] && [ ! -L "$1/$e" ] || return 1 ;;
+      palettes | logos) { [ -d "$1/$e" ] && [ ! -L "$1/$e" ]; } || return 1 ;;
+      # What macOS's Finder leaves in a folder it shows: not part of the looks.
+      .DS_Store | palettes/.DS_Store | logos/.DS_Store) { [ -f "$1/$e" ] && [ ! -L "$1/$e" ]; } || return 1 ;;
       *) { is_member "$e" && [ -f "$1/$e" ] && [ ! -L "$1/$e" ]; } || return 1
          echo "$e" >>"$stage/lk.files" ;;
     esac
@@ -885,21 +889,25 @@ ours() { # folder
 # looks-applied: the digests of the folders this refresher wrote, the latest first, at most 8
 # (so a folder it wrote under another Herdr folder, with HERDR_APP_HOME set or not, stays its
 # own). Each line is 64 hex digits; anything else in the file is dropped.
-mark_looks() { # digest... to put first
-  : >"$D/.looks-applied.tmp" || return 1
-  for x in "$@"; do [ -n "$x" ] && echo "$x" >>"$D/.looks-applied.tmp"; done
-  [ -f "$LOOKS_MARK" ] && grep -xE '[0-9a-f]{64}' "$LOOKS_MARK" >>"$D/.looks-applied.tmp"
-  awk '!seen[$0]++' "$D/.looks-applied.tmp" | head -n 8 >"$D/.looks-applied.new" \
-    && mv -f "$D/.looks-applied.new" "$LOOKS_MARK"
-  rm -f "$D/.looks-applied.tmp" "$D/.looks-applied.new"
+mark_looks() { # digest... to put first; fails when looks-applied could not be written
+  ml_t="$D/.looks-applied.tmp" ml_n="$D/.looks-applied.new"
+  if { : >"$ml_t" && for x in "$@"; do if [ -n "$x" ]; then echo "$x" >>"$ml_t"; fi; done \
+    && { [ ! -f "$LOOKS_MARK" ] || grep -xE '[0-9a-f]{64}' "$LOOKS_MARK" >>"$ml_t" || [ $? -eq 1 ]; } \
+    && awk '!seen[$0]++' "$ml_t" | head -n 8 >"$ml_n" && [ -s "$ml_n" ] \
+    && mv -f "$ml_n" "$LOOKS_MARK"; } 2>/dev/null; then
+    rm -f "$ml_t"
+    return 0
+  fi
+  rm -f "$ml_t" "$ml_n"
+  return 1
 }
 
 # A refresh stopped between the two renames of a replacement leaves no desk-looks and the old
 # folder aside: put it back (only a folder of this refresher's own, by its digest).
 recover_looks() {
-  [ -e "$target" ] || [ -L "$target" ] && return 0
+  if [ -e "$target" ] || [ -L "$target" ]; then return 0; fi
   for x in "$hh"/.shipshape-looks-old.*; do
-    [ -d "$x" ] && [ ! -L "$x" ] || continue
+    { [ -d "$x" ] && [ ! -L "$x" ]; } || continue
     dg=$(folder_digest "$x") || continue
     grep -qxF "$dg" "$LOOKS_MARK" 2>/dev/null || continue
     mv "$x" "$target" && return 0
@@ -987,6 +995,7 @@ refresh() {
   apply_files
   sync_hc
   apply_looks
+  [ -n "$looks_warning" ] && warning="${warning:+$warning }$looks_warning"
   write_state ok ""
   cleanup
   echo "Refreshed $name: $ship_count Ship(s), certificate until $cert_until."

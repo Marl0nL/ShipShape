@@ -586,8 +586,9 @@ def build_parser() -> argparse.ArgumentParser:
                    "(ship-fleet looks), for its refresher to write into Herdr's desk-looks "
                    "folder: on, and its restricted refresh key also reads them; off, the "
                    "default, and its bundle is as before. Its refresher must be version 2 "
-                   "or later (on it: ~/.ssh/shipshape/refresh --version; older: run "
-                   "shipshape-setup there first). Signs nothing")
+                   "or later (on it: ~/.ssh/shipshape/refresh --version; older: paste the "
+                   "line ship-fleet trust NAME prints on FleetLedger's VM there first). "
+                   "Signs nothing")
     p.add_argument("--sync-keys", action="store_true",
                    help="on FleetLedger's own VM: rewrite FleetLedger's block in "
                    "~/.ssh/authorized_keys (each trusted machine's key, forced to fetch its "

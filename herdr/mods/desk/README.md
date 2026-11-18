@@ -212,8 +212,8 @@ a computer whose key has a shell there,
 `tar -cf - -C ~/.config/herdr-app/desk-looks . | ssh fleetledger@HOST ship-fleet looks publish -`;
 `ship-fleet looks show` says what it keeps (`contracts/ship-fleet.md`, "ship-fleet looks").
 **Have FleetLedger send it**: `ship-fleet trust NAME --looks on` there, after the computer NAME
-runs refresher 2 (`~/.ssh/shipshape/refresh --version`; older: run `shipshape-setup` on it
-first). Its refresher then writes the folder here at each refresh that brings a change, and
+runs refresher 2 (`~/.ssh/shipshape/refresh --version`; older: paste the line
+`ship-fleet trust NAME` prints on FleetLedger's VM there first). Its refresher then writes the folder here at each refresh that brings a change, and
 never over a `desk-looks` of your own. Steps: `docs/runbooks/share-desk-looks.md`.
 
 ## Files
