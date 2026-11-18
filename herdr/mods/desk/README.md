@@ -18,8 +18,9 @@ Around it, the parts of `main` that said little are replaced:
 
 - **The top bar** (the desk mod's `bar` part, instead of Herdr's tab strip) says where you are:
   `space › agent`, named by the agent's tab or session title rather than the program, with its tag
-  colour. Tabs appear only when a space has more than one, named by what's in them. A **Fleet**
-  button opens the Fleet panel's tab when that mod is installed (`install-desk.sh` installs it).
+  colour. Tabs appear only when a space has more than one, named by what's in them. A
+  **Dashboard** button opens the Dashboard tab (below), and a **Fleet** button the Fleet panel's
+  tab when that mod is installed (`install-desk.sh` installs it).
   New, Files, Changes and the window buttons are as before.
 - **The sidebar's lists** are clones of Herdr's (`mods/desk-spaces`, `mods/desk-agents`). Both
   colour by tag: a tagged space's avatar takes its tag's colour, and each tagged agent gets a bar
@@ -37,6 +38,16 @@ Around it, the parts of `main` that said little are replaced:
   the originals; re-clone and re-apply the marked `Desk:` lines if you want them.
 - **The corner** shows the look's brand (below).
 - **Pane headers** show on hover only; the coder view hides Herdr's Changes panel outside git.
+
+## Dashboard
+
+One tab with every agent on every machine Herdr reaches: **Needs you** (blocked, the longest
+first; then done), **In progress** and **Idle** by machine with crews nested under their
+manager, **Recent** (status changes since Herdr started) and **Machines** (an unreachable one's
+agents stay, greyed, with Go and Peek off). Each row says where the agent runs, how long it has
+been in its state, what it reports and its branch; **Go** goes to it, **Peek** shows it over the
+Dashboard. Filter by tag or machine. It is drawn from Herdr's live state only, and only while on
+show (`../../DESK.md`, "The Dashboard").
 
 ## Crews
 
@@ -108,7 +119,8 @@ so switching agents never disturbs your sizes. Fonts change only the desk, unles
 … for the whole window". Presets, parts and default tag looks are in `looks.js`.
 
 Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-manager`,
-`desk.sample-coder`, `desk.sample-crew`, `desk.sample-off`, `desk.look-<preset>`, `desk.taglooks`, `desk.toggle`, `desk.looks`.
+`desk.sample-coder`, `desk.sample-crew`, `desk.sample-off`, `desk.look-<preset>`, `desk.taglooks`, `desk.toggle`, `desk.looks`,
+`desk.dashboard` (the Dashboard tab, or a new one).
 
 ## Files
 
@@ -116,6 +128,7 @@ Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-ma
 |---|---|
 | `main.js` | the header and controller (view, width, look), the Kind and Look popups |
 | `views.js` | assistant, manager (kanban), coder, crew sheet and untyped bodies |
+| `dashboard.js`, `dash.js` | the Dashboard tab: its view, and its logic (no gpui or herdr imports; tested in `herdr/tests/desk/`) |
 | `model.js` | the focused agent, its kind, tags and board (read from its own machine) |
 | `looks.js` | palettes, finishes, type, density, presets, tag looks |
 | `ui.js` | cards, chips, labels and buttons, styled by the look |

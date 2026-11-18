@@ -94,8 +94,27 @@ export function band(L) {
     .children(Array.from({ length: N }, (_, i) => div().flex_1().h_full().bg(`#${a.map((x, k) => hex(x + ((b[k] - x) * i) / (N - 1))).join("")}`)));
 }
 
-// A small pill button.
+// A small pill button. `opts.off`: shown but does nothing, its tooltip says why.
 export function button(t, L, id, text, act, opts = {}) {
+  if (opts.off) {
+    return h_flex()
+      .id(id)
+      .flex_none()
+      .h(opts.h ?? 24)
+      .px(opts.icon && !text ? 5 : 8)
+      .gap(5)
+      .items_center()
+      .rounded(Math.min(L.f.radius, 8))
+      .border_1()
+      .border_color(t.border)
+      .text_size(11.5)
+      .text_color(t.dim)
+      .opacity(0.6)
+      .tooltip(opts.off)
+      .on_mouse_down("left", stop)
+      .when(Boolean(opts.icon), (el) => el.child(icon(opts.icon, 13, t.dim)))
+      .when(Boolean(text), (el) => el.child(text));
+  }
   return h_flex()
     .id(id)
     .flex_none()
@@ -114,6 +133,7 @@ export function button(t, L, id, text, act, opts = {}) {
     .when(Boolean(opts.tip), (el) => el.tooltip(opts.tip))
     .on_mouse_down("left", stop)
     .on_click((e, cx) => {
+      cx.stop_propagation(); // a button on a clickable row (the Dashboard's) is not a click on the row
       act(e, cx);
       cx.notify();
     })
