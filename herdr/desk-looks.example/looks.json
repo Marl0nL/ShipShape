@@ -1,0 +1,38 @@
+{
+  "schema": "shipshape.desk-looks/1",
+  "palettes": [
+    {
+      "id": "looks-example-dark",
+      "label": "Example dark",
+      "dark": true
+    }
+  ],
+  "presets": [
+    {
+      "id": "example",
+      "label": "Example",
+      "palette": "looks-example-dark",
+      "light": "desk-linen",
+      "finish": "ledger",
+      "type": "geist-mono",
+      "density": "compact",
+      "band": [
+        "#1f6fb2",
+        "#7cc4b0"
+      ],
+      "brand": {
+        "name": "Example",
+        "logo": "example.png",
+        "w": 20,
+        "h": 20,
+        "round": 5
+      }
+    }
+  ],
+  "tag_looks": [
+    {
+      "tag": "work",
+      "preset": "example"
+    }
+  ]
+}

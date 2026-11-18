@@ -1,0 +1,9 @@
+{
+  "schema": "shipshape.desk-looks/1",
+  "tag_looks": [
+    {
+      "tag": "personal",
+      "preset": "ember"
+    }
+  ]
+}

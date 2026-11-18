@@ -12,8 +12,9 @@
 // (data/<id>/intent.txt), how it was dispatched (state/<id>.meta) and what it has reported
 // (state/<id>.status), so a crew's sheet has something to show before it writes a board.
 
-import { agents, terminals, focused, panes, spaces, shared, readTextFile, exec, hc, home, appHome } from "herdr";
-import { resolve, DEFAULT_TAG_LOOKS, PRESETS } from "./looks.js";
+import { agents, terminals, focused, panes, spaces, shared, readTextFile, writeTextFile, exec, hc, home, appHome } from "herdr";
+import { resolve, PRESETS, applyFolder, builtinParts, tagLooksOf } from "./looks.js";
+import { readLookFolder, installThemes, checkLooks, toDoc } from "./lookfolder.js";
 import { tagColor } from "./ui.js";
 import { createHash } from "crypto";
 import { ShipTags } from "./shiptags.js";
@@ -57,6 +58,51 @@ const tagList = (s) => (Array.isArray(s) ? s : (s ?? "").split(/[,\s]+/)).map((t
 // FleetLedger's tags for each Ship (by name): a remote space's machine is its Ship (shiptags.js).
 export const shipTags = new ShipTags({ readTextFile, exec, home });
 export const readLedger = () => shipTags.read();
+
+// Your own looks (lookfolder.js): the head reads the folder, checks it, puts its palettes in
+// Herdr's themes/ and publishes the checked looks as shared "desk.lookFolder"; every part checks
+// them again and merges them over looks.js before it draws (syncLooks).
+async function readBytes(path, max) {
+  try {
+    const fs = await import("fs/promises");
+    return await fs.readFile(path);
+  } catch {
+    // No file access for mods here: od prints the bytes (Linux and macOS have it).
+  }
+  try {
+    const r = await exec("od", ["-An", "-v", "-tx1", "-N", String(max), path], { timeout: 10000 });
+    if (r.code !== 0) return null;
+    return Uint8Array.from((r.stdout.match(/[0-9a-f]{2}/g) ?? []).map((h) => parseInt(h, 16)));
+  } catch {
+    return null;
+  }
+}
+const lookHost = { appHome, readTextFile, writeTextFile, readBytes };
+
+/** The folder, read and checked, as the value for shared "desk.lookFolder": {looks, problem}. */
+export async function loadLooks() {
+  const r = await readLookFolder(lookHost, builtinParts());
+  if (!r.folder) return { looks: null, problem: r.problem };
+  const problem = await installThemes(lookHost, r.folder.themes);
+  if (problem) return { looks: null, problem: `${appHome()}/desk-looks is ignored: ${problem}` };
+  return { looks: toDoc(r.folder), problem: null };
+}
+
+let folderKey = "null";
+/** Wears what "desk.lookFolder" holds, checked again (it is shared state); else looks.js alone. */
+export function syncLooks() {
+  const looks = shared("desk.lookFolder")?.looks ?? null;
+  const key = JSON.stringify(looks);
+  if (key === folderKey) return;
+  folderKey = key;
+  let folder = null;
+  try {
+    if (looks) folder = checkLooks(looks, builtinParts());
+  } catch {
+    folder = null;
+  }
+  applyFolder(folder);
+}
 
 const SAMPLE_AGENT = {
   assistant: { name: "Assistant", where: "sample" },
@@ -307,7 +353,8 @@ export function full(s) {
 
 // The look to wear now: a tag's own look wins over the one you picked.
 export function lookFor(s) {
-  const tagLooks = shared("desk.tagLooks") ?? DEFAULT_TAG_LOOKS;
+  syncLooks();
+  const tagLooks = tagLooksOf(shared("desk.tagLooks"));
   const tag = s?.tags?.find((t) => tagLooks[t]);
   const mine = shared("desk.look");
   return { ...resolve(tag ? { preset: tagLooks[tag] } : mine), tag: tag ?? null };
@@ -401,7 +448,8 @@ export function messageFor(s) {
 // a steady theme colour. Published by the desk header as shared "desk.tagIndex", with the
 // hierarchy (parents: address -> its boss's address; crews: address -> task) for the agents list.
 export function tagIndex(t) {
-  const tagLooks = shared("desk.tagLooks") ?? DEFAULT_TAG_LOOKS;
+  syncLooks();
+  const tagLooks = tagLooksOf(shared("desk.tagLooks"));
   const colorOf = (tags) => {
     const looked = tags.find((x) => PRESETS[tagLooks[x]]?.band);
     if (looked) return PRESETS[tagLooks[looked]].band[1];
