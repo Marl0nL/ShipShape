@@ -24,6 +24,8 @@ follow Herdr's updates.
 | `mods/desk/` | the desk itself, in parts (`props.part`): `head`, `assistant`, `manager`, `coder`, `crew`, `none`, plus the window's `bar` and `brand` corner |
 | `mods/desk/bin/desk` | the agents' CLI (one Python 3 file, no dependencies), linked as `~/.local/bin/desk` |
 | `mods/desk-spaces/`, `mods/desk-agents/` | clones of Herdr's shipped `spaces` and `agents` sidebar mods, changed where marked `Desk:` (tag colours; the agents list's hierarchy view) |
+| `mods/desk/lookfolder.js` | your own looks, from a folder of data in Herdr's folder (`desk-looks/`, below) |
+| `desk-looks.example/` | a placeholder looks folder to start from (nothing installs it) |
 | `mods/desk/shiptags.js` | each Ship's FleetLedger tags (below); `fleet-model.js` beside it is a link to the Fleet panel's `mods/fleet/model.js`, whose checks it reads with |
 | `install-desk.sh` | copies all of it into Herdr's folder (with the Fleet panel, `install-fleet.sh`) and links the CLI |
 
@@ -65,7 +67,8 @@ root (row; terminal_opacity 0.88)
 4. **Which look.** Its tags: its `desk.tags` label, plus, on a Ship, the Ship's FleetLedger tags.
    A tag can carry a look (`work` wears Slate ledger, `personal` wears Moss), which changes
    the whole window: its palette and, for a look that has them, the desk's band and the corner's
-   logo.
+   logo. Your looks folder (`desk-looks/`) adds presets and palettes and sets tag looks of its
+   own, over the popup's.
 
 The head part then moves the layout to match, by clicks rather than by rewriting the layout file
 (which would throw away the person's dragged sizes): `layout.select` for `desk-body` and
@@ -145,6 +148,7 @@ without tags of their own wear their boss's, and secondmates go by their space's
 | `desk.tagIndex` | desk header | tags and colours per agent and space, the hierarchy, crew tasks, names |
 | `desk.look` | the Look popup | the person's own look (a preset, parts on top) |
 | `desk.tagLooks`, `desk.tagLooksOff` | the Look popup | which tag wears which preset; paused or not |
+| `desk.lookFolder` | the desk (head and Look popup) | your looks folder as checked (`{looks, problem}`); each part checks it again |
 | `desk.sample` | `desk.sample-*` commands | a sample board in place of the focused agent |
 | `sidebar.width`, `sidebar.collapsed` | the brand corner's toggle | the sidebar fold |
 
@@ -171,5 +175,6 @@ done
   show behind a terminal.
 - The sidebar clones are copies of Herdr's mods at the version they were cloned from; re-clone and
   re-apply the `Desk:` lines to pick up Herdr's changes.
-- The tag looks here are neutral presets with no band or logo. A live install can add presets of
-  its own with a band and a logo; keep those out of this public repository (`docs/hygiene.md`).
+- The tag looks here are neutral presets with no band or logo. Your own, with a band and a logo,
+  go in `~/.config/herdr-app/desk-looks/` (`mods/desk/README.md`, "Your own looks";
+  `contracts/desk-looks.md`), outside the repository; keep them out of it (`docs/hygiene.md`).

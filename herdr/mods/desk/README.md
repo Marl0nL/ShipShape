@@ -97,10 +97,9 @@ The settings button on the desk's header opens the Look popup:
   review your own.
 
 The corner is the desk mod's `brand` part, standing in for Herdr's `workspace-chrome` (search and
-the sidebar toggle work as before). A preset's `brand` in `looks.js` sets its logo, size and name;
-presets without one show Herdr's. None of the presets here has one: add your own preset with a
-`band` and a `brand` (a logo of yours in `brand/`) in your installed copy. Urbanist (SIL OFL,
-`fonts/Urbanist-OFL.txt`) is in `fonts/`.
+the sidebar toggle work as before). A preset's `brand` sets its logo, size and name; presets
+without one show Herdr's. None of the presets here has one: yours go in your looks folder
+(below). Urbanist (SIL OFL, `fonts/Urbanist-OFL.txt`) is in `fonts/`.
 
 Palettes are Herdr themes (`themes/desk-slate.json`, `desk-ember`, `desk-linen`, plus Herdr's
 own). They go on through Herdr's theme pick, never the layout file,
@@ -108,7 +107,55 @@ so switching agents never disturbs your sizes. Fonts change only the desk, unles
 … for the whole window". Presets, parts and default tag looks are in `looks.js`.
 
 Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-manager`,
-`desk.sample-coder`, `desk.sample-crew`, `desk.sample-off`, `desk.look-<preset>`, `desk.taglooks`, `desk.toggle`, `desk.looks`.
+`desk.sample-coder`, `desk.sample-crew`, `desk.sample-off`, `desk.look-<preset>`, `desk.taglooks`, `desk.toggle`, `desk.looks`,
+`desk.looks-reload`.
+
+### Your own looks: a folder of data
+
+Looks of your own (palettes, presets with a band and a logo, which tag wears which) go in a
+folder beside Herdr's settings, not in `looks.js`, so they survive a reinstall and can be copied
+to another computer:
+
+```
+~/.config/herdr-app/desk-looks/      ($HERDR_APP_HOME/desk-looks if you set that)
+  looks.json                         palettes, presets and tag looks
+  palettes/looks-<id>.json           a Herdr theme for each palette looks.json lists
+  logos/<name>.png                   (or .jpg) a logo a preset's brand names
+```
+
+`../../desk-looks.example/` is a placeholder to start from: an `Example` preset with its own dark
+palette, a band and a logo, worn by the `work` tag. The format and every rule are in
+`contracts/desk-looks.md`. In short: it is data only (nothing in it is run, and no value in it is
+a path); a palette id starts `looks-`; presets name the Desk's finishes, types and densities;
+there are size limits. A folder with one thing out of place is ignored whole: the Desk wears its
+own looks and the Look popup says what is wrong. Without the folder nothing changes.
+
+The Desk reads the folder when it starts, when you open the Look popup, and on
+`herdr-app do desk.looks-reload`, never on a timer. It copies each palette to Herdr's
+`themes/looks-<id>.json` (the only theme files it writes), merges the presets over its own
+(a preset with the id of one here replaces it), and gives the folder's tag looks priority over
+the popup's for the same tags (the popup shows those as set by the folder).
+
+**Moving presets you added to an installed `looks.js`.** For each preset of yours there:
+
+1. Each theme of yours it uses (`~/.config/herdr-app/themes/<name>.json`): copy it to
+   `desk-looks/palettes/looks-<name>.json`, add `{"id": "looks-<name>", "label": "...", "dark":
+   true}` (or `false`) to `palettes`, and use `looks-<name>` in the preset. Only the fields the
+   Desk's own themes have are allowed (the popup names any other).
+2. The preset: add it to `presets` with its key as `id` and the same fields. Its brand's `logo`
+   becomes just the file name, and the picture goes in `desk-looks/logos/`.
+3. Tags: add `{"tag": "work", "preset": "<id>"}` to `tag_looks` for each tag that should wear it.
+4. Open the Look popup: it lists the folder's presets, or says why it ignored the folder. Then
+   put `looks.js` back as shipped (run `install-desk.sh` again).
+
+**On another computer**, copy the folder as it is into that computer's Herdr folder, with
+whatever you copy files with, for example:
+
+```sh
+scp -r ~/.config/herdr-app/desk-looks other-computer:.config/herdr-app/
+```
+
+Then open the Look popup there (or `herdr-app do desk.looks-reload`).
 
 ## Files
 
@@ -117,7 +164,8 @@ Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-ma
 | `main.js` | the header and controller (view, width, look), the Kind and Look popups |
 | `views.js` | assistant, manager (kanban), coder, crew sheet and untyped bodies |
 | `model.js` | the focused agent, its kind, tags and board (read from its own machine) |
-| `looks.js` | palettes, finishes, type, density, presets, tag looks |
+| `looks.js` | palettes, finishes, type, density, presets, tag looks; your folder merged over them |
+| `lookfolder.js` | your looks folder, read and checked (`contracts/desk-looks.md`) |
 | `ui.js` | cards, chips, labels and buttons, styled by the look |
 | `bin/desk` | the agents' CLI |
 | `samples/` | the preview boards |

@@ -11,6 +11,10 @@
 // in shared state ("desk.look"). A tag can carry a look of its own ("desk.tagLooks"): whenever
 // the focused agent has that tag, the window wears that look, so a `work` agent never looks like
 // a `personal` one. Add a preset or a tag look here, or pick them in the popup.
+//
+// Looks of your own go in a folder of data instead (lookfolder.js, contracts/desk-looks.md):
+// its palettes, presets and tag looks are merged over these by applyFolder(), and without one
+// everything here is as written.
 
 export const PALETTES = [
   { id: "graphite", label: "Graphite", dark: true },
@@ -60,9 +64,49 @@ export const PRESETS = {
 };
 
 export const DEFAULT_LOOK = { preset: "graphite" };
+// Where a folder's logos are, for image(): Herdr's folder, like mods/desk/brand/.
+export const FOLDER_LOGOS = "desk-looks/logos";
 // Tags that bring their own look, until you change them in the popup.
 export const DEFAULT_TAG_LOOKS = { work: "slate", personal: "moss" };
 export const HERDR_BRAND = { name: "Herdr", logo: "frame/welcome/herdr.png", w: 20, h: 20, round: 5 };
+
+// The parts as this file has them, before any folder.
+const BUILTIN = { palettes: PALETTES.map((p) => ({ ...p })), presets: { ...PRESETS } };
+// The tag looks the folder sets (they win over the popup's), and the folder last applied.
+export const FOLDER_TAG_LOOKS = {};
+let applied = "null";
+
+/** What a folder may name besides its own: the palettes, finishes, types, densities, presets
+ *  and fonts here (for lookfolder.js's checks). */
+export function builtinParts() {
+  const fonts = [...new Set(Object.values(TYPES).flatMap((x) => [x.ui, x.titles, x.labels]))];
+  return { palettes: BUILTIN.palettes, finishes: FINISHES, types: TYPES, densities: DENSITIES, presets: BUILTIN.presets, fonts };
+}
+
+/** Merges a checked folder (lookfolder.js's readLookFolder().folder, or null) over the looks
+ *  here, in place, so everything that reads PRESETS and PALETTES sees it. A folder preset with a
+ *  preset's id here replaces it. Null puts this file's looks back exactly. */
+export function applyFolder(folder) {
+  const key = JSON.stringify(folder ?? null);
+  if (key === applied) return false;
+  applied = key;
+  PALETTES.splice(0, PALETTES.length, ...BUILTIN.palettes.map((p) => ({ ...p })), ...(folder?.palettes ?? []).map((p) => ({ ...p })));
+  for (const k of Object.keys(PRESETS)) delete PRESETS[k];
+  Object.assign(PRESETS, BUILTIN.presets);
+  for (const p of folder?.presets ?? []) {
+    const { id, brand, ...rest } = p;
+    PRESETS[id] = { ...rest, ...(brand ? { brand: { ...brand, logo: `${FOLDER_LOGOS}/${brand.logo}` } } : {}) };
+  }
+  for (const k of Object.keys(FOLDER_TAG_LOOKS)) delete FOLDER_TAG_LOOKS[k];
+  for (const [tag, preset] of Object.entries(folder?.tagLooks ?? {})) if (PRESETS[preset]) FOLDER_TAG_LOOKS[tag] = preset;
+  return true;
+}
+
+/** Which tag wears which preset: the popup's choices (shared "desk.tagLooks", else the defaults
+ *  above), with the folder's tag looks on top. */
+export function tagLooksOf(stored) {
+  return { ...(stored ?? DEFAULT_TAG_LOOKS), ...FOLDER_TAG_LOOKS };
+}
 
 // A whole look from a stored one: the preset, with any part chosen separately on top.
 export function resolve(stored) {
