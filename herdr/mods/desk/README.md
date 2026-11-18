@@ -41,7 +41,13 @@ Around it, the parts of `main` that said little are replaced:
 - **The corner** shows the look's brand (below).
 - **Pane headers** show on hover only; the coder view hides Herdr's Changes panel outside git.
 
-## Task cards: Peek, branch, PR and Diff
+## Task cards: right now, Peek, branch, PR and Diff
+
+Under a card's note, a live line says how long its agent has been in its state ("working 41m",
+from its tab's `working_since` or `changed_at`) and, when Herdr's report for its terminal
+carries one, what it says right now. A task in Doing whose agent has been idle (or done) for
+ten minutes is marked **stale**; when Herdr has seen no change since it started, the card's own
+`updated` decides. All of it is Herdr's live state: nothing is read for it.
 
 Beside the agent on a card, **Peek** shows that agent's terminal over the board
 (`terminal.peek`): read it or answer it, close the peek, and you are still on the kanban. For a

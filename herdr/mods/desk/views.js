@@ -3,10 +3,11 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, hc, setShared, panes, machines, layout, shared } from "herdr";
+import { run, hc, setShared, panes, machines, layout, shared, spaces, terminals } from "herdr";
 import { STATUSES, STATUS_LABEL, KIND_LABEL, agentNamed, ago, toolsOn, messageFor, docFor } from "./model.js";
 import { card, title, body, label, chip, pip, icon, tagColor, toneColor, statusColor, openUrl, openHttps, button, code, stop } from "./ui.js";
 import { taskLinks, diffMenu, findNode } from "./links.js";
+import { cardLive, tabIndex, span } from "./dash.js";
 
 const go = (a) => a && run("pane.focus", { pane: a.pane });
 const machineOf = (a) => (a?.address?.includes("/") ? a.address.split("/")[0] : null);
@@ -304,11 +305,34 @@ function taskCard(t, L, task, idp, view) {
   const who = agentNamed(task.agent);
   const k = card(t, L, color, `${idp}-${task.id}`);
   const links = linksRow(t, L, task, who, `${idp}-${task.id}`, view);
+  const live = who ? cardLive(task, who, tabIndex(spaces()).get(who.tab)?.tab, terminals().find((x) => x.address === who.address), Date.now()) : null;
   let el = k.finish(
     k.inner
       .gap(5)
-      .child(title(t, L, task.title ?? task.id ?? "", 13))
+      .child(
+        h_flex()
+          .gap(6)
+          .items_start()
+          .child(title(t, L, task.title ?? task.id ?? "", 13).flex_1())
+          .when(Boolean(live?.stale), (e) =>
+            e.child(div().id(`${idp}-${task.id}-stale`).flex_none().tooltip(`${task.agent} has been ${who.status} for ${span(live.still)} while this task is in Doing`).child(chip(t, L, "stale", t.ansi3 ?? t.working, { h: 18 }))),
+          ),
+      )
       .when(Boolean(task.note), (e) => e.child(body(t, L, task.note)))
+      // Right now: how long its agent has been at it, and what it says (when Herdr's report says).
+      .when(Boolean(live), (e) =>
+        e.child(
+          h_flex()
+            .id(`${idp}-${task.id}-live`)
+            .gap(6)
+            .items_center()
+            .min_w(0)
+            .text_size(11)
+            .child(pip(t, who.status, 6))
+            .child(div().flex_none().text_color(who.status === "blocked" ? t.blocked : t.muted).child(live.text))
+            .when(Boolean(live.msg), (r) => r.tooltip(`Right now: ${live.msg}`).child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`“${live.msg}”`))),
+        ),
+      )
       .when(Boolean(links), (e) => e.child(links))
       .child(
         h_flex()

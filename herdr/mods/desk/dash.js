@@ -581,3 +581,24 @@ export function nextAfter(queue, last) {
   const i = queue.findIndex((r) => r.address === last);
   return queue[(i + 1) % queue.length] ?? queue[0];
 }
+
+// ---- a task card's live line: how long its agent has been at it, and what it says now --------
+
+/** A task in Doing whose agent has sat idle (or done) this long is marked stale. */
+export const STALE_MS = 10 * 60 * 1000;
+
+/** The card's live line, from Herdr alone: `who` the live agent (agents()), `tab` its tab
+ *  (spaces()), `term` its terminal (terminals()). {text: "working 41m", msg, stale}. `msg` is
+ *  null when terminals()'s report carries no message. Stale: the task is in Doing and the agent
+ *  has been idle or done for STALE_MS (by its tab's last change; when Herdr has seen none, by
+ *  the card's own `updated`). */
+export function cardLive(task, who, tab, term, now) {
+  if (!who) return null;
+  const since = sinceOf(who.status, tab);
+  const text = Number.isFinite(since) ? `${who.status} ${span(now - since)}` : who.status;
+  const quiet = who.status === "idle" || who.status === "done";
+  const updated = typeof task?.updated === "string" ? Date.parse(task.updated) : NaN;
+  const still = Number.isFinite(since) ? now - since : Number.isFinite(updated) ? now - updated : null;
+  const stale = task?.status === "doing" && quiet && still !== null && still >= STALE_MS;
+  return { text, msg: reportText(term), stale, still };
+}
