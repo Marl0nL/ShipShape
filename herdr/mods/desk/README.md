@@ -6,7 +6,7 @@ on the right that follows the agent you focus and shows what that agent keeps fo
 | Agent kind | Its desk |
 |---|---|
 | Assistant | summary, cards, checklists, notes, links |
-| Manager | a kanban of the tasks it hands out, each with the live status of the agent doing it |
+| Manager | a kanban of the tasks it hands out, each with the live status of the agent doing it, its branch and PR, and a Diff menu |
 | Coder | branch, PR and CI, recent commits, its plan; Herdr's Changes panel below |
 | Crew | a sheet over its terminal (what it's on, what it found, what's next, what its manager heard); its branch and PR on the desk |
 | Untyped | buttons to set its kind, and sample boards to preview |
@@ -38,6 +38,18 @@ Around it, the parts of `main` that said little are replaced:
   the originals; re-clone and re-apply the marked `Desk:` lines if you want them.
 - **The corner** shows the look's brand (below).
 - **Pane headers** show on hover only; the coder view hides Herdr's Changes panel outside git.
+
+## Task cards: branch, PR and Diff
+
+A manager's task card shows the work's branch and PR, taken from the first that answers: the
+task's own `branch`, `pr`, `folder` and `base` (`desk task set ID --branch ... --pr ...`); the
+live terminal of the agent on it (Herdr's `panes()`: its branch and folder); a PR address
+(`/pull/N`, `/merge_requests/N`) in its link or note. **Diff ▾** offers **Open PR #N (files
+changed)** in the browser and **Go to <agent> + Changes** (focus it, open Herdr's Changes
+panel); each says what it does, or why it is off ("No PR yet", "<agent> isn't running here",
+"ship-01 is unreachable"). A board is the agent's to write, so these are checked before they
+are shown or opened (`links.js`): a branch must look like a git ref, a folder must be absolute
+or `~/`, and only `https://` addresses open. A field that fails is left out, with a `?` saying so.
 
 ## Dashboard
 
@@ -134,6 +146,7 @@ Commands (keys.json or `herdr-app do`): `desk.sample-assistant`, `desk.sample-ma
 |---|---|
 | `main.js` | the header and controller (view, width, look), the Kind and Look popups |
 | `views.js` | assistant, manager (kanban), coder, crew sheet and untyped bodies |
+| `links.js` | a task's branch and PR, the Diff menu, and the checks on what a board names (no gpui or herdr imports) |
 | `dashboard.js`, `dash.js` | the Dashboard tab: its view, and its logic (no gpui or herdr imports; tested in `herdr/tests/desk/`) |
 | `model.js` | the focused agent, its kind, tags and board (read from its own machine) |
 | `looks.js` | palettes, finishes, type, density, presets, tag looks |

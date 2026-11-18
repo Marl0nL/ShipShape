@@ -4,6 +4,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec } from "herdr";
+import { checkHttps } from "./links.js";
 
 const ICON = "mods/workspace-chrome";
 export const icon = (name, size, color) => svg(`${ICON}/${name}.svg`).size(size).flex_none().text_color(color);
@@ -79,6 +80,13 @@ export function body(t, L, text) {
 
 export function openUrl(url) {
   if (url) exec("xdg-open", [url]).catch(() => {});
+}
+
+// What a board names and the desk opens (a PR, a link in a finding): https:// only, else nothing.
+export function openHttps(url) {
+  const u = checkHttps(url);
+  if (u) exec("xdg-open", [u]).catch(() => {});
+  return Boolean(u);
 }
 
 // A strip across the top, blended from one colour to the other in short steps.

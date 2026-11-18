@@ -66,10 +66,15 @@ desk list rm Today 2               # one item;  desk list rm Today  removes the 
 desk task add login-bug --title "Fix login redirect" --status todo --agent fix-login
 desk task move login-bug doing --note "fix-login has started"
 desk task move login-bug review --note "PR #412, CI green" --link https://...
+desk task set login-bug --branch fix/login --pr https://example.com/org/repo/pull/412 --folder ~/work/repo-wt3
 desk task rm login-bug
 #   statuses: todo | doing | review | blocked | done
 #   --agent: who is doing it: their tab name, space name, title or terminal (t7). The desk shows
 #   that agent's live status on the card, and the person can click through to them.
+#   --branch, --pr (https:// only), --folder (its worktree, on its machine), --base (default: the
+#   repo's default branch): the card's branch and PR row and its Diff menu. Optional: without
+#   them the card takes the branch from the agent's terminal and a PR from --link or --note.
+#   "" clears one.
 
 # crews: what you've found (newest first) and your next steps, in order
 desk finding add "Loop only happens with SSO on" --tone warn
@@ -103,7 +108,7 @@ the same folder and rename it over the old one, so Herdr never reads half a file
   "summary": "Getting 2.4 out the door",
   "cards": [{ "id": "freeze", "title": "Code freeze Fri 3pm", "body": "...", "tone": "warn", "link": null, "tags": [] }],
   "lists": [{ "title": "Today", "items": [{ "text": "Confirm flights", "done": false }] }],
-  "tasks": [{ "id": "login-bug", "title": "Fix login redirect", "status": "review", "note": "PR #412", "agent": "fix-login", "link": null, "updated": "..." }],
+  "tasks": [{ "id": "login-bug", "title": "Fix login redirect", "status": "review", "note": "PR #412", "agent": "fix-login", "link": null, "branch": "fix/login", "pr": "https://example.com/org/repo/pull/412", "folder": "~/work/repo-wt3", "base": "main", "updated": "..." }],
   "notes": "free text",
   "links": [{ "title": "Itinerary", "url": "https://..." }],
   "crew": { "parent": "firstmate", "task": "fm-fix-login-k3" },
@@ -122,7 +127,8 @@ hc label "$HC_TERMINAL_ID" desk.kind=assistant desk.tags=personal desk.file="$HO
 
 - **Assistant:** your summary, cards (two across when there's room), checklists, notes, links.
 - **Manager:** your summary and cards, then To do / Doing / Review / Blocked / Done, each task
-  with whoever is on it and their live status.
+  with whoever is on it and their live status, and its branch and PR with a Diff menu (open the
+  PR's changed files, or go to the agent with Herdr's Changes panel).
 - **Coder:** your summary, the branch (ahead, behind, changed files), the PR and CI (from `gh`),
   recent commits, your plan and cards; Herdr's Changes panel (the diff) below.
 - **Crew:** a sheet over your terminal, which is kept short and marked with a caution sign so the

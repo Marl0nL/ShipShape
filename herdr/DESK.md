@@ -24,6 +24,7 @@ follow Herdr's updates.
 | `mods/desk/` | the desk itself, in parts (`props.part`): `head`, `assistant`, `manager`, `coder`, `crew`, `none`, plus the window's `bar` and `brand` corner, and the `dashboard` tab |
 | `mods/desk/bin/desk` | the agents' CLI (one Python 3 file, no dependencies), linked as `~/.local/bin/desk` |
 | `mods/desk-spaces/`, `mods/desk-agents/` | clones of Herdr's shipped `spaces` and `agents` sidebar mods, changed where marked `Desk:` (tag colours; the agents list's hierarchy view) |
+| `mods/desk/links.js` | task cards' branch, PR and Diff menu, and the checks on what a board names before the desk shows or opens it |
 | `mods/desk/dash.js`, `dashboard.js` | the Dashboard: its logic (no gpui or herdr imports, tested in `tests/desk/`) and its view |
 | `mods/desk/shiptags.js` | each Ship's FleetLedger tags (below); `fleet-model.js` beside it is a link to the Fleet panel's `mods/fleet/model.js`, whose checks it reads with |
 | `install-desk.sh` | copies all of it into Herdr's folder (with the Fleet panel, `install-fleet.sh`) and links the CLI |

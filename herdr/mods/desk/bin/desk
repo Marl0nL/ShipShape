@@ -18,6 +18,7 @@ machine and Herdr reads it from there.
   desk list check Today 1
   desk task add login-bug --title "Fix login redirect" --status doing --agent fix-login
   desk task move login-bug review --note "PR #42 open"
+  desk task set login-bug --branch fix/login --pr https://example.com/org/repo/pull/42
   desk show
 
 A crew (a worker another agent dispatched, e.g. a firstmate crewmate) gets a sheet
@@ -48,6 +49,25 @@ KINDS = ("assistant", "manager", "coder", "crew")
 TONES = ("info", "good", "warn", "bad")
 STATUSES = ("todo", "doing", "review", "blocked", "done")
 STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "herdr-desk")
+
+# A task's branch, PR, folder and base, checked as the desk checks them before it shows or opens
+# them (mods/desk/links.js): a git-ref-like branch, an https:// PR, an absolute or ~/ folder.
+REF_RE = re.compile(r"(?!-)(?!.*\.\.)(?!.*//)(?!.*@\{)(?!.*(?:/|\.|\.lock)\Z)[A-Za-z0-9._/-]{1,200}")
+HTTPS_RE = re.compile(r"https://[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}))*"
+                      r"(?::[0-9]{1,5})?(?:[/?#][^\s\"'<>\\^`{|}]*)?")
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+LINK_FIELDS = ("branch", "pr", "folder", "base")
+
+
+def link_problem(field, v):
+    """Why a task's branch, pr, folder or base is refused, or None."""
+    if field in ("branch", "base"):
+        return None if REF_RE.fullmatch(v) else "a git branch name: letters, digits and ._/-, not starting with -, no .."
+    if field == "folder":
+        ok = (v.startswith("/") or v.startswith("~/")) and len(v) <= 1024 and not CONTROL_RE.search(v)
+        return None if ok and ".." not in v.split("/") else "an absolute or ~/ path on this machine, no .."
+    ok = len(v) <= 2048 and not CONTROL_RE.search(v) and HTTPS_RE.fullmatch(v)
+    return None if ok else "an https:// address"
 
 
 def now():
@@ -301,7 +321,16 @@ def cmd_task(a):
             if i < 0 and not a.title:
                 die("a new task needs --title")
             task = tasks[i] if i >= 0 else {"id": slug(a.id), "status": "todo"}
-            put(task, a, ("title", "note", "agent", "link", "tags"))
+            for f in LINK_FIELDS:
+                v = getattr(a, f, None)
+                if v:
+                    why = link_problem(f, v)
+                    if why:
+                        die(f"--{f} must be {why}")
+            put(task, a, ("title", "note", "agent", "link", "tags", *LINK_FIELDS))
+            for f in LINK_FIELDS:
+                if task.get(f) == "":
+                    del task[f]  # --branch "" and the like clear it
             if status:
                 task["status"] = status
             task["updated"] = now()
@@ -389,7 +418,9 @@ def cmd_show(a):
         for n, it in enumerate(lst["items"], 1):
             print(f"     {n}. [{'x' if it.get('done') else ' '}] {it['text']}")
     for t in b["tasks"]:
-        print(f"  [task {t['id']}] {t['status']:7} {t.get('title', '')}{'  -> ' + t['agent'] if t.get('agent') else ''}")
+        extra = "  ".join(f"{f}: {t[f]}" for f in ("branch", "pr") if t.get(f))
+        print(f"  [task {t['id']}] {t['status']:7} {t.get('title', '')}{'  -> ' + t['agent'] if t.get('agent') else ''}"
+              f"{'  (' + extra + ')' if extra else ''}")
     for n, f in enumerate(b.get("findings", []), 1):
         print(f"  [finding {n}] {f.get('text', '')}{' (' + f['tone'] + ')' if f.get('tone') else ''}")
     for n, st in enumerate(b.get("next", []), 1):
@@ -414,6 +445,10 @@ def cmd_put(a):
     for t in new.get("tasks", []):
         if t.get("status", "todo") not in STATUSES:
             die(f"task {t.get('id')}: status must be one of {', '.join(STATUSES)}")
+        for f in LINK_FIELDS:
+            v = t.get(f)
+            if v is not None and (not isinstance(v, str) or link_problem(f, v)):
+                die(f"task {t.get('id')}: {f} must be {link_problem(f, v) if isinstance(v, str) else 'text'}")
     path = board_path()
     with Locked(path):
         save(path, new)
@@ -475,7 +510,8 @@ def main():
     s.add_argument("item", nargs="*")
     s.set_defaults(fn=cmd_list)
 
-    s = sub.add_parser("task", help="kanban tasks: add|set ID --title.., move ID STATUS, rm ID")
+    s = sub.add_parser("task", help="kanban tasks: add|set ID --title.., move ID STATUS, rm ID "
+                                    "(--branch, --pr, --folder, --base: what the card shows and opens)")
     s.add_argument("op", choices=("add", "set", "move", "rm"))
     s.add_argument("id")
     s.add_argument("to", nargs="?", help="for move: " + ", ".join(STATUSES))
@@ -485,6 +521,10 @@ def main():
     s.add_argument("--agent", help="who's doing it: a tab name, an agent's title, or a terminal like t7")
     s.add_argument("--link")
     s.add_argument("--tags")
+    s.add_argument("--branch", help="the branch the work is on, e.g. fix/login (\"\" clears it)")
+    s.add_argument("--pr", help="its pull request, an https:// address (\"\" clears it)")
+    s.add_argument("--folder", help="its worktree on the agent's machine, absolute or ~/ (\"\" clears it)")
+    s.add_argument("--base", help="the branch it is compared with (default: the repo's default branch)")
     s.set_defaults(fn=cmd_task)
 
     s = sub.add_parser("finding", help="crew: add TEXT [--tone], rm N|TEXT, or clear what you've found")
