@@ -18,6 +18,43 @@ function hasChanges() {
   const enabled = shared("workspace.panels") ?? ["files", "changes"];
   return Boolean(findNode(root, "panel") && findNode(root, "panel-body")) && enabled.includes("changes");
 }
+// Peek: the agent's terminal over this tab (terminal.peek), so you can read or answer it and
+// close the peek to be back on the kanban. A crew is typed into directly: its tooltip says so,
+// in the crew terminal's amber.
+function peekButton(t, L, who, name, id) {
+  const machine = machineOf(who);
+  const off = machineState(machine) === "unavailable" ? `${machine} is unreachable` : null;
+  const crew = Boolean((shared("desk.tagIndex") ?? {}).crews?.[who.address]);
+  const tip = crew ? `Peek at ${name} here. Careful: it's the crew's own terminal; what you type steers it directly, so talk to its manager instead` : `Peek at ${name} over the board; close the peek to come back`;
+  return h_flex()
+    .id(id)
+    .h(20)
+    .px(6)
+    .gap(4)
+    .flex_none()
+    .items_center()
+    .rounded(Math.min(L.f.radius, 8))
+    .border_1()
+    .border_color(crew ? `${CAUTION}88` : t.border)
+    .text_size(11)
+    .text_color(off ? t.dim : crew ? CAUTION : t.muted)
+    .tooltip(off ?? tip)
+    .on_mouse_down("left", stop)
+    .when(!off, (e) =>
+      e
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => {
+          cx.stop_propagation();
+          try {
+            run("terminal.peek", { terminal: who.address });
+          } catch {}
+        }),
+    )
+    .when(crew, (e) => e.child(caution(10, CAUTION)))
+    .child("Peek");
+}
+
 function goChanges(who) {
   go(who);
   run("layout.select", { stack: "panel-body", child: "changes" });
@@ -296,6 +333,7 @@ function taskCard(t, L, task, idp, view) {
                 .when(Boolean(who), (c) => c.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(`Go to ${task.agent} (${who.status})`).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); go(who); })),
             ),
           )
+          .when(Boolean(who), (r) => r.child(peekButton(t, L, who, task.agent, `${idp}-${task.id}-peek`)))
           .child(div().flex_1())
           .when(Boolean(task.link), (r) => r.child(div().id(`${idp}-${task.id}-link`).cursor_pointer().tooltip(task.link).on_click(() => openUrl(task.link)).child(icon("file-text", 12, t.dim))))
           .when(Boolean(task.updated), (r) => r.child(div().text_size(10.5).text_color(t.dim).child(ago(task.updated)))),

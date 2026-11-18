@@ -127,7 +127,8 @@ hc label "$HC_TERMINAL_ID" desk.kind=assistant desk.tags=personal desk.file="$HO
 
 - **Assistant:** your summary, cards (two across when there's room), checklists, notes, links.
 - **Manager:** your summary and cards, then To do / Doing / Review / Blocked / Done, each task
-  with whoever is on it and their live status, and its branch and PR with a Diff menu (open the
+  with whoever is on it and their live status (the person can peek at them from the card), and
+  its branch and PR with a Diff menu (open the
   PR's changed files, or go to the agent with Herdr's Changes panel).
 - **Coder:** your summary, the branch (ahead, behind, changed files), the PR and CI (from `gh`),
   recent commits, your plan and cards; Herdr's Changes panel (the diff) below.

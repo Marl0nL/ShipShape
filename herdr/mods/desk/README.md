@@ -6,7 +6,7 @@ on the right that follows the agent you focus and shows what that agent keeps fo
 | Agent kind | Its desk |
 |---|---|
 | Assistant | summary, cards, checklists, notes, links |
-| Manager | a kanban of the tasks it hands out, each with the live status of the agent doing it, its branch and PR, and a Diff menu |
+| Manager | a kanban of the tasks it hands out, each with the live status of the agent doing it (Peek shows that agent over the board), its branch and PR, and a Diff menu |
 | Coder | branch, PR and CI, recent commits, its plan; Herdr's Changes panel below |
 | Crew | a sheet over its terminal (what it's on, what it found, what's next, what its manager heard); its branch and PR on the desk |
 | Untyped | buttons to set its kind, and sample boards to preview |
@@ -41,7 +41,12 @@ Around it, the parts of `main` that said little are replaced:
 - **The corner** shows the look's brand (below).
 - **Pane headers** show on hover only; the coder view hides Herdr's Changes panel outside git.
 
-## Task cards: branch, PR and Diff
+## Task cards: Peek, branch, PR and Diff
+
+Beside the agent on a card, **Peek** shows that agent's terminal over the board
+(`terminal.peek`): read it or answer it, close the peek, and you are still on the kanban. For a
+crew the button is amber and its tooltip warns that what you type steers the crew directly;
+while the agent's machine is unreachable it is off and says so.
 
 A manager's task card shows the work's branch and PR, taken from the first that answers: the
 task's own `branch`, `pr`, `folder` and `base` (`desk task set ID --branch ... --pr ...`); the
