@@ -136,7 +136,10 @@ The Desk reads the folder when it starts, when you open the Look popup, and on
 (a preset with the id of one here replaces it), and gives the folder's tag looks priority over
 the popup's for the same tags (the popup shows those as set by the folder).
 
-**Moving presets you added to an installed `looks.js`.** For each preset of yours there:
+**Moving presets you added to an installed `looks.js`.** First save a copy of that `looks.js`
+and of any logos you put in the installed `mods/desk/brand/`: installing or updating the Desk
+(`install-desk.sh`, `shipshape-setup`) copies the shipped `looks.js` over yours. Then, for each
+preset of yours in the copy:
 
 1. Each theme of yours it uses (`~/.config/herdr-app/themes/<name>.json`): copy it to
    `desk-looks/palettes/looks-<name>.json`, add `{"id": "looks-<name>", "label": "...", "dark":
@@ -146,7 +149,7 @@ the popup's for the same tags (the popup shows those as set by the folder).
    becomes just the file name, and the picture goes in `desk-looks/logos/`.
 3. Tags: add `{"tag": "work", "preset": "<id>"}` to `tag_looks` for each tag that should wear it.
 4. Open the Look popup: it lists the folder's presets, or says why it ignored the folder. Then
-   put `looks.js` back as shipped (run `install-desk.sh` again).
+   update the Desk if you have not (`install-desk.sh`), which puts `looks.js` back as shipped.
 
 **On another computer**, copy the folder as it is into that computer's Herdr folder, with
 whatever you copy files with, for example:

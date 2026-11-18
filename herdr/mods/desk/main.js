@@ -16,8 +16,8 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents } from "herdr";
-import { subject, full, refresh, boardOf, lookFor, loadLooks, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
-import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, FOLDER_TAG_LOOKS, tagLooksOf, resolve } from "./looks.js";
+import { subject, full, refresh, boardOf, lookFor, loadLooks, syncLooks, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
+import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, FOLDER_TAG_LOOKS, tagLooksOf, resolve } from "./looks.js";
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
 import { assistant, manager, coder, none, crewSheet } from "./views.js";
 import { openPlan } from "./fleet-model.js";
@@ -44,6 +44,7 @@ async function publishLooks() {
 
 // The look in effect, with tag looks paused while you review your own.
 function currentLook(s) {
+  syncLooks(); // before resolve(): your own look may be a preset of your looks folder
   if (shared("desk.tagLooksOff")) return { ...resolve(shared("desk.look")), tag: null, paused: lookFor(s).tag };
   return lookFor(s);
 }
@@ -692,7 +693,7 @@ export default class Desk extends View {
             .items_center()
             .child(chip(t, L, tag, tagColor(t, tag)))
             .child(div().flex_1())
-            .child(button(t, L, `tl-${tag}`, cur ? PRESETS[cur]?.label ?? cur : "Your look", () => setShared("desk.tagLooks", { ...tagLooks, [tag]: next }), { on: Boolean(cur), tip: `Next: ${next ? PRESETS[next].label : "your own look"}` }));
+            .child(button(t, L, `tl-${tag}`, cur ? PRESETS[cur]?.label ?? cur : "Your look", () => setShared("desk.tagLooks", { ...(shared("desk.tagLooks") ?? DEFAULT_TAG_LOOKS), [tag]: next }), { on: Boolean(cur), tip: `Next: ${next ? PRESETS[next].label : "your own look"}` }));
         }),
       )
       .child(body(t, L, "Palettes are themes in themes/ (desk-*); presets and parts are in mods/desk/looks.js. Your own go in desk-looks/ beside Herdr's settings (mods/desk/README.md)."))

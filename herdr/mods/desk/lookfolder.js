@@ -32,7 +32,7 @@ const PALETTE_ID = /^looks-[a-z0-9][a-z0-9-]{0,30}$/; // a palette of the folder
 const LOGO = /^[a-z0-9][a-z0-9-]{0,30}\.(png|jpg)$/;
 const COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 const BAND_COLOR = /^#[0-9a-fA-F]{6}$/;
-const LABEL = /^[^\u0000-\u001f\u007f]{1,40}$/;
+const LABEL = /^[^\u0000-\u001f\u007f]{1,40}$/u; // 40 characters, as JSON Schema counts them
 const THEME_TOP = ["background", "foreground", "selection", "cursor"];
 export const THEME_COLORS = ["canvas", "chrome", "surface", "popover", "raised", "hover", "selected", "border", "input", "muted", "dim", "accent", "accent_foreground", "solid", "solid_foreground", "working", "blocked", "done", "idle"];
 const MAGIC = { png: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], jpg: [0xff, 0xd8, 0xff] };
@@ -73,7 +73,7 @@ export function bytes(s) {
 export function checkPalette(doc, where = "a palette") {
   only(doc, where, [...THEME_TOP, "ansi", "colors"], [...THEME_TOP, "ansi"]);
   const out = {};
-  for (const k of THEME_TOP) out[k] = COLOR.test(doc[k] ?? "") ? doc[k] : bad(`${where}: ${k} is not a colour (#rrggbb)`);
+  for (const k of THEME_TOP) out[k] = typeof doc[k] === "string" && COLOR.test(doc[k]) ? doc[k] : bad(`${where}: ${k} is not a colour (#rrggbb)`);
   if (!Array.isArray(doc.ansi) || doc.ansi.length !== 16) bad(`${where}: ansi is not 16 colours`);
   out.ansi = doc.ansi.map((c, i) => (typeof c === "string" && COLOR.test(c) ? c : bad(`${where}: ansi ${i} is not a colour`)));
   if ("colors" in doc) {

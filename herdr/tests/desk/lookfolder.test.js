@@ -144,6 +144,9 @@ test("a palette is rewritten from what was checked: nothing else comes through",
   assert.notEqual(out.ansi, theme.ansi);
   assert.throws(() => checkPalette({ ...theme, name: "x" }), /unknown field, "name"/);
   assert.throws(() => checkPalette({ ...theme, colors: { ...theme.colors, accent: "red" } }), /colors.accent is not a colour/);
+  // A colour must be a string, not anything that turns into one.
+  assert.throws(() => checkPalette({ ...theme, background: ["#112233"] }), /background is not a colour/);
+  assert.throws(() => checkPalette({ ...theme, cursor: { toString: () => "#112233" } }), /cursor is not a colour/);
 });
 
 // Each: what is changed in looks.json, and what the Look popup says.
@@ -159,6 +162,7 @@ const REFUSED = [
   ["a logo given as a path", (d) => (d.presets[0].brand.logo = "../brand/x.png", d), /brand.logo is not a file name in logos/],
   ["a font the Desk has not got", (d) => (d.presets[0].brand.font = "Comic Sans", d), /brand.font "Comic Sans" is not a font/],
   ["a logo bigger than the corner", (d) => (d.presets[0].brand.w = 400, d), /brand.w is not a whole number from 8 to 64/],
+  ["a label over 40 characters", (d) => (d.presets[0].label = "x".repeat(41), d), /label is not a short line of text/],
   ["a label with a newline", (d) => (d.presets[0].label = "Two\nlines", d), /label is not a short line of text/],
   ["an unknown field", (d) => ((d.presets[0].command = "rm -rf ~"), d), /unknown field, "command"/],
   ["another version", (d) => ((d.schema = "shipshape.desk-looks/2"), d), /is not shipshape.desk-looks\/1/],
@@ -213,6 +217,14 @@ test("the whole folder has a size limit too", async () => {
   delete host.bytes[`${DIR}/logos/l8.png`];
   host.files[`${DIR}/looks.json`] = JSON.stringify({ ...JSON.parse(host.files[`${DIR}/looks.json`]), presets: JSON.parse(host.files[`${DIR}/looks.json`]).presets.slice(0, 8) });
   assert.equal((await readLookFolder(host, builtinParts())).problem, null);
+});
+
+test("a label is up to 40 characters as the schema counts them, emoji included", () => {
+  const doc = JSON.parse(read(EXAMPLE, "looks.json"));
+  doc.presets[0].label = "\u{1F6A2}".repeat(40);
+  assert.doesNotThrow(() => checkLooks(doc, builtinParts()));
+  doc.presets[0].label = "\u{1F6A2}".repeat(41);
+  assert.throws(() => checkLooks(doc, builtinParts()), /label is not a short line of text/);
 });
 
 test("a JPEG logo is checked as a JPEG", () => {
