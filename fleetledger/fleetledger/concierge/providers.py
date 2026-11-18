@@ -8,7 +8,8 @@ in, how the Ship checks them, and how to sign out.
 
 Modes:
 - paste-back: you open the link, approve, and paste the code shown back;
-  FleetLedger types it into the Ship's terminal.
+  FleetLedger types it into the Ship's terminal. `answer = "one-time-code"` shows
+  it as you paste it; anything else (a secret, the default) is read without echo.
 - device-code: the Ship shows a code; you type it at the link yourself.
 """
 
@@ -62,6 +63,7 @@ class Provider:
     scopes_add: str | None = None  # the [scopes] table: this provider takes extra scopes
     scopes_refresh: str | None = None
     scopes_remove: str | None = None
+    one_time_code: bool = False  # answer = "one-time-code": the pasted answer is shown
 
     @property
     def services(self) -> list[str]:
@@ -156,6 +158,7 @@ def parse(path: Path) -> Provider:
         scopes_add=doc.get("scopes", {}).get("add"),
         scopes_refresh=doc.get("scopes", {}).get("refresh"),
         scopes_remove=doc.get("scopes", {}).get("remove"),
+        one_time_code=doc.get("answer") == "one-time-code",
     )
 
 

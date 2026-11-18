@@ -1,0 +1,39 @@
+# Refused: answer is for paste-back flows; a device flow has nothing pasted back.
+schema = 1
+id = "exampledevice"
+label = "Example device sign-in"
+mode = "device-code"
+answer = "one-time-code"
+run = "GH_PROMPT_DISABLED=1 gh auth login --hostname github.com --git-protocol https --web"
+timeout = 900
+after = ["gh auth setup-git --hostname github.com"]
+
+[signin]
+label = "Example device sign-in"
+order = 3
+
+[match]
+url = 'https://github\.com/login/device'
+code = 'one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})'
+success = '(?:Authentication complete|Logged in as)'
+failure = '(?i)(?:failed to authenticate|authentication failed|expired_token)'
+
+[[check]]
+service = "github"
+run = "gh api user --jq .login"
+account = "stdout"
+
+[status]
+builtin = "github"
+
+[secrets]
+paths = ["~/.config/gh/hosts.yml"]
+store = "file"
+
+[logout]
+run = "gh auth logout --hostname github.com"
+
+[scopes]
+add = "--scopes"
+refresh = "GH_PROMPT_DISABLED=1 gh auth refresh --hostname github.com"
+remove = "--remove-scopes"

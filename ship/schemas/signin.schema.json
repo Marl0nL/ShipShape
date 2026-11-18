@@ -18,6 +18,10 @@
       "enum": ["paste-back", "device-code"],
       "description": "paste-back: open the link, approve, paste the code shown back (match.prompt). device-code: the tool shows a code to type at the link (match.code)."
     },
+    "answer": {
+      "enum": ["one-time-code", "secret"],
+      "description": "paste-back only: what you paste back. one-time-code (a code the sign-in page shows, spent once it is used) is shown as it is typed or pasted; secret, the default, is read without echo."
+    },
     "run": { "$ref": "#/$defs/command", "description": "The login command, run on the Ship as agent in a terminal." },
     "timeout": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Seconds the flow waits for the sign-in." },
     "after": {
@@ -202,7 +206,7 @@
     },
     {
       "if": { "properties": { "mode": { "const": "device-code" } } },
-      "then": { "properties": { "match": { "required": ["code"] } } }
+      "then": { "properties": { "match": { "required": ["code"] } }, "not": { "required": ["answer"] } }
     },
     {
       "if": { "required": ["signin"], "properties": { "signin": { "required": ["order"] } } },

@@ -4,6 +4,7 @@ schema = 1
 id = "claude"
 label = "Claude Code"
 mode = "paste-back"
+answer = "one-time-code"  # shown as it is pasted: spent once used, not a secret
 run = "claude auth login"
 timeout = 600
 
