@@ -161,6 +161,9 @@ class Machine:
     refresh_allowed: str | None = None
     idle_limit: bool = True
     idle_refused: str | None = None
+    # Whether its bundle carries the fleet's Desk looks (ship-fleet trust NAME --looks on;
+    # absent: it does not, and its bundle is exactly as before).
+    looks: bool = False
 
     @classmethod
     def from_entry(cls, name: str, entry: dict[str, Any]) -> Machine:
@@ -181,6 +184,7 @@ class Machine:
             refresh_allowed=entry.get("refresh_allowed"),
             idle_limit=entry.get("idle_limit", True) is not False,
             idle_refused=entry.get("idle_refused"),
+            looks=entry.get("looks") is True,
         )
 
     @property

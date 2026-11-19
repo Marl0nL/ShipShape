@@ -10,14 +10,17 @@
 #
 # What a refresh may change, and nothing else: in ~/.ssh/shipshape, the certificate
 # (NAME-cert.pub), known_hosts, config (written from the template below, never from text
-# in the bundle), fleet.json (the bundle as checked, without the refresher), state.json
-# and hc-added (the hc machines it added); and hc's machines, adding herdr-core Ships and
-# removing only those it added itself. It never runs, sources or writes as config any text
-# from the bundle: every value is checked against a tight pattern first, and a bundle with
-# one value out of place is refused whole. It never replaces itself, so a FleetLedger that
-# was taken over cannot run code here through a refresh. A refresh that fails or is refused
-# leaves the last good files as they were, says why in one sentence on stderr and in
-# state.json, and exits 1.
+# in the bundle), fleet.json (the bundle as checked, without the refresher or the looks),
+# state.json, hc-added (the hc machines it added) and looks-applied (the digests of the
+# looks folder it wrote); hc's machines, adding herdr-core Ships and removing only those it
+# added itself; and, for a machine FleetLedger sends the fleet's Desk looks to (ship-fleet
+# trust NAME --looks on), the folder desk-looks in Herdr's folder (~/.config/herdr-app, or
+# $HERDR_APP_HOME), only while it is the folder this refresher wrote there (never one of
+# your own). It never runs, sources or writes as config any text from the bundle: every
+# value is checked against a tight pattern first, and a bundle with one value out of place
+# is refused whole. It never replaces itself, so a FleetLedger that was taken over cannot
+# run code here through a refresh. A refresh that fails or is refused leaves the last good
+# files as they were, says why in one sentence on stderr and in state.json, and exits 1.
 #
 # Its settings are in ~/.ssh/shipshape/machine.conf, written by the first install: data,
 # read line by line, never sourced. See docs/runbooks/trust-machines.md.
@@ -27,11 +30,13 @@ umask 077
 LC_ALL=C
 export LC_ALL
 
-VERSION=1
+# 2: reads the fleet's Desk looks (a bundle's `looks`); 1 refuses a bundle that has them.
+VERSION=2
 D="$HOME/.ssh/shipshape"
 CONF="$D/machine.conf"
 STATE="$D/state.json"
 ADDED="$D/hc-added"
+LOOKS_MARK="$D/looks-applied"
 UNIT=shipshape-refresh
 LABEL=local.shipshape.refresh
 MAX_BUNDLE=1048576
@@ -39,6 +44,9 @@ MAX_BUNDLE=1048576
 stage=
 locked=
 warning=
+looks_mode=
+b64d=
+sha=
 
 # --- checks: every value from the bundle, the settings or the command line passes one ----------
 is_name() { # a Ship or machine name, a tag: a-z, 0-9 and -, up to 31
@@ -57,6 +65,15 @@ is_blob() { # an ed25519 key's base64
   case $1 in AAAAC3NzaC1lZDI1NTE5* ) ;; *) return 1 ;; esac
   case $1 in *[!A-Za-z0-9+/=]*) return 1 ;; esac
   [ "${#1}" -le 120 ]
+}
+is_member() { # a file's name in a looks folder, as contracts/desk-looks.md names one
+  case $1 in
+    looks.json) return 0 ;;
+    palettes/looks-*.json) m=${1#palettes/looks-}; m=${m%.json} ;;
+    logos/*.png | logos/*.jpg) m=${1#logos/}; m=${m%.???} ;;
+    *) return 1 ;;
+  esac
+  is_name "$m"
 }
 is_path() { # an absolute path, with characters ssh_config and a unit file take as they are
   case $1 in /*) ;; *) return 1 ;; esac
@@ -183,11 +200,12 @@ take_lock() {
 # A strict JSON reader: one value, objects with keys of a-z and _ (no key twice), no control
 # character in a string, nothing after the value, at most 8 levels deep. It prints each
 # value as PATH<tab>TYPE<tab>TEXT (strings as they were written, escapes and all), and
-# writes the document again, compact, without the top-level "refresher", to the file canon.
+# writes the document again, compact, without the top-level "refresher" and "looks", to the
+# file CANON names (so fleet.json never grows with the looks).
 # shellcheck disable=SC2016  # an awk program: its $ are awk's
 JSON_AWK='
 function fail(why) { print "! " why; failed = 1; exit 2 }
-function out(x) { if (!mute) cs = cs x }
+function out(x) { if (!mute && !quiet) cs = cs x }
 function emit(path, type, text) { if (!mute) printf "%s\t%s\t%s\n", path, type, text }
 function ws(   c) {
   while (p <= n) {
@@ -196,21 +214,21 @@ function ws(   c) {
     else break
   }
 }
-function str(   c, start, h, rest, q) {
+# Strings with no escape and no line end in them are taken to their closing quote at once,
+# within the next w characters: some awks pay for each substr by the length of the whole
+# document, so one call a string, not one a character. Anything else, character by character.
+function str(w,   c, start, h, rest, q) {
   p++
   start = p
-  if (mute) {
-    # A value nobody reads (the refresher, base64): to its closing quote at once, when
-    # nothing before that needs a closer look.
-    rest = substr(s, p)
-    q = index(rest, "\"")
-    if (q > 0) {
-      rest = substr(rest, 1, q - 1)
-      if (index(rest, "\\") == 0 && index(rest, "\t") == 0 && index(rest, "\n") == 0 && index(rest, "\r") == 0) {
-        tok = rest
-        p += q
-        return
-      }
+  rest = substr(s, p, w)
+  q = index(rest, "\"")
+  if (q > 0) {
+    rest = substr(rest, 1, q - 1)
+    if (index(rest, "\\") == 0 && index(rest, "\t") == 0 && index(rest, "\n") == 0 && index(rest, "\r") == 0) {
+      tok = rest
+      p += q
+      out("\"" tok "\"")
+      return
     }
   }
   for (;;) {
@@ -237,12 +255,14 @@ function str(   c, start, h, rest, q) {
 }
 function value(path, depth,   c, t) {
   if (depth > 8) fail("too deep")
+  if (p > 65536) { s = substr(s, p); n = n - p + 1; p = 1 } # what is read already goes
   ws()
   if (p > n) fail("it ends early")
   c = substr(s, p, 1)
   if (c == "{") { object(path, depth); return }
   if (c == "[") { array(path, depth); return }
-  if (c == "\"") { str(); emit(path, "s", tok); return }
+  # The long strings (the refresher, the files of the looks) in one step; others within 512.
+  if (c == "\"") { str((mute || quiet) ? n : 512); emit(path, "s", tok); return }
   if (substr(s, p, 4) == "true") { p += 4; out("true"); emit(path, "b", "true"); return }
   if (substr(s, p, 5) == "false") { p += 5; out("false"); emit(path, "b", "false"); return }
   if (substr(s, p, 4) == "null") { p += 4; out("null"); emit(path, "z", "null"); return }
@@ -252,7 +272,7 @@ function value(path, depth,   c, t) {
   out(t)
   emit(path, "n", t)
 }
-function object(path, depth,   first, key, kp, skip, c, m) {
+function object(path, depth,   first, key, kp, skip, hide, c, m) {
   p++
   out("{")
   emit(path, "o", "")
@@ -264,7 +284,7 @@ function object(path, depth,   first, key, kp, skip, c, m) {
     if (substr(s, p, 1) != "\"") fail("a key is not a string")
     m = mute
     mute = 1
-    str()
+    str(64)
     mute = m
     key = tok
     if (key !~ /^[a-z_]+$/ || length(key) > 40) fail("a key that is not a-z and _")
@@ -274,11 +294,14 @@ function object(path, depth,   first, key, kp, skip, c, m) {
     ws()
     if (substr(s, p, 1) != ":") fail("not JSON")
     p++
-    skip = (path == "" && key == "refresher")
-    if (!skip) { out((first ? "" : ",") "\"" key "\":"); first = 0 }
+    skip = (path == "" && key == "refresher") # not read at all
+    hide = (path == "" && key == "looks") # read and checked, but not kept in CANON
+    if (!skip && !hide) { out((first ? "" : ",") "\"" key "\":"); first = 0 }
     if (skip) mute++
+    if (hide) quiet++
     value(kp, depth + 1)
     if (skip) mute--
+    if (hide) quiet--
     ws()
     c = substr(s, p, 1)
     if (c == ",") { p++; continue }
@@ -310,6 +333,7 @@ END {
   n = length(s)
   p = 1
   mute = 0
+  quiet = 0
   ws()
   if (substr(s, p, 1) != "{") fail("not a JSON object")
   value("", 0)
@@ -324,6 +348,9 @@ END {
 # a line, each word already checked (so none holds a space, a quote or a glob it should not):
 #   M machine | A at | C type blob valid_before (or C - - -) | N renewed code (or -)
 #   U user | K a known_hosts line | S name runtime lan overlay(-) host_cert tags(a,b or -)
+#   L index name size (a file of the fleet's looks; its base64 is written to the file
+#   LOOKS_DATA/index, named by its index alone) | G digest (or G - : FleetLedger keeps none);
+#   no L or G when the bundle has no looks.
 # shellcheck disable=SC2016  # an awk program: its $ are awk's
 CHECK_AWK='
 function bad(why) { print "! " why; failed = 1; exit 3 }
@@ -335,6 +362,16 @@ function blob_ok(x) { return x ~ "^AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]*=?=?$" && l
 function certblob_ok(x) { return x ~ "^AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29t[A-Za-z0-9+/]*=?=?$" && length(x) <= 4000 }
 function fl_host(x) { return index(" " tolower(flhosts) " ", " " tolower(x) " ") > 0 }
 function need(path, type) { if (!(path in T)) bad("no " path); if (T[path] != type) bad(path " is not what it should be") }
+# A looks file'"'"'s name (contracts/desk-looks.md): looks.json, palettes/looks-<id>.json or
+# logos/<name>.png|.jpg, the id or name a-z, 0-9 and - (first not -), up to 31.
+function member_ok(x,   m) {
+  if (x == "looks.json") return 1
+  if (x ~ "^palettes/looks-[a-z0-9][a-z0-9-]*[.]json$") m = substr(x, 16, length(x) - 20)
+  else if (x ~ "^logos/[a-z0-9][a-z0-9-]*[.](png|jpg)$") m = substr(x, 7, length(x) - 10)
+  else return 0
+  return length(m) >= 1 && length(m) <= 31
+}
+function b64_ok(x) { return x ~ "^[A-Za-z0-9+/]*=?=?$" && length(x) % 4 == 0 && length(x) <= 87384 }
 function names_ok(list,   k, i, a) {
   k = split(list, a, ",")
   if (k < 1 || k > 400) return 0
@@ -365,8 +402,18 @@ END {
       else if (top == "certificate" || top == "ssh" || top == "idle_limit") { if (t != "o") bad(top) }
       else if (top == "scope" || top == "logins" || top == "known_hosts" || top == "ships") { if (t != "a") bad(top) }
       else if (top == "fleetledger") { if (t != "o" && t != "z") bad(top) }
+      else if (top == "looks") { if (t != "o" && t != "z") bad(top) }
       else bad("an unknown field, " path)
       continue
+    }
+    if (top == "looks") {
+      if (k == 2 && a[2] == "digest") { if (t != "s" || v !~ /^[0-9a-f]+$/ || length(v) != 64) bad("looks.digest"); continue }
+      if (k == 2 && a[2] == "files") { if (t != "a") bad("looks.files"); continue }
+      if (k == 3 && a[2] == "files") { if (t != "o") bad("a looks file"); continue }
+      if (k == 4 && a[2] == "files" && a[4] == "name") { if (t != "s" || !member_ok(v)) bad("a looks file'"'"'s name"); continue }
+      if (k == 4 && a[2] == "files" && a[4] == "size") { if (t != "n" || v !~ /^[1-9][0-9]*$/ || length(v) > 6) bad("a looks file'"'"'s size"); continue }
+      if (k == 4 && a[2] == "files" && a[4] == "data") { if (t != "s" || !b64_ok(v)) bad("a looks file'"'"'s data"); continue }
+      bad("an unknown field, " path)
     }
     if (top == "certificate") {
       f = a[2]
@@ -462,6 +509,36 @@ END {
     ov = (T[b ".host_names.overlay"] == "s") ? V[b ".host_names.overlay"] : "-"
     print "S " nm " " V[b ".runtime"] " " V[b ".host_names.lan"] " " ov " " V[b ".host_certificate"] " " tags
   }
+
+  # The fleet'"'"'s Desk looks: only in the bundle of a machine FleetLedger sends them to.
+  if (("looks" in T) && T["looks"] == "z") print "G -"
+  if (("looks" in T) && T["looks"] == "o") {
+    need("looks.digest", "s"); need("looks.files", "a")
+    nf = V["looks.files"]
+    if (nf < 1 || nf > 33) bad("looks.files")
+    total = 0; np = 0; nl = 0; nj = 0
+    for (i = 0; i < nf; i++) {
+      b = "looks.files." i
+      need(b ".name", "s"); need(b ".size", "n"); need(b ".data", "s")
+      nm = V[b ".name"]; sz = V[b ".size"] + 0; d = V[b ".data"]
+      if (nm in seenlook) bad("a looks file listed twice")
+      seenlook[nm] = 1
+      if (nm == "looks.json") { nj++; most = 65536 }
+      else if (substr(nm, 1, 9) == "palettes/") { np++; most = 16384 }
+      else { nl++; most = 65536 }
+      if (sz > most) bad("a looks file over its limit, " nm)
+      total += sz
+      if (length(d) != 4 * int((sz + 2) / 3)) bad("a looks file'"'"'s data is not its size, " nm)
+      f = ENVIRON["LOOKS_DATA"] "/" i
+      printf "%s", d > f
+      close(f)
+      print "L " i " " nm " " sz
+    }
+    if (nj != 1) bad("no looks.json in looks")
+    if (np > 16 || nl > 16) bad("more looks files than a folder may have")
+    if (total > 524288) bad("looks over 512 KiB")
+    print "G " V["looks.digest"]
+  }
 }
 '
 
@@ -519,7 +596,8 @@ check_bundle() {
     why=$(sed -n 's/^! //p' "$stage/flat" | head -n 1)
     fail "FleetLedger's answer is not a document this refresher takes (${why:-unreadable}); refused, and the files here are unchanged."
   fi
-  awk -v me="$name" -v flhosts="$flhosts" "$CHECK_AWK" <"$stage/flat" >"$stage/records"
+  mkdir "$stage/lk" || fail "Could not make a folder in $stage."
+  LOOKS_DATA="$stage/lk" awk -v me="$name" -v flhosts="$flhosts" "$CHECK_AWK" <"$stage/flat" >"$stage/records"
   rc=$?
   if [ "$rc" -ne 0 ]; then
     why=$(sed -n 's/^! //p' "$stage/records" | head -n 1)
@@ -687,6 +765,219 @@ sync_hc() {
   mv -f "$tmp" "$ADDED"
 }
 
+# --- the fleet's Desk looks ---------------------------------------------------------------------
+# Only for a machine FleetLedger sends them to (ship-fleet trust NAME --looks on): the folder of
+# contracts/desk-looks.md, each file base64 under a name the format gives it, and the folder's
+# digest. Every file is checked before anything is written (decoded to the size it says, each
+# logo by its first bytes, each JSON file by the strict reader above, the folder by its digest),
+# and a bundle with one out of place is refused whole like any other. The folder is written into
+# Herdr's folder as desk-looks, whole, by rename, only where there is none or where the one there
+# is a folder this refresher wrote (its digest is in looks-applied): a desk-looks of your own is
+# never changed or removed. Nothing in it is run, and the only paths made from it are the names
+# checked here.
+
+# The looks' own warnings, said after the others (which some steps set outright).
+looks_warning=
+add_warning() { looks_warning="${looks_warning:+$looks_warning }$1"; }
+
+# The tools the checks need; when one is missing the looks are left (said), never unchecked.
+find_looks_tools() {
+  if [ "$(printf 'QUJD' | base64 --decode 2>/dev/null)" = ABC ]; then b64d='base64 --decode'
+  elif [ "$(printf 'QUJD' | base64 -d 2>/dev/null)" = ABC ]; then b64d='base64 -d'
+  else return 1; fi
+  if [ "$(printf '' | sha256sum 2>/dev/null | cut -c 1-8)" = e3b0c442 ]; then sha='sha256sum'
+  elif [ "$(printf '' | shasum -a 256 2>/dev/null | cut -c 1-8)" = e3b0c442 ]; then sha='shasum -a 256'
+  else return 1; fi
+  [ "$(printf 'A' | od -An -tx1 -N1 2>/dev/null | tr -d ' \n')" = 41 ]
+}
+
+first_bytes() { # file count -> those bytes in hex
+  od -An -tx1 -N"$2" "$1" 2>/dev/null | tr -d ' \n'
+}
+
+# The digest FleetLedger names (looks.py Folder.sha256): over each file's name, a newline, its
+# size, a newline and its bytes, in name order. Only for a real folder holding nothing but the
+# format's folders and files (no link, nothing else); otherwise it prints nothing and fails.
+folder_digest() { # folder
+  { [ -d "$1" ] && [ ! -L "$1" ]; } || return 1
+  ( cd "$1" 2>/dev/null && find . ! -name . -print ) >"$stage/lk.list" || return 1
+  : >"$stage/lk.files"
+  while IFS= read -r e; do
+    e=${e#./}
+    case $e in
+      palettes | logos) { [ -d "$1/$e" ] && [ ! -L "$1/$e" ]; } || return 1 ;;
+      # What macOS's Finder leaves in a folder it shows: not part of the looks.
+      .DS_Store | palettes/.DS_Store | logos/.DS_Store) { [ -f "$1/$e" ] && [ ! -L "$1/$e" ]; } || return 1 ;;
+      *) { is_member "$e" && [ -f "$1/$e" ] && [ ! -L "$1/$e" ]; } || return 1
+         echo "$e" >>"$stage/lk.files" ;;
+    esac
+  done <"$stage/lk.list"
+  [ -s "$stage/lk.files" ] || return 1
+  sort "$stage/lk.files" >"$stage/lk.sorted" || return 1
+  fd=$(
+    while IFS= read -r e; do
+      printf '%s\n%s\n' "$e" "$(wc -c <"$1/$e" | tr -cd 0-9)"
+      cat "$1/$e"
+    done <"$stage/lk.sorted" | $sha | cut -c 1-64
+  )
+  case $fd in *[!0-9a-f]* | '') return 1 ;; esac
+  [ "${#fd}" -eq 64 ] || return 1
+  printf '%s' "$fd"
+}
+
+refuse_looks() {
+  fail "FleetLedger's bundle has looks this refresher refuses ($1); refused, and the files here are unchanged."
+}
+
+# The looks in the bundle (records L and G from the check), decoded into $stage/looks and
+# checked; sets looks_mode: empty (the bundle has none: leave what is here), none (FleetLedger
+# keeps none) or the folder's digest.
+check_looks() {
+  looks_mode=$(sed -n 's/^G //p' "$stage/records")
+  [ -n "$looks_mode" ] || return 0
+  if ! find_looks_tools; then
+    looks_mode=
+    add_warning "The fleet's looks were left as they are: this computer has no base64, sha256sum (or shasum) or od to check them with."
+    return 0
+  fi
+  if [ "$looks_mode" = - ]; then
+    looks_mode=none
+    return 0
+  fi
+  mkdir "$stage/looks" "$stage/looks/palettes" "$stage/looks/logos" || fail "Could not make a folder in $stage."
+  tab=$(printf '\t')
+  while read -r kind i nm sz; do
+    [ "$kind" = L ] || continue
+    case $i in '' | *[!0-9]*) refuse_looks "an odd record" ;; esac
+    case $sz in '' | *[!0-9]*) refuse_looks "an odd record" ;; esac
+    is_member "$nm" || refuse_looks "a name that is not a looks file's"
+    [ ! -e "$stage/looks/$nm" ] || refuse_looks "$nm twice"
+    $b64d <"$stage/lk/$i" >"$stage/looks/$nm" 2>/dev/null || refuse_looks "$nm is not base64"
+    [ "$(wc -c <"$stage/looks/$nm" | tr -cd 0-9)" = "$sz" ] || refuse_looks "$nm is not the size it says"
+    case $nm in
+      *.png) [ "$(first_bytes "$stage/looks/$nm" 8)" = 89504e470d0a1a0a ] || refuse_looks "$nm is not a PNG picture" ;;
+      *.jpg) [ "$(first_bytes "$stage/looks/$nm" 3)" = ffd8ff ] || refuse_looks "$nm is not a JPEG picture" ;;
+      *.json)
+        # No control byte but tab and line ends (the reader takes those only between values).
+        [ "$(tr -d '\011\012\015\040-\176\200-\377' <"$stage/looks/$nm" | wc -c)" -eq 0 ] \
+          || refuse_looks "$nm holds a control character"
+        CANON=/dev/null awk "$JSON_AWK" <"$stage/looks/$nm" >"$stage/lk.flat" || refuse_looks "$nm is not JSON this refresher reads"
+        if [ "$nm" = looks.json ]; then
+          grep -qx "schema${tab}s${tab}shipshape.desk-looks/1" "$stage/lk.flat" || refuse_looks "looks.json is not shipshape.desk-looks/1"
+        fi ;;
+    esac
+  done <"$stage/records"
+  got=$(folder_digest "$stage/looks") || refuse_looks "the folder is not one this refresher writes"
+  [ "$got" = "$looks_mode" ] || refuse_looks "the files do not match their digest"
+}
+
+herdr_home() {
+  hh=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
+  case $hh in /*) ;; *) hh=$HOME/.config/herdr-app ;; esac
+  printf '%s' "$hh"
+}
+
+# The digest of the desk-looks folder there when it is one this refresher wrote; fails for a
+# folder of your own (or anything else in its place).
+ours() { # folder
+  [ -f "$LOOKS_MARK" ] || return 1
+  dg=$(folder_digest "$1") || return 1
+  grep -qxF "$dg" "$LOOKS_MARK" || return 1
+  printf '%s' "$dg"
+}
+
+# looks-applied: the digests of the folders this refresher wrote, the latest first, at most 8
+# (so a folder it wrote under another Herdr folder, with HERDR_APP_HOME set or not, stays its
+# own). Each line is 64 hex digits; anything else in the file is dropped.
+mark_looks() { # digest... to put first; fails when looks-applied could not be written
+  ml_t="$D/.looks-applied.tmp" ml_n="$D/.looks-applied.new"
+  if { : >"$ml_t" && for x in "$@"; do if [ -n "$x" ]; then echo "$x" >>"$ml_t"; fi; done \
+    && { [ ! -f "$LOOKS_MARK" ] || grep -xE '[0-9a-f]{64}' "$LOOKS_MARK" >>"$ml_t" || [ $? -eq 1 ]; } \
+    && awk '!seen[$0]++' "$ml_t" | head -n 8 >"$ml_n" && [ -s "$ml_n" ] \
+    && mv -f "$ml_n" "$LOOKS_MARK"; } 2>/dev/null; then
+    rm -f "$ml_t"
+    return 0
+  fi
+  rm -f "$ml_t" "$ml_n"
+  return 1
+}
+
+# A refresh stopped between the two renames of a replacement leaves no desk-looks and the old
+# folder aside: put it back (only a folder of this refresher's own, by its digest).
+recover_looks() {
+  if [ -e "$target" ] || [ -L "$target" ]; then return 0; fi
+  for x in "$hh"/.shipshape-looks-old.*; do
+    { [ -d "$x" ] && [ ! -L "$x" ]; } || continue
+    dg=$(folder_digest "$x") || continue
+    grep -qxF "$dg" "$LOOKS_MARK" 2>/dev/null || continue
+    mv "$x" "$target" && return 0
+  done
+  return 0
+}
+
+apply_looks() {
+  hh=$(herdr_home)
+  target="$hh/desk-looks"
+  if [ -d "$hh" ] && [ -f "$LOOKS_MARK" ] && find_looks_tools; then
+    recover_looks
+    # What a refresh stopped half way left: only the names this refresher gives its own.
+    find "$hh" -maxdepth 1 \( -name '.shipshape-looks-new.??????' -o -name '.shipshape-looks-old.*' \) \
+      -mmin +15 -exec rm -rf {} + 2>/dev/null
+  fi
+  [ -n "$looks_mode" ] || return 0
+  if [ ! -d "$hh" ]; then
+    [ "$looks_mode" = none ] || add_warning "The fleet's looks were not written: there is no Herdr folder here ($hh)."
+    return 0
+  fi
+  have=
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if ! have=$(ours "$target"); then
+      [ "$looks_mode" = none ] \
+        || add_warning "The fleet's looks were not written: $target is a folder of your own (move it away to receive them)."
+      return 0
+    fi
+  fi
+  old="$hh/.shipshape-looks-old.$$"
+  if [ "$looks_mode" = none ]; then
+    if [ -n "$have" ]; then
+      if ! mv "$target" "$old"; then
+        add_warning "Could not remove the fleet's looks from $target."
+        return 0
+      fi
+      rm -rf "$old"
+      echo "Removed the fleet's looks from $target: FleetLedger keeps none now."
+    fi
+    return 0
+  fi
+  if [ "$have" = "$looks_mode" ]; then
+    [ "$(head -n 1 "$LOOKS_MARK")" = "$looks_mode" ] || mark_looks "$looks_mode"
+    return 0
+  fi
+  new=$(mktemp -d "$hh/.shipshape-looks-new.XXXXXX") || { add_warning "Could not write the fleet's looks in $hh."; return 0; }
+  if ! cp -R "$stage/looks/." "$new/" || [ "$(folder_digest "$new")" != "$looks_mode" ] \
+    || ! mark_looks "$looks_mode" "$have"; then
+    rm -rf "$new"
+    add_warning "Could not write the fleet's looks to $target; what was there is unchanged."
+    return 0
+  fi
+  if [ -n "$have" ] && ! mv "$target" "$old"; then
+    rm -rf "$new"
+    add_warning "Could not replace the fleet's looks in $target; what was there is unchanged."
+    return 0
+  fi
+  # Two renames: for a moment there is no desk-looks (the Desk then wears its own looks), never
+  # half of one. A desk-looks that appeared meanwhile is yours: mv would put this one inside it.
+  if [ -e "$target" ] || [ -L "$target" ] || ! mv "$new" "$target" || [ -e "$target/${new##*/}" ]; then
+    [ -d "$target/${new##*/}" ] && mv "$target/${new##*/}" "$new"
+    [ -n "$have" ] && [ ! -e "$target" ] && [ ! -L "$target" ] && mv "$old" "$target"
+    rm -rf "$new"
+    add_warning "Could not write the fleet's looks to $target."
+    return 0
+  fi
+  [ -n "$have" ] && rm -rf "$old"
+  echo "Wrote the fleet's looks to $target (the Desk wears them when its Look popup opens, or at herdr-app do desk.looks-reload)."
+}
+
 # --- refresh ------------------------------------------------------------------------------------
 refresh() {
   if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then echo "HOME is not set." >&2; exit 1; fi
@@ -699,9 +990,12 @@ refresh() {
   cert_until_old=$(state_field certificate_valid_before)
   fetch
   check_bundle
+  check_looks
   build_files
   apply_files
   sync_hc
+  apply_looks
+  [ -n "$looks_warning" ] && warning="${warning:+$warning }$looks_warning"
   write_state ok ""
   cleanup
   echo "Refreshed $name: $ship_count Ship(s), certificate until $cert_until."

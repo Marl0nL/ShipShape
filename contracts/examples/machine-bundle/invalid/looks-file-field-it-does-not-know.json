@@ -1,0 +1,66 @@
+{
+  "schema": "shipshape.machine-bundle/1",
+  "machine": "laptop",
+  "at": "2026-01-05T09:00:00Z",
+  "looks": {
+    "digest": "2079c0f30032252f0bd7e6a99904ed0edb14dfa62056de1dfdb0f0dc6a52065f",
+    "files": [
+      {
+        "name": "logos/example.png",
+        "size": 268,
+        "data": "iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAA00lEQVR42s3YyxHCQAwDUHeSEmmAojLUQF8LZEKGkM1mP5asgy72Qe8sm24Pu0gCp9gfharC3p+zqcAO0A/uH6iCS29YkgWuuANQDbchZYAZnA7wBLcBVXFLTBkXCqzBhQFrcSHAFhwd2IqjAntwNGAvjgIcwcGBozgo0AMHA3rhIEBPnDvQG+cKRODcgCicCxCJGwaicUNABq4byMJ1AZm4ZiAb1wSMwFUDo3BfoKniLpeFYFwZKIBLp/ObCi4LFMFlgaaG2wF/jwqwHTD3IGKL/S8QTMc+op1BWQAAAABJRU5ErkJggg==",
+        "mode": "0755"
+      },
+      {
+        "name": "looks.json",
+        "size": 417,
+        "data": "eyJzY2hlbWEiOiJzaGlwc2hhcGUuZGVzay1sb29rcy8xIiwicGFsZXR0ZXMiOlt7ImlkIjoibG9va3MtZXhhbXBsZS1kYXJrIiwibGFiZWwiOiJFeGFtcGxlIGRhcmsiLCJkYXJrIjp0cnVlfV0sInByZXNldHMiOlt7ImlkIjoiZXhhbXBsZSIsImxhYmVsIjoiRXhhbXBsZSIsInBhbGV0dGUiOiJsb29rcy1leGFtcGxlLWRhcmsiLCJsaWdodCI6ImRlc2stbGluZW4iLCJmaW5pc2giOiJsZWRnZXIiLCJ0eXBlIjoiZ2Vpc3QtbW9ubyIsImRlbnNpdHkiOiJjb21wYWN0IiwiYmFuZCI6WyIjMWY2ZmIyIiwiIzdjYzRiMCJdLCJicmFuZCI6eyJuYW1lIjoiRXhhbXBsZSIsImxvZ28iOiJleGFtcGxlLnBuZyIsInciOjIwLCJoIjoyMCwicm91bmQiOjV9fV0sInRhZ19sb29rcyI6W3sidGFnIjoid29yayIsInByZXNldCI6ImV4YW1wbGUifV19"
+      },
+      {
+        "name": "palettes/looks-example-dark.json",
+        "size": 647,
+        "data": "eyJiYWNrZ3JvdW5kIjoiIzEyMTgyMSIsImZvcmVncm91bmQiOiIjYzlkMWQ5Iiwic2VsZWN0aW9uIjoiIzJhMzQ0MSIsImN1cnNvciI6IiM1YWE5ZTYiLCJhbnNpIjpbIiMyYTMxM2EiLCIjZWY2YjczIiwiIzhiZDE3YyIsIiNlNmMwNmIiLCIjNmNiNmZmIiwiI2M0OWJlYSIsIiM3Y2M0YjAiLCIjYzlkMWQ5IiwiIzU2NjA2YiIsIiNmZjhhOTEiLCIjYTZlMzlhIiwiI2YyZDM4YiIsIiM5M2NhZmYiLCIjZDZiOGYyIiwiIzlhZDhjOCIsIiNlZWYyZjYiXSwiY29sb3JzIjp7ImNhbnZhcyI6IiMwZTE0MWMiLCJjaHJvbWUiOiIjMTQxYjI1Iiwic3VyZmFjZSI6IiMxYjIxMjkiLCJwb3BvdmVyIjoiIzIwMjYyZiIsInJhaXNlZCI6IiMyMzJiMzUiLCJob3ZlciI6IiNmZmZmZmYwZCIsInNlbGVjdGVkIjoiIzI2MzI0MSIsImJvcmRlciI6IiMyODMxM2MiLCJpbnB1dCI6IiMzYTQ2NTYiLCJtdXRlZCI6IiM5YWE2YjIiLCJkaW0iOiIjNjY3MjdlIiwiYWNjZW50IjoiIzVhYTllNiIsImFjY2VudF9mb3JlZ3JvdW5kIjoiIzBmMWExNyIsInNvbGlkIjoiIzVhYTllNiIsInNvbGlkX2ZvcmVncm91bmQiOiIjMGYxYTE3Iiwid29ya2luZyI6IiM2Y2I2ZmYiLCJibG9ja2VkIjoiI2VmNmI3MyIsImRvbmUiOiIjOGJkMTdjIiwiaWRsZSI6IiM2Yjc3ODUifX0="
+      }
+    ]
+  },
+  "certificate": {
+    "line": "ssh-ed25519-cert-v01@openssh.com ZXhhbXBsZSBjZXJ0aWZpY2F0ZSBmb3IgbGFwdG9wLCBub3QgYSByZWFsIG9uZQ== laptop",
+    "valid_before": "2026-01-12T09:00:00Z",
+    "renewed": true,
+    "not_renewed": null
+  },
+  "scope": [
+    "tag:work"
+  ],
+  "logins": [
+    "agent"
+  ],
+  "ssh": {
+    "user": "agent"
+  },
+  "known_hosts": [
+    "@cert-authority ship-01,ship-01.local,ship-01.tailnet.example ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVob3N0Y2FrZXlleGFtcGxlaG9zdGNha2V5ZXhh shipshape-host-ca"
+  ],
+  "fleetledger": {
+    "name": "fleetledger",
+    "known_hosts": "fleetledger,fleetledger.local ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGV4YW1wbGVmbGVldGxlZGdlcmhvc3RrZXlleGFtcGxlZmxl"
+  },
+  "ships": [
+    {
+      "name": "ship-01",
+      "tags": [
+        "work"
+      ],
+      "runtime": "core",
+      "host_names": {
+        "lan": "ship-01.local",
+        "overlay": "ship-01.tailnet.example"
+      },
+      "host_certificate": true
+    }
+  ],
+  "idle_limit": {
+    "on": true,
+    "days": 30
+  }
+}

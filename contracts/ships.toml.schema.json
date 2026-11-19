@@ -301,6 +301,10 @@
           "idle_refused": {
             "$ref": "#/$defs/timestamp",
             "description": "When `ship-fleet machine-bundle` first refused it for being idle. Written by ship-fleet; cleared when you allow it again or turn its idle limit off."
+          },
+          "looks": {
+            "type": "boolean",
+            "description": "true: its bundle (`ship-fleet machine-bundle`) carries the fleet's Desk looks (`ship-fleet looks`) for its refresher, so its restricted refresh key reads them too (`ship-fleet trust NAME --looks on`; its refresher must be version 2 or later). Absent or false: its bundle is exactly as without looks."
           }
         }
       }

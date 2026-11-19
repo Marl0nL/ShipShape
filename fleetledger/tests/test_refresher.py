@@ -36,7 +36,7 @@ SSHD = os.environ.get("FLEETLEDGER_TEST_SSHD") or shutil.which("sshd") or "/usr/
 SCRIPT = Path(refresher.__file__).with_name(refresher.SCRIPT)
 TOOLS = ("sh", "sed", "tr", "head", "cut", "grep", "mkdir", "mv", "rm", "cat", "date",
          "mktemp", "chmod", "wc", "cp", "id", "sleep", "readlink", "base64", "ssh-keygen", "env",
-         "ls", "touch", "tail", "find", "sha256sum")
+         "ls", "touch", "tail", "find", "sha256sum", "sort", "od")
 REAL_SSH = shutil.which("ssh") or "/usr/bin/ssh"
 
 pytestmark = [

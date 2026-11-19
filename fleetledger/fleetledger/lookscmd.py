@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-from fleetledger import looks, paths
+from fleetledger import ca, looks, paths
 from fleetledger.concierge import audit
 from fleetledger.errors import FleetError
 from fleetledger.inventory import now_timestamp
@@ -181,6 +181,28 @@ def show_doc() -> dict:
     }
 
 
+def _receivers(app) -> list[str]:
+    """The trusted machines whose bundles carry the looks (ship-fleet trust NAME --looks on)."""
+    try:
+        return [m.name for m in ca.machines(app.store_factory().load())
+                if m.looks and not m.revoked]
+    except FleetError:
+        return []
+
+
+def _say_receivers(app, sent: bool) -> None:
+    names = _receivers(app)
+    if not names:
+        app.say("  sent to no machine (ship-fleet trust NAME --looks on sends them through "
+                "its refresher)")
+    elif sent:
+        app.say(f"  sent to: {', '.join(names)} (each through its refresher; its refresh key "
+                "reads them; the audit log's machine-bundle line says when one went without)")
+    else:
+        app.say(f"  not sent to {', '.join(names)} until then: their bundles come without "
+                "looks, and each keeps what it has")
+
+
 def _show(app, as_json: bool) -> int:
     doc = show_doc()
     if as_json:
@@ -189,10 +211,14 @@ def _show(app, as_json: bool) -> int:
     if not doc["stored"]:
         app.say("No Desk looks are stored. Publish a looks folder with ship-fleet looks "
                 "publish FOLDER|-.")
+        if _receivers(app):
+            app.say(f"  {', '.join(_receivers(app))}: told there are none, so each refresher "
+                    "removes the looks it wrote there")
         return 0
     if doc["problem"]:
         app.say(f"The stored Desk looks are not usable: {doc['problem']}.")
         app.say("  Publish the folder again, or ship-fleet looks clear.")
+        _say_receivers(app, False)
         return 1
     src = doc["from"]
     by = " ".join(x for x in (
@@ -210,5 +236,6 @@ def _show(app, as_json: bool) -> int:
         f"{t['tag']} -> {t['preset']}" for t in doc["tag_looks"]) or "none"))
     for f in doc["files"]:
         app.say(f"  {f['name']:<40} {_kib(f['bytes'])}")
+    _say_receivers(app, True)
     return 0
 
