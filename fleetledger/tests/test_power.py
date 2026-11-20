@@ -7,7 +7,7 @@ from test_cli import env  # noqa: F401  (a fixture: the CLI's store, fake driver
 
 def test_start_and_stop_go_through_the_driver(env):  # noqa: F811
     assert env.run("new", "ship-07", "--driver", "proxmox", "--no-wait")[0] == 0
-    code, out, err = env.run("stop", "ship-07")
+    code, out, err = env.run("stop", "ship-07", "--yes")
     assert code == 0, err
     assert "Shut down ship-07." in out and "ship-fleet start ship-07" in err
     code, out, err = env.run("start", "ship-07")
@@ -18,7 +18,7 @@ def test_start_and_stop_go_through_the_driver(env):  # noqa: F811
 
 def test_the_manual_driver_prints_the_steps(env):  # noqa: F811
     assert env.store.load().ship("ship-01").driver == "manual"
-    code, out, _ = env.run("stop", "ship-01")
+    code, out, _ = env.run("stop", "ship-01", "--yes")
     assert code == 0 and "Stop ship-01's VM by hand:" in out
     code, out, _ = env.run("start", "ship-01")
     assert code == 0 and "Start ship-01's VM by hand:" in out

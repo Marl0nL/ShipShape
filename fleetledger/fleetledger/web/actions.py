@@ -77,13 +77,15 @@ def logs(app: Any, ship: str, source: str, lines: int = 300) -> tuple[bool, list
 
 
 def logout(app: Any, ship: str, service: str) -> Outcome:
-    """`ship-fleet logout` with its output captured (never on the server's stdout)."""
+    """`ship-fleet logout` with its output captured (never on the server's stdout), after
+    the page's confirm box (so --yes: nobody can be asked here)."""
     from fleetledger.web.jobs import BrowserApp
 
     buf = io.StringIO()
     sub = BrowserApp(app, buf)
     try:
-        code = commands.cmd_logout(argparse.Namespace(name=ship, service=service), sub) or 0
+        code = commands.cmd_logout(argparse.Namespace(name=ship, service=service,
+                                                         yes=True), sub) or 0
     except FleetError as exc:
         return Outcome(ship, False, exc.message + (f" {exc.hint}" if exc.hint else ""))
     lines = [line for line in buf.getvalue().splitlines() if line.strip()]
@@ -259,7 +261,8 @@ POWER = {"start": "Start", "stop": "Stop"}
 
 def start_power(jobs: Any, app: Any, verb: str, name: str):
     """Start or stop a Ship's VM: `ship-fleet start|stop NAME` itself, as a job.
-    Refused while something else runs on that Ship."""
+    Refused while something else runs on that Ship. Stop comes after its confirm dialog
+    (ship_power), so it gets --yes: nobody can be asked in a job."""
     from fleetledger.web.jobs import RecordingApp, run_cli
 
     if verb not in POWER:
@@ -267,7 +270,9 @@ def start_power(jobs: Any, app: Any, verb: str, name: str):
     # RecordingApp: the driver's answer goes on the card (_outcome.html), so the
     # manual driver's step shows as "by hand" with Copy, not as "done".
     return jobs.start(verb, [name],
-                      lambda job: run_cli(RecordingApp(app, job), [verb, name], job),
+                      lambda job: run_cli(RecordingApp(app, job),
+                                          [verb, name, *(["--yes"] if verb == "stop" else [])],
+                                          job),
                       f"{POWER[verb]} {name}'s VM")
 
 
@@ -278,7 +283,9 @@ def start_agent_restart(jobs: Any, app: Any, name: str, agents: list[str], *,
     """Restart running agents on one Ship in place, as one job running
     `ship-fleet agent restart NAME ...` (ops.restart_agents, as the CLI does). Checked
     here first, so a bad choice is refused on the page, not in a failed job. With poll,
-    the job checks the Ship before it ends, so the page it refreshes shows the new modes."""
+    the job checks the Ship before it ends, so the page it refreshes shows the new modes.
+    Its callers come after a confirm dialog, so --force and --fresh go with --yes (the
+    CLI asks before either, and nobody can be asked in a job)."""
     from fleetledger.web.jobs import run_cli
 
     agents = list(dict.fromkeys(agents))
@@ -290,7 +297,7 @@ def start_agent_restart(jobs: Any, app: Any, name: str, agents: list[str], *,
         raise FleetError("Mode: not one of the choices.")
     argv = ["agent", "restart", name, *(["--all"] if everyone else agents)]
     argv += [*(["--mode", mode] if mode else []), *(["--fresh"] if fresh else []),
-             *(["--force"] if force else [])]
+             *(["--force"] if force else []), *(["--yes"] if force or fresh else [])]
     who = "every agent" if everyone else ", ".join(agents)
     title = f"Restart {who} on {name}" + (f" in {mode}" if mode else "")
 

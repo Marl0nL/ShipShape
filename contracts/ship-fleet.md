@@ -43,6 +43,35 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 `about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls`, `looks show`, `machine-bundle` (which then signs
 nothing) and `machine-pair` (a request waits; approving it does not), answer while FleetLedger's vault is locked; the others are refused then (stderr says how to unlock, exit 1).
 
+## Commands that ask first
+
+These ask a question before they act. Each asks only in a terminal (stdin a terminal; over
+ssh, `ssh -t`), saying what will happen and to which Ship. Any other answer is a refusal:
+nothing is done, stderr says so, exit 1. With no terminal, each one does nothing unless it is
+given `--yes`: stderr says what it would have done and to rerun it in a terminal or with
+`--yes`, exit 1. A program that confirms in its own way (the web UI's dialogs) passes `--yes`
+after that; one that shows the command to a person (the Fleet panel) runs it in a terminal
+and never passes `--yes`.
+
+| Command | Asks for | When |
+|---|---|---|
+| `destroy NAME` | the Ship's name | always |
+| `new NAME` | the Ship's name | when a failed attempt left something on the hypervisor that it deletes first |
+| `snapshot rollback NAME SNAP` | `yes` | always |
+| `snapshot rm NAME SNAP`, `image rm IMAGE` | the snapshot's, the image's name | always |
+| `update`, `reboot` | `yes` | on more than one Ship |
+| `untrust NAME`, `keys revoke KEY` | the machine's, the key's name | always |
+| `stop NAME` | `yes` | always (`start` asks nothing) |
+| `logout NAME SERVICE` | `yes` | always |
+| `overlay leave NAME...` | `yes` | always, once for every Ship named |
+| `agent restart SHIP AGENT...` | `yes` | with `--force` (it interrupts a working agent's turn) or `--fresh` (each starts a new conversation); without either it asks nothing, as an idle agent continues its conversation and a working one is left alone |
+| `signins NAME --off X`, `signins NAME --only ...` | `yes` | when a sign-in the Ship uses is turned off (an `--only` that leaves it out does that too): it signs the Ship out of it; `--on` asks nothing |
+| `resize NAME ... --restart` | `yes` | with `--restart` (the VM restarts now); not with `--record-only` |
+| `set ... ssh_listen=overlay` | `yes` | when it sets `ssh_listen=overlay` (it can cut the LAN path), once for every Ship named; any other setting asks nothing |
+
+Other commands ask for what only a person can give (a fingerprint for `adopt`, a code for
+`pair approve`, a passphrase for `unlock`); each says what it needs.
+
 ## `ship-fleet ls --json` and `ship-fleet status NAME --json`
 
 One Ship as FleetLedger sees it: `ls` lists every Ship in the inventory (with `--tag`,

@@ -67,7 +67,8 @@ async def leave(request: Request) -> Response:
         flash(request, "bad", f"Not left: a sign-in is open on {name}. Finish or cancel it "
               "on the Sign-ins page first.")
         return back(where)
-    start_cli_job(request, "leave", [name], ["overlay", "leave", name],
+    # After the confirm box: --yes, as nobody can be asked in a job.
+    start_cli_job(request, "leave", [name], ["overlay", "leave", name, "--yes"],
                   f"{name} leaves the overlay",
                   said=f"{name} is leaving the overlay; its progress is below.")
     return back(where)

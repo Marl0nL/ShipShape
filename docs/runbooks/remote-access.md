@@ -131,8 +131,8 @@ loopback are accepted):
 ship-fleet set ship-01 ssh_listen=overlay
 ```
 
-It is refused until the Ship has joined, and `overlay leave` turns it back to
-`any` first, so the Ship can never be locked out by these commands. **The
+It asks you to type `yes` first (`--yes` in a script). It is refused until the
+Ship has joined, and `overlay leave` turns it back to `any` first, so the Ship can never be locked out by these commands. **The
 computer FleetLedger runs on must be on the overlay too** before you do this:
 otherwise its own logins come from the LAN and are refused ("refused
 FleetLedger's admin key"). If the overlay itself breaks, the Proxmox console
@@ -225,9 +225,9 @@ policy let through gets refused. By hand:
 ship-fleet overlay leave ship-01
 ```
 
-turns `ssh_listen` back to `any`, logs the Ship out of the tailnet, and stops and
-disables `tailscaled`. `ship-fleet destroy` does this first by itself, then
-prints the exact admin-console step to remove the Ship's device (its tailnet
+asks you to type `yes` (`--yes` in a script), then turns `ssh_listen` back to `any`,
+logs the Ship out of the tailnet, and stops and disables `tailscaled`. `ship-fleet
+destroy` does this first by itself, then prints the exact admin-console step to remove the Ship's device (its tailnet
 name and node id). If you turned device removal on (`remove_devices`, level 2 or
 3), it removes the device itself instead: the one `tag:ship` device with the node
 id the Ship joined as (Ships joined before that was recorded: its recorded

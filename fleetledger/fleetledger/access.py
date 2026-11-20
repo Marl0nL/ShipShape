@@ -6,7 +6,7 @@ the whole setup, including your laptop.
 
 from __future__ import annotations
 
-from fleetledger import overlay
+from fleetledger import overlay, prompts
 from fleetledger.commands import table
 from fleetledger.errors import FleetError
 from fleetledger.shipctl import ShipCtl
@@ -18,7 +18,7 @@ def add_parsers(sub, add) -> None:
             "  ship-fleet overlay check [--policy FILE] [--probe]\n"
             "  ship-fleet overlay join ship-01 [ship-02 ...] | --tag work\n"
             "  ship-fleet overlay status [ship-01 ...]\n"
-            "  ship-fleet overlay leave ship-01\n"
+            "  ship-fleet overlay leave ship-01     asks first in a terminal (--yes elsewhere)\n"
             "  ship-fleet overlay policy          access rules to paste into the admin console\n\n"
             "Each join uses a one-off auth key, pasted (not shown) or minted through the\n"
             "Tailscale API ([overlay] key_source). Keys never go into seeds or logs.\n"
@@ -27,6 +27,7 @@ def add_parsers(sub, add) -> None:
     p.add_argument("names", nargs="*", metavar="SHIP")
     p.add_argument("--tag", help="every Ship with this tag")
     p.add_argument("--force", action="store_true", help="setup: replace an existing [overlay]")
+    p.add_argument("--yes", action="store_true", help="leave: do not ask first (for scripts)")
     p.add_argument("--policy", metavar="FILE",
                    help="check: a policy file exported from the admin console")
     p.add_argument("--probe", action="store_true",
@@ -92,6 +93,13 @@ def cmd_overlay(args, app) -> int:
             app.say("Only SSH with the pinned host key is allowed in, over the overlay as on "
                     "the LAN. To refuse LAN logins: ship-fleet set SHIP ssh_listen=overlay")
         return 1 if failed else 0
+    names = ", ".join(s.name for s in ships)
+    one = len(ships) == 1
+    prompts.go_on(app, f"{names} {'leaves' if one else 'leave'} the overlay: from then on only "
+                  f"the LAN reaches {'it' if one else 'them'}, so a computer that reaches "
+                  f"{'it' if one else 'them'} over the overlay alone loses its way in (SSH "
+                  "listening goes back to every network first).", yes=args.yes,
+                  refused=f"Nothing left: {names} {'stays' if one else 'stay'} on the overlay.")
     for ship in ships:  # leave
         ctl = ShipCtl(app.ssh_factory(inv), ship)
         try:

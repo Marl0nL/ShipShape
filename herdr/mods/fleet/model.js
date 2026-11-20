@@ -198,6 +198,11 @@ export function readShips(stdout) {
       // tooling: none) and the claude block, which says some of it on older tooling too.
       settings: part(e.status?.settings),
       claude: part(e.status?.claude),
+      // For the Agents and size view (agents.js, which checks each value it reads): herdr's
+      // agents as the status lists them, the agent record, and the size the Ship sees.
+      herdrAgents: Array.isArray(e.status?.herdr?.agents) ? e.status.herdr.agents : null,
+      record: part(e.status?.agent_record),
+      host: part(e.status?.host),
     });
   }
   return { ships, refused: refused.list(), older };
@@ -936,7 +941,8 @@ export function selectPlan(row) {
  *  terminal). Never sent; spelt here without their dashes so that no source file of the mod
  *  holds one at all (tests/test_herdr_fleet.py looks). */
 // The code too: an approval by code is typed in its terminal, never passed by the panel.
-const SKIPPING = new Set(["yes", "force", "revoke-my-key", "stdin", "code", "y"].map((w) => (w.length === 1 ? `-${w}` : `--${w}`)));
+// And record-only: a resize recorded without changing the VM is done in a terminal, by hand.
+const SKIPPING = new Set(["yes", "force", "revoke-my-key", "stdin", "code", "record-only", "y"].map((w) => (w.length === 1 ? `-${w}` : `--${w}`)));
 
 /** The patterns ship-fleet enforces, each from where it is defined (tests/test_herdr_fleet.py
  *  checks each one against its source). */
@@ -994,7 +1000,10 @@ export const shellLine = (argv) => argv.map(shellWord).join(" ");
 function refuseSkipping(args) {
   for (const a of args) {
     const flag = String(a).split("=")[0];
-    if (SKIPPING.has(flag)) throw new Error(`refused ${flag}: the panel never skips a question ship-fleet asks`);
+    // ship-fleet's parser takes a flag cut short (one that starts no other), so a cut one is
+    // refused too: any word of three or more characters that starts one of them.
+    const cut = flag.startsWith("--") && flag.length > 2 && [...SKIPPING].some((f) => f.startsWith(flag));
+    if (SKIPPING.has(flag) || cut) throw new Error(`refused ${flag}: the panel never skips a question ship-fleet asks`);
   }
 }
 
@@ -1229,8 +1238,10 @@ export function actionGate(st) {
   return null;
 }
 
-const FULL = ["signin", "update", "reboot", "snapshots", "snapshot", "rollback", "destroy"];
-const HYPERVISOR = ["snapshots", "snapshot", "rollback", "destroy"];
+const FULL = ["signin", "signout", "update", "reboot", "start", "stop", "resize", "snapshots", "snapshot", "rollback", "destroy"];
+// What goes through the hypervisor, not the Ship (a disk that grows has its filesystem grown
+// over ssh afterwards; resize says when that has to wait).
+const HYPERVISOR = ["start", "stop", "resize", "snapshots", "snapshot", "rollback", "destroy"];
 /** Which actions each documented state allows (contracts/ship-fleet.md, `state` and `problem`). */
 export const BY_STATE = {
   ready: FULL,
@@ -1250,6 +1261,8 @@ const NOT_THERE = { signin: "its sign-ins need it to answer", update: "update re
 const LABEL = {
   update: "Update",
   reboot: "Reboot",
+  start: "Start",
+  stop: "Stop",
   snapshots: "Snapshots",
   snapshot: "Take a snapshot",
   rollback: "Roll back to",
@@ -1259,6 +1272,8 @@ const LABEL = {
 const NOTE = {
   update: "brings it to FleetLedger's tooling; agents keep running",
   reboot: "a clean reboot; agents come back in their modes",
+  start: "its VM, through the hypervisor; its agents resume in their modes as it boots",
+  stop: "a clean shutdown of its VM; its agents stop until Start. ship-fleet asks you to type yes in the terminal",
   snapshots: "lists its snapshots",
   snapshot: "of its disk; it holds the Ship's sign-ins",
   rollback: "ship-fleet asks you to type yes in the terminal",
@@ -1272,6 +1287,10 @@ function shipCommand(id, name, value) {
       return ["update", name];
     case "reboot":
       return ["reboot", name];
+    case "start":
+      return ["start", name];
+    case "stop":
+      return ["stop", name];
     case "snapshots":
       return ["snapshot", "ls", name];
     case "snapshot":
@@ -1285,17 +1304,26 @@ function shipCommand(id, name, value) {
     case "signin":
       if (!SERVICE.test(String(value))) throw new Error(`${JSON.stringify(String(value)).slice(0, 40)} is not a service ship-fleet login takes`);
       return ["login", name, value];
+    case "signout":
+      if (!SERVICE.test(String(value))) throw new Error(`${JSON.stringify(String(value)).slice(0, 40)} is not a service ship-fleet logout takes`);
+      return ["logout", name, value];
     default:
       throw new Error(`no action ${id}`);
   }
 }
 
-/** One Ship action's job: `value` is the service for signin, the snapshot for rollback. */
+/** One Ship action's job: `value` is the service for signin and signout, the snapshot for
+ *  rollback. */
 export function shipJob(where, id, name, value) {
   shipName(name);
   const args = shipCommand(id, name, value);
-  return job(where, `${id === "signin" ? `sign in ${value}` : id} ${name}`, [args], { ship: name, kind: id });
+  const title = id === "signin" ? `sign in ${value}` : id === "signout" ? `sign out ${value}` : id;
+  return job(where, `${title} ${name}`, [args], { ship: name, kind: id });
 }
+
+/** A sign-in row's states with something signed in to sign out of: the rows the web UI offers
+ *  Sign out on (fleetledger/signinlist.py SIGNED_IN_STATES). */
+export const SIGNED_IN_STATES = ["ok", "expiring", "wrong account", "scopes differ"];
 
 /** A Ship's menu: each action with its job (and so its exact command), or why it is not offered.
  *  `ship` is its entry in state.ships; `snap` what is typed in the menu's snapshot box. */
@@ -1309,7 +1337,7 @@ export function shipMenu(st, ship, snap = "") {
   const why = BY_STATE[word] ? null : `State ${JSON.stringify(String(word)).slice(0, 30)} is new to this panel: only what goes through the hypervisor.`;
   const add = (id, label, value, note) => {
     try {
-      items.push({ id: value && id === "signin" ? `signin:${value}` : id, label, job: shipJob(st.where, id, ship.name, value), note });
+      items.push({ id: value && (id === "signin" || id === "signout") ? `${id}:${value}` : id, label, job: shipJob(st.where, id, ship.name, value), note });
     } catch (e) {
       items.push({ id, label, job: null, why: firstLine(e?.message ?? e) });
     }
@@ -1327,9 +1355,16 @@ export function shipMenu(st, ship, snap = "") {
         else add("signin", `Sign in: ${r.provider}`, r.provider, `${r.state || r.group}; the link and the code are in the terminal`);
       }
       if (!seen.size) items.push({ id: "signin", label: "Sign in", job: null, why: "it uses no sign-in" });
+      // Sign out of each one it is signed in to, as the web UI offers it.
+      const out = new Set();
+      for (const r of s.rows) {
+        if (r.group === "off" || !SIGNED_IN_STATES.includes(r.state) || !r.answers || out.has(r.provider)) continue;
+        out.add(r.provider);
+        add("signout", `Sign out: ${r.provider}`, r.provider, "deletes its credentials for it there; ship-fleet asks you to type yes in the terminal");
+      }
     }
   } else items.push({ id: "signin", label: "Sign in", job: null, why: `${word}: ${NOT_THERE.signin}` });
-  for (const id of ["finish", "update", "reboot", "snapshots", "snapshot", "rollback", "destroy"]) {
+  for (const id of ["finish", "update", "reboot", "start", "stop", "snapshots", "snapshot", "rollback", "destroy"]) {
     if (!allowed.includes(id)) {
       if (NOT_THERE[id] && id !== "finish") items.push({ id, label: LABEL[id], job: null, why: `${word}: ${NOT_THERE[id]}` });
       continue;

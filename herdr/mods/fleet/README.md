@@ -80,14 +80,17 @@ ssh -t -o ConnectTimeout=8 [-i KEY -o IdentitiesOnly=yes] -- DEST "'ship-fleet' 
 
 which is exactly the line the panel showed under the action before you clicked it. Whatever
 `ship-fleet` asks, it asks in that terminal, and you answer it there: a Ship's name before
-**Destroy**, `yes` before **Roll back**, the vault's passphrase for **Unlock**, a sign-in's link and
-code. The panel never passes a flag that skips one (`--yes`, `--force`, `--revoke-my-key`,
-`--stdin`, `--code`), asks no question of its own, never types into a terminal, and takes no secret: the
-only things typed into it are a new Ship's name, tags, repository and size (and under Advanced its
-first agent's name and folder, host names, VM id and time zone), in a Ship's Settings its session
-prefix, LAN guard addresses, reboot time, time zone, wake delay and message and new tags, a
-snapshot's name, and
-on the Machines page a machine's name, public key and scope and a device's name, each checked
+**Destroy**, `yes` before **Roll back**, **Stop**, **Sign out**, a fresh restart, a resize that
+restarts the VM, SSH on the overlay only and a sign-in turned off (`contracts/ship-fleet.md`,
+"Commands that ask first"), the vault's passphrase for **Unlock**, a sign-in's link and code. The
+panel never passes a flag that skips one or overrides a check (`--yes`, `--force`,
+`--revoke-my-key`, `--stdin`, `--code`, nor any of them cut short), never resizes record-only,
+asks no question of its own, never types into a terminal, and takes no secret: the only things
+typed into it are a new Ship's name, tags, repository and size (and under Advanced its first
+agent's name and folder, host names, VM id and time zone), in a Ship's Settings its session
+prefix, LAN guard addresses, reboot time, time zone, wake delay and message and new tags, in its
+Agents and size an autostart agent's name and folder and a new size, a snapshot's name, and on
+the Machines page a machine's name, public key and scope and a device's name, each checked
 against the pattern `ship-fleet` enforces and refused, not sent, when it does not match.
 
 | Where | Action | Runs on FleetLedger |
@@ -95,8 +98,11 @@ against the pattern `ship-fleet` enforces and refused, not sent, when it does no
 | **New Ship** | Create | `ship-fleet new NAME [--tag TAG]… [--repo OWNER/NAME] [--cores N] [--memory-mb N] [--disk-gb N] [--signins A,B] [--autostart AGENT:FOLDER[:MODE]] [--github-scopes A,B] [--no-overlay] [--vmid N] [--host HOST]… [--mode MODE] [--allow-bypass] [--agent-sudo] [--timezone ZONE] [--driver DRIVER] [--image IMAGE] [--no-default-tools] [--tools A,B] [--profile P]… && ship-fleet login NAME claude` (the login only when Claude is one of its sign-ins; with the manual driver `new` only prints the steps, so that login fails until you have made the VM: sign in from the Ship's menu then). Tags: buttons for the fleet's, or type some (spaces or commas between). Sign-ins: FleetLedger's list (`signins --accounts --json`), all by default. A first agent, `main` in `~/work`, as the web form's (with a repository it works in its clone). Size: blank is FleetLedger's default, which the hint shows once `defaults --json` is read. |
 | | Advanced | Closed until you open it, and what it holds is in the line shown either way: the first agent's name, folder and mode, or none (then no repository); extra GitHub scopes (`workflow`, `project`, `write:packages`; none: gh's minimum); not joining the overlay; host names to reach it by; a Proxmox VM id; the default permission mode, allowing `bypassPermissions` (a first agent in that mode needs it), sudo for the agent user; a time zone (blank: FleetLedger's computer's, named once read; `new` refuses one its tzdata lacks). Never the first prompt: `new` treats it as possibly secret, so it is typed only in a terminal (`--autostart-prompt`). From FleetLedger's lists, as buttons, never typed: the driver (those set up there) and the base image (those the driver can start from; blank: the pinned one, and the form says when that one is not on the driver chosen), the tools (ticked as FleetLedger's defaults are; adding one sends `--tools`, leaving a default out `--no-default-tools --tools` with every one ticked) and the profiles (they replace the default ones). A toolkit's tool or profile is refused, as `new` refuses it, on a Ship with none of its toolkit's tags. When a list cannot be read (an older FleetLedger, say), its option stays at FleetLedger's default and the form says why. |
 | A Ship's **⋯** | Settings… | Opens the Ship's Settings (below), only while ship-fleet reaches it over ssh (the states that offer Update) |
+| | Agents and size… | Opens the Ship's Agents and size (below), in the states that go through the hypervisor (its agents only while ship-fleet reaches it over ssh) |
 | | Sign in: SERVICE | `ship-fleet login NAME SERVICE`, one per sign-in the Ship uses (from `signins NAME --offline --json`), only while it answers |
+| | Sign out: SERVICE | `ship-fleet logout NAME SERVICE` (`ship-fleet` asks for `yes`), one per sign-in it is signed in to (the rows the web UI offers Sign out on), only while it answers |
 | | Update, Reboot | `ship-fleet update NAME`, `ship-fleet reboot NAME` |
+| | Start, Stop | `ship-fleet start NAME`, `ship-fleet stop NAME` (`ship-fleet` asks for `yes` before a stop), through the hypervisor, so also while it does not answer |
 | | Snapshots, Take a snapshot | `ship-fleet snapshot ls NAME`, `ship-fleet snapshot take NAME` |
 | | Roll back to | `ship-fleet snapshot rollback NAME SNAPSHOT` (type the snapshot's name in the menu; `ship-fleet` asks for `yes`) |
 | | Destroy | `ship-fleet destroy NAME` (`ship-fleet` asks for the Ship's name) |
@@ -118,13 +124,26 @@ only when it changes something:
 | Claude Code, Agent, Network, Updates, After a reboot | `ship-fleet set NAME KEY=VALUE…`: `remote_control`, `default_mode`, `allow_bypass`, `update_channel`, `session_prefix`, `sudo`, `lan_guard`, `lan_guard_allow`, `auto_reboot`, `reboot_time`, `timezone`, `wake_after_boot`, `wake_delay_minutes`, `wake_text` (`bypassPermissions` as the default mode with it disallowed is refused) |
 | GitHub scopes | `github_scopes=A,B` (or `none`) in the same `set` line: the extra scopes its next GitHub sign-in asks for. A scope its ship.toml chose that this FleetLedger does not offer is said, and changing the ticks drops it. |
 | Tags | `&& ship-fleet tag NAME +A -B`: the fleet's tags as buttons, new ones typed |
-| Sign-ins it uses | `&& ship-fleet signins NAME --on A`: a sign-in that is off can be turned on (from `signins NAME --offline --json` and `signins --accounts --json`, read when the view opens if the menu has not read them) |
+| SSH listens | `ssh_listen=any` in the same `set` line; `ssh_listen=overlay` in a `set` of its own, last, after every other part has run. On the overlay only, it refuses SSH from the LAN, so this computer reaches it only over the overlay: `ship-fleet` asks for `yes` first, and the Ship refuses it until it has joined the overlay. |
+| Sign-ins it uses | `&& ship-fleet signins NAME --on A --off B`: a sign-in that is off can be turned on, and one in use turned off, which signs the Ship out of it (`ship-fleet` asks for `yes` first). From `signins NAME --offline --json` and `signins --accounts --json`, read when the view opens if the menu has not read them. |
 
-Not changed here yet, because each acts at once and `ship-fleet` asks nothing in the terminal
-first: SSH listening on the overlay only (`set ssh_listen=`, which can cut this computer's way to
-the Ship; its value is shown), and turning a sign-in off (`signins --off`, or an `--only` that
-leaves one out, which signs the Ship out of it). The rest of the web tab (agents, tools, size)
-is not in the panel either.
+When `ship-fleet` is answered anything but `yes`, that part changes nothing and the parts after it
+do not run. Its tools are not changed in the panel.
+
+**A Ship's Agents and size** are what the web UI changes about its agents and its VM, from what
+the panel already reads (the Ship's last status in the offline list: herdr's agents, its agent
+record, its autostart list and the size it sees; no read of its own). Each action is its own
+button, with its line shown under it, and opens one terminal tab:
+
+| Part | Runs on FleetLedger |
+|---|---|
+| Restart an agent | `ship-fleet agent restart NAME AGENT [--mode MODE] [--fresh]`: one of the Claude agents herdr runs or its record keeps, in the mode it starts in (its autostart mode, else the default) or a chosen one, continuing its conversation or a new one (`--fresh`: `ship-fleet` asks for `yes`). A working agent is left alone by `ship-fleet`: the panel never interrupts a turn. `bypassPermissions` while the Ship disallows it is refused. |
+| Remote Control per agent | `ship-fleet agent remote-control NAME AGENT [--off]`, for each agent its record keeps and says this of, from its next start by the Ship; while the Ship's own Remote Control is not `on`, it says so |
+| Started at every boot | `ship-fleet set NAME autostart.add=AGENT:FOLDER[:MODE]` (a name and a folder typed, the mode a button; a name it has already, or a folder with `:`, is refused) and `ship-fleet set NAME autostart.remove=AGENT` (a running one keeps running) |
+| Size | `ship-fleet resize NAME [--cores N] [--memory-mb N] [--disk-gb N] [--restart]`: blank is unchanged; a disk only grows. Without `--restart` vCPUs and memory apply at its next restart through the hypervisor; with it (`ship-fleet` asks for `yes`) its VM restarts now. Never `--record-only`. |
+
+On tooling that does not report its agent record or autostart list, those parts say so and offer
+nothing.
 
 What is offered follows `contracts/ship-fleet.md`: a Ship's state decides its menu (a Ship that is
 unreachable gets only what goes through the hypervisor; one still provisioning or never enrolled,
@@ -221,6 +240,6 @@ asks FleetLedger nothing.
 ## Code
 
 `model.js` holds the logic and imports nothing (the Desk links to it); `settings.js`, a Ship's
-Settings, imports only `model.js`; `main.js` only draws, and hands `model.js`
-the Herdr functions it uses. The tests (`herdr/tests/fleet/`, run by `scripts/check`) load
-`model.js` and `settings.js` with a stand-in for Herdr. The drawing is not tested: only a running Herdr shows it.
+Settings, and `agents.js`, its Agents and size, import only `model.js`; `main.js` only draws,
+and hands `model.js` the Herdr functions it uses. The tests (`herdr/tests/fleet/`, run by
+`scripts/check`) load `model.js`, `settings.js` and `agents.js` with a stand-in for Herdr. The drawing is not tested: only a running Herdr shows it.

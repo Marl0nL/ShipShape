@@ -3,17 +3,17 @@
 //
 // Every `ship-fleet set NAME KEY=VALUE` setting the web tab offers, grouped as it groups them
 // (fleetledger/web/shipsettings.py GROUPS), with the value the Ship last reported (its status
-// `settings`, in the offline list the panel already reads); its tags (`ship-fleet tag NAME +A
-// -B`); the sign-ins it uses, turned on (`ship-fleet signins NAME --on A`); and its extra GitHub
-// scopes (`github_scopes=`, in the same set line). Only what changed is sent, checked first as
-// ship-fleet checks it, in one job: `ship-fleet set NAME K=V … && ship-fleet tag NAME … &&
-// ship-fleet signins NAME --on …`, each part only when it has something to change.
+// `settings`, in the offline list the panel already reads), SSH listening among them; its tags
+// (`ship-fleet tag NAME +A -B`); the sign-ins it uses, turned on or off (`ship-fleet signins NAME
+// --on A --off B`); and its extra GitHub scopes (`github_scopes=`, in the same set line). Only
+// what changed is sent, checked first as ship-fleet checks it, in one job: `ship-fleet set NAME
+// K=V … && ship-fleet tag NAME … && ship-fleet signins NAME …`, each part only when it has
+// something to change.
 //
-// Held back (HELD, below), because each acts at once and ship-fleet asks nothing in the terminal
-// first: SSH listening on the overlay only (it can cut this computer's way to the Ship), shown
-// with its value and not changed here; and turning a sign-in off (it signs the Ship out), so a
-// sign-in in use is shown as on and nothing narrows the list. When ship-fleet asks before each,
-// they join the plan through HELD alone.
+// Two of them ship-fleet asks about in the terminal before it acts, and the view says so: SSH on
+// the overlay only (it can cut this computer's way to the Ship), and a sign-in turned off (it
+// signs the Ship out of it). Answered anything but yes, that part does nothing and the parts
+// after it do not run; so SSH on the overlay only goes last, in a set of its own.
 
 import { BY_STATE, GITHUB_SCOPES, MODES, NAME, SIGNIN, TAG, TIMEZONE, actionGate, checkTag, firstLine, job, words } from "./model.js";
 
@@ -62,7 +62,7 @@ export const GROUPS = [
   ],
 ];
 export const FIELDS = Object.fromEntries(GROUPS.flatMap(([, fields]) => fields.map((f) => [f.key, f])));
-/** shipsettings.SSH_LISTEN: shown, not changed here (HELD). */
+/** shipsettings.SSH_LISTEN, beside the Network group. */
 export const SSH_LISTEN = { key: "ssh_listen", label: "SSH listens", choices: [["any", "on every network"], ["overlay", "on the overlay only"]], hint: "" };
 
 /** Where each key's value is in the status `settings` block: fleetledger/ops.py SET_KEYS. */
@@ -93,13 +93,10 @@ export const WAKE_DELAY = [1, 1440]; // wake_delay_minutes: 1 to 1440
 export const WAKE_TEXT_MAX = 1000; // wake_text: one line of at most 1000 characters
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-/** What the panel does not change yet, though `ship-fleet` can: each acts at once and asks
- *  nothing in the terminal first. "ssh_listen": `set ssh_listen=`; "signins-off": turning a
- *  sign-in off (`signins --off`, or an `--only` that leaves one out), which signs it out. */
-export const HELD = new Set(["ssh_listen", "signins-off"]);
-const HELD_WHY = {
-  ssh_listen: "Not changed here: on the overlay only, this computer reaches the Ship only over the overlay, and ship-fleet changes it at once, asking nothing first.",
-  "signins-off": "Turning one off signs the Ship out of it at once, and ship-fleet asks nothing first: not from here.",
+/** What the view says beside the two that ship-fleet asks about first. */
+export const ASKED = {
+  ssh_listen: "On the overlay only, it refuses SSH from the LAN: this computer reaches it only over the overlay then. ship-fleet asks you to type yes in the terminal.",
+  signins_off: "Turning one off signs the Ship out of it: ship-fleet asks you to type yes in the terminal.",
 };
 
 /** The states whose Ship answers over ssh, so `set` and `tag` reach it: those that allow Update. */
@@ -172,7 +169,7 @@ export function settingsView(st, ship) {
   if (why) return { why };
   const reported = Boolean(ship.settings);
   const groups = GROUPS.map(([title, fields]) => ({ title, fields: fields.map((f) => ({ ...f, current: current(ship, f.key), older: olderHint(ship, f.key) })) }));
-  const ssh = { ...SSH_LISTEN, current: current(ship, "ssh_listen"), held: HELD.has("ssh_listen") ? HELD_WHY.ssh_listen : null };
+  const ssh = { ...SSH_LISTEN, current: current(ship, "ssh_listen"), note: ASKED.ssh_listen };
   return {
     why: null,
     reported,
@@ -182,7 +179,7 @@ export function settingsView(st, ship) {
     tags: ship.tags.filter((t) => TAG.test(t)),
     scopes: reportedScopes(ship),
     signins: signinChoices(st, ship.name),
-    signinsHeld: HELD.has("signins-off") ? HELD_WHY["signins-off"] : null,
+    signinsNote: ASKED.signins_off,
   };
 }
 
@@ -244,8 +241,8 @@ export function assignment(ship, key, raw) {
 /** The job for what the Settings view holds, or what is wrong with it (and nothing is sent).
  *  form: {values: {key: what is chosen or typed for each field (null: left as it is)},
  *  tags: the tags chosen, tag: tags typed (spaces or commas between), github_scopes: null (left
- *  as they are) or every one chosen, signins_on: the sign-ins to turn on}. Also ssh_listen in
- *  values and signins_off, which are refused while HELD holds them. */
+ *  as they are) or every one chosen, signins_on and signins_off: the sign-ins to turn on and
+ *  off}; ssh_listen is in values like the others. */
 export function settingsJob(st, ship, form) {
   const gate = settingsGate(st, ship);
   if (gate) return { errors: [gate], changes: 0 };
@@ -265,9 +262,7 @@ export function settingsJob(st, ship, form) {
   const keys = [...Object.keys(FIELDS), "ssh_listen"];
   for (const key of keys) {
     const pair = guard(() => assignment(ship, key, values[key]));
-    if (!pair) continue;
-    if (HELD.has(key)) errors.push(`${(FIELDS[key] ?? SSH_LISTEN).label}: ${HELD_WHY[key]}`);
-    else pairs.push(pair);
+    if (pair) pairs.push(pair);
   }
   // bypassPermissions as the default needs it allowed. Sent alone, ship-fleet allows it too;
   // turned off beside it (or under it), the Ship refuses.
@@ -291,25 +286,34 @@ export function settingsJob(st, ship, form) {
   const removed = now.filter((t) => !wanted.includes(t));
   // A tag named y would go as the one-letter flag the panel never sends.
   if (removed.includes("y")) errors.push("A tag named y cannot be taken away from here: run ship-fleet tag in a terminal for it.");
-  // -- signins: those turned on --
+  // -- signins: those turned on, and those turned off --
   const on = form.signins_on ?? [];
+  const off = form.signins_off ?? [];
   let turnOn = [];
-  if ((form.signins_off ?? []).length && HELD.has("signins-off")) errors.push(HELD_WHY["signins-off"]);
-  if (on.length) {
+  let turnOff = [];
+  if (on.length || off.length) {
     const c = signinChoices(st, name);
     if (!c.rows) errors.push(`Sign-ins: ${c.why}`);
     else {
-      const bad = on.filter((id) => !c.rows.some((r) => r.id === id));
+      const bad = [...on, ...off].filter((id) => !c.rows.some((r) => r.id === id));
       if (bad.length) errors.push(`Not a sign-in FleetLedger offers: ${bad.join(", ")}`);
+      const both = on.filter((id) => off.includes(id));
+      if (both.length) errors.push(`Turned on and off at once: ${both.join(", ")}`);
       turnOn = c.rows.filter((r) => on.includes(r.id) && !r.on).map((r) => r.id);
+      turnOff = c.rows.filter((r) => off.includes(r.id) && r.on).map((r) => r.id);
     }
   }
   if (errors.length) return { errors, changes: 0 };
   const commands = [];
-  if (pairs.length) commands.push(["set", name, ...pairs]);
+  // SSH on the overlay only goes last, in a set of its own: once it is on, this computer may
+  // reach the Ship only over the overlay, and the parts before it have already run.
+  const overlayOnly = pairs.filter((p) => p === "ssh_listen=overlay");
+  const rest = pairs.filter((p) => p !== "ssh_listen=overlay");
+  if (rest.length) commands.push(["set", name, ...rest]);
   if (added.length || removed.length) commands.push(["tag", name, ...added.map((t) => `+${t}`), ...removed.map((t) => `-${t}`)]);
-  if (turnOn.length) commands.push(["signins", name, ...turnOn.flatMap((id) => ["--on", id])]);
-  const changes = pairs.length + added.length + removed.length + turnOn.length;
+  if (turnOn.length || turnOff.length) commands.push(["signins", name, ...turnOn.flatMap((id) => ["--on", id]), ...turnOff.flatMap((id) => ["--off", id])]);
+  if (overlayOnly.length) commands.push(["set", name, ...overlayOnly]);
+  const changes = pairs.length + added.length + removed.length + turnOn.length + turnOff.length;
   if (!commands.length) return { errors: [], changes: 0 };
   try {
     return { job: job(st.where, `settings ${name}`, commands, { ship: name, kind: "settings" }), errors: [], changes };

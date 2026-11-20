@@ -47,8 +47,10 @@ def add_parsers(sub, add) -> None:
     p = add(sub, "stop", "shut a Ship's VM down cleanly",
             "Shut the Ship's VM down through its driver: an ACPI shutdown, never a\n"
             "power-off, so herdr saves every agent first. Its agents stop until\n"
-            "ship-fleet start, then resume in their modes.")
+            "ship-fleet start, then resume in their modes. In a terminal it asks first;\n"
+            "elsewhere it needs --yes.")
     p.add_argument("name")
+    p.add_argument("--yes", action="store_true", help="do not ask first (for scripts)")
 
     p = add(sub, "resize", "change a Ship's vCPUs, memory or disk",
             "  ship-fleet resize ship-01 --cores 8 --memory-mb 16384\n"
@@ -56,7 +58,8 @@ def add_parsers(sub, add) -> None:
             "--cores is vCPUs (each one host CPU thread). vCPUs and memory apply when the\n"
             "VM next restarts through the hypervisor (--restart does it now; a reboot from\n"
             "inside the Ship does not). A disk only grows: it grows at once, and the Ship's\n"
-            "filesystem with it (ship-ctl grow-root).")
+            "filesystem with it (ship-ctl grow-root). --restart asks first in a terminal\n"
+            "(it stops the Ship's agents); elsewhere it needs --yes.")
     p.add_argument("name")
     p.add_argument("--cores", type=int, help="vCPUs (each one host CPU thread)")
     p.add_argument("--memory-mb", type=int)
@@ -65,6 +68,8 @@ def add_parsers(sub, add) -> None:
                    help="restart the VM through the hypervisor now, so the change applies")
     p.add_argument("--record-only", action="store_true",
                    help="only record the size in ships.toml (you changed the VM by hand)")
+    p.add_argument("--yes", action="store_true",
+                   help="--restart: do not ask first (for scripts)")
 
     p = add(sub, "snapshot", "take, list, roll back or delete a Ship's disk snapshots",
             "  ship-fleet snapshot ls ship-01 [--json]\n"
@@ -227,7 +232,11 @@ def cmd_start(args, app) -> int:
 
 
 def cmd_stop(args, app) -> int:
-    return _power(app, args.name, "stop")
+    ship = app.store_factory().load().ship(args.name)
+    prompts.go_on(app, f"Stopping {ship.name}'s VM (a clean shutdown) stops its agents until "
+                  f"ship-fleet start {ship.name}, and cuts off anyone attached to it.",
+                  yes=args.yes, refused=f"Not stopped: {ship.name} keeps running.")
+    return _power(app, ship.name, "stop")
 
 
 def _power(app, name: str, verb: str) -> int:
@@ -249,9 +258,18 @@ def _power(app, name: str, verb: str) -> int:
 
 
 def cmd_resize(args, app) -> int:
-    for line in resize(app, app.store_factory(), args.name,
-                       {"cores": args.cores, "memory_mb": args.memory_mb,
-                        "disk_gb": args.disk_gb},
+    size = {"cores": args.cores, "memory_mb": args.memory_mb, "disk_gb": args.disk_gb}
+    store = app.store_factory()
+    if args.restart and not args.record_only:
+        ship = store.load().ship(args.name)
+        if check_size(size):  # a bad size is refused before anything is asked
+            prompts.go_on(app, f"Resizing {ship.name} with --restart restarts its VM through "
+                          "the hypervisor now: its agents stop and come back in their modes "
+                          "as it boots, and anyone attached to it is cut off.", yes=args.yes,
+                          refused=f"Not resized: {ship.name} keeps running as it is. Without "
+                          "--restart, vCPUs and memory apply at its next restart through the "
+                          "hypervisor.")
+    for line in resize(app, store, args.name, size,
                        restart=args.restart, record_only=args.record_only):
         app.say(line)
     app.say(f"Recorded in ships.toml: {args.name}'s size.")

@@ -17,6 +17,7 @@ from fleetledger import (
     images,
     ops,
     paths,
+    prompts,
     schemas,
     signinreg,
     signins,
@@ -831,6 +832,13 @@ def cmd_signins(args, app) -> int:
         if ship.github_scopes:
             app.say(f"github scopes: {', '.join(ship.github_scopes)}")
         return 0
+    dropped = [c for c in signins.used(ship) if c not in wanted]
+    if dropped:  # set_signins signs the Ship out of each one
+        labels = ", ".join(signins.LABELS[c] for c in dropped)
+        prompts.go_on(app, f"Turning {labels} off on {ship.name} signs {ship.name} out of "
+                      f"{'it' if len(dropped) == 1 else 'them'}: its credentials there are "
+                      "deleted, and what uses them stops working.", yes=args.yes,
+                      refused=f"Nothing changed: {ship.name} still uses {labels}.")
     return 0 if set_signins(app, store, ship.name, wanted, app.say) else 1
 
 
@@ -1002,9 +1010,15 @@ def set_owner(app, store, name: str, say) -> bool:
 def cmd_logout(args, app) -> int:
     inv = app.store_factory().load()
     ship = inv.ship(args.name)
+    chosen = providers.resolve(args.service)
+    labels = ", ".join(p.label for p in chosen)
+    prompts.go_on(app, f"Signing {ship.name} out of {labels} deletes its credentials there, "
+                  "and what uses them stops working until it signs in again.",
+                  yes=args.yes,
+                  refused=f"Not signed out: {ship.name} keeps its sign-ins.")
     ssh = _ssh(app, inv)
     failed = 0
-    for provider in providers.resolve(args.service):
+    for provider in chosen:
         if concierge.logout(ssh, ship, provider):
             app.say(f"{ship.name}: signed out of {provider.label}.")
         else:
@@ -1068,11 +1082,24 @@ def cmd_set(args, app) -> int:
     names, pairs = _split_names(args.args)
     if not pairs:
         raise FleetError("Give at least one KEY=VALUE.")
-    ops.parse_assignments(pairs)  # reject a bad setting before touching any Ship
+    parsed = ops.parse_assignments(pairs)  # reject a bad setting before touching any Ship
     fleet = _fleet(app)
     ships = ops.select(fleet.inventory, names, args.tag)
+    if "network.ssh_listen=overlay" in parsed:
+        _confirm_overlay_only(app, ships, args.yes)
     outcomes = ops.set_settings(fleet, ships, pairs)
     return _report(app, outcomes)
+
+
+def _confirm_overlay_only(app, ships: list[Ship], yes: bool) -> None:
+    """ssh_listen=overlay can cut the LAN path, this computer's too: ask first."""
+    names = ", ".join(s.name for s in ships)
+    one = len(ships) == 1
+    prompts.go_on(app, f"ssh_listen=overlay makes {names} refuse SSH logins from the LAN: "
+                  f"only the overlay reaches {'it' if one else 'them'} from then on, so this "
+                  "computer and any other that is not on the overlay lose their way in (the "
+                  "hypervisor's console still works).", yes=yes,
+                  refused=f"Nothing changed on {names}.")
 
 
 def cmd_agent(args, app) -> int:
@@ -1093,6 +1120,14 @@ def cmd_agent(args, app) -> int:
         raise FleetError("Give agent names or --all, not both.")
     fleet = _fleet(app)
     ship = fleet.inventory.ship(args.ship)
+    if args.force or args.fresh:  # each interrupts or ends a conversation: ask first
+        ops.check_restart(args.agents, everyone=args.all, mode=args.mode)
+        who = "every agent" if args.all else ", ".join(dict.fromkeys(args.agents))
+        said = [*(["--force interrupts the turn of any that is working"] if args.force else []),
+                *(["--fresh starts each in a new conversation instead of continuing its own"]
+                  if args.fresh else [])]
+        prompts.go_on(app, f"Restarting {who} on {ship.name}: {'; '.join(said)}.",
+                      yes=args.yes, refused=f"Nothing restarted on {ship.name}.")
     outcome = ops.restart_agents(fleet, ship, args.agents, everyone=args.all, mode=args.mode,
                                  fresh=args.fresh, force=args.force, on_event=_progress(app))
     return _report(app, [outcome], args.json)

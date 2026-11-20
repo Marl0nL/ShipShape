@@ -411,7 +411,7 @@ def test_resize_through_the_driver_and_recorded(env):
     env.driver.reboot = lambda ship: rebooted.append(ship.name) or Outcome(
         done=True, messages=["Rebooted."])
     env.run("new", "ship-16", "--driver", "proxmox")
-    code, out, err = env.run("resize", "ship-16", "--cores", "8", "--restart")
+    code, out, err = env.run("resize", "ship-16", "--cores", "8", "--restart", "--yes")
     assert code == 0, err
     assert sized == [{"cores": 8}] and rebooted == ["ship-16"]
     assert env.store.load().ship("ship-16").size["cores"] == 8
@@ -487,7 +487,7 @@ def test_offline_views_leave_out_sign_ins_a_ship_does_not_use(env):
                              "message": "Google Cloud is not signed in."})
     env.ship.status_override["ship-01"] = doc
     env.run("ls")  # fetched and cached
-    env.run("signins", "ship-01", "--off", "gcloud")
+    env.run("signins", "ship-01", "--off", "gcloud", "--yes")
     inv = env.store.load()
     from fleetledger import status
 
@@ -782,7 +782,7 @@ def test_login_arguments(env):
 
 
 def test_a_sign_in_turned_off_is_signed_out_and_never_offered(env):
-    code, out, err = env.run("signins", "ship-01", "--off", "gcloud")
+    code, out, err = env.run("signins", "ship-01", "--off", "gcloud", "--yes")
     assert code == 0, err
     assert "gcloud auth revoke" in env.ship.calls[-1][1][-1]  # signed out on the Ship
     assert env.store.load().ship("ship-01").signins == ("claude", "github")
@@ -806,7 +806,7 @@ def test_turning_off_a_sign_in_that_was_never_made_signs_nothing_out(env):
     for key in ("gcloud", "gcloud_adc"):
         doc["auth"][key].update(state="missing", account=None)
     env.ship.status_override["ship-01"] = doc
-    code, out, _ = env.run("signins", "ship-01", "--off", "gcloud")
+    code, out, _ = env.run("signins", "ship-01", "--off", "gcloud", "--yes")
     assert code == 0 and "Google Cloud was not signed in there" in out
     assert not any("gcloud auth revoke" in c[-1] for _, c in env.ship.calls)
 
@@ -818,7 +818,7 @@ def test_a_new_ship_can_use_fewer_sign_ins(env):
 
 
 def test_logout(env):
-    code, out, _ = env.run("logout", "ship-01", "github")
+    code, out, _ = env.run("logout", "ship-01", "github", "--yes")
     assert code == 0 and "signed out of GitHub" in out
     assert env.ship.calls[-1][1][-1] == "gh auth logout --hostname github.com"
 
@@ -1184,7 +1184,7 @@ def test_overlay_join_failure_keeps_names(env):
 def test_overlay_leave_drops_the_overlay_name(env):
     with_overlay(env)
     env.run("overlay", "join", "ship-01")
-    code, out, err = env.run("overlay", "leave", "ship-01")
+    code, out, err = env.run("overlay", "leave", "ship-01", "--yes")
     assert code == 0, err
     assert env.store.load().ship("ship-01").names == ("ship-01.local",)
 
@@ -1276,7 +1276,7 @@ def test_destroy_goes_on_if_the_ship_cannot_leave(env):
 
 
 def test_set_ssh_listen(env):
-    code, out, err = env.run("set", "ship-01", "ssh_listen=overlay")
+    code, out, err = env.run("set", "ship-01", "ssh_listen=overlay", "--yes")
     assert code == 0, err
     assert ["sudo", "-n", "/usr/local/bin/ship-ctl", "set", "network.ssh_listen=overlay",
             "--json"] in [c for _, c in env.ship.calls]
@@ -1354,7 +1354,7 @@ def test_overlay_leave_forgets_the_node_id(env):
     with_overlay(env)
     env.run("overlay", "join", "ship-01")
     assert env.store.load().ship("ship-01").overlay_node == "nship01"
-    env.run("overlay", "leave", "ship-01")
+    env.run("overlay", "leave", "ship-01", "--yes")
     assert env.store.load().ship("ship-01").overlay_node is None
 
 

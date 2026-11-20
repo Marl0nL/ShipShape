@@ -1,7 +1,7 @@
 """The Herdr Fleet panel (herdr/mods/fleet/): what can be checked without a running Herdr.
 
-Its logic, model.js and settings.js, is tested under npm test (herdr/tests/fleet/). Here: the
-mod's files parse, its install script installs it alone and never docks it or writes its
+Its logic, model.js, settings.js and agents.js, is tested under npm test (herdr/tests/fleet/).
+Here: the mod's files parse, its install script installs it alone and never docks it or writes its
 settings, and the rules the panel keeps that can be read from its source: it skips no question
 ship-fleet asks, asks none of its own, takes no secret, and checks what is typed against
 ship-fleet's own patterns.
@@ -19,7 +19,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HERDR = ROOT / "herdr"
 FLEET = HERDR / "mods" / "fleet"
-INSTALLED = ["README.md", "main.js", "mod.json", "model.js", "settings.example.json", "settings.js"]
+INSTALLED = ["README.md", "agents.js", "main.js", "mod.json", "model.js", "settings.example.json",
+             "settings.js"]
 
 
 def test_its_javascript_parses():
@@ -41,21 +42,23 @@ def test_its_json_files_parse_and_it_docks_nowhere():
 
 
 def test_the_logic_imports_neither_gpui_nor_herdr():
-    """model.js imports nothing, and settings.js only model.js, so npm test can load them (and
-    the Desk's link to model.js needs nothing beside it); only main.js talks to Herdr."""
+    """model.js imports nothing, and settings.js and agents.js only model.js, so npm test can load
+    them (and the Desk's link to model.js needs nothing beside it); only main.js talks to Herdr."""
     model = (FLEET / "model.js").read_text("utf-8")
     assert not re.search(r"^\s*import\b", model, re.M)
     assert "gpui" not in re.sub(r"//.*", "", model)
-    settings = (FLEET / "settings.js").read_text("utf-8")
-    assert re.findall(r'^import .* from "([^"]+)";$', settings, re.M) == ["./model.js"]
-    assert "gpui" not in re.sub(r"//.*", "", settings)
+    for name in ("settings.js", "agents.js"):
+        code = (FLEET / name).read_text("utf-8")
+        assert re.findall(r'^import .* from "([^"]+)";$', code, re.M) == ["./model.js"], name
+        assert "gpui" not in re.sub(r"//.*", "", code), name
     main = (FLEET / "main.js").read_text("utf-8")
     assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "./model.js",
-                                                   "./settings.js"]
+                                                   "./settings.js", "./agents.js"]
 
 
 def mod_code():
-    return "".join((FLEET / f).read_text("utf-8") for f in ("main.js", "model.js", "settings.js"))
+    return "".join((FLEET / f).read_text("utf-8")
+                   for f in ("main.js", "model.js", "settings.js", "agents.js"))
 
 
 def test_its_reads_and_where_its_actions_run():
@@ -75,7 +78,7 @@ def test_its_reads_and_where_its_actions_run():
     assert set(re.findall(r'host\.exec\("([^"]+)"', model)) == {"ssh", "test", "xdg-open"}
 
 
-SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin", "--code"]
+SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin", "--code", "--record-only"]
 
 
 def test_no_flag_that_skips_a_question_is_anywhere_in_it():
@@ -104,9 +107,10 @@ def test_nothing_secret_is_typed_into_it():
     """Its only inputs are a new Ship's name, tags, repository and size, and under Advanced its
     first agent's name and folder, host names, VM id and time zone (never the first prompt, which
     `new` treats as possibly secret), a snapshot's name, a machine's name, public key and scope,
-    a device's name, and in a Ship's Settings its session prefix, LAN guard addresses, reboot
-    time, time zone, wake delay and message, and new tags: no passphrase, password, code, token
-    or private key, and nothing drawn masked."""
+    a device's name, in a Ship's Settings its session prefix, LAN guard addresses, reboot
+    time, time zone, wake delay and message, and new tags, and in its Agents and size an
+    autostart agent's name and folder and a new size: no passphrase, password, code, token or
+    private key, and nothing drawn masked."""
     main = (FLEET / "main.js").read_text("utf-8")
     assert "set_masked" not in main
     placeholders = re.findall(r'input\("([^"]*)"\)', main)
@@ -115,7 +119,8 @@ def test_nothing_secret_is_typed_into_it():
                             "the driver's choice", "FleetLedger's own", "snapshot name", "laptop",
                             "ssh-ed25519 AAAA... (the one line of its .pub file)",
                             "or type tag:TAG ship:NAME", "phone", "prefix", "none", "HH:MM",
-                            "Area/City", "minutes", "the default message", "or new tags"]
+                            "Area/City", "minutes", "the default message", "or new tags", "lead",
+                            "~/work/lead", "vCPUs", "memory MB", "disk GB"]
     assert main.count("InputState.new(") == 1  # input(), above
 
 
@@ -320,6 +325,7 @@ def test_mod_json_goes_in_first():
     assert order[0] == "mod.json"
     assert order.index("model.js") < order.index("main.js")
     assert order.index("settings.js") < order.index("main.js")
+    assert order.index("agents.js") < order.index("main.js")
     assert sorted(order) == INSTALLED
 
 
@@ -343,8 +349,7 @@ def test_its_settings_are_the_web_settings_tabs():
     is checked against is what ops.parse_assignments checks it against."""
     js = settings_js("(m) => ({GROUPS: m.GROUPS, SSH_LISTEN: m.SSH_LISTEN, PATHS: m.PATHS, "
                      "CIDR: m.CIDR.source, TIME: m.TIME.source, PREFIX: m.PREFIX.source, "
-                     "WAKE_DELAY: m.WAKE_DELAY, WAKE_TEXT_MAX: m.WAKE_TEXT_MAX, "
-                     "HELD: [...m.HELD]})")
+                     "WAKE_DELAY: m.WAKE_DELAY, WAKE_TEXT_MAX: m.WAKE_TEXT_MAX})")
     from fleetledger.web import shipsettings
 
     from fleetledger import ops
@@ -377,8 +382,6 @@ def test_its_settings_are_the_web_settings_tabs():
     low, high = js["WAKE_DELAY"]
     assert f"{low} <= int(val) <= {high}" in source
     assert f"len(val) > {js['WAKE_TEXT_MAX']}" in source
-    # Held back until ship-fleet asks before them: SSH on the overlay only, a sign-in turned off.
-    assert js["HELD"] == ["ssh_listen", "signins-off"]
 
 
 def test_a_setting_it_sends_is_one_ship_fleet_set_takes():
@@ -420,3 +423,132 @@ def test_a_setting_it_sends_is_one_ship_fleet_set_takes():
         else:
             k, _, v = pair.partition("=")
             assert ops.parse_assignments([pair]) == [f"{ops.SET_KEYS[k][0]}={v}"], pair
+
+
+def agents_js(expr, *args):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = ("const m = await import(process.argv[1]); "
+              f"console.log(JSON.stringify(await ({expr})(m, ...process.argv.slice(2))))")
+    r = subprocess.run([node, "--input-type=module", "-e", script,
+                        (FLEET / "agents.js").as_uri(), *args],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_the_agent_states_it_reads_are_the_status_contracts():
+    """The Agents and size view reads herdr's agents, the agent record and remote_control in the
+    shapes ship-status.schema.json gives them; Sign out is offered on the rows the web UI's Sign
+    out is (signinlist.SIGNED_IN_STATES)."""
+    js = agents_js("(m) => ({AGENT_STATES: [...m.AGENT_STATES], RECORD_STATES: "
+                   "[...m.RECORD_STATES], REMOTE_CONTROL: [...m.REMOTE_CONTROL]})")
+    status = json.loads((ROOT / "contracts" / "ship-status.schema.json").read_text("utf-8"))
+    herdr_agent = status["properties"]["herdr"]["properties"]["agents"]["items"]["properties"]
+    record_agent = status["properties"]["agent_record"]["properties"]["agents"]["items"]
+    assert js["AGENT_STATES"] == herdr_agent["state"]["enum"]
+    assert js["RECORD_STATES"] == record_agent["properties"]["state"]["enum"]
+    assert js["REMOTE_CONTROL"] == status["$defs"]["remoteControl"]["enum"]
+    for key in ("name", "state", "mode", "autostart", "remote_control"):
+        assert key in record_agent["properties"], key
+
+    from fleetledger import signinlist
+
+    model = (FLEET / "model.js").read_text("utf-8")
+    listed = re.search(r"export const SIGNED_IN_STATES = (\[[^\]]*\]);", model).group(1)
+    assert json.loads(listed) == list(signinlist.SIGNED_IN_STATES)
+
+
+def _parsed(argv):
+    """`ship-fleet ARGV` as cli.main's parser reads it (SystemExit if it refuses it)."""
+    from fleetledger import cli
+
+    return cli.build_parser().parse_args(argv)
+
+
+def test_every_agents_and_size_line_is_one_ship_fleet_takes():
+    """Each line the Agents and size view builds, ship-fleet's parser and checks take as they
+    are: the agent, mode and fresh restart; Remote Control on and off; an autostart agent added
+    or removed (as ops.parse_autostart_change reads it back); a resize."""
+    tried = {
+        "restart": [["main", "", False], ["main", "plan", True], ["builder", "auto", False]],
+        "add": [["lead", "~/work/a folder", "plan"], ["agent_2-b", "/srv/x", ""],
+                ["x" * 32, "~/it's", "dontAsk"], ["lead", "~/a:b", ""], ["Lead", "~/x", ""],
+                ["lead", "work", ""]],  # a mode it does not have: agents.test.js
+        "resize": [["8", "16384", "", True], ["", "", "80", False], ["64", "262144", "4096", True],
+                   ["65", "", "", False], ["", "4095", "", False], ["", "", "19", False]],
+    }
+    built = agents_js(
+        "(m, t) => { const tried = JSON.parse(t);"
+        " const ship = { name: 'ship-01', tags: [], state: 'running', problem: null,"
+        "   herdrAgents: [{ kind: 'claude', name: 'main', state: 'idle', mode: 'auto' },"
+        "                 { kind: 'claude', name: 'builder', state: 'working', mode: 'plan' }],"
+        "   record: { agents: [{ name: 'main', state: 'running', mode: 'auto', autostart: true,"
+        "                        remote_control: true }] },"
+        "   settings: { claude: { allow_bypass: true, default_mode: 'auto' }, autostart: [] },"
+        "   host: { cpus: 4, mem_total_mb: 7951, disk_total_gb: 38.6 } };"
+        " const st = { where: { ssh: 'fleetledger@fleetledger.example.invalid' },"
+        "   about: { copy: 'active', vault: 'off' }, shipsFrom: 'FleetLedger', older: false };"
+        " const words = (j) => j.job ? j.job.remote : null;"
+        " return {"
+        "  restart: tried.restart.map(([a, mo, f]) => words(m.restartJob(st, ship,"
+        "    { agent: a, mode: mo, fresh: f }))),"
+        "  rc: [words(m.remoteControlJob(st, ship, 'main', false))],"
+        "  add: tried.add.map(([n, f, mo]) => words(m.autostartAddJob(st, ship,"
+        "    { name: n, folder: f, mode: mo }))),"
+        "  remove: [words(m.autostartRemoveJob(st, { ...ship, settings: { ...ship.settings,"
+        "    autostart: [{ name: 'main', cwd: '~/work' }] } }, 'main'))],"
+        "  resize: tried.resize.map(([c, mem, d, r]) => words(m.resizeJob(st, ship,"
+        "    { cores: c, memory_mb: mem, disk_gb: d, restart: r }))) }; }",
+        json.dumps(tried))
+
+    import shlex
+
+    from fleetledger.errors import FleetError
+    from fleetledger.lifecycle import check_size
+
+    from fleetledger import ops
+
+    def argv(remote):
+        words = shlex.split(remote)
+        assert words[0] == "ship-fleet", remote
+        return words[1:]
+
+    for line, (agent, mode, fresh) in zip(built["restart"], tried["restart"], strict=True):
+        args = _parsed(argv(line))
+        assert (args.command, args.action, args.ship, args.agents) == ("agent", "restart",
+                                                                        "ship-01", [agent])
+        assert (args.mode or "", args.fresh, args.force, args.yes) == (mode, fresh, False, False)
+        ops.check_restart(args.agents, everyone=args.all, mode=args.mode)
+    args = _parsed(argv(built["rc"][0]))
+    assert (args.action, args.agents, args.off) == ("remote-control", ["main"], True)
+    for line, (name, folder, mode) in zip(built["add"], tried["add"], strict=True):
+        value = f"{name}:{folder}" + (f":{mode}" if mode else "")
+        try:
+            took = ops.parse_assignments([f"autostart.add={value}"])
+        except FleetError:
+            took = None
+        if line is None:  # refused by both; the panel also refuses a folder with ":" in it,
+            assert took is None or ":" in folder, value  # which could be read as a mode
+            continue
+        args = _parsed(argv(line))
+        assert (args.command, args.args, args.yes) == ("set", ["ship-01", f"autostart.add={value}"],
+                                                       False)
+        assert took == [f"autostart.add={value}"], value
+    args = _parsed(argv(built["remove"][0]))
+    assert args.args == ["ship-01", "autostart.remove=main"]
+    assert ops.parse_assignments(args.args[1:]) == ["autostart.remove=main"]
+    for line, (cores, mem, disk, restart) in zip(built["resize"], tried["resize"], strict=True):
+        size = {"cores": cores, "memory_mb": mem, "disk_gb": disk}
+        try:
+            wanted = check_size({k: int(v) for k, v in size.items() if v})
+        except FleetError:
+            wanted = None
+        if line is None:
+            assert wanted is None, size
+            continue
+        args = _parsed(argv(line))
+        assert {k: v for k, v in (("cores", args.cores), ("memory_mb", args.memory_mb),
+                                  ("disk_gb", args.disk_gb)) if v is not None} == wanted
+        assert (args.restart, args.record_only, args.yes) == (restart, False, False)

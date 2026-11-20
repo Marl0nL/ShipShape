@@ -260,6 +260,8 @@ that mode and `ship-fleet reboot` checks for it.
 - An agent in the middle of a turn is left alone and the command says so; run it
   again once the agent is idle, or add `--force` to interrupt the turn. An agent
   waiting at a question has that question dismissed.
+- With `--force` or `--fresh` it asks you to type `yes` first, naming the Ship and the
+  agents (`--yes` in a script); without either it asks nothing.
 - `bypassPermissions` needs `allow_bypass=true` on the Ship; without it the Ship
   refuses and nothing is restarted. (`default_mode=bypassPermissions` turns
   `allow_bypass` on with it.)
