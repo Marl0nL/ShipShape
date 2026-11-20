@@ -83,7 +83,7 @@
     },
     "allow_bypass": {
       "type": "boolean",
-      "description": "bypassPermissions is allowed without --allow-bypass (defaults.claude.allow_bypass, or a default mode of bypassPermissions)."
+      "description": "bypassPermissions is allowed without --allow-bypass (defaults.claude.allow_bypass; only new's own --mode bypassPermissions implies it)."
     },
     "tools": {
       "type": "array",

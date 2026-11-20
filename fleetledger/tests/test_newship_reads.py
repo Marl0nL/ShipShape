@@ -126,6 +126,16 @@ def test_defaults_from_ships_toml(env, monkeypatch):  # noqa: F811
     assert "bypassPermissions (bypassPermissions allowed)" in out and "UTC (this computer's)" in out
 
 
+def test_a_default_mode_of_bypass_alone_does_not_allow_it(env):  # noqa: F811
+    """Only new's own --mode bypassPermissions implies --allow-bypass: defaults.claude with
+    that mode and no allow_bypass makes a Ship new refuses, so it is not reported allowed."""
+    with env.store.edit() as ed:
+        ed.doc["defaults"]["claude"] = {"default_mode": "bypassPermissions"}
+    doc = read(env, "defaults", "--json")
+    assert (doc["mode"], doc["allow_bypass"]) == ("bypassPermissions", False)
+    assert env.run("new", "ship-09")[0] != 0  # as new says: it needs allow_bypass too
+
+
 @pytest.mark.parametrize("argv", [["tools", "ls", "--json"], ["image", "ls", "--json"],
                                   ["defaults", "--json"]])
 def test_the_reads_ask_no_ship(env, argv):  # noqa: F811

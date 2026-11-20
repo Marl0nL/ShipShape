@@ -1372,10 +1372,13 @@ function listChoices(choices, form, tags, errors) {
     else out.push("--driver", driver);
   }
   const on = driver || defaults?.driver;
-  const offered = imagesOn(choices, driver);
+  const unset = Boolean(images && on && !images.drivers.some((d) => d.id === on));
+  if (unset && !driver) errors.push(`FleetLedger's default driver, ${on}, is not set up there: choose one that is.`);
+  const offered = unset ? null : imagesOn(choices, driver);
   const image = String(form.image ?? "").trim();
   if (image) {
-    if (!offered) errors.push(`Base image: FleetLedger's lists are not read (${why.images ?? why.defaults}); leave it at FleetLedger's default.`);
+    if (unset) errors.push("Base image: choose a driver that is set up first.");
+    else if (!offered) errors.push(`Base image: FleetLedger's lists are not read (${why.images ?? why.defaults}); leave it at FleetLedger's default.`);
     else if (!offered.includes(image)) errors.push(`Base image ${JSON.stringify(image).slice(0, 70)} is not one published to the ${on} driver`);
     else out.push("--image", image);
   } else if (offered && images && !offered.includes(images.pinned)) {
@@ -1388,12 +1391,18 @@ function listChoices(choices, form, tags, errors) {
     if (!item.only_tags.some((t) => shipTags.includes(t))) errors.push(`${item.id} goes only to Ships tagged ${item.only_tags.join(" or ") || "(none)"}: tag this one so, or leave it out.`);
   };
   for (const [key, what] of [["tools", "tool"], ["profiles", "profile"]]) {
-    if (form[key] === null || form[key] === undefined) continue;
     if (!tools || !defaults) {
+      if (form[key] === null || form[key] === undefined) continue;
       errors.push(`${key === "tools" ? "Tools" : "Profiles"}: FleetLedger's lists are not read (${why.tools ?? why.defaults}); leave them at FleetLedger's default.`);
       continue;
     }
     const list = tools[key];
+    // FleetLedger's defaults that its list shows: what the form ticks to begin with.
+    const base = defaults[key].filter((id) => list.some((t) => t.id === id));
+    if (form[key] === null || form[key] === undefined) {
+      for (const item of list.filter((t) => base.includes(t.id))) goesTo(item);
+      continue;
+    }
     const unknown = form[key].filter((id) => !list.some((t) => t.id === id));
     if (unknown.length) {
       errors.push(`Not a ${what} FleetLedger offers: ${unknown.join(", ")}`);
@@ -1402,7 +1411,6 @@ function listChoices(choices, form, tags, errors) {
     const chosen = list.filter((t) => form[key].includes(t.id));
     for (const item of chosen) goesTo(item);
     const ids = chosen.map((t) => t.id);
-    const base = defaults[key];
     if (key === "tools") {
       if (!base.every((t) => ids.includes(t))) {
         out.push("--no-default-tools");

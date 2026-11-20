@@ -44,7 +44,8 @@ def document(inv, repo) -> dict[str, Any]:
         "tags": list(inv.effective_tags(blank)),
         "size": inv.effective_size(),
         "mode": mode,
-        "allow_bypass": bool(claude.get("allow_bypass", False)) or mode == "bypassPermissions",
+        # Only --mode bypassPermissions implies --allow-bypass; defaults.claude needs both.
+        "allow_bypass": bool(claude.get("allow_bypass", False)),
         "tools": tools_for(inv, blank, Catalogue.from_repo(repo)),
         "tools_from": "defaults" if "tools" in inv.defaults else "catalogue",
         "profiles": profiles_for(inv, blank),

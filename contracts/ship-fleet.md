@@ -287,7 +287,7 @@ ls`, `defaults`) are for people, as ever.
 |---|---|
 | `driver`, `image`, `tags` | Without `--driver`, `--image`, `--tag`: `defaults.driver` (else `manual`), the pinned image, `defaults.tags`. |
 | `size` | Without `--cores`, `--memory-mb`, `--disk-gb`: `defaults.size`, each one it leaves out FleetLedger's own (4, 8192, 40). |
-| `mode`, `allow_bypass` | Without `--mode` and `--allow-bypass`: `defaults.claude`'s `default_mode` (else the Ship's own, `auto`), and whether `bypassPermissions` is allowed. |
+| `mode`, `allow_bypass` | Without `--mode` and `--allow-bypass`: `defaults.claude`'s `default_mode` (else the Ship's own, `auto`), and whether `bypassPermissions` is allowed (`defaults.claude.allow_bypass`: only `new`'s own `--mode bypassPermissions` implies it). |
 | `tools`, `tools_from` | The tools a new Ship gets without `--tools` and `--no-default-tools` (`--tools` adds to these; `--no-default-tools` starts from none), and where they come from: `defaults` (`ships.toml` `defaults.tools`) or `catalogue` (each tool `tools ls --json` marks `default`). |
 | `profiles` | Without `--profile`: `defaults.profiles`. |
 | `timezone` | Without `--timezone`: this computer's own zone (`TZ`, `/etc/localtime`, `/etc/timezone`, else `UTC`). |

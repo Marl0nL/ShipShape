@@ -396,7 +396,7 @@ test("New Ship: profiles replace FleetLedger's default ones", async () => {
   // Default profiles cannot be left out: `new --profile` replaces them, and none is no flag.
   const withDefaults = await readFleet({ answers: { defaults: ok(example("fleetledger-defaults", "from-ships-toml.json")) } });
   await Promise.all([withDefaults.fleet.loadAccounts(), withDefaults.fleet.loadChoices()]);
-  const p = (profiles) => newShipJob(withDefaults.fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, image: "stock", driver: "manual", profiles });
+  const p = (profiles) => newShipJob(withDefaults.fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, image: "stock", driver: "manual", tag: "work", profiles });
   assert.match(p([]).errors.join(" "), /cannot leave out the default profiles/);
   assert.equal(p(["orchestrator"]).errors.length, 0);
 });
@@ -407,6 +407,30 @@ test("New Ship: FleetLedger's defaults allowing bypassPermissions let a first ag
   assert.match(newShipJob(s.fleet.state, form).errors.join(" "), /needs allow bypassPermissions/); // not read yet
   await s.fleet.loadChoices();
   assert.equal(newShipJob(s.fleet.state, form).job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work:bypassPermissions' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+});
+
+test("New Ship: FleetLedger's defaults its lists do not show are kept, and checked where they go", async () => {
+  // A default tool and profile from a toolkit that did not load: not listed, never ticked.
+  const defaults = { ...example("fleetledger-defaults", "catalogue.json"), tools: ["gh-axi", "ship-axi", "otherkit/x"], tools_from: "defaults", profiles: ["otherkit/p"] };
+  const s = await readFleet({ answers: { defaults: ok(defaults) } });
+  await Promise.all([s.fleet.loadAccounts(), s.fleet.loadChoices()]);
+  const plan = (form) => newShipJob(s.fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, ...form });
+  assert.equal(plan({ tools: ["gh-axi", "ship-axi", "tasks-axi"] }).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--tools' 'tasks-axi'");
+  assert.equal(plan({ profiles: [] }).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github'");
+  // A default toolkit tool left as it is still goes only to Ships with its toolkit's tags.
+  const kit = await readFleet({ answers: { defaults: ok({ ...defaults, tools: ["gh-axi", "examplekit/example-cli"], profiles: [] }) } });
+  await kit.fleet.loadChoices();
+  assert.match(newShipJob(kit.fleet.state, { name: "ship-07", signins: null, tag: "personal" }).errors.join(" "), /examplekit\/example-cli goes only to Ships tagged work/);
+  assert.equal(newShipJob(kit.fleet.state, { name: "ship-07", signins: null }).errors.length, 0); // defaults.tags: work
+});
+
+test("New Ship: a default driver FleetLedger has not set up is said as that", async () => {
+  const s = await readFleet({ answers: { defaults: ok({ ...example("fleetledger-defaults", "catalogue.json"), driver: "proxmox" }), image: ok(example("fleetledger-images", "stock-only.json")) } });
+  await s.fleet.loadChoices();
+  const plan = (form) => newShipJob(s.fleet.state, { name: "ship-07", signins: null, agent_on: false, ...form });
+  assert.deepEqual(plan({}).errors, ["FleetLedger's default driver, proxmox, is not set up there: choose one that is."]);
+  assert.match(plan({ image: "stock" }).errors.join(" "), /choose a driver that is set up first/);
+  assert.equal(plan({ driver: "manual" }).job.remote, "'ship-fleet' 'new' 'ship-07' '--driver' 'manual' && 'ship-fleet' 'login' 'ship-07' 'claude'");
 });
 
 test("New Ship: an older FleetLedger, or a read that fails: no choices, the rest still works, and why is said", async () => {
