@@ -349,6 +349,8 @@ export class Fleet {
       older: false, // FleetLedger answered, but is older than the panel's contracts: no actions
       signins: {}, // per Ship, read when its menu opens: {rows} | {error} | {loading: true}
       accounts: null, // the New Ship form's sign-ins and tags: {signins, tags} | {error} | {loading: true}
+      // ... and its other choices: {tools, images, defaults}, each {…} | {error}; or {loading: true}
+      choices: null,
       jobs: [], // terminal tabs the panel opened that have not ended
       jobNote: null, // what came of the last job that ended, for the view
       // This computer's refresher (the Machines view and the header): state.json and
@@ -630,6 +632,26 @@ export class Fleet {
     st.accounts = { loading: true };
     const r = await ask(this.host, st.where, ["signins", "--accounts", "--json"]);
     st.accounts = r.ok ? readAccounts(r.stdout) : { error: r.error };
+  }
+
+  /** Reads the New Ship form's other choices: the tools and profiles, the drivers and images, and
+   *  what `new` uses for an option left blank (three reads at once, when the form opens). */
+  async loadChoices() {
+    const st = this.state;
+    if (!st.where) return;
+    st.choices = { loading: true };
+    const reads = [
+      [["tools", "ls", "--json"], readTools],
+      [["image", "ls", "--json"], readImages],
+      [["defaults", "--json"], readDefaults],
+    ];
+    const [tools, images, defaults] = await Promise.all(
+      reads.map(async ([args, read]) => {
+        const r = await ask(this.host, st.where, args);
+        return r.ok ? read(r.stdout) : { error: r.error };
+      }),
+    );
+    st.choices = { tools, images, defaults };
   }
 
   /** Opens the remote web UI here, with the system's opener (`xdg-open`, as the Desk's links). */
@@ -927,9 +949,16 @@ export const TIMEZONE = /^[A-Z][A-Za-z0-9_+-]{0,40}(\/[A-Za-z0-9_+-]{1,40}){0,2}
 export const VMID = [100, 999999999]; // ships.toml.schema.json fleet.self.vmid (web/newship.py's check)
 /** The first agent a new Ship gets unless the form says otherwise: the web form's own. */
 export const FIRST_AGENT = { name: "main", folder: "~/work" };
+/** New Ship's choices from FleetLedger's lists (tools ls, image ls, defaults: each --json). */
+export const TOOL = /^([a-z][a-z0-9-]{0,31}\/)?[a-z0-9][a-z0-9-]{0,63}$/; // ships.toml.schema.json $defs.toolId and profileId
+export const IMAGE = /^(stock|[a-z0-9][a-z0-9.-]{0,62})$/; // ships.toml.schema.json $defs.imageRef
+export const DRIVERS = ["manual", "proxmox"]; // ships.toml.schema.json $defs.driverId (fleetledger/images.py DRIVERS)
 
 export const SCHEMA_SIGNIN = "shipshape.fleetledger-signin/1";
 export const SCHEMA_ACCOUNTS = "shipshape.fleetledger-tag-accounts/1";
+export const SCHEMA_TOOLS = "shipshape.fleetledger-tools/1";
+export const SCHEMA_IMAGES = "shipshape.fleetledger-images/1";
+export const SCHEMA_DEFAULTS = "shipshape.fleetledger-defaults/1";
 
 /** Where the refresher would be: the coming one that keeps this computer's ~/.ssh/shipshape
  *  current. Absent today, which is normal: the panel then says nothing about it. */
@@ -1096,6 +1125,84 @@ export function knownTags(state) {
   return [...tags].sort();
 }
 
+const onlyTags = (v) => (Array.isArray(v) ? v.filter((t) => typeof t === "string" && TAG.test(t)) : null);
+
+/** `ship-fleet tools ls --json`: the tools and profiles `new` takes, in FleetLedger's order, each
+ *  with its toolkit's only_tags (null: any Ship); a tool also with whether the catalogue gives it
+ *  by default. Entries with an id the contract does not allow are left out. */
+export function readTools(stdout) {
+  const p = parse(stdout, "ship-fleet tools ls");
+  if (p.error) return { error: p.error };
+  const why = checkSchema(p.value, SCHEMA_TOOLS);
+  if (why) return { error: `ship-fleet tools ls: ${why}` };
+  const doc = p.value;
+  if (!Array.isArray(doc.tools) || !Array.isArray(doc.profiles)) return { error: "ship-fleet tools ls: no tools or profiles list" };
+  const ok = (e) => e && typeof e.id === "string" && TOOL.test(e.id);
+  const tools = doc.tools.filter(ok).map((e) => ({ id: e.id, default: e.default === true, toolkit: typeof e.toolkit === "string" ? e.toolkit : null, only_tags: onlyTags(e.only_tags) }));
+  const profiles = doc.profiles.filter(ok).map((e) => ({ id: e.id, tools: strings(e.tools) ? e.tools.filter((t) => TOOL.test(t)) : [], toolkit: typeof e.toolkit === "string" ? e.toolkit : null, only_tags: onlyTags(e.only_tags) }));
+  const broken = (Array.isArray(doc.broken) ? doc.broken : []).map((b) => b?.toolkit).filter((k) => typeof k === "string" && TOOL.test(k));
+  return { tools, profiles, broken };
+}
+
+/** `ship-fleet image ls --json`: the image new Ships start from, and each driver set up on
+ *  FleetLedger with the images a new Ship on it can start from. */
+export function readImages(stdout) {
+  const p = parse(stdout, "ship-fleet image ls");
+  if (p.error) return { error: p.error };
+  const why = checkSchema(p.value, SCHEMA_IMAGES);
+  if (why) return { error: `ship-fleet image ls: ${why}` };
+  const doc = p.value;
+  if (typeof doc.pinned !== "string" || !IMAGE.test(doc.pinned) || !Array.isArray(doc.drivers)) return { error: "ship-fleet image ls: no pinned image or drivers list" };
+  const drivers = doc.drivers
+    .filter((d) => d && DRIVERS.includes(d.id))
+    .map((d) => ({ id: d.id, images: strings(d.images) ? d.images.filter((i) => IMAGE.test(i)) : [] }));
+  return { pinned: doc.pinned, drivers };
+}
+
+/** `ship-fleet defaults --json`: what `new` uses for each option it is not given. Refused whole
+ *  when a value is not the contract's: the form then says why and offers no choice built on it. */
+export function readDefaults(stdout) {
+  const p = parse(stdout, "ship-fleet defaults");
+  if (p.error) return { error: p.error };
+  const why = checkSchema(p.value, SCHEMA_DEFAULTS);
+  if (why) return { error: `ship-fleet defaults: ${why}` };
+  const d = p.value;
+  const size = {};
+  for (const [key, [low, high]] of Object.entries(SIZE)) {
+    const v = d.size?.[key];
+    if (!Number.isInteger(v) || v < low || v > high) return { error: `ship-fleet defaults: its size's ${key} is not the contract's` };
+    size[key] = v;
+  }
+  const ids = (v, re) => strings(v) && v.every((x) => re.test(x));
+  if (!DRIVERS.includes(d.driver) || typeof d.image !== "string" || !IMAGE.test(d.image) || !ids(d.tags, TAG) || !MODES.includes(d.mode) || typeof d.allow_bypass !== "boolean" || !ids(d.tools, TOOL) || !ids(d.profiles, TOOL) || typeof d.timezone !== "string" || !TIMEZONE.test(d.timezone)) {
+    return { error: "ship-fleet defaults: a value is not the contract's" };
+  }
+  return { driver: d.driver, image: d.image, tags: [...d.tags], size, mode: d.mode, allow_bypass: d.allow_bypass, tools: [...d.tools], tools_from: d.tools_from === "defaults" ? "defaults" : "catalogue", profiles: [...d.profiles], timezone: d.timezone };
+}
+
+/** The New Ship form's choices that FleetLedger's lists give, each null when its read has not
+ *  answered (with why): {tools, images, defaults, why: {tools, images, defaults}}. */
+export function newShipChoices(st) {
+  const c = st.choices ?? {};
+  const one = (key) => {
+    const v = c[key];
+    if (!v || c.loading) return [null, "not read yet"];
+    return v.error ? [null, v.error] : [v, null];
+  };
+  const [tools, toolsWhy] = one("tools");
+  const [images, imagesWhy] = one("images");
+  const [defaults, defaultsWhy] = one("defaults");
+  return { tools, images, defaults, why: { tools: toolsWhy, images: imagesWhy, defaults: defaultsWhy } };
+}
+
+/** The images a new Ship can start from on `driver` (blank: FleetLedger's default one), or null
+ *  when the lists that say so are not read. */
+export function imagesOn(choices, driver) {
+  const on = String(driver ?? "").trim() || choices.defaults?.driver;
+  if (!choices.images || !on) return null;
+  return choices.images.drivers.find((d) => d.id === on)?.images ?? [];
+}
+
 // -- what is offered --
 
 const LOCAL_COPY = new Set(["standby", "retired", "unreadable", "none"]);
@@ -1252,13 +1359,74 @@ export function fleetLedgerMenu(st) {
   return { why: null, items };
 }
 
+/** The driver, image, tools and profiles a New Ship form chose, as `new`'s arguments; what is
+ *  wrong goes into errors. Each must be one FleetLedger's lists offer, so a list not read leaves
+ *  its option at FleetLedger's default. `tags` are the ones chosen (none: defaults.tags). */
+function listChoices(choices, form, tags, errors) {
+  const out = [];
+  const { tools, images, defaults, why } = choices;
+  const driver = String(form.driver ?? "").trim();
+  if (driver) {
+    if (!images) errors.push(`Driver: FleetLedger's list is not read (${why.images}); leave it at FleetLedger's default.`);
+    else if (!images.drivers.some((d) => d.id === driver)) errors.push(`${JSON.stringify(driver).slice(0, 30)} is not a driver set up on FleetLedger`);
+    else out.push("--driver", driver);
+  }
+  const on = driver || defaults?.driver;
+  const offered = imagesOn(choices, driver);
+  const image = String(form.image ?? "").trim();
+  if (image) {
+    if (!offered) errors.push(`Base image: FleetLedger's lists are not read (${why.images ?? why.defaults}); leave it at FleetLedger's default.`);
+    else if (!offered.includes(image)) errors.push(`Base image ${JSON.stringify(image).slice(0, 70)} is not one published to the ${on} driver`);
+    else out.push("--image", image);
+  } else if (offered && images && !offered.includes(images.pinned)) {
+    errors.push(`The pinned image ${images.pinned} is not published to the ${on} driver: choose one that is (stock always is).`);
+  }
+  // Tools and profiles: null is FleetLedger's default; a list is every one chosen.
+  const shipTags = tags.length ? tags : (defaults?.tags ?? null);
+  const goesTo = (item) => {
+    if (!item?.only_tags || !shipTags) return;
+    if (!item.only_tags.some((t) => shipTags.includes(t))) errors.push(`${item.id} goes only to Ships tagged ${item.only_tags.join(" or ") || "(none)"}: tag this one so, or leave it out.`);
+  };
+  for (const [key, what] of [["tools", "tool"], ["profiles", "profile"]]) {
+    if (form[key] === null || form[key] === undefined) continue;
+    if (!tools || !defaults) {
+      errors.push(`${key === "tools" ? "Tools" : "Profiles"}: FleetLedger's lists are not read (${why.tools ?? why.defaults}); leave them at FleetLedger's default.`);
+      continue;
+    }
+    const list = tools[key];
+    const unknown = form[key].filter((id) => !list.some((t) => t.id === id));
+    if (unknown.length) {
+      errors.push(`Not a ${what} FleetLedger offers: ${unknown.join(", ")}`);
+      continue;
+    }
+    const chosen = list.filter((t) => form[key].includes(t.id));
+    for (const item of chosen) goesTo(item);
+    const ids = chosen.map((t) => t.id);
+    const base = defaults[key];
+    if (key === "tools") {
+      if (!base.every((t) => ids.includes(t))) {
+        out.push("--no-default-tools");
+        if (ids.length) out.push("--tools", ids.join(","));
+      } else {
+        const extra = ids.filter((t) => !base.includes(t));
+        if (extra.length) out.push("--tools", extra.join(","));
+      }
+    } else if (ids.length !== base.length || !base.every((t) => ids.includes(t))) {
+      if (!ids.length) errors.push("new cannot leave out the default profiles (ships.toml defaults.profiles): choose one, or leave them as they are.");
+      for (const id of ids) out.push("--profile", id);
+    }
+  }
+  return out;
+}
+
 /** The New Ship form: its job, or what is wrong with what is typed (and nothing is sent).
  *  form: {name, tags: the tags chosen, tag: tags typed (spaces or commas between), repo, cores,
  *  memory_mb, disk_gb, signins: null (FleetLedger's default: all) or the chosen ids}, and the
  *  advanced options: a first agent unless agent_on is false (agent, folder, agent_mode: blank is
  *  main, ~/work and the Ship's default, as the web form), github_scopes (ids), no_overlay, hosts
- *  (typed, spaces or commas between), vmid, mode, allow_bypass, agent_sudo, timezone. Never the
- *  first prompt (`new` keeps it out of saved attempts as it may hold a secret: a terminal's
+ *  (typed, spaces or commas between), vmid, mode, allow_bypass, agent_sudo, timezone; and from
+ *  FleetLedger's lists (st.choices) driver and image (blank: FleetLedger's default), tools and
+ *  profiles (null: FleetLedger's default; else every one chosen). Never the first prompt (`new` keeps it out of saved attempts as it may hold a secret: a terminal's
  *  alone) and no flag that skips a question. The job runs `new`, then signs it in to Claude when
  *  Claude is one of its sign-ins, as one line: `ship-fleet new NAME … && ship-fleet login NAME
  *  claude`. */
@@ -1327,12 +1495,16 @@ export function newShipJob(st, form) {
   else if (mode) args.push("--mode", mode);
   if (form.allow_bypass) args.push("--allow-bypass");
   // ship.toml takes a first agent in bypassPermissions only where the Ship allows it.
-  if (agentOn && String(form.agent_mode ?? "").trim() === "bypassPermissions" && !form.allow_bypass && mode !== "bypassPermissions") {
+  const choices = newShipChoices(st);
+  const allowed = form.allow_bypass || mode === "bypassPermissions" || choices.defaults?.allow_bypass === true;
+  if (agentOn && String(form.agent_mode ?? "").trim() === "bypassPermissions" && !allowed) {
     errors.push("A first agent in bypassPermissions needs allow bypassPermissions too.");
   }
   if (form.agent_sudo) args.push("--agent-sudo");
   const zone = guard(() => checkTimezone(form.timezone));
   if (zone) args.push("--timezone", zone);
+  // -- from FleetLedger's lists: never a value they do not offer --
+  args.push(...listChoices(choices, form, tags, errors));
   if (errors.length) return { errors };
   const claude = (chosen ?? known ?? ["claude"]).includes("claude");
   const commands = [args];
