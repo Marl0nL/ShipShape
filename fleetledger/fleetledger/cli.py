@@ -276,9 +276,12 @@ def build_parser() -> argparse.ArgumentParser:
                    "set SHIP github_scopes=...), then sign in with them; a Ship already "
                    "signed in has its token's scopes refreshed in place")
 
-    p = _add(sub, "logout", "sign a Ship out of a service")
+    p = _add(sub, "logout", "sign a Ship out of a service",
+             "Deletes the Ship's credentials for the service (all: every one). In a\n"
+             "terminal it asks first; elsewhere it needs --yes.")
     p.add_argument("name")
     p.add_argument("service", help=services)
+    p.add_argument("--yes", action="store_true", help="do not ask first (for scripts)")
 
     p = _add(sub, "signins", "every sign-in on every Ship; choose which ones a Ship uses",
              "With no Ship named: every sign-in on every Ship, across every service, most\n"
@@ -296,7 +299,9 @@ def build_parser() -> argparse.ArgumentParser:
              "  ship-fleet signins ship-01 --only claude,github  exactly these\n\n"
              "A sign-in a Ship does not use gets no prompt, no sign-in flow and no attention\n"
              "item, and is shown as off; turning one off signs it out on the Ship, so no\n"
-             "credentials for it stay there. Its tool may stay installed.\n\n"
+             "credentials for it stay there. Its tool may stay installed. Turning off one\n"
+             "it uses (--off, or an --only that leaves it out) asks first in a terminal;\n"
+             "elsewhere it needs --yes.\n\n"
              "Tag accounts: the account each tag's Ships must sign in as, per sign-in\n"
              "([tag.<tag>] in ships.toml; a Ship signed in as another shows wrong account):\n\n"
              "  ship-fleet signins --accounts                    every tag's (--json too)\n"
@@ -308,6 +313,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--on", action="append", default=[], metavar="NAME")
     p.add_argument("--off", action="append", default=[], metavar="NAME")
     p.add_argument("--only", metavar="NAME,NAME", help="exactly these (empty: none)")
+    p.add_argument("--yes", action="store_true",
+                   help="turning one off: do not ask first (for scripts)")
     p.add_argument("--tag", help="list: only Ships with this tag")
     p.add_argument("--service", metavar="SERVICE",
                    help="list: only this service "
@@ -336,13 +343,17 @@ def build_parser() -> argparse.ArgumentParser:
              "wake_delay_minutes (default 10), wake_text ({delay} is the delay; empty:\n"
              "the default line), tags; or their full names (claude.remote_control, ...).\n"
              "Agents: autostart.add=NAME:FOLDER[:MODE] starts one now (once Claude is\n"
-             "signed in) and on every boot; autostart.remove=NAME stops starting it.\n\n"
+             "signed in) and on every boot; autostart.remove=NAME stops starting it.\n"
+             "ssh_listen=overlay (SSH logins from the overlay only) asks first in a\n"
+             "terminal, as it can cut the LAN path; elsewhere it needs --yes.\n\n"
              "  ship-fleet set ship-01 remote_control=off default_mode=bypassPermissions\n"
              "  ship-fleet set ship-01 autostart.add=main:~/work\n"
              "  ship-fleet set --tag work update_channel=stable\n"
              "  ship-fleet set all lan_guard=true")
     p.add_argument("args", nargs="+", metavar="[SHIP ...|all] KEY=VALUE")
     p.add_argument("--tag", help="every Ship with this tag")
+    p.add_argument("--yes", action="store_true",
+                   help="ssh_listen=overlay: do not ask first (for scripts)")
 
     p = _add(sub, "agent", "restart running agents in a new permission mode, in place",
              "Swap running Claude agents for ones in another mode. Each restarts in its own\n"
@@ -355,7 +366,9 @@ def build_parser() -> argparse.ArgumentParser:
              "again, by default in the mode it was in.\n\n"
              "An agent that is working is left alone unless --force (which interrupts its\n"
              "turn); one waiting for an answer has that question dismissed. bypassPermissions\n"
-             "needs allow_bypass=true on the Ship.\n\n"
+             "needs allow_bypass=true on the Ship. Without --force or --fresh it asks\n"
+             "nothing: an idle agent continues its conversation. With either it asks first\n"
+             "in a terminal; elsewhere it needs --yes.\n\n"
              "  ship-fleet agent restart ship-01 main --mode bypassPermissions\n"
              "--all restarts every named agent, also one already in the mode it starts\n"
              "in (so a restart in the same mode picks up other settings, such as Remote\n"
@@ -379,6 +392,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start a new conversation instead of continuing it")
     p.add_argument("--force", action="store_true",
                    help="also restart an agent that is working, interrupting its turn")
+    p.add_argument("--yes", action="store_true",
+                   help="restart: with --force or --fresh, do not ask first (for scripts)")
     p.add_argument("--off", action="store_true",
                    help="remote-control: start these agents without Remote Control")
     p.add_argument("--json", action="store_true", help="print the result as JSON")

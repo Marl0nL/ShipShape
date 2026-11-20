@@ -901,6 +901,17 @@ def set_settings(
 AGENT_RESTART_TIMEOUT = 360  # per agent: stop, then start again (the Ship's own limits)
 
 
+def check_restart(agents: Sequence[str], *, everyone: bool, mode: str | None) -> None:
+    """What restart_agents refuses before it reaches the Ship (FleetError)."""
+    if bool(agents) == everyone:
+        raise FleetError("Which agents? Give their names, or --all.")
+    bad = [a for a in agents if not AGENT_NAME_RE.match(a)]
+    if bad:
+        raise FleetError(f"'{bad[0]}' is not an agent name.")
+    if mode is not None and mode not in MODES:
+        raise FleetError(f"Unknown mode '{mode}' (modes: {', '.join(MODES)}).")
+
+
 def restart_agents(
     fleet: Fleet,
     ship: Ship,
@@ -919,13 +930,7 @@ def restart_agents(
     so a later reboot (and `ship-fleet reboot`'s check) expects it."""
     on_event = on_event or _quiet
     agents = list(dict.fromkeys(agents))
-    if bool(agents) == everyone:
-        raise FleetError("Which agents? Give their names, or --all.")
-    bad = [a for a in agents if not AGENT_NAME_RE.match(a)]
-    if bad:
-        raise FleetError(f"'{bad[0]}' is not an agent name.")
-    if mode is not None and mode not in MODES:
-        raise FleetError(f"Unknown mode '{mode}' (modes: {', '.join(MODES)}).")
+    check_restart(agents, everyone=everyone, mode=mode)
     argv = ["restart", *(["--all"] if everyone else agents)]
     argv += [*(["--mode", mode] if mode else []), *(["--fresh"] if fresh else []),
              *(["--force"] if force else [])]

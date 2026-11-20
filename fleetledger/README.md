@@ -396,7 +396,11 @@ for every Ship (an unknown setting or tool) is refused before any Ship is touche
 | `ship-fleet attention [--tag T] [--watch [S]] [--offline]` | `ops.attention` | every attention item across the fleet plus unreachable or untrusted Ships, most urgent first (`ops.SEVERITY`), and the fleet-level items (`ops.fleet_attention`, `"ship": null`, the machine as `subject`, the next step as `fix`): `machine-cert-expiring` (a trusted machine's certificate in its last day) and `machine-cert-lapsed`, for machines reaching one of the Ships listed; FleetLedger's own computer renews itself, so it is named only once lapsed; for a machine that refreshes itself (`ship-fleet machine-bundle`), `machine-refresh-stopped` (no ask for 4 days) or `machine-refresh-refused` (refused for 30 days idle) in place of a second item for the same cause; `vault-locked` (subject `vault`) while FleetLedger's vault is locked, in place of a "not checked yet" per Ship; and `proxmox-token-expiring` (its last 14 days) and `proxmox-token-lapsed` (subject the token id), from `[drivers.proxmox] token_expires`, with no date no item. `--watch` polls and prints only new items; `--offline` reads each Ship's last known status, asking none (it runs while the vault is locked). |
 
 `update` and `reboot` on more than one Ship ask first (or need `--yes` when not
-run from a terminal). `ship-fleet status SHIP` also shows herdr's version and last
+run from a terminal), and so do `agent restart` with `--force` or `--fresh` and `set`
+with `ssh_listen=overlay`, as do `stop`, `logout`, `overlay leave`, `resize --restart`
+and turning off a sign-in a Ship uses (`signins --off`, or an `--only` that leaves it
+out): the full list is "Commands that ask first" in
+[contracts/ship-fleet.md](../contracts/ship-fleet.md). `ship-fleet status SHIP` also shows herdr's version and last
 resume, the bundle commit, provisioning and pending OS updates.
 
 `ship-fleet pins` (`fleetledger/pins.py`) checks and moves the pins in this

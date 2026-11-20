@@ -47,3 +47,14 @@ def typed(app, question: str, word: str, *, no_terminal: str, refused: str,
     answer = app.confirm(question).strip()
     if (answer if exact else answer.lower()) != word:
         raise FleetError(refused)
+
+
+def go_on(app, said: str, *, yes: bool, refused: str) -> None:
+    """Go on with something disruptive (a VM stopped, a sign-out, a conversation cut off)
+    only once yes is typed after `said` in a terminal, or with --yes where nobody can be
+    asked, as snapshot rollback asks. FleetError(refused) on any other answer."""
+    if yes:
+        return
+    typed(app, f"{said} Type yes to go on: ", "yes",
+          no_terminal=f"Nothing done. {said} Run it in a terminal to answer, or rerun it "
+          "with --yes.", refused=refused)

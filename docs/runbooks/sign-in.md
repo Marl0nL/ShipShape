@@ -194,6 +194,10 @@ ship-fleet logout ship-01 github
 ship-fleet logout ship-01 all
 ```
 
+Each asks you to type `yes` first (`--yes` in a script, where nothing can be asked).
+So does turning off a sign-in a Ship uses (`ship-fleet signins ship-01 --off gcloud`,
+or an `--only` that leaves one out), which signs the Ship out of it.
+
 ## If a sign-in does not go through
 
 - **"No sign-in link appeared" / "The prompt for the code did not appear":** the

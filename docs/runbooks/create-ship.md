@@ -176,7 +176,7 @@ ship-fleet resize ship-01 --disk-gb 80
 
 `resize` changes vCPUs and memory at the next restart through the hypervisor;
 `--restart` does that now, which stops the Ship's agents, so resize while they are
-idle. A disk only grows, at once, with no restart.
+idle (it asks first; `--yes` in a script). A disk only grows, at once, with no restart.
 
 ## A Ship FleetLedger did not create
 
@@ -193,7 +193,7 @@ The same command with `--replace` re-pins a Ship you rebuilt from a new seed.
 ## Stop and start it
 
 ```sh
-ship-fleet stop ship-01    # a clean shutdown
+ship-fleet stop ship-01    # a clean shutdown (asks first; --yes in a script)
 ship-fleet start ship-01   # its agents resume in their modes as it boots
 ```
 

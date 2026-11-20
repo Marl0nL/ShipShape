@@ -1244,6 +1244,53 @@ def test_cli_agent_restart(app, world):
     assert code == 1 and "not both" in err
 
 
+def _restarts(world):
+    return [c for c in world.sims["ship-01"].calls if c[3:5] == ["agent", "restart"]]
+
+
+def test_cli_agent_restart_plain_asks_nothing(app, world):
+    app.tty["value"] = True  # no answers queued: a question would fail the test
+    assert app.run("agent", "restart", "ship-01", "main")[0] == 0
+    app.tty["value"] = False
+    assert app.run("agent", "restart", "ship-01", "--all", "--mode", "plan")[0] == 0
+    assert len(_restarts(world)) == 2
+
+
+@pytest.mark.parametrize("flags,said", [
+    (["--force"], "--force interrupts the turn of any that is working"),
+    (["--fresh"], "--fresh starts each in a new conversation instead of continuing its own"),
+    (["--fresh", "--force"], "working; --fresh starts each"),  # as ship-ctl takes them
+])
+def test_cli_agent_restart_force_or_fresh_asks_first(app, world, flags, said):
+    app.tty["value"] = True
+    app.answers.append("no")
+    code, _, err = app.run("agent", "restart", "ship-01", "main", *flags)
+    assert code == 1 and "Nothing restarted on ship-01." in err and not _restarts(world)
+    app.answers.append("yes")
+    asked = []
+    app.confirm = lambda prompt: asked.append(prompt) or app.answers.pop(0)
+    assert app.run("agent", "restart", "ship-01", "main", *flags)[0] == 0
+    assert asked[0].startswith("Restarting main on ship-01: ") and said in asked[0]
+    assert _restarts(world)[-1][5:] == ["main", *flags, "--json"]
+
+
+def test_cli_agent_restart_force_without_a_terminal_needs_yes(app, world):
+    code, _, err = app.run("agent", "restart", "ship-01", "--all", "--fresh")
+    assert code == 1 and "--yes" in err and "every agent on ship-01" in err
+    assert not _restarts(world)
+    assert app.run("agent", "restart", "ship-01", "--all", "--fresh", "--yes")[0] == 0
+    assert _restarts(world)[-1][5:] == ["--all", "--fresh", "--json"]
+
+
+def test_cli_agent_restart_refuses_bad_choices_before_asking(app, world):
+    app.tty["value"] = True  # no answers queued: a question would fail the test
+    code, _, err = app.run("agent", "restart", "ship-01", "--force")
+    assert code == 1 and "Which agents?" in err
+    code, _, err = app.run("agent", "restart", "ship-01", "Main!", "--fresh")
+    assert code == 1 and "not an agent name" in err
+    assert not _restarts(world)
+
+
 def test_cli_reboot_refused_by_a_lock_says_what_holds_it_then_force_reboots(app, world):
     sim = world.sims["ship-01"]
     sim.refuse_reboot, sim.blockers = DENIED, [APT_IN_SESSION]
