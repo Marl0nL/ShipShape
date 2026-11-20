@@ -20,7 +20,7 @@ import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
 import { Fleet, ago, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
-import { settingsGate, settingsView, settingsJob } from "./settings.js";
+import { asOpened, openedAs, settingsGate, settingsView, settingsJob, toggleScope } from "./settings.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -393,7 +393,7 @@ export default class FleetPanel extends View {
     for (const f of fields) if (f.choices) values[f.key] = f.current ?? "";
     for (const k of TYPED) this.inputs[`s_${k}`].set_value(fields.find((f) => f.key === k)?.current ?? "");
     this.inputs.s_tag.set_value("");
-    this.settings = { ship: name, values, tags: [...v.tags], github_scopes: null, signins_on: [] };
+    this.settings = { ship: name, opened: openedAs(ship), values, tags: [...v.tags], github_scopes: null, signins_on: [] };
     this.menu = null;
     this.form = null;
     // Its sign-ins (read when its menu opened) and FleetLedger's list of them: read now only
@@ -421,7 +421,8 @@ export default class FleetPanel extends View {
   settingsBox(t, r) {
     const st = fleet.state;
     const s = this.settings;
-    const ship = (st.ships ?? []).find((x) => x.name === r.name);
+    // Its state now, with the values the view opened with (a read meanwhile changes neither).
+    const ship = asOpened((st.ships ?? []).find((x) => x.name === r.name), s.opened);
     const v = settingsView(st, ship);
     const label = (text) => div().w(190).flex_none().text_size(12).text_color(t.muted).child(text);
     const line = (id, ...kids) => h_flex().id(id).w_full().gap(6).items_center().flex_wrap().children(kids);
@@ -463,13 +464,9 @@ export default class FleetPanel extends View {
     // GitHub scopes: ticked as its ship.toml chose them; back at exactly those, null again.
     const had = v.scopes;
     const base = had?.known ?? [];
-    const scopeHint = !had ? "not reported: those ticked are sent" : had.other.length ? `it also chooses ${had.other.join(", ")}, which this FleetLedger does not offer: changing these drops it` : "on top of gh's own; signing in to GitHub again asks for them";
+    const scopeHint = !had ? "not reported: those ticked are sent (none: left as they are)" : had.other.length ? `it also chooses ${had.other.join(", ")}, which this FleetLedger does not offer: changing these drops it` : "on top of gh's own; signing in to GitHub again asks for them";
     const scopes = line("s-scopes", label("GitHub scopes"), ...GITHUB_SCOPES.map((id) => button(t, `s-scope-${id}`, id, () => {
-      const on = new Set(s.github_scopes ?? base);
-      if (on.has(id)) on.delete(id);
-      else on.add(id);
-      const same = had && !had.other.length && on.size === base.length && base.every((x) => on.has(x));
-      s.github_scopes = same ? null : GITHUB_SCOPES.filter((x) => on.has(x));
+      s.github_scopes = toggleScope(ship, s.github_scopes, id);
     }, (s.github_scopes ?? base).includes(id))), dim(scopeHint));
     const sshNow = v.ssh.current === null ? "not reported" : (v.ssh.choices.find(([x]) => x === v.ssh.current)?.[1] ?? v.ssh.current);
     const ssh = line("s-ssh", label(v.ssh.label), said(sshNow), dim(v.ssh.held ?? ""));

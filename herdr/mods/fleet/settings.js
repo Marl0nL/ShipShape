@@ -186,6 +186,24 @@ export function settingsView(st, ship) {
   };
 }
 
+/** What the view showed when it opened: what it compares with until it closes, so a read that
+ *  lands meanwhile turns nothing left alone into a change. */
+export const openedAs = (ship) => ({ settings: ship.settings, claude: ship.claude, tags: [...ship.tags] });
+
+/** The Ship as it is now (its state, for the gate) with the values the view opened with. */
+export const asOpened = (ship, opened) => (ship && opened ? { ...ship, ...opened } : ship);
+
+/** The GitHub scopes chosen after `id` is ticked or unticked: null again ("left as they are")
+ *  when they are back at the ticks the view opened with. `chosen`: null or every one chosen. */
+export function toggleScope(ship, chosen, id) {
+  const base = reportedScopes(ship)?.known ?? [];
+  const on = new Set(chosen ?? base);
+  if (on.has(id)) on.delete(id);
+  else on.add(id);
+  const back = on.size === base.length && base.every((x) => on.has(x));
+  return back ? null : GITHUB_SCOPES.filter((x) => on.has(x));
+}
+
 // -- what is sent --
 
 /** One setting as `set` takes it, from what the view holds: null when it is not to change. A
@@ -194,9 +212,10 @@ export function assignment(ship, key, raw) {
   const f = FIELDS[key] ?? (key === "ssh_listen" ? SSH_LISTEN : null);
   if (!f) throw new Error(`no setting ${key}`);
   if (raw === null || raw === undefined) return null;
+  const known = current(ship, key);
+  if (String(raw) === known) return null; // as reported, spaces and all: not touched
   let value = String(raw).trim();
   if (key === "lan_guard_allow") value = words(value).join(",");
-  const known = current(ship, key);
   if (known === null && !value) return null; // "(unchanged)"
   if (value === known) return null;
   if (CONTROL.test(value)) throw new Error(`${f.label}: one line, with no control characters`);

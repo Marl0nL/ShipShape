@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 import { BY_STATE, Fleet } from "../../mods/fleet/model.js";
-import { FIELDS, GROUPS, HELD, assignment, current, olderHint, settingsGate, settingsJob, settingsView, signinChoices } from "../../mods/fleet/settings.js";
+import { FIELDS, GROUPS, HELD, asOpened, assignment, current, olderHint, openedAs, settingsGate, settingsJob, settingsView, signinChoices, toggleScope } from "../../mods/fleet/settings.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const example = (kind, name) => JSON.parse(readFileSync(join(ROOT, "contracts", "examples", kind, name), "utf8"));
@@ -264,4 +264,38 @@ test("its fields are every set key the web tab offers, once each, in its groups"
   assert.equal(new Set(keys).size, keys.length);
   assert.deepEqual(Object.keys(FIELDS), keys);
   assert.ok(!keys.includes("ssh_listen") && !keys.includes("tags") && !keys.includes("github_scopes"));
+});
+
+test("a read that lands while the view is open changes nothing left alone", async () => {
+  const { st, ship } = await readFleet();
+  const s = ship("ship-01");
+  const snap = openedAs(s);
+  const form = opened(st, s);
+  // FleetLedger's next read says remote_control is off and the Ship has another tag.
+  const later = { ...s, state: "running", tags: ["work", "lab"], settings: { ...s.settings, claude: { ...s.settings.claude, remote_control: "off" } } };
+  assert.ok(settingsJob(st, later, form).job, "against the new read, the old values would be changes");
+  assert.deepEqual(settingsJob(st, asOpened(later, snap), form), { errors: [], changes: 0 });
+  // Its state is the one now: a Ship that stopped answering offers nothing.
+  assert.match(settingsJob(st, asOpened({ ...later, state: "unreachable" }, snap), form).errors[0], /changed on the Ship/);
+});
+
+test("GitHub scopes go back to left as they are when ticked back", async () => {
+  const { ship } = await readFleet();
+  const s = ship("ship-01"); // workflow
+  assert.deepEqual(toggleScope(s, null, "project"), ["workflow", "project"]);
+  assert.equal(toggleScope(s, ["workflow", "project"], "project"), null);
+  assert.deepEqual(toggleScope(s, null, "workflow"), []);
+  const older = ship("ship-02"); // not reported
+  assert.deepEqual(toggleScope(older, null, "workflow"), ["workflow"]);
+  assert.equal(toggleScope(older, ["workflow"], "workflow"), null);
+  const other = { ...s, settings: { ...s.settings, github: { scopes: ["workflow", "codespace"] } } };
+  assert.equal(toggleScope(other, toggleScope(other, null, "project"), "project"), null);
+});
+
+test("a reported value with spaces around it is no change until it is touched", async () => {
+  const { st, ship } = await readFleet();
+  const s = ship("ship-01");
+  const spaced = { ...s, settings: { ...s.settings, wake: { ...s.settings.wake, text: " hi " } } };
+  assert.deepEqual(settingsJob(st, spaced, opened(st, spaced)), { errors: [], changes: 0 });
+  assert.equal(assignment(spaced, "wake_text", " hi there "), "wake_text=hi there");
 });
