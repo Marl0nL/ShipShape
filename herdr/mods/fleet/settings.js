@@ -13,7 +13,7 @@
 // Two of them ship-fleet asks about in the terminal before it acts, and the view says so: SSH on
 // the overlay only (it can cut this computer's way to the Ship), and a sign-in turned off (it
 // signs the Ship out of it). Answered anything but yes, that part does nothing and the parts
-// after it do not run.
+// after it do not run; so SSH on the overlay only goes last, in a set of its own.
 
 import { BY_STATE, GITHUB_SCOPES, MODES, NAME, SIGNIN, TAG, TIMEZONE, actionGate, checkTag, firstLine, job, words } from "./model.js";
 
@@ -305,9 +305,14 @@ export function settingsJob(st, ship, form) {
   }
   if (errors.length) return { errors, changes: 0 };
   const commands = [];
-  if (pairs.length) commands.push(["set", name, ...pairs]);
+  // SSH on the overlay only goes last, in a set of its own: once it is on, this computer may
+  // reach the Ship only over the overlay, and the parts before it have already run.
+  const overlayOnly = pairs.filter((p) => p === "ssh_listen=overlay");
+  const rest = pairs.filter((p) => p !== "ssh_listen=overlay");
+  if (rest.length) commands.push(["set", name, ...rest]);
   if (added.length || removed.length) commands.push(["tag", name, ...added.map((t) => `+${t}`), ...removed.map((t) => `-${t}`)]);
   if (turnOn.length || turnOff.length) commands.push(["signins", name, ...turnOn.flatMap((id) => ["--on", id]), ...turnOff.flatMap((id) => ["--off", id])]);
+  if (overlayOnly.length) commands.push(["set", name, ...overlayOnly]);
   const changes = pairs.length + added.length + removed.length + turnOn.length + turnOff.length;
   if (!commands.length) return { errors: [], changes: 0 };
   try {

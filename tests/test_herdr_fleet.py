@@ -78,7 +78,7 @@ def test_its_reads_and_where_its_actions_run():
     assert set(re.findall(r'host\.exec\("([^"]+)"', model)) == {"ssh", "test", "xdg-open"}
 
 
-SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin", "--code"]
+SKIPPING = ["--yes", "--force", "--revoke-my-key", "--stdin", "--code", "--record-only"]
 
 
 def test_no_flag_that_skips_a_question_is_anywhere_in_it():

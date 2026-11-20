@@ -236,7 +236,10 @@ test("SSH on the overlay only goes in the set line, and ship-fleet asks about it
   const s = ship("ship-01");
   assert.equal(assignment(s, "ssh_listen", "overlay"), "ssh_listen=overlay");
   const plan = settingsJob(st, s, opened(st, s, { values: { ssh_listen: "overlay", sudo: "true" } }));
-  assert.deepEqual(wordsOf(plan.job.remote), ["ship-fleet", "set", "ship-01", "sudo=true", "ssh_listen=overlay"]);
+  // In a set of its own, last: once on, this computer may reach the Ship only over the overlay.
+  assert.equal(plan.job.remote, "'ship-fleet' 'set' 'ship-01' 'sudo=true' && 'ship-fleet' 'set' 'ship-01' 'ssh_listen=overlay'");
+  const all = settingsJob(st, s, opened(st, s, { values: { ssh_listen: "overlay" }, tags: ["work", "lab"], signins_off: ["github"] }));
+  assert.equal(all.job.remote, "'ship-fleet' 'tag' 'ship-01' '+lab' && 'ship-fleet' 'signins' 'ship-01' '--off' 'github' && 'ship-fleet' 'set' 'ship-01' 'ssh_listen=overlay'");
   assert.match(ASKED.ssh_listen, /asks you to type yes in the terminal/);
   assert.throws(() => assignment(s, "ssh_listen", "lan"), /not one of the choices/);
   // Its own value again is no change.

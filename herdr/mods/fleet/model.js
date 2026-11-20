@@ -941,7 +941,8 @@ export function selectPlan(row) {
  *  terminal). Never sent; spelt here without their dashes so that no source file of the mod
  *  holds one at all (tests/test_herdr_fleet.py looks). */
 // The code too: an approval by code is typed in its terminal, never passed by the panel.
-const SKIPPING = new Set(["yes", "force", "revoke-my-key", "stdin", "code", "y"].map((w) => (w.length === 1 ? `-${w}` : `--${w}`)));
+// And record-only: a resize recorded without changing the VM is done in a terminal, by hand.
+const SKIPPING = new Set(["yes", "force", "revoke-my-key", "stdin", "code", "record-only", "y"].map((w) => (w.length === 1 ? `-${w}` : `--${w}`)));
 
 /** The patterns ship-fleet enforces, each from where it is defined (tests/test_herdr_fleet.py
  *  checks each one against its source). */
