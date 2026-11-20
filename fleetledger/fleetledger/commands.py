@@ -60,6 +60,7 @@ def _ssh(app, inventory: Inventory):
 SHIP_SCHEMA = "shipshape.fleetledger-ship/1"
 ATTENTION_SCHEMA = "shipshape.fleetledger-attention/1"
 SIGNIN_SCHEMA = "shipshape.fleetledger-signin/1"
+TOOLS_SCHEMA = "shipshape.fleetledger-tools/1"
 
 AUTH_LABELS = {
     "ok": "OK",
@@ -1125,7 +1126,32 @@ def _catalogue_order(items):
             + sorted((i for i in items if i.toolkit is not None), key=lambda i: i.id))
 
 
+def tools_document(catalogue: Catalogue) -> dict[str, Any]:
+    """`tools ls --json` (contracts/fleetledger-tools.schema.json): every catalogue tool and
+    profile in the order `tools ls` prints them, each toolkit's after the repo's, and the
+    toolkits that did not load."""
+    def only_tags(item) -> list[str] | None:
+        kit = catalogue.toolkits.get(item.toolkit) if item.toolkit else None
+        cfg = getattr(kit, "config", None)
+        return None if cfg is None or cfg.only_tags is None else list(cfg.only_tags)
+
+    return {
+        "schema": TOOLS_SCHEMA,
+        "tools": [{"id": r.id, "kind": r.kind, "description": r.description,
+                   "default": r.default and r.toolkit is None, "needs": list(r.needs),
+                   "toolkit": r.toolkit, "only_tags": only_tags(r)}
+                  for r in _catalogue_order(catalogue.recipes.values())],
+        "profiles": [{"id": p.id, "description": p.description, "tools": list(p.tools),
+                      "toolkit": p.toolkit, "only_tags": only_tags(p)}
+                     for p in _catalogue_order(catalogue.profiles.values())],
+        "broken": [{"toolkit": kit_id, "why": why}
+                   for kit_id, why in sorted(catalogue.broken.items())],
+    }
+
+
 def cmd_tools(args, app) -> int:
+    if args.json and args.action != "ls":
+        raise FleetError("--json is for tools ls.")
     if args.action == "ls":
         if args.rest or args.tag:
             raise FleetError("tools ls takes no arguments.")
@@ -1137,6 +1163,9 @@ def cmd_tools(args, app) -> int:
             app.note(f"ship-fleet: toolkits not listed: {exc.message}")
             inv = None
         catalogue = Catalogue.from_repo(app.repo_factory(), inv)
+        if args.json:
+            app.say(json.dumps(tools_document(catalogue), indent=2))
+            return 0
         rows = [[r.id, r.kind, "yes" if r.default else "", ",".join(r.needs) or "-",
                  r.description] for r in _catalogue_order(catalogue.recipes.values())]
         app.say(table(rows, ["TOOL", "KIND", "DEFAULT", "NEEDS", "DESCRIPTION"])

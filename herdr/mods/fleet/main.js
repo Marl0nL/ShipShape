@@ -16,7 +16,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
-import { Fleet, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { Fleet, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -88,7 +88,7 @@ function button(t, id, text, act, on = false) {
 const mono = (t, text) => div().w_full().text_size(11).font_family("JetBrains Mono").text_color(t.muted).child(text);
 const FORM = ["name", "tag", "repo", "cores", "memory_mb", "disk_gb", "agent", "folder", "hosts", "vmid", "timezone"];
 /** The New Ship form as it opens: the basic part, with Advanced closed and at its defaults. */
-const NEW_FORM = () => ({ tags: [], signins: null, advanced: false, agent_on: true, agent_mode: "", github_scopes: [], no_overlay: false, mode: "", allow_bypass: false, agent_sudo: false });
+const NEW_FORM = () => ({ tags: [], signins: null, advanced: false, agent_on: true, agent_mode: "", github_scopes: [], no_overlay: false, mode: "", allow_bypass: false, agent_sudo: false, driver: "", image: "", tools: null, profiles: null });
 const TRUST = ["mname", "mkey", "mscope"];
 // The FleetLedger menu's key in this.menu, beside Ship names: not one a Ship can have.
 const FLEETLEDGER = ":fleetledger";
@@ -256,7 +256,7 @@ export default class FleetPanel extends View {
     for (const k of FORM) this.inputs[k].set_value("");
     this.menu = null;
     cx.spawn(async (cx) => {
-      const reading = fleet.loadAccounts();
+      const reading = Promise.all([fleet.loadAccounts(), fleet.loadChoices()]);
       cx.notify();
       await reading;
       cx.notify();
@@ -287,6 +287,11 @@ export default class FleetPanel extends View {
       allow_bypass: this.form.allow_bypass,
       agent_sudo: this.form.agent_sudo,
       timezone: v("timezone"),
+      // From FleetLedger's lists: blank or null is FleetLedger's default.
+      driver: this.form.driver,
+      image: this.form.image,
+      tools: this.form.tools ? [...this.form.tools] : null,
+      profiles: this.form.profiles ? [...this.form.profiles] : null,
     };
   }
 
@@ -355,6 +360,8 @@ export default class FleetPanel extends View {
     const label = (text) => div().w(90).flex_none().text_size(12).text_color(t.muted).child(text);
     const line = (id, ...kids) => h_flex().id(id).w_full().gap(6).items_center().flex_wrap().children(kids);
     const typedTags = words(this.inputs.tag.value());
+    const size = newShipChoices(st).defaults?.size;
+    const sizeHint = size ? `blank: ${size.cores} vCPUs, ${size.memory_mb} MB, ${size.disk_gb} GB` : "blank: FleetLedger's default";
     const known = st.accounts?.signins ?? null;
     let signins;
     if (!st.accounts || st.accounts.loading) signins = [div().text_size(12).text_color(t.dim).child("reading…")];
@@ -383,7 +390,7 @@ export default class FleetPanel extends View {
         f.tags = f.tags.includes(tag) ? f.tags.filter((x) => x !== tag) : [...f.tags, tag];
       }, f.tags.includes(tag) || typedTags.includes(tag))), this.inputBox(t, "tag", 140)))
       .child(line("f-repo", label("Repository"), this.inputBox(t, "repo", 260)))
-      .child(line("f-size", label("Size"), this.inputBox(t, "cores", 80), this.inputBox(t, "memory_mb", 110), this.inputBox(t, "disk_gb", 90), div().text_size(11.5).text_color(t.dim).child("blank: FleetLedger's default")))
+      .child(line("f-size", label("Size"), this.inputBox(t, "cores", 80), this.inputBox(t, "memory_mb", 110), this.inputBox(t, "disk_gb", 90), div().text_size(11.5).text_color(t.dim).child(sizeHint)))
       .child(line("f-signins", label("Sign-ins"), ...signins))
       .child(line("f-advanced", button(t, "advanced", f.advanced ? "Advanced ▾" : "Advanced ▸", () => {
         f.advanced = !f.advanced;
@@ -401,10 +408,12 @@ export default class FleetPanel extends View {
       );
   }
 
-  // The New Ship form's Advanced part: what the web form offers that needs no other read.
+  // The New Ship form's Advanced part: what the web form offers.
   advancedView(t, label, line) {
     const f = this.form;
     const dim = (text) => div().text_size(11.5).text_color(t.dim).child(text);
+    const ch = newShipChoices(fleet.state);
+    const d = ch.defaults;
     const toggle = (id, text, key) => button(t, id, text, () => {
       f[key] = !f[key];
     }, f[key]);
@@ -423,12 +432,57 @@ export default class FleetPanel extends View {
       line("f-scopes", label("GitHub scopes"), ...GITHUB_SCOPES.map((id) => button(t, `scope-${id}`, id, () => {
         f.github_scopes = f.github_scopes.includes(id) ? f.github_scopes.filter((x) => x !== id) : [...f.github_scopes, id];
       }, f.github_scopes.includes(id))), dim("none: gh's minimum")),
-      line("f-mode", label("Default mode"), ...modes("mode", "mode", "FleetLedger's default")),
+      line("f-mode", label("Default mode"), ...modes("mode", "mode", d ? `FleetLedger's default (${d.mode})` : "FleetLedger's default")),
       line("f-claude", label("Claude"), toggle("allow-bypass", "allow bypassPermissions", "allow_bypass"), toggle("agent-sudo", "agent sudo", "agent_sudo")),
       line("f-overlay", label("Overlay"), toggle("no-overlay", "do not join it", "no_overlay")),
+      ...this.listsView(t, label, line, dim, ch),
       line("f-hosts", label("Host names"), this.inputBox(t, "hosts", 260)),
-      line("f-vmid", label("VM id"), this.inputBox(t, "vmid", 140), label("Time zone"), this.inputBox(t, "timezone", 160)),
+      line("f-vmid", label("VM id"), this.inputBox(t, "vmid", 140), label("Time zone"), this.inputBox(t, "timezone", 160), dim(d ? `blank: ${d.timezone}` : "")),
     ];
+  }
+
+  // Driver, base image, tools and profiles: buttons for what FleetLedger's lists offer, or why
+  // there are none (then FleetLedger's default, which is what blank means anyway).
+  listsView(t, label, line, dim, ch) {
+    const f = this.form;
+    const d = ch.defaults;
+    if (!fleet.state.choices || fleet.state.choices.loading) return [line("f-lists", label("Driver, tools"), dim("reading…"))];
+    // A chosen image the driver chosen cannot start from goes back to the default.
+    const keepImage = () => {
+      if (f.image && !(imagesOn(ch, f.driver) ?? []).includes(f.image)) f.image = "";
+    };
+    const driver = ch.images
+      ? line("f-driver", label("Driver"), button(t, "driver-blank", d ? `FleetLedger's default (${d.driver})` : "FleetLedger's default", () => {
+          f.driver = "";
+          keepImage();
+        }, !f.driver), ...ch.images.drivers.map((x) => button(t, `driver-${x.id}`, x.id, () => {
+          f.driver = x.id;
+          keepImage();
+        }, f.driver === x.id)))
+      : line("f-driver", label("Driver"), dim(`FleetLedger's default (${ch.why.images})`));
+    const offered = imagesOn(ch, f.driver);
+    const image = offered
+      ? line("f-image", label("Base image"), button(t, "image-blank", `the pinned one (${ch.images.pinned})`, () => {
+          f.image = "";
+        }, !f.image), ...offered.map((i) => button(t, `image-${i}`, i, () => {
+          f.image = i;
+        }, f.image === i)))
+      : line("f-image", label("Base image"), dim(`the pinned one (${ch.why.images ?? ch.why.defaults})`));
+    // Tools and profiles tick from FleetLedger's defaults; back at exactly those, null again.
+    const ticks = (key, what) => {
+      if (!ch.tools || !d) return line(`f-${key}`, label(what), dim(`FleetLedger's default (${ch.why.tools ?? ch.why.defaults})`));
+      const list = ch.tools[key];
+      const base = d[key].filter((id) => list.some((x) => x.id === id));
+      const flip = (id) => {
+        const on = new Set(f[key] ?? base);
+        if (on.has(id)) on.delete(id);
+        else on.add(id);
+        f[key] = on.size === base.length && base.every((x) => on.has(x)) ? null : [...on];
+      };
+      const from = key === "tools" ? (d.tools_from === "defaults" ? "ticked: ships.toml's defaults" : "ticked: the catalogue's defaults") : base.length ? "ticked: ships.toml's defaults" : "none ticked: none";
+      return line(`f-${key}`, label(what), ...list.map((x) => button(t, `${key}-${x.id}`, x.id, () => flip(x.id), (f[key] ?? base).includes(x.id))), dim(from));
+    };
+    return [driver, image, ticks("tools", "Tools"), ticks("profiles", "Profiles")];
   }
 
   // ---- the Needs you list ----

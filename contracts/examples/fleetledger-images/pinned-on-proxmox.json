@@ -1,0 +1,38 @@
+{
+  "schema": "shipshape.fleetledger-images/1",
+  "pinned": "26.04-20261102-3f9a1c2e",
+  "images": [
+    {
+      "id": "26.04-20261102-3f9a1c2e",
+      "ubuntu": "20261016",
+      "tooling": "0.1.0",
+      "dirty": false,
+      "recipes": [
+        "chrome-devtools-axi"
+      ],
+      "published": {
+        "proxmox": {
+          "template_vmid": 9181
+        }
+      },
+      "ships": 2,
+      "file": true,
+      "pinned": true
+    }
+  ],
+  "drivers": [
+    {
+      "id": "manual",
+      "images": [
+        "stock"
+      ]
+    },
+    {
+      "id": "proxmox",
+      "images": [
+        "stock",
+        "26.04-20261102-3f9a1c2e"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "schema": "shipshape.fleetledger-tools/1",
+  "tools": [
+    {
+      "id": "gh-axi",
+      "kind": "npm",
+      "description": "GitHub CLI for agents.",
+      "default": true,
+      "needs": [
+        "github"
+      ],
+      "toolkit": null,
+      "only_tags": null
+    },
+    {
+      "id": "ship-axi",
+      "kind": "script",
+      "description": "Tells agents about their Ship.",
+      "default": true,
+      "needs": [],
+      "toolkit": null,
+      "only_tags": null
+    },
+    {
+      "id": "tasks-axi",
+      "kind": "npm",
+      "description": "Task backlog tool.",
+      "default": false,
+      "needs": [],
+      "toolkit": null,
+      "only_tags": null
+    },
+    {
+      "id": "examplekit/example-cli",
+      "kind": "script",
+      "description": "An example command line tool.",
+      "default": false,
+      "needs": [
+        "exampledocs"
+      ],
+      "toolkit": "examplekit",
+      "only_tags": [
+        "work"
+      ]
+    },
+    {
+      "id": "examplekit/example-lint",
+      "kind": "npm",
+      "description": "An example linter.",
+      "default": false,
+      "needs": [],
+      "toolkit": "examplekit",
+      "only_tags": [
+        "work"
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "orchestrator",
+      "description": "An orchestration repo and its tools.",
+      "tools": [
+        "tasks-axi"
+      ],
+      "toolkit": null,
+      "only_tags": null
+    },
+    {
+      "id": "examplekit/dev",
+      "description": "Example development setup.",
+      "tools": [
+        "examplekit/example-cli",
+        "tasks-axi"
+      ],
+      "toolkit": "examplekit",
+      "only_tags": [
+        "work"
+      ]
+    }
+  ],
+  "broken": [
+    {
+      "toolkit": "otherkit",
+      "why": "tools/example.toml: a toolkit's tool may not set default = true."
+    }
+  ]
+}

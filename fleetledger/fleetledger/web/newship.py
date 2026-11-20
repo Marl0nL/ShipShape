@@ -35,9 +35,9 @@ def next_name(inv) -> str:
 
 def images_for(inv, driver: str) -> list[str]:
     """The base images a Ship on this driver can start from (as `new` checks)."""
-    return ["stock"] + sorted(
-        i for i, e in (inv.images.items() if inv is not None else [])
-        if driver in (e.get("published") or {}))
+    from fleetledger import images
+
+    return images.for_driver(inv, driver)
 
 
 @dataclass
@@ -88,8 +88,9 @@ def choices(app, inv) -> FormChoices:
     defaults = inv.defaults if inv is not None else {}
     default_tools = (list(defaults["tools"]) if "tools" in defaults
                      else catalogue.default_tools())
-    drivers = ["manual"] + (["proxmox"] if inv is not None and inv.driver_config("proxmox")
-                            else [])
+    from fleetledger import images
+
+    drivers = images.drivers_set_up(inv)
     driver = defaults.get("driver", "manual")
     images = images_for(inv, driver)
     known_tags = sorted({t for s in (inv.ships() if inv is not None else [])

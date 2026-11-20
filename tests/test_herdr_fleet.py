@@ -178,6 +178,42 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
     assert web.agent_on is True  # the web form's first agent is on by default
 
 
+def test_the_new_ship_choices_it_reads_are_fleetledgers():
+    """New Ship's driver, image, tools and profiles: the ids it accepts from FleetLedger's lists
+    are ships.toml's, and the shapes it reads are the ones ship-fleet prints."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = ("const m = await import(process.argv[1]); console.log(JSON.stringify({"
+              "TOOL: m.TOOL.source, IMAGE: m.IMAGE.source, DRIVERS: m.DRIVERS, "
+              "SCHEMA_TOOLS: m.SCHEMA_TOOLS, SCHEMA_IMAGES: m.SCHEMA_IMAGES, "
+              "SCHEMA_DEFAULTS: m.SCHEMA_DEFAULTS}))")
+    r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri()],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    js = json.loads(r.stdout)
+
+    from fleetledger import cli, commands, images, newdefaults
+
+    ships_toml = json.loads((ROOT / "contracts" / "ships.toml.schema.json").read_text("utf-8"))
+    defs = ships_toml["$defs"]
+    tool = js["TOOL"].replace("\\/", "/")  # a JS regex literal escapes its /
+    assert tool == defs["toolId"]["pattern"] == defs["profileId"]["pattern"]
+    assert js["IMAGE"] == defs["imageRef"]["pattern"]
+    assert js["DRIVERS"] == defs["driverId"]["enum"] == list(images.DRIVERS)
+    new = next(a for a in cli.build_parser()._subparsers._group_actions[0].choices["new"]._actions
+               if a.dest == "driver")
+    assert list(new.choices) == js["DRIVERS"]
+    assert js["SCHEMA_TOOLS"] == commands.TOOLS_SCHEMA
+    assert js["SCHEMA_IMAGES"] == images.SCHEMA
+    assert js["SCHEMA_DEFAULTS"] == newdefaults.SCHEMA
+    for name, version in (("fleetledger-tools", js["SCHEMA_TOOLS"]),
+                          ("fleetledger-images", js["SCHEMA_IMAGES"]),
+                          ("fleetledger-defaults", js["SCHEMA_DEFAULTS"])):
+        schema = json.loads((ROOT / "contracts" / f"{name}.schema.json").read_text("utf-8"))
+        assert schema["properties"]["schema"]["const"] == version
+
+
 def test_a_first_agent_it_sends_is_one_ship_fleet_takes():
     """Every first agent checkFirstAgent lets through, `new --autostart` reads back as that name,
     folder and mode (and `set autostart.add=` takes it too); every one it refuses, they refuse."""

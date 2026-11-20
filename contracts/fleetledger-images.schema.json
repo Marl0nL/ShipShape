@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-images.schema.json",
+  "title": "Base images (ship-fleet image ls --json, version 1)",
+  "description": "Printed on stdout by `ship-fleet image ls --json` on the FleetLedger computer: the baked images (contracts/image.md) as ships.toml records them, the one new Ships start from, and each driver set up there with the images a new Ship on it can start from (what `ship-fleet new --driver --image` takes). Read from ships.toml only: it asks no Ship and no hypervisor. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "pinned",
+    "images",
+    "drivers"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shipshape.fleetledger-images/1"
+    },
+    "pinned": {
+      "$ref": "#/$defs/imageRef",
+      "description": "What new Ships start from unless `new --image` says otherwise (defaults.image, `ship-fleet image use`): an image id, or stock (the driver's own template)."
+    },
+    "images": {
+      "type": "array",
+      "description": "Every baked image, by id.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "ubuntu",
+          "tooling",
+          "dirty",
+          "recipes",
+          "published",
+          "ships",
+          "file",
+          "pinned"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/imageId"
+          },
+          "ubuntu": {
+            "type": "string",
+            "pattern": "^[0-9]{8}(\\.[0-9]+)?$",
+            "description": "The Ubuntu cloud image build it was baked from."
+          },
+          "tooling": {
+            "type": "string",
+            "description": "The ShipShape tooling version baked in."
+          },
+          "dirty": {
+            "type": "boolean",
+            "description": "Baked from a checkout with uncommitted changes."
+          },
+          "recipes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "description": "The catalogue recipes whose system parts are baked in."
+          },
+          "published": {
+            "type": "object",
+            "description": "Where it is ready to clone from, per driver (e.g. proxmox: {template_vmid: 9181}).",
+            "propertyNames": {
+              "$ref": "#/$defs/driverId"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "integer"
+                ]
+              }
+            }
+          },
+          "ships": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many Ships in the inventory were made from it."
+          },
+          "file": {
+            "type": "boolean",
+            "description": "Its qcow2 is still kept on the FleetLedger computer."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "New Ships start from it."
+          }
+        }
+      }
+    },
+    "drivers": {
+      "type": "array",
+      "description": "The drivers a new Ship can be made with there, in this order: manual always, proxmox once ships.toml has [drivers.proxmox]. Which one `new` uses without --driver is `ship-fleet defaults --json`'s driver.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "images"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/driverId"
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/imageRef"
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "What a new Ship on it can start from: stock first, then each image published to it, by id."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "imageId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$",
+      "not": {
+        "const": "stock"
+      },
+      "description": "e.g. 26.04-20261102-3f9a1c2e: Ubuntu release, bake date, first 8 hex of the bake inputs' hash."
+    },
+    "imageRef": {
+      "type": "string",
+      "pattern": "^(stock|[a-z0-9][a-z0-9.-]{0,62})$"
+    },
+    "driverId": {
+      "enum": [
+        "manual",
+        "proxmox"
+      ]
+    }
+  }
+}

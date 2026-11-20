@@ -1,0 +1,22 @@
+{
+  "schema": "shipshape.fleetledger-defaults/1",
+  "driver": "manual",
+  "image": "stock",
+  "tags": [
+    "work"
+  ],
+  "size": {
+    "cores": 4,
+    "memory_mb": 1024,
+    "disk_gb": 40
+  },
+  "mode": "auto",
+  "allow_bypass": false,
+  "tools": [
+    "gh-axi",
+    "ship-axi"
+  ],
+  "tools_from": "catalogue",
+  "profiles": [],
+  "timezone": "Europe/Berlin"
+}

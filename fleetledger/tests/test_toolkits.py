@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import shutil
 import tomllib
@@ -574,6 +575,34 @@ def test_tools_ls_lists_toolkit_tools_after_the_catalogue(run, kit, store):
     store.path.write_text(store.path.read_text() + "\n[nonsense]\n")
     code, out, err = run("tools", "ls")  # a broken ships.toml: the catalogue still lists
     assert code == 0 and "gh-axi" in out and "toolkits not listed" in err
+
+
+def test_tools_ls_json_lists_toolkit_tools_with_their_only_tags(run, kit, store):
+    from fleetledger import schemas
+
+    with_toolkits(store, examplekit={"path": str(kit), "only_tags": ["work"]})
+    code, out, err = run("tools", "ls", "--json")
+    assert code == 0, err
+    doc = json.loads(out)
+    assert schemas.errors("fleetledger-tools", doc) == []
+    ids = [t["id"] for t in doc["tools"]]
+    first_kit = next(i for i, x in enumerate(ids) if x.startswith("examplekit/"))
+    assert all(x.startswith("examplekit/") for x in ids[first_kit:])
+    assert all(not x.startswith("examplekit/") for x in ids[:first_kit])
+    cli_tool = next(t for t in doc["tools"] if t["id"] == "examplekit/example-cli")
+    assert cli_tool["toolkit"] == "examplekit" and cli_tool["only_tags"] == ["work"]
+    assert cli_tool["needs"] == ["exampledocs"] and cli_tool["default"] is False
+    dev = next(p for p in doc["profiles"] if p["id"] == "examplekit/dev")
+    assert dev["toolkit"] == "examplekit" and dev["only_tags"] == ["work"]
+    assert "examplekit/example-cli" in dev["tools"]
+    assert all(t["only_tags"] is None for t in doc["tools"] if t["toolkit"] is None)
+    _default(kit)  # a toolkit that does not load: listed in broken, its tools left out
+    code, out, err = run("tools", "ls", "--json")
+    doc = json.loads(out)
+    assert code == 0 and schemas.errors("fleetledger-tools", doc) == []
+    assert [b["toolkit"] for b in doc["broken"]] == ["examplekit"]
+    assert "default = true" in doc["broken"][0]["why"]
+    assert not any(t["id"].startswith("examplekit/") for t in doc["tools"])
 
 
 def test_toolkit_tools_are_refused_on_ships_only_tags_leave_out(run, kit, store):

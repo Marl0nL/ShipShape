@@ -108,6 +108,7 @@ def add_parsers(sub, add) -> None:
     p.add_argument("--out", metavar="DIR",
                    help="build: write the image (and its .json) here and record it nowhere, "
                         "to import on FleetLedger's own VM (no fleet needed here)")
+    p.add_argument("--json", action="store_true", help="ls: print JSON")
 
 
 # --- destroy -------------------------------------------------------------------
@@ -345,6 +346,8 @@ def cmd_image(args, app) -> int:
     }[args.action]
     if args.out and args.action != "build":
         raise FleetError("--out is for image build.")
+    if args.json and args.action != "ls":
+        raise FleetError("--json is for image ls.")
     if args.action == "import" and not args.image:
         raise FleetError("image import needs the image file: ship-fleet image import "
                          "FILE.qcow2 (its .json beside it).")
@@ -427,6 +430,9 @@ def _image_import(args, app) -> int:
 
 def _image_ls(args, app) -> int:
     inv = app.store_factory().load()
+    if args.json:
+        app.say(json.dumps(images.document(inv), indent=2))
+        return 0
     found = images.listing(inv)
     if not found:
         app.say("No baked images yet; new Ships use the stock template. "

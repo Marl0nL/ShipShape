@@ -27,9 +27,14 @@ import {
   job,
   jobPlan,
   knownTags,
+  imagesOn,
+  newShipChoices,
   newShipJob,
   olderThan,
   readAccounts,
+  readDefaults,
+  readImages,
+  readTools,
   readSignins,
   runsJob,
   shellLine,
@@ -55,6 +60,9 @@ const REFRESHER = `${HOME}/.ssh/shipshape/refresh`;
 const DEST = "fleetledger@fleetledger.example.invalid";
 const WHERE = { ssh: DEST, identity: null };
 const SKIPPING = ["--yes", "-y", "--force", "--revoke-my-key", "--stdin", "--code"];
+const IMG = "26.04-20261102-3f9a1c2e";
+// Proxmox set up, its baked image published there, and new Ships still on the stock template.
+const IMAGES = { ...example("fleetledger-images", "pinned-on-proxmox.json"), pinned: "stock" };
 
 // ---- the stand-in ---------------------------------------------------------------------------
 
@@ -72,6 +80,9 @@ function stand({ about = example("fleetledger-about", "desktop-checked.json"), s
     about: ok(about),
     signins: ok(examples("fleetledger-signin")),
     "signins --accounts": ok(example("fleetledger-tag-accounts", "fleet.json")),
+    tools: ok(example("fleetledger-tools", "with-toolkits.json")),
+    image: ok(IMAGES),
+    defaults: ok(example("fleetledger-defaults", "catalogue.json")),
     ...answers,
   };
   const host = {
@@ -314,6 +325,138 @@ test("New Ship: the tags to choose from are the fleet's", async () => {
   assert.deepEqual(knownTags(s.fleet.state), ["home", "personal", "work"]);
 });
 
+test("New Ship: driver, image, tools and profiles are read when it opens, three reads at once", async () => {
+  const s = await readFleet();
+  assert.equal(s.fleet.state.choices, null);
+  const before = s.calls.length;
+  const reading = s.fleet.loadChoices();
+  assert.deepEqual(s.fleet.state.choices, { loading: true });
+  await reading;
+  const lines = s.calls.slice(before).map((c) => c.args.at(-1));
+  assert.deepEqual(lines, ["'ship-fleet' 'tools' 'ls' '--json'", "'ship-fleet' 'image' 'ls' '--json'", "'ship-fleet' 'defaults' '--json'"]);
+  for (const c of s.calls.slice(before)) assert.ok(c.args.includes("BatchMode=yes")); // reads ask nothing
+  const ch = newShipChoices(s.fleet.state);
+  assert.deepEqual(ch.why, { tools: null, images: null, defaults: null });
+  assert.deepEqual(ch.images.drivers.map((d) => d.id), ["manual", "proxmox"]);
+  assert.deepEqual(imagesOn(ch, ""), ["stock"]); // FleetLedger's default driver: manual
+  assert.deepEqual(imagesOn(ch, "proxmox"), ["stock", IMG]);
+});
+
+test("New Ship: driver and base image, only ones FleetLedger offers there", async () => {
+  const { fleet } = await readFleet();
+  await fleet.loadChoices();
+  const plan = (form) => newShipJob(fleet.state, { name: "ship-07", signins: null, agent_on: false, ...form });
+  assert.equal(plan({}).job.remote, "'ship-fleet' 'new' 'ship-07' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.equal(plan({ driver: "proxmox", image: IMG }).job.remote, `'ship-fleet' 'new' 'ship-07' '--driver' 'proxmox' '--image' '${IMG}' && 'ship-fleet' 'login' 'ship-07' 'claude'`);
+  assert.equal(plan({ driver: "proxmox", image: "stock" }).job.remote, "'ship-fleet' 'new' 'ship-07' '--driver' 'proxmox' '--image' 'stock' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.match(plan({ image: IMG }).errors.join(" "), /is not one published to the manual driver/);
+  assert.match(plan({ driver: "cloud" }).errors.join(" "), /"cloud" is not a driver set up on FleetLedger/);
+  // proxmox not set up: only manual is offered.
+  const manual = await readFleet({ answers: { image: ok(example("fleetledger-images", "stock-only.json")) } });
+  await manual.fleet.loadChoices();
+  assert.match(newShipJob(manual.fleet.state, { name: "ship-07", driver: "proxmox" }).errors.join(" "), /not a driver set up/);
+  // A pinned image the driver cannot start from: `new` would refuse it, so the form says so.
+  const pinned = await readFleet({ answers: { image: ok(example("fleetledger-images", "pinned-on-proxmox.json")) } });
+  await pinned.fleet.loadChoices();
+  const p = (form) => newShipJob(pinned.fleet.state, { name: "ship-07", signins: null, agent_on: false, ...form });
+  assert.match(p({}).errors.join(" "), /The pinned image 26\.04-20261102-3f9a1c2e is not published to the manual driver/);
+  assert.equal(p({ image: "stock" }).errors.length, 0);
+  assert.equal(p({ driver: "proxmox" }).job.remote, "'ship-fleet' 'new' 'ship-07' '--driver' 'proxmox' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+});
+
+test("New Ship: tools tick from FleetLedger's defaults; --tools adds, --no-default-tools starts from none", async () => {
+  const { fleet } = await readFleet();
+  await Promise.all([fleet.loadAccounts(), fleet.loadChoices()]);
+  const remote = (tools, form = {}) => newShipJob(fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, tools, ...form }).job?.remote;
+  const base = "'ship-fleet' 'new' 'ship-07' '--signins' 'github'";
+  assert.equal(remote(null), base);
+  assert.equal(remote(["ship-axi", "gh-axi"]), base); // exactly the defaults
+  assert.equal(remote(["gh-axi", "ship-axi", "tasks-axi"]), `${base} '--tools' 'tasks-axi'`);
+  assert.equal(remote(["tasks-axi", "gh-axi"]), `${base} '--no-default-tools' '--tools' 'gh-axi,tasks-axi'`);
+  assert.equal(remote([]), `${base} '--no-default-tools'`);
+  const bad = newShipJob(fleet.state, { name: "ship-07", tools: ["gh-axi", "ship-axi", "nope"] });
+  assert.match(bad.errors.join(" "), /Not a tool FleetLedger offers: nope/);
+  // A toolkit's tool goes only to Ships with one of its only_tags (no tag: defaults.tags, work).
+  const kit = ["gh-axi", "ship-axi", "examplekit/example-cli"];
+  assert.equal(remote(kit), `${base} '--tools' 'examplekit/example-cli'`);
+  assert.equal(remote(kit, { tags: ["work", "lab"] }), `'ship-fleet' 'new' 'ship-07' '--tag' 'work' '--tag' 'lab' '--signins' 'github' '--tools' 'examplekit/example-cli'`);
+  const elsewhere = newShipJob(fleet.state, { name: "ship-07", tags: ["personal"], tools: kit });
+  assert.match(elsewhere.errors.join(" "), /examplekit\/example-cli goes only to Ships tagged work/);
+});
+
+test("New Ship: profiles replace FleetLedger's default ones", async () => {
+  const { fleet } = await readFleet();
+  await Promise.all([fleet.loadAccounts(), fleet.loadChoices()]);
+  const plan = (profiles, form = {}) => newShipJob(fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, profiles, ...form });
+  assert.equal(plan(["orchestrator"]).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--profile' 'orchestrator'");
+  assert.equal(plan(["examplekit/dev", "orchestrator"]).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--profile' 'orchestrator' '--profile' 'examplekit/dev'");
+  assert.equal(plan([]).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github'"); // the default: none
+  assert.match(plan(["nope"]).errors.join(" "), /Not a profile FleetLedger offers: nope/);
+  assert.match(plan(["examplekit/dev"], { tag: "personal" }).errors.join(" "), /examplekit\/dev goes only to Ships tagged work/);
+  // Default profiles cannot be left out: `new --profile` replaces them, and none is no flag.
+  const withDefaults = await readFleet({ answers: { defaults: ok(example("fleetledger-defaults", "from-ships-toml.json")) } });
+  await Promise.all([withDefaults.fleet.loadAccounts(), withDefaults.fleet.loadChoices()]);
+  const p = (profiles) => newShipJob(withDefaults.fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, image: "stock", driver: "manual", tag: "work", profiles });
+  assert.match(p([]).errors.join(" "), /cannot leave out the default profiles/);
+  assert.equal(p(["orchestrator"]).errors.length, 0);
+});
+
+test("New Ship: FleetLedger's defaults allowing bypassPermissions let a first agent start in it", async () => {
+  const s = await readFleet({ answers: { defaults: ok({ ...example("fleetledger-defaults", "catalogue.json"), mode: "bypassPermissions", allow_bypass: true }) } });
+  const form = { name: "ship-07", signins: null, agent_mode: "bypassPermissions" };
+  assert.match(newShipJob(s.fleet.state, form).errors.join(" "), /needs allow bypassPermissions/); // not read yet
+  await s.fleet.loadChoices();
+  assert.equal(newShipJob(s.fleet.state, form).job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work:bypassPermissions' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+});
+
+test("New Ship: FleetLedger's defaults its lists do not show are kept, and checked where they go", async () => {
+  // A default tool and profile from a toolkit that did not load: not listed, never ticked.
+  const defaults = { ...example("fleetledger-defaults", "catalogue.json"), tools: ["gh-axi", "ship-axi", "otherkit/x"], tools_from: "defaults", profiles: ["otherkit/p"] };
+  const s = await readFleet({ answers: { defaults: ok(defaults) } });
+  await Promise.all([s.fleet.loadAccounts(), s.fleet.loadChoices()]);
+  const plan = (form) => newShipJob(s.fleet.state, { name: "ship-07", signins: ["github"], agent_on: false, ...form });
+  assert.equal(plan({ tools: ["gh-axi", "ship-axi", "tasks-axi"] }).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--tools' 'tasks-axi'");
+  assert.equal(plan({ profiles: [] }).job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github'");
+  // A default toolkit tool left as it is still goes only to Ships with its toolkit's tags.
+  const kit = await readFleet({ answers: { defaults: ok({ ...defaults, tools: ["gh-axi", "examplekit/example-cli"], profiles: [] }) } });
+  await kit.fleet.loadChoices();
+  assert.match(newShipJob(kit.fleet.state, { name: "ship-07", signins: null, tag: "personal" }).errors.join(" "), /examplekit\/example-cli goes only to Ships tagged work/);
+  assert.equal(newShipJob(kit.fleet.state, { name: "ship-07", signins: null }).errors.length, 0); // defaults.tags: work
+});
+
+test("New Ship: a default driver FleetLedger has not set up is said as that", async () => {
+  const s = await readFleet({ answers: { defaults: ok({ ...example("fleetledger-defaults", "catalogue.json"), driver: "proxmox" }), image: ok(example("fleetledger-images", "stock-only.json")) } });
+  await s.fleet.loadChoices();
+  const plan = (form) => newShipJob(s.fleet.state, { name: "ship-07", signins: null, agent_on: false, ...form });
+  assert.deepEqual(plan({}).errors, ["FleetLedger's default driver, proxmox, is not set up there: choose one that is."]);
+  assert.match(plan({ image: "stock" }).errors.join(" "), /choose a driver that is set up first/);
+  assert.equal(plan({ driver: "manual" }).job.remote, "'ship-fleet' 'new' 'ship-07' '--driver' 'manual' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+});
+
+test("New Ship: an older FleetLedger, or a read that fails: no choices, the rest still works, and why is said", async () => {
+  const usage = (what) => ({ code: 2, stdout: "", stderr: `usage: ship-fleet\nship-fleet: error: ${what}\n` });
+  const s = await readFleet({ answers: { tools: usage("unrecognized arguments: --json"), image: usage("unrecognized arguments: --json"), defaults: usage("argument command: invalid choice: 'defaults'") } });
+  await s.fleet.loadChoices();
+  const ch = newShipChoices(s.fleet.state);
+  assert.equal(ch.tools, null);
+  assert.match(ch.why.tools, /ship-fleet tools: this FleetLedger is older than the contract this panel reads; update FleetLedger/);
+  assert.match(ch.why.defaults, /ship-fleet defaults: this FleetLedger is older/);
+  assert.equal(imagesOn(ch, "proxmox"), null);
+  const plain = newShipJob(s.fleet.state, { name: "ship-07", signins: null });
+  assert.equal(plain.job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  const chosen = newShipJob(s.fleet.state, { name: "ship-07", signins: null, driver: "proxmox", image: "stock", tools: ["gh-axi"], profiles: ["orchestrator"] });
+  assert.equal(chosen.job, undefined);
+  assert.match(chosen.errors.join("\n"), /Driver: FleetLedger's list is not read[\s\S]*Base image: FleetLedger's lists are not read[\s\S]*Tools: FleetLedger's lists are not read[\s\S]*Profiles: FleetLedger's lists are not read/);
+  // One read failing leaves the others' choices.
+  const one = await readFleet({ answers: { defaults: { code: 1, stdout: "", stderr: "ship-fleet: FleetLedger's vault is locked\n" } } });
+  await one.fleet.loadChoices();
+  const c = newShipChoices(one.fleet.state);
+  assert.ok(c.images && c.tools && !c.defaults);
+  assert.match(c.why.defaults, /vault is locked/);
+  assert.equal(newShipJob(one.fleet.state, { name: "ship-07", signins: null, driver: "proxmox", image: IMG }).errors.length, 0);
+  assert.match(newShipJob(one.fleet.state, { name: "ship-07", signins: null, tools: ["gh-axi"] }).errors.join(" "), /Tools: FleetLedger's lists are not read \(ship-fleet defaults: ship-fleet: FleetLedger's vault is locked\)/);
+});
+
 // ---- what is offered ------------------------------------------------------------------------
 
 test("actionGate: settings, an older FleetLedger, a locked vault, a copy on standby, or nothing", async () => {
@@ -402,6 +545,30 @@ test("sign-ins: one per service the Ship uses, none it has off, none while it do
   const failed = await readFleet({ answers: { signins: { code: 1, stdout: "", stderr: "no such Ship\n" } } });
   await failed.fleet.loadSignins("ship-01");
   assert.match(shipMenu(failed.fleet.state, failed.fleet.state.ships[0]).items.find((i) => i.id === "signin").why, /no such Ship/);
+});
+
+test("readTools, readImages and readDefaults read the contracts' examples, and refuse other shapes", () => {
+  const tools = readTools(JSON.stringify(example("fleetledger-tools", "with-toolkits.json")));
+  assert.deepEqual(tools.tools.map((t) => [t.id, t.default, t.only_tags]), [["gh-axi", true, null], ["ship-axi", true, null], ["tasks-axi", false, null], ["examplekit/example-cli", false, ["work"]], ["examplekit/example-lint", false, ["work"]]]);
+  assert.deepEqual(tools.profiles.map((p) => p.id), ["orchestrator", "examplekit/dev"]);
+  assert.deepEqual(tools.broken, ["otherkit"]);
+  for (const name of ["catalogue.json", "empty.json"]) assert.equal(readTools(JSON.stringify(example("fleetledger-tools", name))).error, undefined);
+  const odd = readTools(JSON.stringify({ ...example("fleetledger-tools", "catalogue.json"), tools: [{ id: "Bad Id" }, { id: "x;id" }, { id: "ok-tool", default: "yes" }] }));
+  assert.deepEqual(odd.tools, [{ id: "ok-tool", default: false, toolkit: null, only_tags: null }]);
+  assert.match(readTools("{}").error, /older than the contract/);
+  assert.match(readTools(JSON.stringify({ schema: "shipshape.fleetledger-tools/2" })).error, /newer than this panel reads/);
+  const images = readImages(JSON.stringify(example("fleetledger-images", "pinned-on-proxmox.json")));
+  assert.deepEqual(images, { pinned: IMG, drivers: [{ id: "manual", images: ["stock"] }, { id: "proxmox", images: ["stock", IMG] }] });
+  const strange = readImages(JSON.stringify({ ...IMAGES, drivers: [{ id: "cloud", images: ["stock"] }, { id: "manual", images: ["stock", "../x"] }] }));
+  assert.deepEqual(strange.drivers, [{ id: "manual", images: ["stock"] }]);
+  assert.match(readImages("{}").error, /older than the contract/);
+  const defaults = readDefaults(JSON.stringify(example("fleetledger-defaults", "catalogue.json")));
+  assert.deepEqual(defaults, { driver: "manual", image: "stock", tags: ["work"], size: { cores: 4, memory_mb: 8192, disk_gb: 40 }, mode: "auto", allow_bypass: false, tools: ["gh-axi", "ship-axi"], tools_from: "catalogue", profiles: [], timezone: "Europe/Berlin" });
+  assert.equal(readDefaults(JSON.stringify(example("fleetledger-defaults", "from-ships-toml.json"))).tools_from, "defaults");
+  for (const bad of [{ mode: "yolo" }, { size: { cores: 0, memory_mb: 8192, disk_gb: 40 } }, { timezone: "../etc" }, { tools: ["a b"] }, { driver: "cloud" }]) {
+    assert.match(readDefaults(JSON.stringify({ ...example("fleetledger-defaults", "catalogue.json"), ...bad })).error, /not the contract's/, JSON.stringify(bad));
+  }
+  assert.match(readDefaults("{}").error, /older than the contract/);
 });
 
 test("readSignins and readAccounts read the contracts' examples", () => {

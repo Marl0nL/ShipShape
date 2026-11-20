@@ -27,7 +27,7 @@ COMMANDS = (
     "reboot", "attention", "pins", "ssh", "logs", "ca", "trust", "untrust", "net", "ui",
     "destroy", "resize", "snapshot", "image", "overlay", "put", "inbox", "migrate", "service",
     "unlock", "vault", "appliance", "backup", "self-update", "about", "machine-bundle", "keys",
-    "machine-setup", "pair", "machine-pair", "looks",
+    "machine-setup", "pair", "machine-pair", "looks", "defaults",
 )  # fmt: skip
 
 # Modules whose commands live outside commands.py; each has add_parsers(sub, add)
@@ -38,7 +38,8 @@ EXTRA_COMMAND_MODULES = ("fleetledger.lifecycle", "fleetledger.access", "fleetle
                          "fleetledger.selfupdate", "fleetledger.toolkitcmd",
                          "fleetledger.about", "fleetledger.machinebundle",
                          "fleetledger.loginkeys", "fleetledger.machinesetup",
-                         "fleetledger.paircmd", "fleetledger.lookscmd")
+                         "fleetledger.paircmd", "fleetledger.lookscmd",
+                         "fleetledger.newdefaults")
 
 
 @dataclass
@@ -416,6 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=("ls", "add", "remove"))
     p.add_argument("rest", nargs="*", metavar="SHIP|all ID")
     p.add_argument("--tag", help="every Ship with this tag (then give only tool ids)")
+    p.add_argument("--json", action="store_true", help="ls: print JSON")
 
     p = _add(sub, "update", "bring Ships to this checkout's tooling and pins",
              "Pack ship/ and versions.toml from this checkout into a tooling bundle,\n"

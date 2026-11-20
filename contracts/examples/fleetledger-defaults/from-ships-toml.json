@@ -1,0 +1,23 @@
+{
+  "schema": "shipshape.fleetledger-defaults/1",
+  "driver": "proxmox",
+  "image": "26.04-20261102-3f9a1c2e",
+  "tags": [],
+  "size": {
+    "cores": 8,
+    "memory_mb": 16384,
+    "disk_gb": 80
+  },
+  "mode": "bypassPermissions",
+  "allow_bypass": true,
+  "tools": [
+    "gh-axi",
+    "tasks-axi",
+    "examplekit/example-cli"
+  ],
+  "tools_from": "defaults",
+  "profiles": [
+    "orchestrator"
+  ],
+  "timezone": "UTC"
+}

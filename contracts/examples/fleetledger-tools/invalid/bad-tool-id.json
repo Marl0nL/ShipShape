@@ -1,0 +1,18 @@
+{
+  "schema": "shipshape.fleetledger-tools/1",
+  "tools": [
+    {
+      "id": "GH axi",
+      "kind": "npm",
+      "description": "GitHub CLI for agents.",
+      "default": true,
+      "needs": [
+        "github"
+      ],
+      "toolkit": null,
+      "only_tags": null
+    }
+  ],
+  "profiles": [],
+  "broken": []
+}

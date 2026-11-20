@@ -1,0 +1,13 @@
+{
+  "schema": "shipshape.fleetledger-images/1",
+  "pinned": "stock",
+  "images": [],
+  "drivers": [
+    {
+      "id": "manual",
+      "images": [
+        "stock"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-defaults.schema.json",
+  "title": "What a new Ship gets (ship-fleet defaults --json, version 1)",
+  "description": "Printed on stdout by `ship-fleet defaults --json` on the FleetLedger computer: what `ship-fleet new` uses for each option it is not given, from ships.toml [defaults] and that computer's time zone. Read from ships.toml, the checkout's catalogue and the computer's time zone only: it asks no Ship. The choices themselves are `tools ls --json` and `image ls --json`. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "driver",
+    "image",
+    "tags",
+    "size",
+    "mode",
+    "allow_bypass",
+    "tools",
+    "tools_from",
+    "profiles",
+    "timezone"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shipshape.fleetledger-defaults/1"
+    },
+    "driver": {
+      "enum": [
+        "manual",
+        "proxmox"
+      ],
+      "description": "Without --driver (defaults.driver; manual when unset)."
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^(stock|[a-z0-9][a-z0-9.-]{0,62})$",
+      "description": "Without --image: the pinned image (defaults.image), or stock."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+      },
+      "uniqueItems": true,
+      "description": "Without --tag (defaults.tags)."
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cores",
+        "memory_mb",
+        "disk_gb"
+      ],
+      "description": "Without --cores, --memory-mb, --disk-gb: defaults.size, each left out there FleetLedger's own (4, 8192, 40).",
+      "properties": {
+        "cores": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "memory_mb": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 262144
+        },
+        "disk_gb": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 4096
+        }
+      }
+    },
+    "mode": {
+      "enum": [
+        "default",
+        "acceptEdits",
+        "plan",
+        "auto",
+        "dontAsk",
+        "bypassPermissions"
+      ],
+      "description": "Claude Code's default permission mode without --mode: defaults.claude.default_mode, else the Ship's own (auto)."
+    },
+    "allow_bypass": {
+      "type": "boolean",
+      "description": "bypassPermissions is allowed without --allow-bypass (defaults.claude.allow_bypass; only new's own --mode bypassPermissions implies it)."
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "uniqueItems": true,
+      "description": "The tools it gets without --tools and --no-default-tools: --tools adds to these, --no-default-tools starts from none."
+    },
+    "tools_from": {
+      "enum": [
+        "defaults",
+        "catalogue"
+      ],
+      "description": "Where those come from: ships.toml defaults.tools, or the catalogue's defaults (tools ls --json's default)."
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "uniqueItems": true,
+      "description": "Without --profile (defaults.profiles)."
+    },
+    "timezone": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9_+-]{0,40}(/[A-Za-z0-9_+-]{1,40}){0,2}$",
+      "description": "Without --timezone: the FleetLedger computer's own (TZ, /etc/localtime, /etc/timezone, else UTC), an IANA name."
+    }
+  }
+}
