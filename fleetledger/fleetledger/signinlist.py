@@ -59,6 +59,10 @@ TIMED_OUT = "The last sign-in attempt timed out."
 FLOW_WAITING = ("link", "code", "live-offered", "live")
 
 
+# A row's states with something signed in to sign out of (the Sign out button's rows).
+SIGNED_IN_STATES = ("ok", "expiring", "wrong account", "scopes differ")
+
+
 @dataclass(frozen=True)
 class Row:
     ship: str
@@ -92,7 +96,7 @@ class Row:
 
     @property
     def signed_in(self) -> bool:
-        return self.state in ("ok", "expiring", "wrong account", "scopes differ")
+        return self.state in SIGNED_IN_STATES
 
     @property
     def needs_action(self) -> bool:

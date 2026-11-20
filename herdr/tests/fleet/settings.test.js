@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 import { BY_STATE, Fleet } from "../../mods/fleet/model.js";
-import { FIELDS, GROUPS, HELD, asOpened, assignment, current, olderHint, openedAs, settingsGate, settingsJob, settingsView, signinChoices, toggleScope } from "../../mods/fleet/settings.js";
+import { ASKED, FIELDS, GROUPS, asOpened, assignment, current, olderHint, openedAs, settingsGate, settingsJob, settingsView, signinChoices, toggleScope } from "../../mods/fleet/settings.js";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const example = (kind, name) => JSON.parse(readFileSync(join(ROOT, "contracts", "examples", kind, name), "utf8"));
@@ -98,11 +98,11 @@ test("the view shows what the Ship last reported, grouped as the web tab", async
     wake_text: REPORTED.settings.wake.text,
   });
   assert.equal(v.ssh.current, "any");
-  assert.match(v.ssh.held, /Not changed here/);
+  assert.match(v.ssh.note, /asks you to type yes in the terminal/);
   assert.deepEqual(v.tags, ["work"]);
   assert.deepEqual(v.scopes, { known: ["workflow"], other: [] });
   assert.deepEqual(v.signins, { rows: [{ id: "claude", on: true }, { id: "gcloud", on: false }, { id: "github", on: true }] });
-  assert.match(v.signinsHeld, /signs the Ship out/);
+  assert.match(v.signinsNote, /signs the Ship out of it: ship-fleet asks you to type yes/);
 });
 
 test("a Ship on older tooling shows (unchanged), with what its claude block says", async () => {
@@ -195,7 +195,7 @@ test("tags: those added and taken away, as ship-fleet tag takes them", async () 
   assert.match(settingsJob(st, y, opened(st, y, { tags: ["work"] })).errors[0], /tag named y/);
 });
 
-test("sign-ins: one off can be turned on; turning one off is held back", async () => {
+test("sign-ins: one off can be turned on, one on turned off, in one signins line", async () => {
   const { st, ship } = await readFleet();
   const s = ship("ship-01");
   const plan = settingsJob(st, s, opened(st, s, { signins_on: ["gcloud", "claude"] }));
@@ -203,8 +203,15 @@ test("sign-ins: one off can be turned on; turning one off is held back", async (
   assert.equal(plan.job.remote, "'ship-fleet' 'signins' 'ship-01' '--on' 'gcloud'");
   assert.equal(plan.changes, 1);
   assert.match(settingsJob(st, s, opened(st, s, { signins_on: ["nosuch"] })).errors[0], /Not a sign-in FleetLedger offers: nosuch/);
-  assert.ok(HELD.has("signins-off"));
-  assert.match(settingsJob(st, s, opened(st, s, { signins_off: ["github"] })).errors[0], /signs the Ship out/);
+  // Turned off: --off, which ship-fleet asks about in the terminal; one off already is no change.
+  const off = settingsJob(st, s, opened(st, s, { signins_off: ["github", "gcloud"] }));
+  assert.equal(off.job.remote, "'ship-fleet' 'signins' 'ship-01' '--off' 'github'");
+  assert.equal(off.changes, 1);
+  const both = settingsJob(st, s, opened(st, s, { signins_on: ["gcloud"], signins_off: ["github"] }));
+  assert.deepEqual(wordsOf(both.job.remote), ["ship-fleet", "signins", "ship-01", "--on", "gcloud", "--off", "github"]);
+  assert.match(settingsJob(st, s, opened(st, s, { signins_on: ["github"], signins_off: ["github"] })).errors[0], /Turned on and off at once: github/);
+  assert.match(settingsJob(st, s, opened(st, s, { signins_off: ["nosuch"] })).errors[0], /Not a sign-in FleetLedger offers: nosuch/);
+  assert.deepEqual(settingsJob(st, s, opened(st, s, { signins_off: ["gcloud"] })), { errors: [], changes: 0 });
   // Not read yet, or not readable: said, and nothing offered.
   assert.deepEqual(signinChoices({ signins: { "ship-01": { loading: true } }, accounts: st.accounts }, "ship-01"), { why: "reading its sign-ins…" });
   assert.deepEqual(signinChoices({ signins: { "ship-01": { error: "ship-fleet signins: no" } }, accounts: st.accounts }, "ship-01"), { why: "ship-fleet signins: no" });
@@ -224,16 +231,16 @@ test("GitHub scopes go in the set line, and only when they changed", async () =>
   assert.equal(settingsJob(st, other, opened(st, other, { github_scopes: ["workflow"] })).job.remote, "'ship-fleet' 'set' 'ship-01' 'github_scopes=workflow'");
 });
 
-test("SSH on the overlay only is shown and held back, never sent", async () => {
+test("SSH on the overlay only goes in the set line, and ship-fleet asks about it in the terminal", async () => {
   const { st, ship } = await readFleet();
   const s = ship("ship-01");
-  assert.ok(HELD.has("ssh_listen"));
   assert.equal(assignment(s, "ssh_listen", "overlay"), "ssh_listen=overlay");
   const plan = settingsJob(st, s, opened(st, s, { values: { ssh_listen: "overlay", sudo: "true" } }));
-  assert.equal(plan.job, undefined);
-  assert.match(plan.errors[0], /^SSH listens: Not changed here/);
+  assert.deepEqual(wordsOf(plan.job.remote), ["ship-fleet", "set", "ship-01", "sudo=true", "ssh_listen=overlay"]);
+  assert.match(ASKED.ssh_listen, /asks you to type yes in the terminal/);
+  assert.throws(() => assignment(s, "ssh_listen", "lan"), /not one of the choices/);
   // Its own value again is no change.
-  assert.ok(settingsJob(st, s, opened(st, s, { values: { ssh_listen: "any", sudo: "true" } })).job);
+  assert.deepEqual(wordsOf(settingsJob(st, s, opened(st, s, { values: { ssh_listen: "any", sudo: "true" } })).job.remote), ["ship-fleet", "set", "ship-01", "sudo=true"]);
 });
 
 test("everything at once: one job, set then tag then signins, each only when it changes something", async () => {

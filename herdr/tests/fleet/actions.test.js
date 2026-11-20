@@ -15,6 +15,7 @@ import {
   LOST_MS,
   REFRESHER_MS,
   actionGate,
+  alertMenu,
   checkRepo,
   checkSize,
   checkFirstAgent,
@@ -160,6 +161,10 @@ test("the panel never sends a flag that skips a question or a check", () => {
     assert.throws(() => job(WHERE, "x", [["destroy", "ship-01", flag]]), /never skips/, flag);
     assert.throws(() => job(WHERE, "x", [["update", "ship-01"], ["reboot", "ship-01", `${flag}=1`]]), /never skips/, flag);
   }
+  // ship-fleet's parser takes a flag cut short, so a cut one is refused too.
+  for (const cut of ["--ye", "--forc", "--for", "--revoke", "--std", "--co"]) assert.throws(() => job(WHERE, "x", [["stop", "ship-01", cut]]), /never skips/, cut);
+  // Flags that only start the same way are not cut ones.
+  for (const fine of ["--fresh", "--off", "--on", "--only", "--restart", "--cores"]) assert.ok(job(WHERE, "x", [["agent", "restart", "ship-01", "main", fine]]), fine);
 });
 
 test("each Ship action's exact command", () => {
@@ -168,6 +173,9 @@ test("each Ship action's exact command", () => {
   assert.deepEqual(remote("signin", "gcloud-adc"), ["ship-fleet", "login", "ship-01", "gcloud-adc"]);
   assert.deepEqual(remote("update"), ["ship-fleet", "update", "ship-01"]);
   assert.deepEqual(remote("reboot"), ["ship-fleet", "reboot", "ship-01"]);
+  assert.deepEqual(remote("start"), ["ship-fleet", "start", "ship-01"]);
+  assert.deepEqual(remote("stop"), ["ship-fleet", "stop", "ship-01"]);
+  assert.deepEqual(remote("signout", "github"), ["ship-fleet", "logout", "ship-01", "github"]);
   assert.deepEqual(remote("snapshots"), ["ship-fleet", "snapshot", "ls", "ship-01"]);
   assert.deepEqual(remote("snapshot"), ["ship-fleet", "snapshot", "take", "ship-01"]);
   assert.deepEqual(remote("rollback", "before-upgrade"), ["ship-fleet", "snapshot", "rollback", "ship-01", "before-upgrade"]);
@@ -492,11 +500,11 @@ test("which Ship actions each documented state offers", async () => {
   const ship = (name) => fleet.state.ships.find((s) => s.name === name);
   for (const s of fleet.state.ships) await fleet.loadSignins(s.name);
   // ship-01, needs-sign-in and answering: everything, a sign-in per service it uses
-  assert.deepEqual(offered(shipMenu(fleet.state, ship("ship-01"))), ["signin:claude", "update", "reboot", "snapshots", "snapshot", "destroy"]);
-  assert.deepEqual(offered(shipMenu(fleet.state, ship("ship-01"), "before-upgrade")), ["signin:claude", "update", "reboot", "snapshots", "snapshot", "rollback", "destroy"]);
-  // ship-02, unreachable: only through the hypervisor
+  assert.deepEqual(offered(shipMenu(fleet.state, ship("ship-01"))), ["signin:claude", "signout:claude", "update", "reboot", "start", "stop", "snapshots", "snapshot", "destroy"]);
+  assert.deepEqual(offered(shipMenu(fleet.state, ship("ship-01"), "before-upgrade")), ["signin:claude", "signout:claude", "update", "reboot", "start", "stop", "snapshots", "snapshot", "rollback", "destroy"]);
+  // ship-02, unreachable: only through the hypervisor (Start brings back one that is off)
   const two = shipMenu(fleet.state, ship("ship-02"), "before-upgrade");
-  assert.deepEqual(offered(two), ["snapshots", "snapshot", "rollback", "destroy"]);
+  assert.deepEqual(offered(two), ["start", "stop", "snapshots", "snapshot", "rollback", "destroy"]);
   assert.match(two.items.find((i) => i.id === "signin").why, /unreachable/);
   // ship-04, provisioning: let it finish, or destroy it
   assert.deepEqual(offered(shipMenu(fleet.state, ship("ship-04"))), ["finish", "destroy"]);
@@ -507,13 +515,28 @@ test("which Ship actions each documented state offers", async () => {
     assert.equal(ids.includes("signin"), ["ready", "running", "needs-sign-in", "unknown"].includes(state), state);
     assert.equal(ids.includes("finish"), ["provisioning", "not-enrolled"].includes(state), state);
     assert.ok(ids.includes("destroy"), state);
+    assert.equal(ids.includes("signout"), ids.includes("signin"), state); // both need it to answer
+    for (const id of ["start", "stop", "resize"]) assert.equal(ids.includes(id), ids.includes("snapshot"), `${state} ${id}`); // the hypervisor's
   }
   const notEnrolled = { name: "ship-09", tags: [], state: "not-enrolled", problem: null };
   assert.deepEqual(offered(shipMenu(fleet.state, notEnrolled)), ["finish", "destroy"]);
   assert.ok(!shipMenu(fleet.state, notEnrolled).items.some((i) => i.id.startsWith("signin") && i.job));
   const future = shipMenu(fleet.state, { name: "ship-09", tags: [], state: "sailing", problem: null });
   assert.match(future.why, /new to this panel/);
-  assert.deepEqual(offered(future), ["snapshots", "snapshot", "destroy"]);
+  assert.deepEqual(offered(future), ["start", "stop", "snapshots", "snapshot", "destroy"]);
+});
+
+test("start and stop: through the hypervisor; stop says ship-fleet asks in the terminal", async () => {
+  const { fleet } = await readFleet();
+  const one = fleet.state.ships.find((s) => s.name === "ship-01");
+  const items = shipMenu(fleet.state, one).items;
+  const start = items.find((i) => i.id === "start");
+  const stop = items.find((i) => i.id === "stop");
+  assert.deepEqual(shWords(start.job.remote), ["ship-fleet", "start", "ship-01"]);
+  assert.deepEqual(shWords(stop.job.remote), ["ship-fleet", "stop", "ship-01"]);
+  assert.equal(stop.job.title, "stop ship-01");
+  assert.match(stop.note, /asks you to type yes in the terminal/);
+  assert.doesNotMatch(start.note, /asks/);
 });
 
 test("rollback needs a snapshot's name, and refuses one ship-fleet would", async () => {
@@ -542,6 +565,18 @@ test("sign-ins: one per service the Ship uses, none it has off, none while it do
   assert.deepEqual(signins.map((i) => [i.id, Boolean(i.job)]), [["signin:claude", true], ["signin:gcloud-adc", true], ["signin:github", false]]);
   assert.match(signins[2].why, /has not answered/);
   assert.deepEqual(shWords(signins[1].job.remote), ["ship-fleet", "login", "ship-01", "gcloud-adc"]);
+  // Sign out: of each one signed in that answers (claude), not one off, missing or not answering.
+  const signouts = m.items.filter((i) => i.id.startsWith("signout"));
+  assert.deepEqual(signouts.map((i) => i.id), ["signout:claude", "signout:gcloud-adc"]);
+  const missing = await readFleet({ answers: { signins: ok(rows.map((r) => (r.service === "gcloud_adc" ? { ...r, state: "missing" } : r))) } });
+  await missing.fleet.loadSignins("ship-01");
+  const after = shipMenu(missing.fleet.state, missing.fleet.state.ships.find((s) => s.name === "ship-01")).items.filter((i) => i.id.startsWith("signout"));
+  assert.deepEqual(after.map((i) => i.id), ["signout:claude"]);
+  assert.deepEqual(shWords(after[0].job.remote), ["ship-fleet", "logout", "ship-01", "claude"]);
+  assert.equal(after[0].job.title, "sign out claude ship-01");
+  assert.match(after[0].note, /asks you to type yes in the terminal/);
+  // An alert's Sign in… lists sign-ins only, not sign-outs.
+  assert.ok(alertMenu(fleet.state, fleet.state.ships.find((s) => s.name === "ship-01"), { only: ["signin"] }).items.every((i) => i.id.startsWith("signin")));
   const failed = await readFleet({ answers: { signins: { code: 1, stdout: "", stderr: "no such Ship\n" } } });
   await failed.fleet.loadSignins("ship-01");
   assert.match(shipMenu(failed.fleet.state, failed.fleet.state.ships[0]).items.find((i) => i.id === "signin").why, /no such Ship/);
@@ -612,7 +647,7 @@ test("the web UI opens with the local opener, no ssh, and only an https address"
 test("no source file of the mod holds a flag that skips a question", () => {
   const dir = join(ROOT, "herdr", "mods", "fleet");
   const files = readdirSync(dir).filter((f) => f.endsWith(".js"));
-  assert.deepEqual(files.sort(), ["main.js", "model.js", "settings.js"]);
+  assert.deepEqual(files.sort(), ["agents.js", "main.js", "model.js", "settings.js"]);
   for (const f of files) {
     const code = readFileSync(join(dir, f), "utf8");
     for (const flag of SKIPPING.filter((x) => x !== "-y")) assert.ok(!code.includes(flag), `${f}: ${flag}`);
