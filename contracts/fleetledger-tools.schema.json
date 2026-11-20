@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.shipshape.invalid/fleetledger-tools.schema.json",
+  "title": "Catalogue tools and profiles (ship-fleet tools ls --json, version 1)",
+  "description": "Printed on stdout by `ship-fleet tools ls --json` on the FleetLedger computer: every tool and profile `ship-fleet new --tools/--profile` and `tools add` take, the repo's catalogue (ship/tools/, ship/profiles/) first, then your toolkits' (contracts/toolkit.md), and the toolkits that did not load. Read from the checkout and ships.toml only: it asks no Ship. See contracts/ship-fleet.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "tools",
+    "profiles",
+    "broken"
+  ],
+  "properties": {
+    "schema": {
+      "const": "shipshape.fleetledger-tools/1"
+    },
+    "tools": {
+      "type": "array",
+      "description": "Every tool, in the order `tools ls` prints them: the repo's catalogue by id, then each toolkit's, by id.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "description",
+          "default",
+          "needs",
+          "toolkit",
+          "only_tags"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/itemId"
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The recipe's kind (tool-recipe.schema.json): npm, apt, script, claude-plugin, skill-dir, mcp. Show one you do not know as it is."
+          },
+          "description": {
+            "type": "string"
+          },
+          "default": {
+            "type": "boolean",
+            "description": "The catalogue marks it default: a new Ship gets it unless ships.toml defaults.tools says otherwise (what a new Ship gets is `ship-fleet defaults --json`'s tools). Never true for a toolkit's tool."
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/signinId"
+            },
+            "description": "The sign-ins it needs to work."
+          },
+          "toolkit": {
+            "$ref": "#/$defs/toolkit"
+          },
+          "only_tags": {
+            "$ref": "#/$defs/onlyTags"
+          }
+        }
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "description": "Every profile, in the same order as the tools.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "description",
+          "tools",
+          "toolkit",
+          "only_tags"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/itemId"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/itemId"
+            },
+            "description": "The tools it installs."
+          },
+          "toolkit": {
+            "$ref": "#/$defs/toolkit"
+          },
+          "only_tags": {
+            "$ref": "#/$defs/onlyTags"
+          }
+        }
+      }
+    },
+    "broken": {
+      "type": "array",
+      "description": "Toolkits in ships.toml that did not load, by id: their tools and profiles are not listed (`ship-fleet toolkit check ID` says more).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "toolkit",
+          "why"
+        ],
+        "properties": {
+          "toolkit": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          },
+          "why": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "itemId": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]{0,31}/)?[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "A catalogue id, or toolkit/id for one of your toolkits'."
+    },
+    "toolkit": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "The toolkit it comes from; null for the repo's catalogue."
+    },
+    "onlyTags": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+      },
+      "uniqueItems": true,
+      "description": "Its toolkit's only_tags (ships.toml [toolkit.<id>]): it goes only to Ships with one of these tags, and `new` and `tools add` refuse it elsewhere. null: any Ship (always, for the repo's catalogue)."
+    },
+    "signinId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "A sign-in id, as FleetLedger's sign-in registry names it (the built-ins: claude, gcloud, github)."
+    }
+  }
+}

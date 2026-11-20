@@ -46,6 +46,7 @@ only over SSH, as `contracts/ship-runtime.md` describes.
 | `fleetledger/concierge/`, `ship/signins/*.toml` | W9 | the login concierge: terminal engine, providers, account checks, audit log |
 | `fleetledger/web/` | phase 2 | the local web UI, `ship-fleet ui` ([docs/web-ui.md](../docs/web-ui.md)); `web/control.py`, its private control socket (`ship-fleet ui link --local`) |
 | `fleetledger/appliance.py`, `backup.py`, `selfupdate.py` | | FleetLedger on its own VM: `ship-fleet appliance seed\|show\|forget` (the cloud-init seed, `[fleet] self` and its guard), `backup now\|schedule\|unschedule` (sealed under the vault; restored with `migrate import`), `self-update` ([fleetledger-vm.md](../docs/runbooks/fleetledger-vm.md)) |
+| `fleetledger/newdefaults.py` | | `ship-fleet defaults [--json]`: what a new Ship gets for each option `new` leaves out; read-only, its JSON in [contracts/ship-fleet.md](../contracts/ship-fleet.md) beside `tools ls --json` and `image ls --json` |
 | `fleetledger/about.py` | | `ship-fleet about [--check] [--json]`: FleetLedger itself (version, newer on origin, addresses, service, vault, backups, which copy, the update command); read-only, its JSON in [contracts/ship-fleet.md](../contracts/ship-fleet.md) |
 | `fleetledger/service.py` | | FleetLedger as a systemd user service: `ship-fleet service install\|status\|restart\|uninstall` ([fleetledger-service.md](../docs/runbooks/fleetledger-service.md)) |
 | `fleetledger/cli.py`, `commands.py`, `scan.py` | W10 | the `ship-fleet` commands; LAN discovery and host-key fetching for `scan` and `adopt` |
@@ -354,7 +355,8 @@ covers the core ones; the rest are documented with their feature: `setup`,
 | `set NAME KEY=VALUE...` | `ship-ctl set` with short keys (`remote_control=off`, `default_mode=...`). The inventory is kept in step. `default_mode=bypassPermissions` also sets `allow_bypass=true`. A new `default_mode` reaches agents started afterwards; `agent restart` switches running ones. |
 | `agent restart NAME AGENT...\|--all` | restarts running agents in place in a new mode (`--mode`, else the mode each starts in), continuing their conversations; below, under day-2 operations |
 | `tag NAME +work -personal` | changes tags in the inventory and on the Ship (`--local` for the inventory only); `none` clears them |
-| `tools ls`, `tools add/remove NAME ID...` | the catalogue, and `ship-ctl tools add/remove` |
+| `tools ls`, `tools add/remove NAME ID...` | the catalogue (`--json` too: [contracts/ship-fleet.md](../contracts/ship-fleet.md)), and `ship-ctl tools add/remove` |
+| `defaults` | what `new` uses for each option it is not given: `ships.toml` `[defaults]` and this computer's time zone (`--json` too) |
 | `toolkit add ID PATH`, `toolkit ls\|check\|show` | your own toolkits: folders of recipes, profiles, sign-ins and skills, checked and listed as `<toolkit>/<id>` beside the catalogue (`contracts/toolkit.md`); `check PATH` also checks a folder not added yet |
 | `toolkit push ID [--tag T] [--force]` | sends the toolkit, packed on its own, to every Ship its `only_tags` allow (`ship-ctl toolkit apply`); `update`, `tools add` and a new Ship's enrolment send it too, and Ships it may not go to never get it |
 | `ssh NAME [--as agent\|owner\|fleet] [-- CMD]` | a shell as agent with your own keys (default), as your own login with sudo (`owner`), or as fleet with the admin key; pinned host key either way |

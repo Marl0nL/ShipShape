@@ -1,0 +1,31 @@
+{
+  "schema": "shipshape.fleetledger-images/1",
+  "pinned": "stock",
+  "images": [
+    {
+      "id": "stock",
+      "ubuntu": "20261016",
+      "tooling": "0.1.0",
+      "dirty": false,
+      "recipes": [
+        "chrome-devtools-axi"
+      ],
+      "published": {
+        "proxmox": {
+          "template_vmid": 9181
+        }
+      },
+      "ships": 2,
+      "file": true,
+      "pinned": false
+    }
+  ],
+  "drivers": [
+    {
+      "id": "manual",
+      "images": [
+        "stock"
+      ]
+    }
+  ]
+}

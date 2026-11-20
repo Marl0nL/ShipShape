@@ -35,6 +35,9 @@ An optional field added keeps the version; anything else bumps it, as `README.md
 | `machine-pair` (the pairing key's forced command; always JSON) | one document | `shipshape.machine-pair/1` |
 | `keys ls --json` | a list, one per key line | `shipshape.fleetledger-key/1` |
 | `looks show --json` | one document | `shipshape.fleetledger-looks/1` |
+| `tools ls --json` | one document | `shipshape.fleetledger-tools/1` |
+| `image ls --json` | one document | `shipshape.fleetledger-images/1` |
+| `defaults --json` | one document | `shipshape.fleetledger-defaults/1` |
 
 `--offline` asks no Ship: each Ship's last fetched status. Every `--offline` read, and
 `about`, `doctor` (with `--json` or `--next`), `signins --accounts`, `keys ls`, `looks show`, `machine-bundle` (which then signs
@@ -246,6 +249,48 @@ never a credential. It is written as every other change (locked, validated, mode
 
 It only reads `ships.toml`: it reaches no Ship, and the listing runs while the vault
 is locked (a change does not). Tag accounts never reach a Ship (`settings.md`).
+
+## A new Ship's choices: `tools ls --json`, `image ls --json`, `defaults --json`
+
+What `ship-fleet new` can be given, and what it uses for each option it is not given,
+for a program that draws its own New Ship form (the Herdr Fleet panel). Three reads,
+each one document: the first two list what there is to choose from (and serve a
+Ship's tools and images later as well), the third what `new` picks when nothing is
+chosen. Each reads the checkout's catalogue and `ships.toml` (and `defaults` this
+computer's time zone) and nothing else: none reaches a Ship or a hypervisor, and none
+reads a secret. Like most commands they wait for the vault to be unlocked, as `new`
+does, and refuse on a copy on standby or retired. The text forms (`tools ls`, `image
+ls`, `defaults`) are for people, as ever.
+
+**`tools ls --json`**: schema `fleetledger-tools.schema.json`; examples in
+`examples/fleetledger-tools/`.
+
+| Field | What it is |
+|---|---|
+| `tools` | Every tool `new --tools` and `tools add` take, in the order `tools ls` prints them: the repo's catalogue (`ship/tools/`) by id, then each toolkit's as `toolkit/id`. Each: `id`, `kind`, `description`, `needs` (the sign-ins it needs), `default` (the catalogue gives it to a new Ship unless `ships.toml` `defaults.tools` says otherwise; never for a toolkit's), `toolkit` (null for the repo's) and `only_tags` (its toolkit's: `new` and `tools add` refuse it on a Ship with none of them; null: any Ship). |
+| `profiles` | Every profile `new --profile` takes, in the same order: `id`, `description`, `tools` (what it installs), `toolkit`, `only_tags`. |
+| `broken` | The toolkits in `ships.toml` that did not load (`toolkit`, `why`): their tools and profiles are not listed. When `ships.toml` itself cannot be read, the repo's catalogue is still listed and stderr says why no toolkit is. |
+
+**`image ls --json`**: schema `fleetledger-images.schema.json`; examples in
+`examples/fleetledger-images/`.
+
+| Field | What it is |
+|---|---|
+| `pinned` | What a new Ship starts from without `--image` (`ship-fleet image use`): an image id, or `stock` (the driver's own template). |
+| `images` | Every baked image, by id (`contracts/image.md`): `id`, `ubuntu` (the Ubuntu build), `tooling`, `dirty`, `recipes` (baked in), `published` (per driver, where it is ready to clone from), `ships` (how many were made from it), `file` (its qcow2 is kept here), `pinned`. |
+| `drivers` | The drivers a new Ship can be made with here, `manual` always and then `proxmox` once `ships.toml` has `[drivers.proxmox]`, each with the `images` `new --driver D --image` takes on it: `stock` first, then each image published to it, by id. |
+
+**`defaults --json`**: schema `fleetledger-defaults.schema.json`; examples in
+`examples/fleetledger-defaults/`.
+
+| Field | What it is |
+|---|---|
+| `driver`, `image`, `tags` | Without `--driver`, `--image`, `--tag`: `defaults.driver` (else `manual`), the pinned image, `defaults.tags`. |
+| `size` | Without `--cores`, `--memory-mb`, `--disk-gb`: `defaults.size`, each one it leaves out FleetLedger's own (4, 8192, 40). |
+| `mode`, `allow_bypass` | Without `--mode` and `--allow-bypass`: `defaults.claude`'s `default_mode` (else the Ship's own, `auto`), and whether `bypassPermissions` is allowed. |
+| `tools`, `tools_from` | The tools a new Ship gets without `--tools` and `--no-default-tools` (`--tools` adds to these; `--no-default-tools` starts from none), and where they come from: `defaults` (`ships.toml` `defaults.tools`) or `catalogue` (each tool `tools ls --json` marks `default`). |
+| `profiles` | Without `--profile`: `defaults.profiles`. |
+| `timezone` | Without `--timezone`: this computer's own zone (`TZ`, `/etc/localtime`, `/etc/timezone`, else `UTC`). |
 
 ## `ship-fleet machine-bundle NAME`
 

@@ -342,6 +342,37 @@ def listing(inventory: Inventory) -> list[dict[str, Any]]:
     } for image_id, entry in sorted(inventory.images.items())]
 
 
+DRIVERS = ("manual", "proxmox")  # what ship-fleet new --driver takes
+SCHEMA = "shipshape.fleetledger-images/1"
+
+
+def drivers_set_up(inventory: Inventory | None) -> list[str]:
+    """The drivers a new Ship can be made with here: manual always, proxmox once
+    ships.toml has [drivers.proxmox]."""
+    return [d for d in DRIVERS
+            if d == "manual" or (inventory is not None and inventory.driver_config(d))]
+
+
+def for_driver(inventory: Inventory | None, driver_id: str) -> list[str]:
+    """The base images a Ship on this driver can start from (as `new` checks): the stock
+    template, then each image published there, by id."""
+    return [STOCK_IMAGE] + sorted(
+        i for i, e in (inventory.images.items() if inventory is not None else [])
+        if driver_id in (e.get("published") or {}))
+
+
+def document(inventory: Inventory) -> dict[str, Any]:
+    """`image ls --json` (contracts/fleetledger-images.schema.json): the listing, the image
+    new Ships start from, and each driver set up here with the images it can start from."""
+    return {
+        "schema": SCHEMA,
+        "pinned": inventory.pinned_image,
+        "images": listing(inventory),
+        "drivers": [{"id": d, "images": for_driver(inventory, d)}
+                    for d in drivers_set_up(inventory)],
+    }
+
+
 def remove_local(inventory: Inventory, image_id: str) -> None:
     entry = inventory.image(image_id)
     if "file" in entry:

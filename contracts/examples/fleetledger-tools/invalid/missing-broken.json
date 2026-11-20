@@ -1,0 +1,45 @@
+{
+  "schema": "shipshape.fleetledger-tools/1",
+  "tools": [
+    {
+      "id": "gh-axi",
+      "kind": "npm",
+      "description": "GitHub CLI for agents.",
+      "default": true,
+      "needs": [
+        "github"
+      ],
+      "toolkit": null,
+      "only_tags": null
+    },
+    {
+      "id": "ship-axi",
+      "kind": "script",
+      "description": "Tells agents about their Ship.",
+      "default": true,
+      "needs": [],
+      "toolkit": null,
+      "only_tags": null
+    },
+    {
+      "id": "tasks-axi",
+      "kind": "npm",
+      "description": "Task backlog tool.",
+      "default": false,
+      "needs": [],
+      "toolkit": null,
+      "only_tags": null
+    }
+  ],
+  "profiles": [
+    {
+      "id": "orchestrator",
+      "description": "An orchestration repo and its tools.",
+      "tools": [
+        "tasks-axi"
+      ],
+      "toolkit": null,
+      "only_tags": null
+    }
+  ]
+}
