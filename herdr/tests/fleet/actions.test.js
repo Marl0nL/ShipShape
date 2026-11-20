@@ -17,8 +17,12 @@ import {
   actionGate,
   checkRepo,
   checkSize,
+  checkFirstAgent,
+  checkHost,
   checkSnapshot,
   checkTag,
+  checkTimezone,
+  checkVmid,
   fleetLedgerMenu,
   job,
   jobPlan,
@@ -191,7 +195,7 @@ test("New Ship: one line, new then the Claude sign-in, every value quoted", asyn
   const form = { name: "ship-07", tag: "work", repo: "example-user/agent-setup", cores: "8", memory_mb: "16384", disk_gb: "80", signins: null };
   const plan = newShipJob(fleet.state, form);
   assert.deepEqual(plan.errors, []);
-  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--tag' 'work' '--repo' 'example-user/agent-setup' '--cores' '8' '--memory-mb' '16384' '--disk-gb' '80' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--tag' 'work' '--repo' 'example-user/agent-setup' '--cores' '8' '--memory-mb' '16384' '--disk-gb' '80' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
   assert.deepEqual(shWords(plan.job.shown), plan.job.argv);
   assert.equal(plan.job.argv[1], "-t");
   assert.equal(plan.job.ship, "ship-07");
@@ -201,7 +205,7 @@ test("New Ship: one line, new then the Claude sign-in, every value quoted", asyn
 test("New Ship: only a name, and the defaults are FleetLedger's", async () => {
   const { fleet } = await readFleet();
   const plan = newShipJob(fleet.state, { name: "ship-07", signins: null });
-  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
 });
 
 test("New Ship: sign-ins chosen from FleetLedger's list; without Claude, no Claude sign-in", async () => {
@@ -209,13 +213,13 @@ test("New Ship: sign-ins chosen from FleetLedger's list; without Claude, no Clau
   await fleet.loadAccounts();
   assert.deepEqual(fleet.state.accounts.signins, ["claude", "gcloud", "github"]);
   let plan = newShipJob(fleet.state, { name: "ship-07", signins: ["github", "claude"] });
-  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'claude,github' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'claude,github' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
   plan = newShipJob(fleet.state, { name: "ship-07", signins: ["github"] });
-  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github'");
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--autostart' 'main:~/work'");
   plan = newShipJob(fleet.state, { name: "ship-07", signins: [] });
-  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' ''");
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--signins' '' '--autostart' 'main:~/work'");
   plan = newShipJob(fleet.state, { name: "ship-07", signins: ["claude", "gcloud", "github"] });
-  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
   plan = newShipJob(fleet.state, { name: "ship-07", signins: ["claude", "token"] });
   assert.match(plan.errors.join(" "), /Not a sign-in FleetLedger offers: token/);
 });
@@ -228,6 +232,75 @@ test("New Ship: what is wrong is said, and nothing is built", async () => {
   assert.match(bad.errors.join("\n"), /not a Ship name[\s\S]*not a tag[\s\S]*not a GitHub repository[\s\S]*cores[\s\S]*memory mb[\s\S]*sign-ins FleetLedger offers are not known/);
   assert.deepEqual(newShipJob(fleet.state, { name: "" }).errors, ["Give it a name."]);
   assert.deepEqual(newShipJob(fleet.state, { name: "ship-01" }).errors, ["ship-01 is already a Ship."]);
+});
+
+test("New Ship: several tags, chosen and typed, each checked and sent once", async () => {
+  const { fleet } = await readFleet();
+  const plan = newShipJob(fleet.state, { name: "ship-07", tags: ["work", "lab"], tag: "home, work  personal", signins: null, agent_on: false });
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--tag' 'work' '--tag' 'lab' '--tag' 'home' '--tag' 'personal' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  const bad = newShipJob(fleet.state, { name: "ship-07", tags: ["work"], tag: "home Bad!", signins: null });
+  assert.equal(bad.job, undefined);
+  assert.match(bad.errors.join("\n"), /"Bad!" is not a tag/);
+});
+
+test("New Ship: the first agent is main in ~/work, as the web form's; named, placed, in a mode, or none", async () => {
+  const { fleet } = await readFleet();
+  await fleet.loadAccounts();
+  const remote = (form) => newShipJob(fleet.state, { name: "ship-07", signins: ["github"], ...form }).job.remote;
+  assert.equal(remote({}), "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--autostart' 'main:~/work'");
+  assert.equal(remote({ agent: " lead ", folder: "/srv/work/lead", agent_mode: "plan" }), "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--autostart' 'lead:/srv/work/lead:plan'");
+  assert.equal(remote({ agent_mode: "auto" }), "'ship-fleet' 'new' 'ship-07' '--signins' 'github' '--autostart' 'main:~/work:auto'");
+  assert.equal(remote({ agent_on: false, agent: "lead" }), "'ship-fleet' 'new' 'ship-07' '--signins' 'github'");
+  // A repository is where the first agent works: `new` clones it into ~/work/NAME for it.
+  assert.equal(remote({ repo: "example-user/agent-setup" }), "'ship-fleet' 'new' 'ship-07' '--repo' 'example-user/agent-setup' '--signins' 'github' '--autostart' 'main:~/work'");
+  const alone = newShipJob(fleet.state, { name: "ship-07", repo: "example-user/agent-setup", agent_on: false });
+  assert.equal(alone.job, undefined);
+  assert.match(alone.errors[0], /A repository is for the first agent/);
+  assert.equal(checkFirstAgent("", "", ""), "main:~/work");
+  assert.equal(checkFirstAgent("agent_2", "~/a folder/x", "bypassPermissions"), "agent_2:~/a folder/x:bypassPermissions");
+  for (const [n, f, m, why] of [["Main", "", "", /not an agent name/], ["2nd", "", "", /not an agent name/], ["a:b", "", "", /not an agent name/], ["x".repeat(33), "", "", /not an agent name/], ["", "work", "", /not a folder/], ["", "~work", "", /not a folder/], ["", "~/a:b", "", /not a folder/], ["", "", "yolo", /not a mode/], ["", "", "Plan", /not a mode/]]) {
+    assert.throws(() => checkFirstAgent(n, f, m), why, `${n} ${f} ${m}`);
+  }
+});
+
+test("New Ship: every advanced option, in one line, every value quoted", async () => {
+  const { fleet } = await readFleet();
+  const form = { name: "ship-07", signins: null, agent: "lead", folder: "~/work/lead", agent_mode: "acceptEdits", github_scopes: ["write:packages", "workflow"], no_overlay: true, hosts: "ship-07.example.com, 192.0.2.7", vmid: "0120", mode: "plan", allow_bypass: true, agent_sudo: true, timezone: "America/Argentina/Buenos_Aires" };
+  const plan = newShipJob(fleet.state, form);
+  assert.deepEqual(plan.errors, []);
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'lead:~/work/lead:acceptEdits' '--github-scopes' 'workflow,write:packages' '--no-overlay' '--vmid' '120' '--host' 'ship-07.example.com' '--host' '192.0.2.7' '--mode' 'plan' '--allow-bypass' '--agent-sudo' '--timezone' 'America/Argentina/Buenos_Aires' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.deepEqual(shWords(plan.job.shown), plan.job.argv);
+  // A folder with a space still runs as one word, on both shells.
+  const spaced = newShipJob(fleet.state, { name: "ship-07", signins: null, folder: "~/my work/it's" });
+  assert.deepEqual(shWords(spaced.job.shown), spaced.job.argv);
+  assert.deepEqual(shWords(spaced.job.remote.split(" && ")[0]), ["ship-fleet", "new", "ship-07", "--autostart", "main:~/my work/it's"]);
+});
+
+test("New Ship: never the first prompt, and no flag of its own that skips a question", async () => {
+  const { fleet } = await readFleet();
+  const plan = newShipJob(fleet.state, { name: "ship-07", signins: null, prompt: "Get going.", autostart_prompt: "Get going.", yes: true, no_wait: true, force: true });
+  assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+});
+
+test("New Ship: advanced values ship-fleet would refuse are said, and nothing is built", async () => {
+  const { fleet } = await readFleet();
+  const bad = newShipJob(fleet.state, { name: "ship-07", signins: null, agent: "Lead", github_scopes: ["admin:org"], hosts: "ok.example.com -bad", vmid: "99", mode: "yolo", timezone: "europe/berlin" });
+  assert.equal(bad.job, undefined);
+  assert.equal(bad.errors.length, 6);
+  assert.match(bad.errors.join("\n"), /not an agent name[\s\S]*GitHub scope FleetLedger offers: admin:org[\s\S]*VM id[\s\S]*"-bad" is not a host[\s\S]*not a mode[\s\S]*not a time zone/);
+  assert.equal(checkVmid(""), null);
+  assert.equal(checkVmid("999999999"), "999999999");
+  for (const v of ["99", "1000000000", "1e3", "-100", "12a", "1 2"]) assert.throws(() => checkVmid(v), /VM id/, v);
+  assert.equal(checkHost(" ship-07.example.com "), "ship-07.example.com");
+  for (const h of ["-a", ".a", "a_b", "a b", "a/b", "x".repeat(254), ""]) assert.throws(() => checkHost(h), /not a host/, h);
+  // A first agent in bypassPermissions: only where the Ship allows it (ship.toml's own rule).
+  const bypass = { name: "ship-07", signins: null, agent_mode: "bypassPermissions" };
+  assert.match(newShipJob(fleet.state, bypass).errors.join(" "), /needs allow bypassPermissions/);
+  assert.match(newShipJob(fleet.state, { ...bypass, allow_bypass: true }).job.remote, /'--autostart' 'main:~\/work:bypassPermissions' .*'--allow-bypass'/);
+  assert.match(newShipJob(fleet.state, { ...bypass, mode: "bypassPermissions" }).job.remote, /'--mode' 'bypassPermissions'/);
+  assert.equal(checkTimezone(""), null);
+  for (const z of ["UTC", "Etc/GMT+5", "America/Indiana/Knox"]) assert.equal(checkTimezone(z), z);
+  for (const z of ["utc", "Europe/", "A/B/C/D", "Europe/Ber lin", "../etc"]) assert.throws(() => checkTimezone(z), /not a time zone/, z);
 });
 
 test("New Ship: the tags to choose from are the fleet's", async () => {
@@ -393,6 +466,8 @@ test("every command any menu or form can build skips no question", async () => {
     built.push(...fleetLedgerMenu(fleet.state).items);
     const plan = newShipJob(fleet.state, { name: "ship-07", tag: "work", repo: "a/b", cores: "4", memory_mb: "8192", disk_gb: "40", signins: ["claude"] });
     if (plan.job) built.push(plan);
+    const advanced = newShipJob(fleet.state, { name: "ship-07", tags: ["work", "lab"], signins: null, agent: "lead", folder: "~/work/lead", agent_mode: "bypassPermissions", github_scopes: ["workflow"], no_overlay: true, hosts: "ship-07.example.com", vmid: "120", mode: "auto", allow_bypass: true, agent_sudo: true, timezone: "UTC" });
+    if (advanced.job) built.push(advanced);
   }
   const jobs = built.filter((i) => i.job).map((i) => i.job);
   assert.ok(jobs.length > 40);

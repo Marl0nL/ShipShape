@@ -1,7 +1,8 @@
 // The Fleet panel: your Ships as FleetLedger last saw them, in a Herdr tab, and what you can do
 // with them. Every action opens a terminal tab running one ship-fleet command over ssh, shown
 // here before it runs; ship-fleet asks its own questions there. Nothing is typed into the panel
-// but a new Ship's name, tag, repository and size, a snapshot's name, and on the Machines page
+// but a new Ship's name, tags, repository and size (and under Advanced its first agent's name and
+// folder, host names, VM id and time zone), a snapshot's name, and on the Machines page
 // a machine's name, public key and scope and a device's name. Nothing secret. A computer asking
 // to be paired by code is approved in a terminal tab, where its code is typed: never here.
 // All its logic is in model.js; this file draws and hands model.js Herdr's functions.
@@ -15,7 +16,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
-import { Fleet, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { Fleet, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -85,7 +86,9 @@ function button(t, id, text, act, on = false) {
 }
 
 const mono = (t, text) => div().w_full().text_size(11).font_family("JetBrains Mono").text_color(t.muted).child(text);
-const FORM = ["name", "tag", "repo", "cores", "memory_mb", "disk_gb"];
+const FORM = ["name", "tag", "repo", "cores", "memory_mb", "disk_gb", "agent", "folder", "hosts", "vmid", "timezone"];
+/** The New Ship form as it opens: the basic part, with Advanced closed and at its defaults. */
+const NEW_FORM = () => ({ tags: [], signins: null, advanced: false, agent_on: true, agent_mode: "", github_scopes: [], no_overlay: false, mode: "", allow_bypass: false, agent_sudo: false });
 const TRUST = ["mname", "mkey", "mscope"];
 // The FleetLedger menu's key in this.menu, beside Ship names: not one a Ship can have.
 const FLEETLEDGER = ":fleetledger";
@@ -95,7 +98,7 @@ export default class FleetPanel extends View {
     this.note = null;
     this.menu = null; // the Ship whose menu is open, or FLEETLEDGER
     this.alertOpen = null; // the Needs you item whose menu is open (its key)
-    this.form = null; // the New Ship form while open: {tag, signins}
+    this.form = null; // the New Ship form while open: NEW_FORM(), what is chosen with buttons
     this.page = "ships"; // or "machines"
     this.trust = null; // the Trust a machine form while open: {scope, logins}
     this.pair = false; // the Pair a phone's browser form is open
@@ -106,11 +109,16 @@ export default class FleetPanel extends View {
     };
     this.inputs = {
       name: input("ship-07"),
-      tag: input("or a new tag"),
+      tag: input("or new tags"),
       repo: input("owner/name (optional)"),
       cores: input("vCPUs"),
       memory_mb: input("memory MB"),
       disk_gb: input("disk GB"),
+      agent: input("main"),
+      folder: input("~/work"),
+      hosts: input("default: NAME.local"),
+      vmid: input("the driver's choice"),
+      timezone: input("FleetLedger's own"),
       snap: input("snapshot name"),
       mname: input("laptop"),
       mkey: input("ssh-ed25519 AAAA... (the one line of its .pub file)"),
@@ -244,7 +252,7 @@ export default class FleetPanel extends View {
       this.form = null;
       return;
     }
-    this.form = { tag: null, signins: null };
+    this.form = NEW_FORM();
     for (const k of FORM) this.inputs[k].set_value("");
     this.menu = null;
     cx.spawn(async (cx) => {
@@ -259,12 +267,26 @@ export default class FleetPanel extends View {
     const v = (k) => this.inputs[k].value();
     return {
       name: v("name"),
-      tag: v("tag").trim() || this.form.tag || "",
+      tags: [...this.form.tags],
+      tag: v("tag"),
       repo: v("repo"),
       cores: v("cores"),
       memory_mb: v("memory_mb"),
       disk_gb: v("disk_gb"),
       signins: this.form.signins ? [...this.form.signins] : null,
+      // Advanced: what is typed there counts while it is closed too, as it is shown.
+      agent_on: this.form.agent_on,
+      agent: v("agent"),
+      folder: v("folder"),
+      agent_mode: this.form.agent_mode,
+      github_scopes: [...this.form.github_scopes],
+      no_overlay: this.form.no_overlay,
+      hosts: v("hosts"),
+      vmid: v("vmid"),
+      mode: this.form.mode,
+      allow_bypass: this.form.allow_bypass,
+      agent_sudo: this.form.agent_sudo,
+      timezone: v("timezone"),
     };
   }
 
@@ -332,7 +354,7 @@ export default class FleetPanel extends View {
     const plan = newShipJob(st, this.formValues());
     const label = (text) => div().w(90).flex_none().text_size(12).text_color(t.muted).child(text);
     const line = (id, ...kids) => h_flex().id(id).w_full().gap(6).items_center().flex_wrap().children(kids);
-    const typedTag = this.inputs.tag.value().trim();
+    const typedTags = words(this.inputs.tag.value());
     const known = st.accounts?.signins ?? null;
     let signins;
     if (!st.accounts || st.accounts.loading) signins = [div().text_size(12).text_color(t.dim).child("reading…")];
@@ -357,13 +379,16 @@ export default class FleetPanel extends View {
       .border_color(t.border)
       .child(div().text_size(13).font_weight(600).child("New Ship"))
       .child(line("f-name", label("Name"), this.inputBox(t, "name", 200)))
-      .child(line("f-tag", label("Tag"), ...knownTags(st).map((tag) => button(t, `tag-${tag}`, tag, () => {
-        f.tag = f.tag === tag ? null : tag;
-        this.inputs.tag.set_value("");
-      }, !typedTag && f.tag === tag)), this.inputBox(t, "tag", 140)))
+      .child(line("f-tag", label("Tags"), ...knownTags(st).map((tag) => button(t, `tag-${tag}`, tag, () => {
+        f.tags = f.tags.includes(tag) ? f.tags.filter((x) => x !== tag) : [...f.tags, tag];
+      }, f.tags.includes(tag) || typedTags.includes(tag))), this.inputBox(t, "tag", 140)))
       .child(line("f-repo", label("Repository"), this.inputBox(t, "repo", 260)))
       .child(line("f-size", label("Size"), this.inputBox(t, "cores", 80), this.inputBox(t, "memory_mb", 110), this.inputBox(t, "disk_gb", 90), div().text_size(11.5).text_color(t.dim).child("blank: FleetLedger's default")))
       .child(line("f-signins", label("Sign-ins"), ...signins))
+      .child(line("f-advanced", button(t, "advanced", f.advanced ? "Advanced ▾" : "Advanced ▸", () => {
+        f.advanced = !f.advanced;
+      }, f.advanced)))
+      .when(Boolean(f.advanced), (el) => el.children(this.advancedView(t, label, line)))
       .children(plan.errors.map((e, i) => div().id(`f-err-${i}`).text_size(12).text_color(t.dim).child(e)))
       .when(Boolean(plan.job), (el) => el.child(div().text_size(11.5).text_color(t.dim).child("Create opens a terminal tab that runs:")).child(mono(t, plan.job?.shown ?? "")))
       .child(
@@ -374,6 +399,36 @@ export default class FleetPanel extends View {
             this.form = null;
           })),
       );
+  }
+
+  // The New Ship form's Advanced part: what the web form offers that needs no other read.
+  advancedView(t, label, line) {
+    const f = this.form;
+    const dim = (text) => div().text_size(11.5).text_color(t.dim).child(text);
+    const toggle = (id, text, key) => button(t, id, text, () => {
+      f[key] = !f[key];
+    }, f[key]);
+    // A mode to choose, or blank: the default named.
+    const modes = (id, key, blank) => ["", ...MODES].map((m) => button(t, `${id}-${m || "blank"}`, m || blank, () => {
+      f[key] = m;
+    }, f[key] === m));
+    const agent = f.agent_on
+      ? [
+          line("f-agent", label("First agent"), toggle("agent-on", "one", "agent_on"), this.inputBox(t, "agent", 110), this.inputBox(t, "folder", 180), dim(this.inputs.repo.value().trim() ? "with a repository, it works in ~/work/NAME" : "")),
+          line("f-agent-mode", label("Its mode"), ...modes("agent-mode", "agent_mode", "the Ship's default")),
+        ]
+      : [line("f-agent", label("First agent"), toggle("agent-on", "one", "agent_on"), dim("none: the Ship starts no agent"))];
+    return [
+      ...agent,
+      line("f-scopes", label("GitHub scopes"), ...GITHUB_SCOPES.map((id) => button(t, `scope-${id}`, id, () => {
+        f.github_scopes = f.github_scopes.includes(id) ? f.github_scopes.filter((x) => x !== id) : [...f.github_scopes, id];
+      }, f.github_scopes.includes(id))), dim("none: gh's minimum")),
+      line("f-mode", label("Default mode"), ...modes("mode", "mode", "FleetLedger's default")),
+      line("f-claude", label("Claude"), toggle("allow-bypass", "allow bypassPermissions", "allow_bypass"), toggle("agent-sudo", "agent sudo", "agent_sudo")),
+      line("f-overlay", label("Overlay"), toggle("no-overlay", "do not join it", "no_overlay")),
+      line("f-hosts", label("Host names"), this.inputBox(t, "hosts", 260)),
+      line("f-vmid", label("VM id"), this.inputBox(t, "vmid", 140), label("Time zone"), this.inputBox(t, "timezone", 160)),
+    ];
   }
 
   // ---- the Needs you list ----

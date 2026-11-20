@@ -917,6 +917,16 @@ export const SIGNIN = /^[a-z][a-z0-9_]{0,31}$/; // fleetledger/signinreg.py ID: 
 export const SERVICE = /^[a-z][a-z0-9-]{0,31}$/; // fleetledger-signin.schema.json provider: what `login` takes
 /** ships.toml.schema.json $defs.size: [minimum, maximum]. */
 export const SIZE = { cores: [1, 64], memory_mb: [4096, 262144], disk_gb: [20, 4096] };
+/** New Ship's advanced options, each from where it is defined. */
+export const MODES = ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"]; // fleetledger/ops.py MODES
+export const GITHUB_SCOPES = ["workflow", "project", "write:packages"]; // fleetledger/ghscopes.py IDS, in its order
+export const AGENT = /^[a-z][a-z0-9_-]{0,31}$/; // ship.toml.schema.json $defs.agentName (ops.py AGENT_NAME_RE)
+export const FOLDER = /^(~\/|\/)[^:]*$/; // ship.toml.schema.json autostart cwd, and no ":" (commands.py parse_autostart)
+export const HOST = /^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$/; // fleetledger/overlay HOST_RE
+export const TIMEZONE = /^[A-Z][A-Za-z0-9_+-]{0,40}(\/[A-Za-z0-9_+-]{1,40}){0,2}$/; // fleetledger/seed/shiptoml.py TIMEZONE_RE
+export const VMID = [100, 999999999]; // ships.toml.schema.json fleet.self.vmid (web/newship.py's check)
+/** The first agent a new Ship gets unless the form says otherwise: the web form's own. */
+export const FIRST_AGENT = { name: "main", folder: "~/work" };
 
 export const SCHEMA_SIGNIN = "shipshape.fleetledger-signin/1";
 export const SCHEMA_ACCOUNTS = "shipshape.fleetledger-tag-accounts/1";
@@ -1001,6 +1011,46 @@ export function checkSize(key, value) {
   const [low, high] = SIZE[key];
   if (!/^\d{1,7}$/.test(s) || Number(s) < low || Number(s) > high) throw new Error(`${key.replace("_", " ")}: a whole number from ${low} to ${high}`);
   return String(Number(s));
+}
+
+/** Several words typed in one box, split at spaces and commas (each checked by its caller). */
+export const words = (value) => String(value ?? "").split(/[\s,]+/).filter(Boolean);
+
+/** The first agent's name, folder and mode, as `new --autostart NAME:CWD[:MODE]` takes them:
+ *  blank name and folder are the web form's (FIRST_AGENT), a blank mode the Ship's default. */
+export function checkFirstAgent(name, folder, mode) {
+  const n = String(name ?? "").trim() || FIRST_AGENT.name;
+  const f = String(folder ?? "").trim() || FIRST_AGENT.folder;
+  const m = String(mode ?? "").trim();
+  if (!AGENT.test(n)) throw new Error(`${JSON.stringify(n).slice(0, 40)} is not an agent name: a lower-case letter, then letters, digits, - or _, up to 32`);
+  if (!FOLDER.test(f)) throw new Error(`${JSON.stringify(f).slice(0, 60)} is not a folder for it: starting ~/ or /, with no ":"`);
+  if (m && !MODES.includes(m)) throw new Error(`${JSON.stringify(m).slice(0, 30)} is not a mode Claude Code has`);
+  return `${n}:${f}${m ? `:${m}` : ""}`;
+}
+
+/** A host name or address to reach the Ship by (new --host). */
+export function checkHost(value) {
+  const s = String(value ?? "").trim();
+  if (!HOST.test(s)) throw new Error(`${JSON.stringify(s).slice(0, 60)} is not a host name or address`);
+  return s;
+}
+
+/** A Proxmox VM id: blank is the driver's choice (null). */
+export function checkVmid(value) {
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+  const [low, high] = VMID;
+  if (!/^\d{1,9}$/.test(s) || Number(s) < low || Number(s) > high) throw new Error(`VM id: a whole number from ${low} to ${high}`);
+  return String(Number(s));
+}
+
+/** A time zone's IANA name: blank is FleetLedger's computer's own (null). `new` itself refuses
+ *  a name its tzdata does not have. */
+export function checkTimezone(value) {
+  const s = String(value ?? "").trim();
+  if (!s) return null;
+  if (!TIMEZONE.test(s)) throw new Error(`${JSON.stringify(s).slice(0, 50)} is not a time zone: an IANA name such as Europe/Berlin`);
+  return s;
 }
 
 // -- reading what the menus need --
@@ -1203,9 +1253,15 @@ export function fleetLedgerMenu(st) {
 }
 
 /** The New Ship form: its job, or what is wrong with what is typed (and nothing is sent).
- *  form: {name, tag, repo, cores, memory_mb, disk_gb, signins: null (FleetLedger's default: all)
- *  or the chosen ids}. The job runs `new`, then signs it in to Claude when Claude is one of its
- *  sign-ins, as one line: `ship-fleet new NAME … && ship-fleet login NAME claude`. */
+ *  form: {name, tags: the tags chosen, tag: tags typed (spaces or commas between), repo, cores,
+ *  memory_mb, disk_gb, signins: null (FleetLedger's default: all) or the chosen ids}, and the
+ *  advanced options: a first agent unless agent_on is false (agent, folder, agent_mode: blank is
+ *  main, ~/work and the Ship's default, as the web form), github_scopes (ids), no_overlay, hosts
+ *  (typed, spaces or commas between), vmid, mode, allow_bypass, agent_sudo, timezone. Never the
+ *  first prompt (`new` keeps it out of saved attempts as it may hold a secret: a terminal's
+ *  alone) and no flag that skips a question. The job runs `new`, then signs it in to Claude when
+ *  Claude is one of its sign-ins, as one line: `ship-fleet new NAME … && ship-fleet login NAME
+ *  claude`. */
 export function newShipJob(st, form) {
   const gate = actionGate(st);
   if (gate) return { errors: [gate] };
@@ -1223,13 +1279,17 @@ export function newShipJob(st, form) {
       return null;
     }
   };
-  if (String(form.tag ?? "").trim()) {
-    const tag = guard(() => checkTag(form.tag));
-    if (tag) args.push("--tag", tag);
+  const tags = [];
+  for (const t of [...(form.tags ?? []), ...words(form.tag)]) {
+    const tag = guard(() => checkTag(t));
+    if (tag && !tags.includes(tag)) tags.push(tag);
   }
+  for (const tag of tags) args.push("--tag", tag);
+  const agentOn = form.agent_on !== false;
   if (String(form.repo ?? "").trim()) {
     const repo = guard(() => checkRepo(form.repo));
-    if (repo) args.push("--repo", repo);
+    if (repo && !agentOn) errors.push("A repository is for the first agent to work in: give it one, or leave the repository out.");
+    else if (repo) args.push("--repo", repo);
   }
   for (const [key, flag] of [["cores", "--cores"], ["memory_mb", "--memory-mb"], ["disk_gb", "--disk-gb"]]) {
     const v = guard(() => checkSize(key, form[key]));
@@ -1246,6 +1306,33 @@ export function newShipJob(st, form) {
       if (chosen.length !== known.length) args.push("--signins", chosen.join(","));
     }
   }
+  // -- advanced --
+  if (agentOn) {
+    const first = guard(() => checkFirstAgent(form.agent, form.folder, form.agent_mode));
+    if (first) args.push("--autostart", first);
+  }
+  const scopes = form.github_scopes ?? [];
+  const unknownScopes = scopes.filter((s) => !GITHUB_SCOPES.includes(s));
+  if (unknownScopes.length) errors.push(`Not a GitHub scope FleetLedger offers: ${unknownScopes.join(", ")}`);
+  else if (scopes.length) args.push("--github-scopes", GITHUB_SCOPES.filter((s) => scopes.includes(s)).join(","));
+  if (form.no_overlay) args.push("--no-overlay");
+  const vmid = guard(() => checkVmid(form.vmid));
+  if (vmid) args.push("--vmid", vmid);
+  for (const h of words(form.hosts)) {
+    const host = guard(() => checkHost(h));
+    if (host) args.push("--host", host);
+  }
+  const mode = String(form.mode ?? "").trim();
+  if (mode && !MODES.includes(mode)) errors.push(`${JSON.stringify(mode).slice(0, 30)} is not a mode Claude Code has`);
+  else if (mode) args.push("--mode", mode);
+  if (form.allow_bypass) args.push("--allow-bypass");
+  // ship.toml takes a first agent in bypassPermissions only where the Ship allows it.
+  if (agentOn && String(form.agent_mode ?? "").trim() === "bypassPermissions" && !form.allow_bypass && mode !== "bypassPermissions") {
+    errors.push("A first agent in bypassPermissions needs allow bypassPermissions too.");
+  }
+  if (form.agent_sudo) args.push("--agent-sudo");
+  const zone = guard(() => checkTimezone(form.timezone));
+  if (zone) args.push("--timezone", zone);
   if (errors.length) return { errors };
   const claude = (chosen ?? known ?? ["claude"]).includes("claude");
   const commands = [args];
