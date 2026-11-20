@@ -95,14 +95,17 @@ def test_it_asks_nothing_of_its_own_and_types_nothing_into_a_terminal():
 
 
 def test_nothing_secret_is_typed_into_it():
-    """Its only inputs are a new Ship's name, tag, repository and size, a snapshot's name, a
-    machine's name, public key and scope, and a device's name: no passphrase, password, code,
-    token or private key, and nothing drawn masked."""
+    """Its only inputs are a new Ship's name, tags, repository and size, and under Advanced its
+    first agent's name and folder, host names, VM id and time zone (never the first prompt, which
+    `new` treats as possibly secret), a snapshot's name, a machine's name, public key and scope,
+    and a device's name: no passphrase, password, code, token or private key, and nothing drawn
+    masked."""
     main = (FLEET / "main.js").read_text("utf-8")
     assert "set_masked" not in main
     placeholders = re.findall(r'input\("([^"]*)"\)', main)
-    assert placeholders == ["ship-07", "or a new tag", "owner/name (optional)", "vCPUs",
-                            "memory MB", "disk GB", "snapshot name", "laptop",
+    assert placeholders == ["ship-07", "or new tags", "owner/name (optional)", "vCPUs",
+                            "memory MB", "disk GB", "main", "~/work", "default: NAME.local",
+                            "the driver's choice", "FleetLedger's own", "snapshot name", "laptop",
                             "ssh-ed25519 AAAA... (the one line of its .pub file)",
                             "or type tag:TAG ship:NAME", "phone"]
     assert main.count("InputState.new(") == 1  # input(), above
@@ -117,7 +120,10 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
               "NAME: m.NAME.source, TAG: m.TAG.source, REPO: m.REPO.source, "
               "SNAPSHOT: m.SNAPSHOT.source, SIGNIN: m.SIGNIN.source, SERVICE: m.SERVICE.source, "
               "SIZE: m.SIZE, SCOPE: m.SCOPE.source, DEVICE: m.DEVICE.source, LOGINS: m.LOGINS, "
-              "LOGIN_CHOICES: m.LOGIN_CHOICES, PAIR_ID: m.PAIR_ID.source}))")
+              "LOGIN_CHOICES: m.LOGIN_CHOICES, PAIR_ID: m.PAIR_ID.source, MODES: m.MODES, "
+              "GITHUB_SCOPES: m.GITHUB_SCOPES, AGENT: m.AGENT.source, FOLDER: m.FOLDER.source, "
+              "HOST: m.HOST.source, TIMEZONE: m.TIMEZONE.source, VMID: m.VMID, "
+              "FIRST_AGENT: m.FIRST_AGENT}))")
     r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri()],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -147,6 +153,68 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
     assert js["PAIR_ID"] == f"^{pairing.ID_RE.pattern}$"
     for choice in js["LOGIN_CHOICES"]:
         ca.parse_logins(choice)  # each one ship-fleet trust --logins takes
+
+    # New Ship's advanced options.
+    from fleetledger.overlay import HOST_RE
+    from fleetledger.seed.shiptoml import TIMEZONE_RE
+    from fleetledger.web import newship
+
+    from fleetledger import ghscopes
+
+    ship_toml = json.loads((ROOT / "contracts" / "ship.toml.schema.json").read_text("utf-8"))
+    assert js["MODES"] == list(ops.MODES) == ship_toml["$defs"]["permissionMode"]["enum"]
+    assert js["GITHUB_SCOPES"] == list(ghscopes.IDS)
+    assert js["AGENT"] == ops.AGENT_NAME_RE.pattern == ship_toml["$defs"]["agentName"]["pattern"]
+    cwd = ship_toml["properties"]["autostart"]["items"]["properties"]["cwd"]["pattern"]
+    assert js["FOLDER"] == cwd + "[^:]*$"  # and no ":", which parse_autostart splits at
+    assert js["HOST"] == HOST_RE.pattern
+    assert js["TIMEZONE"] == TIMEZONE_RE.pattern
+    vmid = ships_toml["properties"]["fleet"]["properties"]["self"]["properties"]["vmid"]
+    assert js["VMID"] == [vmid["minimum"], vmid["maximum"]]
+    web_check = f"{vmid['minimum']} <= int(vmid) <= {vmid['maximum']}"
+    assert web_check in Path(newship.__file__).read_text("utf-8")
+    web = newship.FormChoices
+    assert js["FIRST_AGENT"] == {"name": web.agent, "folder": web.cwd}
+    assert web.agent_on is True  # the web form's first agent is on by default
+
+
+def test_a_first_agent_it_sends_is_one_ship_fleet_takes():
+    """Every first agent checkFirstAgent lets through, `new --autostart` reads back as that name,
+    folder and mode (and `set autostart.add=` takes it too); every one it refuses, they refuse."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    tried = [["", "", ""], ["lead", "/srv/work", "plan"], ["agent_2-b", "~/a folder/it's", "auto"],
+             ["main", "~/work", "bypassPermissions"], ["x" * 32, "/", ""],
+             ["Main", "", ""], ["2nd", "", ""], ["", "work", ""], ["", "~/a:b", ""],
+             ["", "", "yolo"], ["a:b", "", ""], ["x" * 33, "", ""], ["", "~work", ""]]
+    script = ("const m = await import(process.argv[1]); console.log(JSON.stringify("
+              "JSON.parse(process.argv[2]).map((a) => { try { return m.checkFirstAgent(...a); }"
+              " catch { return null; } })))")
+    r = subprocess.run([node, "--input-type=module", "-e", script, (FLEET / "model.js").as_uri(),
+                        json.dumps(tried)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+    from fleetledger.commands import parse_autostart
+    from fleetledger.errors import FleetError
+
+    from fleetledger import ops
+
+    def taken(name, folder, mode):
+        value = f"{name}:{folder}" + (f":{mode}" if mode else "")
+        try:
+            agent = parse_autostart([value])[0]
+            ops.parse_autostart_change("autostart.add", value)
+        except FleetError:
+            return None
+        same = (agent.name, agent.cwd, agent.mode) == (name, folder, mode or None)
+        return value if same else None
+
+    for (name, folder, mode), sent in zip(tried, json.loads(r.stdout), strict=True):
+        if sent is None:
+            assert taken(name or "main", folder or "~/work", mode) is None, (name, folder, mode)
+        else:
+            assert taken(*(sent.split(":") + [""])[:3]) == sent, sent
 
 
 def test_a_key_it_sends_is_one_ship_fleet_takes_as_a_line():

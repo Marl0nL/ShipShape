@@ -83,13 +83,15 @@ which is exactly the line the panel showed under the action before you clicked i
 **Destroy**, `yes` before **Roll back**, the vault's passphrase for **Unlock**, a sign-in's link and
 code. The panel never passes a flag that skips one (`--yes`, `--force`, `--revoke-my-key`,
 `--stdin`, `--code`), asks no question of its own, never types into a terminal, and takes no secret: the
-only things typed into it are a new Ship's name, tag, repository and size, a snapshot's name, and
+only things typed into it are a new Ship's name, tags, repository and size (and under Advanced its
+first agent's name and folder, host names, VM id and time zone), a snapshot's name, and
 on the Machines page a machine's name, public key and scope and a device's name, each checked
 against the pattern `ship-fleet` enforces and refused, not sent, when it does not match.
 
 | Where | Action | Runs on FleetLedger |
 |---|---|---|
-| **New Ship** | Create | `ship-fleet new NAME [--tag TAG] [--repo OWNER/NAME] [--cores N] [--memory-mb N] [--disk-gb N] [--signins A,B] && ship-fleet login NAME claude` (the login only when Claude is one of its sign-ins; with the manual driver `new` only prints the steps, so that login fails until you have made the VM: sign in from the Ship's menu then). Tags: buttons for the fleet's, or type one. Sign-ins: FleetLedger's list (`signins --accounts --json`), all by default. |
+| **New Ship** | Create | `ship-fleet new NAME [--tag TAG]… [--repo OWNER/NAME] [--cores N] [--memory-mb N] [--disk-gb N] [--signins A,B] [--autostart AGENT:FOLDER[:MODE]] [--github-scopes A,B] [--no-overlay] [--vmid N] [--host HOST]… [--mode MODE] [--allow-bypass] [--agent-sudo] [--timezone ZONE] && ship-fleet login NAME claude` (the login only when Claude is one of its sign-ins; with the manual driver `new` only prints the steps, so that login fails until you have made the VM: sign in from the Ship's menu then). Tags: buttons for the fleet's, or type some (spaces or commas between). Sign-ins: FleetLedger's list (`signins --accounts --json`), all by default. A first agent, `main` in `~/work`, as the web form's (with a repository it works in its clone). |
+| | Advanced | Closed until you open it, and what it holds is in the line shown either way: the first agent's name, folder and mode, or none (then no repository); extra GitHub scopes (`workflow`, `project`, `write:packages`; none: gh's minimum); not joining the overlay; host names to reach it by; a Proxmox VM id; the default permission mode, allowing `bypassPermissions`, sudo for the agent user; a time zone (blank: FleetLedger's computer's; `new` refuses one its tzdata lacks). Never the first prompt: `new` treats it as possibly secret, so it is typed only in a terminal (`--autostart-prompt`). Driver, image, tools and profiles are not offered yet. |
 | A Ship's **⋯** | Sign in: SERVICE | `ship-fleet login NAME SERVICE`, one per sign-in the Ship uses (from `signins NAME --offline --json`), only while it answers |
 | | Update, Reboot | `ship-fleet update NAME`, `ship-fleet reboot NAME` |
 | | Snapshots, Take a snapshot | `ship-fleet snapshot ls NAME`, `ship-fleet snapshot take NAME` |
