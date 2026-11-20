@@ -155,6 +155,10 @@ export function shipAgents(status) {
     .map((a) => ({ name: text(a.name, 200), state: a.state, message: text(a.message, 500), blockedKind: text(a.blocked_kind, 40) }));
 }
 
+/** A part of a Ship's status document that is an object, as it is, or null. The Settings view
+ *  (settings.js) checks each value it reads from it. */
+const part = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
+
 /** When a Ship's status document was made (ms), or null. */
 const statusAt = (status) => {
   const t = typeof status?.generated_at === "string" ? Date.parse(status.generated_at) : NaN;
@@ -190,6 +194,10 @@ export function readShips(stdout) {
       more: Math.max(0, e.attention.length - 1),
       agents: shipAgents(e.status),
       statusAt: statusAt(e.status),
+      // For the Settings view: what ship.toml says (ship-status.schema.json `settings`; older
+      // tooling: none) and the claude block, which says some of it on older tooling too.
+      settings: part(e.status?.settings),
+      claude: part(e.status?.claude),
     });
   }
   return { ships, refused: refused.list(), older };

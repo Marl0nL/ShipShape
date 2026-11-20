@@ -8,7 +8,8 @@
 # Run it again to update. It never writes the panel's settings.json (see mods/fleet/README.md).
 #
 # Herdr docks a new mod into the layout on screen if it sees main.js before a mod.json saying
-# "place": "none", so mod.json goes in first; and model.js before main.js, which imports it.
+# "place": "none", so mod.json goes in first; and model.js and settings.js before main.js, which
+# imports them.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +17,7 @@ home="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 dest="$home/mods/fleet"
 
 mkdir -p "$dest"
-for f in mod.json model.js main.js README.md settings.example.json; do
+for f in mod.json model.js settings.js main.js README.md settings.example.json; do
   cp "$here/mods/fleet/$f" "$dest/$f"
 done
 

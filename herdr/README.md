@@ -31,7 +31,7 @@ in `tests/desk/`.
 
 **The Fleet panel** (`mods/fleet/`): a Herdr tab with your Ships as FleetLedger last saw them,
 read over ssh from the FleetLedger computer (`ship-fleet ls --json --offline`). What changes
-anything (a new Ship, a sign-in, update, reboot, snapshots, destroy, unlock; trusting, untrusting
+anything (a new Ship, a Ship's settings, a sign-in, update, reboot, snapshots, destroy, unlock; trusting, untrusting
 and pairing on its Machines page, which also shows this computer's own refresh) opens a terminal
 tab running the exact `ship-fleet` command, which asks its own questions there. It works in any
 layout. See [`mods/fleet/README.md`](mods/fleet/README.md); it installs on its own

@@ -2,10 +2,13 @@
 // with them. Every action opens a terminal tab running one ship-fleet command over ssh, shown
 // here before it runs; ship-fleet asks its own questions there. Nothing is typed into the panel
 // but a new Ship's name, tags, repository and size (and under Advanced its first agent's name and
-// folder, host names, VM id and time zone), a snapshot's name, and on the Machines page
-// a machine's name, public key and scope and a device's name. Nothing secret. A computer asking
-// to be paired by code is approved in a terminal tab, where its code is typed: never here.
-// All its logic is in model.js; this file draws and hands model.js Herdr's functions.
+// folder, host names, VM id and time zone), a Ship's settings in its Settings view (its session
+// prefix, LAN guard addresses, reboot time, time zone, wake delay and message, new tags), a
+// snapshot's name, and on the Machines page a machine's name, public key and scope and a
+// device's name. Nothing secret. A computer asking to be paired by code is approved in a
+// terminal tab, where its code is typed: never here.
+// All its logic is in model.js (and a Ship's Settings in settings.js, beside it); this file
+// draws and hands model.js Herdr's functions.
 //
 //   herdr-app do tab.new '{"name":"Fleet","mod":"fleet"}'   open it as a tab
 //   fleet.open      (keys.json or `herdr-app do`) the Fleet tab, or a new one
@@ -16,7 +19,8 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
-import { Fleet, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { Fleet, ago, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { settingsGate, settingsView, settingsJob } from "./settings.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
 // One model for every copy of the view, so two Fleet tabs make one read, not two.
@@ -90,6 +94,8 @@ const FORM = ["name", "tag", "repo", "cores", "memory_mb", "disk_gb", "agent", "
 /** The New Ship form as it opens: the basic part, with Advanced closed and at its defaults. */
 const NEW_FORM = () => ({ tags: [], signins: null, advanced: false, agent_on: true, agent_mode: "", github_scopes: [], no_overlay: false, mode: "", allow_bypass: false, agent_sudo: false, driver: "", image: "", tools: null, profiles: null });
 const TRUST = ["mname", "mkey", "mscope"];
+// The Settings view's typed fields: each setting's input is `s_` and its key.
+const TYPED = ["session_prefix", "lan_guard_allow", "reboot_time", "timezone", "wake_delay_minutes", "wake_text"];
 // The FleetLedger menu's key in this.menu, beside Ship names: not one a Ship can have.
 const FLEETLEDGER = ":fleetledger";
 
@@ -102,6 +108,9 @@ export default class FleetPanel extends View {
     this.page = "ships"; // or "machines"
     this.trust = null; // the Trust a machine form while open: {scope, logins}
     this.pair = false; // the Pair a phone's browser form is open
+    // A Ship's Settings view while open: {ship, values: each chosen setting ("": unchanged),
+    // tags, github_scopes (null: as they are), signins_on}
+    this.settings = null;
     const input = (placeholder) => {
       const s = InputState.new({ placeholder });
       s.on("change", (_e, cx) => cx.notify()); // the command shown follows what is typed
@@ -124,6 +133,13 @@ export default class FleetPanel extends View {
       mkey: input("ssh-ed25519 AAAA... (the one line of its .pub file)"),
       mscope: input("or type tag:TAG ship:NAME"),
       device: input("phone"),
+      s_session_prefix: input("prefix"),
+      s_lan_guard_allow: input("none"),
+      s_reboot_time: input("HH:MM"),
+      s_timezone: input("Area/City"),
+      s_wake_delay_minutes: input("minutes"),
+      s_wake_text: input("the default message"),
+      s_tag: input("or new tags"),
     };
     cx.timer.every(TICK_MS, (cx) => this.tick(cx));
     this.tick(cx);
@@ -179,6 +195,7 @@ export default class FleetPanel extends View {
       this.form = null;
       this.trust = null;
       this.pair = false;
+      this.settings = null;
     }
   }
 
@@ -192,6 +209,7 @@ export default class FleetPanel extends View {
 
   toggleMenu(cx, name) {
     this.menu = this.menu === name ? null : name;
+    this.settings = null;
     this.inputs.snap.set_value("");
     if (!this.menu || name === FLEETLEDGER || actionGate(fleet.state)) return;
     cx.spawn(async (cx) => {
@@ -206,6 +224,7 @@ export default class FleetPanel extends View {
     this.page = page;
     this.menu = null;
     this.form = null;
+    this.settings = null;
     if (page !== "machines") return;
     cx.spawn(async (cx) => {
       const reading = fleet.openMachines();
@@ -255,6 +274,7 @@ export default class FleetPanel extends View {
     this.form = NEW_FORM();
     for (const k of FORM) this.inputs[k].set_value("");
     this.menu = null;
+    this.settings = null;
     cx.spawn(async (cx) => {
       const reading = Promise.all([fleet.loadAccounts(), fleet.loadChoices()]);
       cx.notify();
@@ -312,7 +332,7 @@ export default class FleetPanel extends View {
 
   // One action: its button, then the exact command it runs; or its name and why it is not here.
   action(t, key, item) {
-    const go = item.job ? () => this.start(item.job) : item.open ? (_e, cx) => this.openUi(cx, item.open) : null;
+    const go = item.job ? () => this.start(item.job) : item.open ? (_e, cx) => this.openUi(cx, item.open) : item.settings ? (_e, cx) => this.openSettings(cx, item.settings) : null;
     return v_flex()
       .id(`act-${key}-${item.id}`)
       .w_full()
@@ -350,7 +370,138 @@ export default class FleetPanel extends View {
 
   shipMenuView(t, r) {
     const ship = (fleet.state.ships ?? []).find((s) => s.name === r.name);
-    return this.menuBox(t, r.name, shipMenu(fleet.state, ship, this.inputs.snap.value()));
+    const m = shipMenu(fleet.state, ship, this.inputs.snap.value());
+    if (m.items.length) {
+      const why = settingsGate(fleet.state, ship);
+      m.items.unshift(why ? { id: "settings", label: "Settings", job: null, why } : { id: "settings", label: "Settings…", settings: r.name, note: "its settings, tags, sign-ins and GitHub scopes; the command is shown before it runs" });
+    }
+    return this.menuBox(t, r.name, m);
+  }
+
+  // ---- a Ship's Settings ----
+
+  openSettings(cx, name) {
+    const st = fleet.state;
+    const ship = (st.ships ?? []).find((s) => s.name === name);
+    const v = settingsView(st, ship);
+    if (v.why) {
+      this.note = v.why;
+      return;
+    }
+    const fields = v.groups.flatMap((g) => g.fields);
+    const values = {};
+    for (const f of fields) if (f.choices) values[f.key] = f.current ?? "";
+    for (const k of TYPED) this.inputs[`s_${k}`].set_value(fields.find((f) => f.key === k)?.current ?? "");
+    this.inputs.s_tag.set_value("");
+    this.settings = { ship: name, values, tags: [...v.tags], github_scopes: null, signins_on: [] };
+    this.menu = null;
+    this.form = null;
+    // Its sign-ins (read when its menu opened) and FleetLedger's list of them: read now only
+    // when neither is here nor on its way.
+    const reads = [];
+    if (!st.signins[name] || st.signins[name].error) reads.push(fleet.loadSignins(name));
+    if (!st.accounts || st.accounts.error) reads.push(fleet.loadAccounts());
+    if (!reads.length) return;
+    cx.spawn(async (cx) => {
+      const reading = Promise.all(reads);
+      cx.notify(); // "reading its sign-ins…"
+      await reading;
+      cx.notify();
+    });
+  }
+
+  settingsValues() {
+    const s = this.settings;
+    const values = { ...s.values };
+    for (const k of TYPED) values[k] = this.inputs[`s_${k}`].value();
+    return { values, tags: [...s.tags], tag: this.inputs.s_tag.value(), github_scopes: s.github_scopes ? [...s.github_scopes] : null, signins_on: [...s.signins_on] };
+  }
+
+  // A Ship's Settings: each group as the web tab has it, then its tags; Apply runs what changed.
+  settingsBox(t, r) {
+    const st = fleet.state;
+    const s = this.settings;
+    const ship = (st.ships ?? []).find((x) => x.name === r.name);
+    const v = settingsView(st, ship);
+    const label = (text) => div().w(190).flex_none().text_size(12).text_color(t.muted).child(text);
+    const line = (id, ...kids) => h_flex().id(id).w_full().gap(6).items_center().flex_wrap().children(kids);
+    const dim = (text) => div().text_size(11.5).text_color(t.dim).child(text);
+    const said = (text) => div().flex_none().text_size(11.5).text_color(t.foreground).child(text);
+    const title = (text) => div().pt(4).text_size(12.5).font_weight(600).child(text);
+    const close = button(t, "settings-cancel", "Cancel", () => {
+      this.settings = null;
+    });
+    const box = v_flex().id(`settings-${r.name}`).w_full().my(4).p(10).gap(4).rounded(8).border_1().border_color(t.border);
+    if (v.why) return box.child(div().text_size(12).text_color(t.muted).child(v.why)).child(h_flex().child(close));
+    const plan = settingsJob(st, ship, this.settingsValues());
+    const field = (f) => {
+      if (!f.choices) {
+        const hint = f.current === null ? "blank: unchanged (not reported)" : f.hint;
+        return line(`s-${f.key}`, label(f.label), this.inputBox(t, `s_${f.key}`, f.key === "wake_text" ? 460 : 200), dim(hint));
+      }
+      const blank = f.current === null
+        ? [button(t, `s-${f.key}-blank`, f.older ? `(unchanged: ${f.older})` : "(unchanged)", () => {
+            s.values[f.key] = "";
+          }, s.values[f.key] === "")]
+        : [];
+      const choices = f.choices.map(([value, text]) => button(t, `s-${f.key}-${value}`, text, () => {
+        s.values[f.key] = value;
+      }, s.values[f.key] === value));
+      return line(`s-${f.key}`, label(f.label), ...blank, ...choices, dim(f.hint));
+    };
+    // Sign-ins: one in use is on (turning it off is not offered here); one off can be turned on.
+    const c = v.signins;
+    const signins = c.rows
+      ? line("s-signins", label("Sign-ins it uses"), ...c.rows.map((x) => {
+          if (x.on) return said(`${x.id}: on`);
+          const on = s.signins_on.includes(x.id);
+          return button(t, `s-signin-${x.id}`, on ? `${x.id}: turn on` : `${x.id}: off`, () => {
+            s.signins_on = on ? s.signins_on.filter((y) => y !== x.id) : [...s.signins_on, x.id];
+          }, on);
+        }), dim(v.signinsHeld ?? ""))
+      : line("s-signins", label("Sign-ins it uses"), dim(c.why));
+    // GitHub scopes: ticked as its ship.toml chose them; back at exactly those, null again.
+    const had = v.scopes;
+    const base = had?.known ?? [];
+    const scopeHint = !had ? "not reported: those ticked are sent" : had.other.length ? `it also chooses ${had.other.join(", ")}, which this FleetLedger does not offer: changing these drops it` : "on top of gh's own; signing in to GitHub again asks for them";
+    const scopes = line("s-scopes", label("GitHub scopes"), ...GITHUB_SCOPES.map((id) => button(t, `s-scope-${id}`, id, () => {
+      const on = new Set(s.github_scopes ?? base);
+      if (on.has(id)) on.delete(id);
+      else on.add(id);
+      const same = had && !had.other.length && on.size === base.length && base.every((x) => on.has(x));
+      s.github_scopes = same ? null : GITHUB_SCOPES.filter((x) => on.has(x));
+    }, (s.github_scopes ?? base).includes(id))), dim(scopeHint));
+    const sshNow = v.ssh.current === null ? "not reported" : (v.ssh.choices.find(([x]) => x === v.ssh.current)?.[1] ?? v.ssh.current);
+    const ssh = line("s-ssh", label(v.ssh.label), said(sshNow), dim(v.ssh.held ?? ""));
+    const parts = [];
+    for (const g of v.groups) {
+      parts.push(title(g.title), ...g.fields.map(field));
+      if (g.title === "Claude Code") parts.push(signins, scopes);
+      if (g.title === "Network") parts.push(ssh);
+    }
+    // Tags: the fleet's and its own, as buttons; new ones typed.
+    const typed = words(this.inputs.s_tag.value());
+    const tagButtons = [...new Set([...knownTags(st), ...v.tags])].sort().map((tag) => button(t, `s-tag-${tag}`, tag, () => {
+      s.tags = s.tags.includes(tag) ? s.tags.filter((x) => x !== tag) : [...s.tags, tag];
+    }, s.tags.includes(tag) || typed.includes(tag)));
+    const tags = line("s-tags", label("Tags"), ...tagButtons, this.inputBox(t, "s_tag", 140), dim("they choose the accounts it must sign in with"));
+    const from = ship.statusAt ? `As ${r.name} last reported them to FleetLedger, ${ago(Date.now() - ship.statusAt)}.` : "As FleetLedger last saw them.";
+    return box
+      .child(div().text_size(13).font_weight(600).child(`${r.name}: Settings`))
+      .child(dim(from))
+      .when(Boolean(v.note), (el) => el.child(dim(v.note ?? "")))
+      .children(parts)
+      .child(title("Tags"))
+      .child(tags)
+      .children(plan.errors.map((e, i) => div().id(`s-err-${i}`).text_size(12).text_color(t.dim).child(e)))
+      .when(!plan.job && !plan.errors.length, (el) => el.child(dim("Nothing changed yet: only what you change is sent.")))
+      .when(Boolean(plan.job), (el) => el.child(dim("Apply opens a terminal tab that runs:")).child(mono(t, plan.job?.shown ?? "")))
+      .child(
+        h_flex()
+          .gap(8)
+          .when(Boolean(plan.job), (el) => el.child(button(t, "settings-apply", "Apply", () => this.start(plan.job))))
+          .child(close),
+      );
   }
 
   formView(t) {
@@ -801,6 +952,6 @@ export default class FleetPanel extends View {
       // Needs you: only from a read that answered (else "nothing" would be a guess; the notices say why).
       .when(this.page === "ships" && Boolean(st.where) && st.readAt !== null && !st.error && !st.attentionError, (el) => el.child(this.alertsView(t, alerts(st))))
       .when(this.page === "ships" && Boolean(h.empty) && !list.length, (el) => el.child(div().pt(8).text_color(t.dim).child(h.empty ?? "")))
-      .when(this.page === "ships", (el) => el.child(v_flex().id("ships").flex_1().min_h(0).overflow_y_scrollbar().children(list.flatMap((r) => (this.menu === r.name ? [this.row(t, r), this.shipMenuView(t, r)] : [this.row(t, r)])))));
+      .when(this.page === "ships", (el) => el.child(v_flex().id("ships").flex_1().min_h(0).overflow_y_scrollbar().children(list.flatMap((r) => (this.settings?.ship === r.name ? [this.row(t, r), this.settingsBox(t, r)] : this.menu === r.name ? [this.row(t, r), this.shipMenuView(t, r)] : [this.row(t, r)])))));
   }
 }

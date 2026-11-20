@@ -1,6 +1,6 @@
 """The Herdr Fleet panel (herdr/mods/fleet/): what can be checked without a running Herdr.
 
-Its logic, model.js, is tested under npm test (herdr/tests/fleet/). Here: the mod's files parse,
+Its logic, model.js and settings.js, is tested under npm test (herdr/tests/fleet/). Here: the mod's files parse,
 its install script installs it alone and never docks it or writes its settings, and the rules the
 panel keeps that can be read from its source: it skips no question ship-fleet asks, asks none of
 its own, takes no secret, and checks what is typed against ship-fleet's own patterns.
@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HERDR = ROOT / "herdr"
 FLEET = HERDR / "mods" / "fleet"
-INSTALLED = ["README.md", "main.js", "mod.json", "model.js", "settings.example.json"]
+INSTALLED = ["README.md", "main.js", "mod.json", "model.js", "settings.example.json", "settings.js"]
 
 
 def test_its_javascript_parses():
@@ -40,16 +40,21 @@ def test_its_json_files_parse_and_it_docks_nowhere():
 
 
 def test_the_logic_imports_neither_gpui_nor_herdr():
-    """model.js imports nothing, so npm test can load it; only main.js talks to Herdr."""
+    """model.js imports nothing, and settings.js only model.js, so npm test can load them (and
+    the Desk's link to model.js needs nothing beside it); only main.js talks to Herdr."""
     model = (FLEET / "model.js").read_text("utf-8")
     assert not re.search(r"^\s*import\b", model, re.M)
     assert "gpui" not in re.sub(r"//.*", "", model)
+    settings = (FLEET / "settings.js").read_text("utf-8")
+    assert re.findall(r'^import .* from "([^"]+)";$', settings, re.M) == ["./model.js"]
+    assert "gpui" not in re.sub(r"//.*", "", settings)
     main = (FLEET / "main.js").read_text("utf-8")
-    assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "./model.js"]
+    assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "./model.js",
+                                                   "./settings.js"]
 
 
 def mod_code():
-    return "".join((FLEET / f).read_text("utf-8") for f in ("main.js", "model.js"))
+    return "".join((FLEET / f).read_text("utf-8") for f in ("main.js", "model.js", "settings.js"))
 
 
 def test_its_reads_and_where_its_actions_run():
@@ -98,8 +103,9 @@ def test_nothing_secret_is_typed_into_it():
     """Its only inputs are a new Ship's name, tags, repository and size, and under Advanced its
     first agent's name and folder, host names, VM id and time zone (never the first prompt, which
     `new` treats as possibly secret), a snapshot's name, a machine's name, public key and scope,
-    and a device's name: no passphrase, password, code, token or private key, and nothing drawn
-    masked."""
+    a device's name, and in a Ship's Settings its session prefix, LAN guard addresses, reboot
+    time, time zone, wake delay and message, and new tags: no passphrase, password, code, token
+    or private key, and nothing drawn masked."""
     main = (FLEET / "main.js").read_text("utf-8")
     assert "set_masked" not in main
     placeholders = re.findall(r'input\("([^"]*)"\)', main)
@@ -107,7 +113,8 @@ def test_nothing_secret_is_typed_into_it():
                             "memory MB", "disk GB", "main", "~/work", "default: NAME.local",
                             "the driver's choice", "FleetLedger's own", "snapshot name", "laptop",
                             "ssh-ed25519 AAAA... (the one line of its .pub file)",
-                            "or type tag:TAG ship:NAME", "phone"]
+                            "or type tag:TAG ship:NAME", "phone", "prefix", "none", "HH:MM",
+                            "Area/City", "minutes", "the default message", "or new tags"]
     assert main.count("InputState.new(") == 1  # input(), above
 
 
@@ -311,4 +318,104 @@ def test_mod_json_goes_in_first():
     order = re.search(r"for f in ([^;]+); do", script).group(1).split()
     assert order[0] == "mod.json"
     assert order.index("model.js") < order.index("main.js")
+    assert order.index("settings.js") < order.index("main.js")
     assert sorted(order) == INSTALLED
+
+
+def settings_js(expr, *args):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = ("const m = await import(process.argv[1]); "
+              f"console.log(JSON.stringify(({expr})(m, ...process.argv.slice(2))))")
+    r = subprocess.run([node, "--input-type=module", "-e", script,
+                        (FLEET / "settings.js").as_uri(), *args],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_its_settings_are_the_web_settings_tabs():
+    """The Settings view's groups, fields, labels, choices and hints are the web tab's
+    (web/shipsettings.py GROUPS and SSH_LISTEN), each key a `ship-fleet set` key in the same
+    place of the status settings, and its choices the ones `set` takes; and what a typed value
+    is checked against is what ops.parse_assignments checks it against."""
+    js = settings_js("(m) => ({GROUPS: m.GROUPS, SSH_LISTEN: m.SSH_LISTEN, PATHS: m.PATHS, "
+                     "CIDR: m.CIDR.source, TIME: m.TIME.source, PREFIX: m.PREFIX.source, "
+                     "WAKE_DELAY: m.WAKE_DELAY, WAKE_TEXT_MAX: m.WAKE_TEXT_MAX, "
+                     "HELD: [...m.HELD]})")
+    from fleetledger.web import shipsettings
+
+    from fleetledger import ops
+
+    def fields(fs):
+        return [{"key": f.key, "label": f.label, "hint": f.hint,
+                 "choices": None if f.choices is None else [list(c) for c in f.choices]}
+                for f in fs]
+
+    keep = ("key", "label", "hint", "choices")
+    assert [[t, fields(fs)] for t, fs in shipsettings.GROUPS] == [
+        [t, [{k: f[k] for k in keep} for f in fs]] for t, fs in js["GROUPS"]]
+    js_ssh = {k: js["SSH_LISTEN"][k] for k in keep}
+    assert fields([shipsettings.SSH_LISTEN]) == [js_ssh]
+    # Every `set` key but tags (the view sends `ship-fleet tag`), in the status settings' place.
+    assert set(js["PATHS"]) == set(ops.SET_KEYS) - {"tags"}
+    for key, path in js["PATHS"].items():
+        assert ops.SET_KEYS[key][0] == path, key
+    for _, fs in js["GROUPS"]:
+        for f in fs:
+            allowed = ops.SET_KEYS[f["key"]][1]
+            if f["choices"] is not None:
+                assert [v for v, _ in f["choices"]] == list(allowed), f["key"]
+            else:
+                assert allowed is None, f["key"]
+    assert js["CIDR"].replace("\\/", "/") == ops.CIDR_RE.pattern
+    assert js["TIME"] == ops.TIME_RE.pattern
+    assert js["PREFIX"] == ops.PREFIX_RE.pattern
+    source = Path(ops.__file__).read_text("utf-8")
+    low, high = js["WAKE_DELAY"]
+    assert f"{low} <= int(val) <= {high}" in source
+    assert f"len(val) > {js['WAKE_TEXT_MAX']}" in source
+    # Held back until ship-fleet asks before them: SSH on the overlay only, a sign-in turned off.
+    assert js["HELD"] == ["ssh_listen", "signins-off"]
+
+
+def test_a_setting_it_sends_is_one_ship_fleet_set_takes():
+    """Every value assignment() lets through, ops.parse_assignments takes as it is; every one it
+    refuses, parse_assignments refuses too."""
+    tried = [
+        ["session_prefix", "lab-ship.1"], ["session_prefix", "-x"], ["session_prefix", ""],
+        ["session_prefix", "a" * 63], ["session_prefix", "a" * 64], ["session_prefix", "a b"],
+        ["lan_guard_allow", "192.0.2.0/24, 2001:db8::/32"], ["lan_guard_allow", ""],
+        ["lan_guard_allow", "192.0.2.7 198.51.100.0/24"], ["lan_guard_allow", "host.example.com"],
+        ["reboot_time", "04:30"], ["reboot_time", "4:30"], ["reboot_time", "24:00"],
+        ["timezone", "Europe/Berlin"], ["timezone", "UTC"], ["timezone", "../etc"],
+        ["timezone", ""], ["wake_delay_minutes", "15"], ["wake_delay_minutes", "0"],
+        ["wake_delay_minutes", "1441"], ["wake_delay_minutes", "1440"], ["wake_delay_minutes", "x"],
+        ["wake_text", "Back {delay} after a boot: carry on."], ["wake_text", ""],
+        ["wake_text", "x" * 1000], ["wake_text", "x" * 1001], ["wake_text", "two\nlines"],
+        ["remote_control", "all"], ["remote_control", "maybe"], ["default_mode", "plan"],
+        ["allow_bypass", "true"], ["sudo", "yes"], ["update_channel", "stable"],
+        ["lan_guard", "false"], ["auto_reboot", "true"], ["wake_after_boot", "false"],
+    ]
+    # A Ship that reports nothing: every value given is sent (blank is "unchanged").
+    sent = settings_js("(m, t) => JSON.parse(t).map(([k, v]) => { try { return m.assignment("
+                       "{name: 'ship-01', tags: [], settings: null}, k, v); } "
+                       "catch { return false; } })", json.dumps(tried))
+    from fleetledger.errors import FleetError
+
+    from fleetledger import ops
+
+    for (key, value), pair in zip(tried, sent, strict=True):
+        if pair is None:
+            assert value.strip() == "", (key, value)  # unchanged: nothing to send
+            continue
+        try:
+            took = ops.parse_assignments([f"{key}={value}"])
+        except FleetError:
+            took = None
+        if pair is False:
+            assert took is None, (key, value)
+        else:
+            k, _, v = pair.partition("=")
+            assert ops.parse_assignments([pair]) == [f"{ops.SET_KEYS[k][0]}={v}"], pair
