@@ -1,9 +1,10 @@
 """The Herdr Fleet panel (herdr/mods/fleet/): what can be checked without a running Herdr.
 
-Its logic, model.js and settings.js, is tested under npm test (herdr/tests/fleet/). Here: the mod's files parse,
-its install script installs it alone and never docks it or writes its settings, and the rules the
-panel keeps that can be read from its source: it skips no question ship-fleet asks, asks none of
-its own, takes no secret, and checks what is typed against ship-fleet's own patterns.
+Its logic, model.js and settings.js, is tested under npm test (herdr/tests/fleet/). Here: the
+mod's files parse, its install script installs it alone and never docks it or writes its
+settings, and the rules the panel keeps that can be read from its source: it skips no question
+ship-fleet asks, asks none of its own, takes no secret, and checks what is typed against
+ship-fleet's own patterns.
 """
 
 import json
