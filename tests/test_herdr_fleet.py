@@ -139,7 +139,7 @@ def test_what_it_checks_is_what_ship_fleet_enforces():
     ships_toml = json.loads((ROOT / "contracts" / "ships.toml.schema.json").read_text("utf-8"))
     signin = json.loads((ROOT / "contracts" / "fleetledger-signin.schema.json").read_text("utf-8"))
     assert js["NAME"] == ops.NAME_RE.pattern
-    assert js["TAG"] == ships_toml["$defs"]["tag"]["pattern"]
+    assert js["TAG"] == ships_toml["$defs"]["tag"]["pattern"] == ops.TAG_RE.pattern
     assert js["REPO"] == github.REPO_RE.pattern
     assert js["SNAPSHOT"] == SNAPSHOT_NAME.pattern
     assert js["SIGNIN"] == signinreg.ID.pattern

@@ -293,6 +293,11 @@ test("New Ship: advanced values ship-fleet would refuse are said, and nothing is
   for (const v of ["99", "1000000000", "1e3", "-100", "12a", "1 2"]) assert.throws(() => checkVmid(v), /VM id/, v);
   assert.equal(checkHost(" ship-07.example.com "), "ship-07.example.com");
   for (const h of ["-a", ".a", "a_b", "a b", "a/b", "x".repeat(254), ""]) assert.throws(() => checkHost(h), /not a host/, h);
+  // A first agent in bypassPermissions: only where the Ship allows it (ship.toml's own rule).
+  const bypass = { name: "ship-07", signins: null, agent_mode: "bypassPermissions" };
+  assert.match(newShipJob(fleet.state, bypass).errors.join(" "), /needs allow bypassPermissions/);
+  assert.match(newShipJob(fleet.state, { ...bypass, allow_bypass: true }).job.remote, /'--autostart' 'main:~\/work:bypassPermissions' .*'--allow-bypass'/);
+  assert.match(newShipJob(fleet.state, { ...bypass, mode: "bypassPermissions" }).job.remote, /'--mode' 'bypassPermissions'/);
   assert.equal(checkTimezone(""), null);
   for (const z of ["UTC", "Etc/GMT+5", "America/Indiana/Knox"]) assert.equal(checkTimezone(z), z);
   for (const z of ["utc", "Europe/", "A/B/C/D", "Europe/Ber lin", "../etc"]) assert.throws(() => checkTimezone(z), /not a time zone/, z);

@@ -1326,6 +1326,10 @@ export function newShipJob(st, form) {
   if (mode && !MODES.includes(mode)) errors.push(`${JSON.stringify(mode).slice(0, 30)} is not a mode Claude Code has`);
   else if (mode) args.push("--mode", mode);
   if (form.allow_bypass) args.push("--allow-bypass");
+  // ship.toml takes a first agent in bypassPermissions only where the Ship allows it.
+  if (agentOn && String(form.agent_mode ?? "").trim() === "bypassPermissions" && !form.allow_bypass && mode !== "bypassPermissions") {
+    errors.push("A first agent in bypassPermissions needs allow bypassPermissions too.");
+  }
   if (form.agent_sudo) args.push("--agent-sudo");
   const zone = guard(() => checkTimezone(form.timezone));
   if (zone) args.push("--timezone", zone);
