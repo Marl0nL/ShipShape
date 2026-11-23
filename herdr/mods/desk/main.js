@@ -17,6 +17,8 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { props, theme, layout, run, hc, shared, setShared, openOverlay, closeOverlay, exec, terminals, panes, nextCommand, readTextFile, writeTextFile, appHome, window as win, spaces, agents, machines } from "herdr";
+// checking() (Herdr 0.1.16+) through the namespace: a named import of it fails to load on 0.1.15.
+import * as herdr from "herdr";
 import { subject, full, refresh, boardOf, lookFor, loadLooks, syncLooks, readLedger, shipTags, KIND_LABEL, KINDS, ago, checkTools, installTools, tagIndex, agentName, refreshCrew, crewInfoOf, parentOf } from "./model.js";
 import { PRESETS, PALETTES, FINISHES, TYPES, DENSITIES, DEFAULT_TAG_LOOKS, FOLDER_TAG_LOOKS, tagLooksOf, resolve } from "./looks.js";
 import { chip, pip, icon, tagColor, button, band, label, body, stop } from "./ui.js";
@@ -69,7 +71,10 @@ export default class Desk extends View {
     this.open = { done: false };
     this.git = null;
     this.gitKey = null;
-    this.widths = { ...WIDTHS, ...JSON.parse(localStorage.getItem("widths") ?? "{}") };
+    // The width each kind was last given; a damaged saved value is forgotten, not a crash.
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem("widths") ?? "{}"); } catch {}
+    this.widths = { ...WIDTHS, ...(saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {}) };
     this.dash = { filter: {}, open: { idle: false } };
     if (this.part === "kind") {
       this.input = InputState.new({ placeholder: "Add a tag, then Enter" });
@@ -79,6 +84,8 @@ export default class Desk extends View {
         if (tag) this.setTags(cx, (tags) => [...new Set([...tags, tag])]);
       });
     }
+    // Under `herdr-app check` init() runs for real: no reads over ssh, execs or theme files there.
+    if (herdr.checking?.()) return;
     if (this.part === "looks") {
       cx.spawn(async (cx) => {
         await publishLooks();
