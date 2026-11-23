@@ -56,9 +56,12 @@ when that is set; `settings.example.json` is beside it):
 |---|---|
 | `ssh` | How this computer reaches the FleetLedger computer with ssh: `user@host`, or a `Host` from `~/.ssh/config`. Its host key must already be in `known_hosts` (the panel never answers ssh's questions). |
 | `identity_file` | Optional: a private key file (`/...` or `~/...`) for ssh, when Herdr does not see your ssh-agent (an app started from a desktop launcher may not). Its path only, never a secret. |
+| `browsers` | Optional: which browser and profile a link in a Ship's job tab opens in, by the Ship's tag (see Links in job tabs). The panel's **Browsers** view edits it. |
 
 Nothing else goes in the file, and nothing secret: no password or passphrase is ever typed into
-the panel. Saving the file reloads the panel.
+the panel, and no command line (`browsers` names a browser from the panel's own list). Saving the
+file reloads the panel. `shipshape-setup` leaves a file with `browsers` in it as it is, so let it
+fill in `ssh` first (or set it by hand).
 
 Without `ssh`, the panel says where to put it. If the refresher has left
 `~/.ssh/shipshape/fleet.json` on this computer (this machine's own bundle from `ship-fleet
@@ -91,7 +94,9 @@ agent's name and folder, host names, VM id and time zone), in a Ship's Settings 
 prefix, LAN guard addresses, reboot time, time zone, wake delay and message and new tags, in its
 Agents and size an autostart agent's name and folder and a new size, a snapshot's name, and on
 the Machines page a machine's name, public key and scope and a device's name, each checked
-against the pattern `ship-fleet` enforces and refused, not sent, when it does not match.
+against the pattern `ship-fleet` enforces and refused, not sent, when it does not match. (In
+Browsers, a tag and a browser profile's name are typed too: they go to `settings.json` only, never
+to `ship-fleet`.)
 
 | Where | Action | Runs on FleetLedger |
 |---|---|---|
@@ -156,7 +161,67 @@ ends, it runs this computer's refresher if there is one (`~/.ssh/shipshape/refre
 `~/.ssh/shipshape` and Herdr's machines current; without it, which is normal, the panel says
 nothing), then reads FleetLedger again as ever (offline). A new Ship that is ready gets a toast.
 
-## Machines
+## Links in job tabs
+
+On Herdr 0.1.17 and later, a Ctrl-click (Cmd-click on macOS) on an `https://` link in a terminal
+tab the panel opened for a Ship, such as the sign-in link `ship-fleet login` shows, opens it in the
+browser and profile you chose for one of that Ship's tags: a `work` Ship's sign-ins in your work
+profile, a `personal` one's in yours. The panel's `link.js` is the handler (`mod.json`
+declares it for `https://` links, and the Desk layout lists it in `link_handlers`, so an update of
+the Desk keeps it; Herdr adds it to a layout of your own the first time it sees it). Older Herdr
+ignores both, and the rest of the panel works as before.
+
+**Browsers** (beside FleetLedger) shows the mappings and edits them: choose a tag (or type one), a
+browser and the profile, Add, and Save, which writes `browsers` in `settings.json` (every other key
+as it was). Up moves a mapping before the one above it. By hand:
+
+```json
+{
+  "ssh": "fleetledger@fleetledger.example.invalid",
+  "identity_file": null,
+  "browsers": [
+    { "tag": "work", "browser": "chrome", "profile": "Profile 1" },
+    { "tag": "personal", "browser": "firefox", "profile": "personal" }
+  ]
+}
+```
+
+A Ship with several mapped tags opens links in the first mapping in this list whose tag it has.
+`profile` is a Chromium browser's profile folder (`Default`, `Profile 1`, …: the end of Profile Path
+on `chrome://version`; a name it does not have starts a new, empty profile) or a Firefox profile's
+name (`about:profiles`): letters, digits, spaces, `.`, `_` and `-`, from a letter or digit. An entry
+that is not one of these, has another key, or repeats a tag is left out, and Browsers says so.
+
+| `browser` | Linux (the first on `PATH`) | macOS |
+|---|---|---|
+| `chrome` | `google-chrome`, `google-chrome-stable` | Google Chrome |
+| `chromium` | `chromium`, `chromium-browser` | Chromium |
+| `edge` | `microsoft-edge`, `microsoft-edge-stable` | Microsoft Edge |
+| `brave` | `brave-browser`, `brave` | Brave Browser |
+| `vivaldi` | `vivaldi`, `vivaldi-stable` | Vivaldi |
+| `firefox` | `firefox` | Firefox |
+
+What runs, with no shell, the profile and the URL each one argument: on macOS `open -n -a APP
+--args --profile-directory=PROFILE URL` (Firefox: `-P PROFILE -new-tab URL`); on Linux `setsid -f
+BROWSER …` with the same arguments, after `which setsid NAME…` finds both (setsid lets a browser it
+starts keep running on its own). Not covered, so Herdr opens the link as usual: Windows, Safari,
+a browser not on `PATH` (a Flatpak, say) or under another name.
+
+The handler takes a click only when all of these hold, and otherwise passes it to Herdr, which
+opens it as it always does:
+
+- the link starts with `https://`, has only the characters a URL may have, and a plain host (no
+  user name before an `@`; no IPv6 address);
+- the terminal is on this computer, still running, and the panel's own job tab for a Ship:
+  the panel publishes its running jobs (`fleet.links`, a Herdr shared value) and the terminal must
+  run that job's exact command and not have been there before the job started (once the panel has
+  found the job's tab, only that one);
+- the Ship is in FleetLedger's list (or is the new Ship that tab is creating, with the tags typed
+  for it), and one of its tags is mapped;
+- the browser is installed: on macOS `open` says when it is not; on Linux `which` must find it.
+
+Saving `settings.json` reloads the panel, which then forgets the job tabs already open: their
+links open as usual.
 
 The **Machines** button swaps the Ships for two parts.
 

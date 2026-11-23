@@ -1,1 +1,1 @@
-{ "place": "none", "title": "Fleet" }
+{ "place": "none", "title": "Fleet", "link_handlers": [{ "kind": "url", "pattern": "^https://" }] }

@@ -29,7 +29,7 @@ export const SCHEMA = {
 /** A Ship's name, as ships.toml allows it. */
 export const NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
-const SETTINGS_KEYS = new Set(["ssh", "identity_file"]);
+const SETTINGS_KEYS = new Set(["ssh", "identity_file", "browsers"]); // "browsers": browsers.js reads it
 
 /** Where the settings file is, under Herdr's own folder. */
 export const settingsPath = (host) => `${host.appHome()}/mods/fleet/settings.json`;
@@ -1561,7 +1561,7 @@ export function newShipJob(st, form) {
   const commands = [args];
   if (claude) commands.push(["login", name, "claude"]);
   try {
-    return { job: job(st.where, `new ${name}`, commands, { ship: name, kind: "new" }), errors: [] };
+    return { job: job(st.where, `new ${name}`, commands, { ship: name, kind: "new", tags }), errors: [] };
   } catch (e) {
     return { errors: [firstLine(e?.message ?? e)] };
   }
@@ -1585,7 +1585,7 @@ const sameArgv = (a, b) => Array.isArray(a) && a.length === b.length && a.every(
 /** A terminal running this job: its argv, or a shell running it (the remote line inside). */
 export const runsJob = (t, job) => Array.isArray(t?.argv) && (sameArgv(t.argv, job.argv) || t.argv.some((a) => typeof a === "string" && a.includes(job.remote)));
 /** Still running: a terminal that reports no end. */
-const live = (t) => (t.state === undefined || t.state === "live") && (t.exit_code === undefined || t.exit_code === null);
+export const live = (t) => (t.state === undefined || t.state === "live") && (t.exit_code === undefined || t.exit_code === null);
 
 // ---- the Machines view: this computer's refresher, and the machines trusted to attach -------
 //

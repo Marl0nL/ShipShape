@@ -647,7 +647,7 @@ test("the web UI opens with the local opener, no ssh, and only an https address"
 test("no source file of the mod holds a flag that skips a question", () => {
   const dir = join(ROOT, "herdr", "mods", "fleet");
   const files = readdirSync(dir).filter((f) => f.endsWith(".js"));
-  assert.deepEqual(files.sort(), ["agents.js", "main.js", "model.js", "settings.js"]);
+  assert.deepEqual(files.sort(), ["agents.js", "browsers.js", "link.js", "main.js", "model.js", "settings.js"]);
   for (const f of files) {
     const code = readFileSync(join(dir, f), "utf8");
     for (const flag of SKIPPING.filter((x) => x !== "-y")) assert.ok(!code.includes(flag), `${f}: ${flag}`);
