@@ -302,7 +302,7 @@ def test_user_units():
         "herdr.service", "ship-core.service"]
     core = unit(FILES / "systemd/user/ship-core.service")
     assert core["Unit"]["ConditionUser"] == "agent"
-    assert core["Service"]["ExecStart"] == "/opt/shipshape/current/bin/ship-core-start"
+    assert "exec /opt/shipshape/current/bin/ship-core-start" in core["Service"]["ExecStart"]
     assert core["Install"]["WantedBy"] == "default.target"
 
 
@@ -720,7 +720,8 @@ def test_herdr_core_installs_the_binary_and_hc_link(tmp_path):
     assert os.readlink(bin_dir / "hc") == "herdr-core"
     assert not (bin_dir / "LICENSE").exists()
     assert (tmp_path / "root/var/lib/shipshape/herdr-core.sha256").read_text().strip() == digest
-    assert (tmp_path / "root/var/lib/shipshape/herdr-core.version").read_text() == "0.1.22\n"
+    assert (tmp_path / "root/var/lib/shipshape/herdr-core.version").read_text() == (
+        f"0.1.22 {digest}\n")
 
 
 def test_herdr_core_refuses_a_mismatched_archive(tmp_path):
@@ -851,12 +852,20 @@ def test_herdr_core_is_never_installed_over_a_newer_one(tmp_path):
     installed binary (a converge to an older bundle, say) is not installed."""
     root = tmp_path / "root"
     (root / "usr/local/bin").mkdir(parents=True)
-    (root / "var/lib/shipshape").mkdir(parents=True)
+    state = root / "var/lib/shipshape"
+    state.mkdir(parents=True)
     assert _sourced(root, "herdr_core_newer_than 0.1.19").returncode == 1  # nothing installed
     (root / "usr/local/bin/herdr-core").write_text("core")
+    (state / "herdr-core.sha256").write_text("a" * 64 + "\n")
     assert _sourced(root, "herdr_core_newer_than 0.1.19").returncode == 1  # no version recorded
-    (root / "var/lib/shipshape/herdr-core.version").write_text("0.1.22\n")
+    (state / "herdr-core.version").write_text("0.1.22 " + "a" * 64 + "\n")
     newer = _sourced(root, "herdr_core_newer_than 0.1.19")
     assert newer.returncode == 0 and newer.stdout == "0.1.22\n"
     assert _sourced(root, "herdr_core_newer_than 0.1.22").returncode == 1  # the same: installs
     assert _sourced(root, "herdr_core_newer_than 0.1.23").returncode == 1  # newer: installs
+    # An older ship-provision (no version record) installed another archive since: the
+    # record no longer describes the binary, so it decides nothing.
+    (state / "herdr-core.sha256").write_text("b" * 64 + "\n")
+    assert _sourced(root, "herdr_core_newer_than 0.1.19").returncode == 1
+    (state / "herdr-core.version").write_text("0.1.22\n")  # no checksum in it
+    assert _sourced(root, "herdr_core_newer_than 0.1.19").returncode == 1

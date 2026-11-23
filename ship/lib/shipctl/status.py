@@ -341,8 +341,11 @@ def core_attention(ctx: Context) -> tuple[str, str] | None:
     note = None
     for running in servers:
         copy = known.get((running.st_dev, running.st_ino))
-        # A binary replaced under the running core is no installed file: ask the core.
-        version = copy.version if copy is not None else Core(ctx).running_version()
+        # A binary replaced under the running core is no installed file, and a copy may
+        # not have said its version this time: ask the core itself.
+        version = copy.version if copy is not None and copy.version else None
+        if version is None:
+            version = Core(ctx).running_version()
         if version is None:
             if copy is None:  # replaced, and it does not say what it is: as before
                 return ("core-restart-pending",

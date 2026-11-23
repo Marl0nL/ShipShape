@@ -5,8 +5,10 @@ ship-core.service (a user unit, so this runs as the agent user) runs it on Ships
 with ship.toml runtime = "core". It starts the core from the newest installed copy
 (shipctl.runtime: ShipShape's pinned one, or a newer one Herdr's own machine update
 put in ~/.local/bin; the pinned one on a tie) and exits with `hc server start`'s
-code. When the choice itself fails it falls back to the pinned copy, as before.
-It never stops or restarts a core that is already running.
+code. When the choice itself fails, or the chosen copy does not run, it starts the
+pinned copy, as before: a core at all comes before the newest one, and status then
+says a newer one is installed (core-restart-pending). It never stops or restarts a
+core that is already running.
 """
 
 import os
@@ -20,11 +22,14 @@ def main() -> int:
     # The pinned copy, under SHIPSHAPE_ROOT as shipctl.paths has it (a sandbox in tests):
     # what starts when the choice below fails, even when shipctl does not load at all.
     root = os.environ.get("SHIPSHAPE_ROOT") or "/"
-    command = os.path.join(root, "usr/local/bin/hc")
+    pinned = command = os.path.join(root, "usr/local/bin/hc")
+    start = ["server", "start"]
     try:
         from shipctl.paths import Paths
         from shipctl.runner import Runner
-        from shipctl.runtime import PINNED_HC, core_copies, newest_core
+        from shipctl.runtime import CORE_START, PINNED_HC, core_copies, newest_core
+
+        start = CORE_START
 
         paths = Paths.from_env()
         command = str(paths.p(PINNED_HC))
@@ -37,7 +42,14 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 - the core must still start
         print(f"ship-core-start: choosing a herdr-core failed ({exc}); starting {command}",
               file=sys.stderr, flush=True)
-    os.execv(command, [command, "server", "start"])
+    try:
+        os.execv(command, [command, *start])
+    except OSError as exc:
+        if command == pinned:
+            raise
+        print(f"ship-core-start: {command} did not start ({exc}); starting {pinned}",
+              file=sys.stderr, flush=True)
+    os.execv(pinned, [pinned, *start])
 
 
 if __name__ == "__main__":

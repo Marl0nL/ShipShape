@@ -370,6 +370,7 @@ step_herdr_core() {
   fi
   if installed=$(herdr_core_newer_than "$version"); then
     log "kept /usr/local/bin/herdr-core $installed: newer than the pin $version (herdr-core never moves back)"
+    [ "$DRY" = 1 ] || put_link herdr-core /usr/local/bin/hc
     return 0
   fi
   if [ "$DRY" = 1 ]; then changed "/usr/local/bin/herdr-core $version"; return 0; fi
@@ -380,11 +381,16 @@ step_herdr_core() {
 }
 
 # herdr_core_newer_than VERSION: print the version of the herdr-core installed here
-# (as recorded when it was installed) and succeed when it is newer than VERSION.
+# and succeed when it is newer than VERSION. The version is the one recorded when it
+# was installed, with that archive's checksum: a record whose checksum is not the
+# installed one (an older ship-provision installed another since) counts for nothing.
 herdr_core_newer_than() {
-  local installed
+  local record installed sum
   [ -f "$ROOT/usr/local/bin/herdr-core" ] || return 1
-  installed=$(head -c 64 "$ROOT/var/lib/shipshape/herdr-core.version" 2>/dev/null) || return 1
+  record=$(head -c 200 "$ROOT/var/lib/shipshape/herdr-core.version" 2>/dev/null) || return 1
+  read -r installed sum <<<"$record" || true
+  [ -n "$sum" ] && [ "$sum" = "$(head -c 100 "$ROOT/var/lib/shipshape/herdr-core.sha256" 2>/dev/null)" ] ||
+    return 1
   version_newer "$installed" "$1" || return 1
   printf '%s\n' "$installed"
 }
@@ -411,7 +417,7 @@ install_herdr_core() {
   # The archive's checksum and version, so a re-run knows the installed binary is
   # the pinned one, and never installs an older one over it.
   echo "$sum" | put_text /var/lib/shipshape/herdr-core.sha256 0644
-  echo "$version" | put_text /var/lib/shipshape/herdr-core.version 0644
+  echo "$version $sum" | put_text /var/lib/shipshape/herdr-core.version 0644
   rm -rf "$dir"
 }
 

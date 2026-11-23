@@ -424,7 +424,8 @@ def test_the_launch_typed_into_a_shell_is_one_quoted_line(core):
 
 def test_the_core_unit_only_starts_the_core():
     text = (SHIP_FILES / "systemd/user/ship-core.service").read_text()
-    assert "ExecStart=/opt/shipshape/current/bin/ship-core-start" in text
+    assert "exec /opt/shipshape/current/bin/ship-core-start;" in text
+    assert "exec /usr/local/bin/hc server start'" in text  # a release without it
     assert "Type=oneshot" in text and "ConditionUser=agent" in text
     assert "Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin" in text
     assert "EnvironmentFile=-%h/.config/shipshape/env" in text

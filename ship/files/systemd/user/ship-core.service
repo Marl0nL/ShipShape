@@ -22,7 +22,9 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=npm_config_prefix=%h/.local
 EnvironmentFile=-%h/.config/shipshape/env
 WorkingDirectory=%h
-ExecStart=/opt/shipshape/current/bin/ship-core-start
+# A converge rolled back to a release without ship-core-start leaves this unit in
+# place: then the pinned core starts, as before.
+ExecStart=/bin/sh -c 'if [ -x /opt/shipshape/current/bin/ship-core-start ]; then exec /opt/shipshape/current/bin/ship-core-start; fi; exec /usr/local/bin/hc server start'
 
 [Install]
 WantedBy=default.target

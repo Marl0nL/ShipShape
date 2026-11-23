@@ -371,6 +371,10 @@ How a copy's version is known, and what that trusts:
   10 seconds), asked **as the agent user**: ship-ctl (root) never runs it as root,
   and the boot unit already runs as the agent. Anything else is not a copy, and the
   pinned one runs.
+- Not every start goes through ShipShape: a client that starts the core while
+  none runs (a laptop's `hc` over SSH, an agent's own `hc`) finds the pinned copy
+  first. Status then says a newer copy is installed (`core-restart-pending`), and
+  the next reboot starts it.
 
 The trade-off, plainly: the sha256 pin no longer decides alone which herdr-core a
 Ship runs. A newer copy in `~/.local/bin` is never checked against a checksum

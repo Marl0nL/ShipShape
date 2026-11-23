@@ -629,9 +629,9 @@ def update_one(
             return _reboot_after(fleet, ship, on_event, Outcome(
                 ship.name, True, f"already on {release}", details, data), wait, times)
         if has_attention(before, "core-restart-pending"):  # never a reboot for it under auto
-            details.append("herdr-core was updated; its agents keep running on the old core, "
-                           f"and the new one takes over at the next reboot (ship-fleet reboot "
-                           f"{ship.name}).")
+            details.append("A newer herdr-core is installed; its agents keep running on the "
+                           "older core, and the newer one takes over at the next reboot "
+                           f"(ship-fleet reboot {ship.name}).")
         if has_attention(before, "tmp-reboot-pending"):
             details.append(tmp_note(ship.name))
         return Outcome(ship.name, True, f"already on {release}", details, data)
@@ -686,8 +686,8 @@ def update_one(
             )
         if core_pending:
             outcome.details.append(
-                "herdr-core was updated; its agents keep running on the old core, and the "
-                f"new one takes over at the next reboot (ship-fleet reboot {ship.name})."
+                "A newer herdr-core is installed; its agents keep running on the older core, "
+                f"and the newer one takes over at the next reboot (ship-fleet reboot {ship.name})."
             )
         if has_attention(after, "tmp-reboot-pending"):
             outcome.details.append(tmp_note(ship.name))

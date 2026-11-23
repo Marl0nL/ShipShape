@@ -125,6 +125,14 @@ agent alone can change; its version is what it says (`hc --version`, run as the
 agent); its checksum is not the pin's (`docs/security.md`). A Herdr copy that is
 the pinned version, or older, is never run and never mentioned.
 
+What ShipShape does not decide: a client that starts the core itself while none
+runs uses the herdr-core its own PATH finds first, which is the pinned one. That
+covers a laptop's `hc` or the Herdr app over SSH, an agent's own `hc`, and a terminal
+holder restarting a crashed core. `ship-core-start` also starts the pinned copy when
+choosing fails or the chosen copy does not run, because a running core matters more
+than the newest one. In each case status then shows `core-restart-pending`, and the
+next start through ShipShape (a reboot) runs the newest copy again.
+
 `tmp-reboot-pending` (subject `/tmp`): `/tmp` is still a tmpfs (in memory, with a
 fixed number of files), and ship-provision has already masked `tmp.mount`, so the
 next reboot leaves it a folder on the root disk (status `host.tmp`). Nothing is

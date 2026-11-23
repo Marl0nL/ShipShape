@@ -238,3 +238,39 @@ def test_the_home_copy_is_asked_its_version_as_the_agent(core):
              if '"herdr-core"' in line]
     assert homes and all(str(ship.p("/home/agent")) in line for line in homes)
     assert os.stat(ship.p(HOME_CORE)).st_mode & 0o777 == 0o755
+
+
+def test_a_pre_release_copy_counts_by_its_numbers(core):
+    """`hc 0.2.0-rc1` is 0.2.0, as herdr-core compares its own versions."""
+    ship = core
+    ship.home_core("0.2.0-rc1")
+    ship.ctl("refresh")
+    assert _core_calls(ship, "home") and not _core_calls(ship, "pinned")
+
+
+def test_status_asks_the_core_when_its_copy_does_not_say_its_version(core):
+    """Herdr's copy runs but did not answer `--version` this time (busy, or a format
+    ship-ctl does not read): the running core's own word decides, never silence."""
+    ship = core
+    ship.p("/usr/local/bin/herdr-core").write_text("pinned herdr-core")
+    home = ship.home_core("0.1.22")
+    _set(ship, home_version="0.1.22 (busy)", running_version="0.1.22")
+    _serving(ship, 4405, home)
+    [item] = _attention(ship.status(), "core-unpinned")
+    assert "0.1.22" in item["message"]
+
+
+def test_the_boot_starts_the_pinned_copy_when_the_newer_one_does_not_run(core):
+    """The chosen copy says its version, then cannot be started (gone a moment later):
+    a core at all comes first, so the pinned one starts."""
+    ship = core
+    home = ship.home_core("0.1.22")
+    script = ship.bundle / "bin/ship-core-start"
+    text = script.read_text().replace(
+        "        os.execv(command, [command, *start])\n",
+        "        os.unlink(command)\n        os.execv(command, [command, *start])\n")
+    script.write_text(text)
+    r = _boot_start(ship)
+    assert r.returncode == 0, r.stderr
+    assert "did not start" in r.stderr and not home.exists()
+    assert ship.scenario()["hc"]["started_from"] == "pinned"

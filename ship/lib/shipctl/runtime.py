@@ -375,7 +375,10 @@ class Herdr(AgentRuntime):
 PINNED_CORE = "/usr/local/bin/herdr-core"  # ship-provision's; `hc` links to it
 PINNED_HC = "/usr/local/bin/hc"
 HOME_CORE = ".local/bin/herdr-core"  # in the agent's home: where Herdr's update puts it
-CORE_VERSION_LINE = re.compile(r"hc (\d{1,9})\.(\d{1,9})\.(\d{1,9})")  # `hc --version`
+# `hc --version`; a pre-release suffix (`-rc1`) is allowed and, as herdr-core's own
+# comparison does, left out of the comparison.
+CORE_VERSION_LINE = re.compile(r"hc (\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:[-+][0-9A-Za-z.-]{1,40})?")
+CORE_START = ["server", "start"]  # what ship-core-start runs the chosen copy with
 CORE_VERSION_TIMEOUT_S = 10
 
 
