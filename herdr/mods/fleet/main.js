@@ -328,7 +328,7 @@ export default class FleetPanel extends View {
     cx.spawn(async (cx) => {
       try {
         await writeTextFile(settingsPath(host), text, b.text);
-        b.note = "Saved. Herdr reloads the panel: job tabs already open open links as before.";
+        b.note = "Saved. Herdr reloads the panel; job tabs open before this open links as usual.";
         b.text = text;
         b.saved = b.mappings;
       } catch (e) {

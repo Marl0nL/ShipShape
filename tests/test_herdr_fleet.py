@@ -1,6 +1,7 @@
 """The Herdr Fleet panel (herdr/mods/fleet/): what can be checked without a running Herdr.
 
-Its logic, model.js, settings.js and agents.js, is tested under npm test (herdr/tests/fleet/).
+Its logic, model.js, settings.js, agents.js and browsers.js (its link handler's), is tested
+under npm test (herdr/tests/fleet/).
 Here: the mod's files parse, its install script installs it alone and never docks it or writes its
 settings, and the rules the panel keeps that can be read from its source: it skips no question
 ship-fleet asks, asks none of its own, takes no secret, and checks what is typed against
@@ -19,8 +20,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HERDR = ROOT / "herdr"
 FLEET = HERDR / "mods" / "fleet"
-INSTALLED = ["README.md", "agents.js", "main.js", "mod.json", "model.js", "settings.example.json",
-             "settings.js"]
+INSTALLED = ["README.md", "agents.js", "browsers.js", "link.js", "main.js", "mod.json", "model.js",
+             "settings.example.json", "settings.js"]
 
 
 def test_its_javascript_parses():
@@ -42,23 +43,27 @@ def test_its_json_files_parse_and_it_docks_nowhere():
 
 
 def test_the_logic_imports_neither_gpui_nor_herdr():
-    """model.js imports nothing, and settings.js and agents.js only model.js, so npm test can load
-    them (and the Desk's link to model.js needs nothing beside it); only main.js talks to Herdr."""
+    """model.js imports nothing, and settings.js, agents.js and browsers.js only model.js, so npm
+    test can load them (and the Desk's link to model.js needs nothing beside it); only main.js and
+    link.js (the link handler, which hands browsers.js Herdr's functions) talk to Herdr."""
     model = (FLEET / "model.js").read_text("utf-8")
     assert not re.search(r"^\s*import\b", model, re.M)
     assert "gpui" not in re.sub(r"//.*", "", model)
-    for name in ("settings.js", "agents.js"):
+    for name in ("settings.js", "agents.js", "browsers.js"):
         code = (FLEET / name).read_text("utf-8")
         assert re.findall(r'^import .* from "([^"]+)";$', code, re.M) == ["./model.js"], name
         assert "gpui" not in re.sub(r"//.*", "", code), name
     main = (FLEET / "main.js").read_text("utf-8")
     assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "./model.js",
-                                                   "./settings.js", "./agents.js"]
+                                                   "./settings.js", "./browsers.js", "./agents.js"]
+    link = (FLEET / "link.js").read_text("utf-8")
+    assert re.findall(r'from "([^"]+)"', link) == ["herdr", "./browsers.js"]
 
 
 def mod_code():
     return "".join((FLEET / f).read_text("utf-8")
-                   for f in ("main.js", "model.js", "settings.js", "agents.js"))
+                   for f in ("main.js", "model.js", "settings.js", "agents.js", "browsers.js",
+                             "link.js"))
 
 
 def test_its_reads_and_where_its_actions_run():
@@ -109,7 +114,8 @@ def test_nothing_secret_is_typed_into_it():
     `new` treats as possibly secret), a snapshot's name, a machine's name, public key and scope,
     a device's name, in a Ship's Settings its session prefix, LAN guard addresses, reboot
     time, time zone, wake delay and message, and new tags, and in its Agents and size an
-    autostart agent's name and folder and a new size: no passphrase, password, code, token or
+    autostart agent's name and folder and a new size, and in Browsers a tag and a browser
+    profile's name (for settings.json, never sent): no passphrase, password, code, token or
     private key, and nothing drawn masked."""
     main = (FLEET / "main.js").read_text("utf-8")
     assert "set_masked" not in main
@@ -120,7 +126,8 @@ def test_nothing_secret_is_typed_into_it():
                             "ssh-ed25519 AAAA... (the one line of its .pub file)",
                             "or type tag:TAG ship:NAME", "phone", "prefix", "none", "HH:MM",
                             "Area/City", "minutes", "the default message", "or new tags", "lead",
-                            "~/work/lead", "vCPUs", "memory MB", "disk GB"]
+                            "~/work/lead", "vCPUs", "memory MB", "disk GB", "or type a tag",
+                            "profile"]
     assert main.count("InputState.new(") == 1  # input(), above
 
 
@@ -326,6 +333,8 @@ def test_mod_json_goes_in_first():
     assert order.index("model.js") < order.index("main.js")
     assert order.index("settings.js") < order.index("main.js")
     assert order.index("agents.js") < order.index("main.js")
+    assert order.index("browsers.js") < order.index("main.js")
+    assert order.index("browsers.js") < order.index("link.js")
     assert sorted(order) == INSTALLED
 
 
