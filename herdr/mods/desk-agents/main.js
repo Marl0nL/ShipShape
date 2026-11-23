@@ -320,7 +320,7 @@ export default class Agents extends View {
 
     // Desk: each agent's tag colour (shared "desk.tagIndex", from the desk mod), as a bar at the row's left.
     const tagIdx = shared("desk.tagIndex")?.agents ?? {};
-    const tagBar = (a, top) => (tagIdx[a.address] ? div().absolute().left(1).top(top).w(3).h(16).rounded_full().bg(tagIdx[a.address].color) : null);
+    const tagBar = (a, top, left = 1) => (tagIdx[a.address] ? div().absolute().left(left).top(top).w(3).h(16).rounded_full().bg(tagIdx[a.address].color) : null);
     const row = (a, i, subs = [], opt = {}) => {
       const pic = icon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
@@ -340,7 +340,8 @@ export default class Agents extends View {
           .hover((s) => s.bg(t.hover))
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .relative()
-          .when(Boolean(tagBar(a, 5)), (el) => el.child(tagBar(a, 5)))
+          // Desk: at the rail's edge, outside the row's 6px margin, clear of a two-digit number.
+          .when(Boolean(tagBar(a, 5)), (el) => el.child(tagBar(a, 5, -5)))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(a.focused ? t.foreground : t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }

@@ -1,8 +1,9 @@
 // `herdr-app check` (Herdr 0.1.16+) runs a mod's init() for real and says so through checking():
 // the Desk (every part) and the Fleet panel then start no timer or task, so nothing reads over
-// ssh, runs a command or writes a theme file. In a live window (checking() false, or no
-// checking at all on Herdr 0.1.15) they start as before. The Fleet panel is loaded here because
-// these stand-ins are the ones that load a mod's view.
+// ssh, runs a command or writes a theme file. In a live window (checking() false) they start as
+// before; Herdr 0.1.15, with no checking at all, is covered by the source scan at the end (the
+// stand-in always has the export). The Fleet panel is loaded here because these stand-ins are
+// the ones that load a mod's view.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -81,8 +82,9 @@ test("a damaged saved width is forgotten, not a crash", async () => {
 });
 
 // Herdr 0.1.15 has no checking export, and a named import of an export the host module lacks
-// fails the whole mod's load: every mod asks through the namespace (`herdr.checking?.()`).
-test("no mod imports an export Herdr 0.1.15 lacks by name", () => {
+// fails the whole mod's load: every mod asks through the namespace, and calls it with ?.() since
+// there it is undefined.
+test("no mod imports an export Herdr 0.1.15 lacks by name, or calls one without ?.()", () => {
   const NEWER = ["checking", "setWindowTitle", "setBadge", "pickFiles"];
   for (const mod of readdirSync(MODS)) {
     const dir = join(MODS, mod);
@@ -92,6 +94,7 @@ test("no mod imports an export Herdr 0.1.15 lacks by name", () => {
         const names = m[1].split(",").map((n) => n.trim().split(/\s+as\s+/)[0]);
         for (const n of NEWER) assert.ok(!names.includes(n), `${mod}/${file} imports ${n} by name`);
       }
+      for (const n of NEWER) assert.ok(!new RegExp(`\\bherdr\\.${n}\\s*\\(`).test(code), `${mod}/${file} calls herdr.${n}() without ?.()`);
     }
   }
 });
