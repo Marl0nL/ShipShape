@@ -471,6 +471,19 @@ def test_a_pending_core_restart_offers_a_reboot_that_is_not_urgent(store):
     assert "herdr saves" in herdr.confirm.text  # a herdr Ship: as before
 
 
+def test_a_newer_unpinned_core_is_a_notice_without_a_reboot(store):
+    """Herdr's own update runs a newer herdr-core than the pin: the Ship keeps it, also
+    across a reboot, so nothing offers one (a reboot would not change it)."""
+    from test_cli import RUNNING_CORE
+
+    from fleetledger import ops
+
+    v = view(store, doc=copy.deepcopy(RUNNING_CORE))
+    action = dashboard.action_for("core-unpinned", "ship-01", v, None)
+    assert action.kind == "link" and action.value == "/ships/ship-01"
+    assert ops.SEVERITY["core-unpinned"] == "low"
+
+
 def test_remote_control_agents_counts_only_those_given_it():
     from fleetledger.status import remote_control_agents
 

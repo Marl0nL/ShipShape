@@ -92,6 +92,7 @@ SEVERITY = {
     "reboot-required": "medium",
     "herdr-restart-pending": "medium",
     "core-restart-pending": "low",  # agents unaffected; the next reboot switches it
+    "core-unpinned": "low",  # a newer herdr-core than the pin runs (Herdr's update); kept
     "tmp-reboot-pending": "low",  # /tmp moves to the disk at the next reboot
     "host-cert-expiring": "medium",
     "machine-cert-expiring": "medium",  # in its last day (fleet-level)

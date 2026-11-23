@@ -750,13 +750,24 @@ def hc_end(t: dict, code: int = 0) -> None:
                      "reason": "prompt_input_exit"})
 
 
+def hc_copy() -> str:
+    """Which herdr-core copy this call ran: "home" (a copy in the agent's
+    ~/.local/bin, as Herdr's own machine update installs it) or "pinned"."""
+    return "home" if sys.argv[0].endswith("/.local/bin/herdr-core") else "pinned"
+
+
 def hc(s: dict, a: list[str]) -> int:
+    """The fake herdr-core. scenario["hc"]: version (the pinned copy's), home_version
+    (a copy in ~/.local/bin: ship_harness.Ship.home_core), running_version (what the
+    running core says it is), started_from (the copy the last `server start` ran)."""
     h = s.setdefault("hc", {})
     terms = h.setdefault("terminals", [])
-    if not h.get("installed", True):
+    copy = hc_copy()
+    if not h.get("installed", True) and copy == "pinned":
         return 127
+    version = h.get("home_version") if copy == "home" else h.get("version", "0.1.19")
     if a in (["--version"], ["-V"]):
-        out(f"herdr-core {h.get('version', '0.1.19')}")
+        out(f"hc {version}")
         return 0
     cmd, rest = a[0], [x for x in a[1:] if x != "--json"]
     if cmd in ("kill",) or a[:2] == ["server", "stop"]:
@@ -764,9 +775,13 @@ def hc(s: dict, a: list[str]) -> int:
         save(s)
         return 0
     if a[:2] == ["server", "start"]:
-        h["server"] = True
+        if not h.get("server"):
+            h.update(server=True, started_from=copy, running_version=version)
         save(s)
-        out({"version": h.get("version", "0.1.19"), "pid": 1320, "uptime_ms": 9})
+        out({"version": h.get("running_version", version), "pid": 1320, "uptime_ms": 9})
+        return 0
+    if [x for x in a if x != "--json"][:2] == ["server", "status"] and h.get("server", True):
+        out({"version": h.get("running_version", version), "pid": 1320, "uptime_ms": 9})
         return 0
     if not h.get("server", True):
         return hc_error("unavailable", "cannot start the core")
@@ -918,6 +933,7 @@ HANDLERS = {
     "example-cli": example_cli,
     "herdr": herdr,
     "hc": hc,
+    "herdr-core": hc,  # a copy in ~/.local/bin (Ship.home_core)
     "claude": claude,
     "gcloud": gcloud,
     "gh": gh,

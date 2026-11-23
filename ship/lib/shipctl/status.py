@@ -255,28 +255,22 @@ def probe_herdr(ctx: Context, ship: ShipToml | None = None
 
 
 HERDR_BIN = "/usr/local/bin/herdr"
-CORE_BIN = "/usr/local/bin/herdr-core"  # `hc` is a link to it
 
 
-def _restart_pending(ctx: Context, binary: str, names: tuple[str, ...], verb: bytes) -> bool:
-    """True when a running server (argv[0] named one of names, argv[1] verb) is not
-    the installed binary.
+def _servers(ctx: Context, names: tuple[str, ...], verb: bytes) -> list[os.stat_result]:
+    """The executable of each running server (argv[0] named one of names, argv[1]
+    verb) as stat() sees it: a binary replaced under it stays the old inode.
 
-    A converge replaces the binary with a new file; the running server keeps the old
-    one (its /proc/<pid>/exe points at the replaced inode) until it restarts. Only the
-    agent's processes are looked at, and only stat() and cmdline are read, so nothing
-    an agent controls is opened or followed for writing; at worst an agent could make
-    this report a needless restart.
+    Only the agent's processes are looked at, and only stat() and cmdline are read, so
+    nothing an agent controls is opened or followed for writing; at worst an agent
+    could make status report a needless restart.
     """
-    try:
-        installed = os.stat(ctx.paths.p(binary))
-    except OSError:
-        return False
     owner = ctx.agent_owner
     try:
         entries = [e for e in ctx.paths.proc.iterdir() if e.name.isdigit()]
     except OSError:
-        return False
+        return []
+    found = []
     for entry in entries:
         try:
             if owner is not None and entry.stat().st_uid != owner[0]:
@@ -284,12 +278,21 @@ def _restart_pending(ctx: Context, binary: str, names: tuple[str, ...], verb: by
             argv = (entry / "cmdline").read_bytes().split(b"\0")
             if Path(argv[0].decode("utf-8", "replace")).name not in names or argv[1:2] != [verb]:
                 continue
-            running = os.stat(entry / "exe")
+            found.append(os.stat(entry / "exe"))
         except OSError:
             continue
-        if (running.st_dev, running.st_ino) != (installed.st_dev, installed.st_ino):
-            return True
-    return False
+    return found
+
+
+def _restart_pending(ctx: Context, binary: str, names: tuple[str, ...], verb: bytes) -> bool:
+    """True when a running server is not the installed binary: a converge replaced
+    the binary, and the server keeps the old one until it restarts."""
+    try:
+        installed = os.stat(ctx.paths.p(binary))
+    except OSError:
+        return False
+    return any((running.st_dev, running.st_ino) != (installed.st_dev, installed.st_ino)
+               for running in _servers(ctx, names, verb))
 
 
 def herdr_restart_pending(ctx: Context) -> bool:
@@ -308,12 +311,62 @@ def runtime_herdr_restart_pending(ctx: Context, ship: ShipToml) -> bool:
     return for_ship(ctx, ship).kind == Herdr.kind and herdr_restart_pending(ctx)
 
 
-def core_restart_pending(ctx: Context) -> bool:
-    """True when the running herdr-core (`herdr-core serve`, which the core starts as
-    its own transient user unit) is not the installed /usr/local/bin/herdr-core.
+def core_attention(ctx: Context) -> tuple[str, str] | None:
+    """What status says about the running herdr-core (`herdr-core serve`, which the
+    core starts as its own transient user unit), against the installed copies
+    (runtime.core_copies): (code, message), or None when there is nothing to say.
+
+    core-restart-pending: a newer copy is installed than the one running (a converge
+    replaced the pinned binary, say); the next start, at the reboot, runs it.
+    core-unpinned: the running core is newer than ShipShape's pinned copy (Herdr's own
+    machine update put it in ~/.local/bin). It is kept, also after a reboot: nothing
+    to do, and never a reboot.
     Its holders, which keep each terminal's program, are not counted: they stay on
-    the binary they started with until their terminal ends, by design."""
-    return _restart_pending(ctx, CORE_BIN, ("herdr-core", "hc"), b"serve")
+    the binary they started with until their terminal ends, by design.
+    """
+    servers = _servers(ctx, ("herdr-core", "hc"), b"serve")
+    if not servers:
+        return None
+    from .runtime import Core, newest_core
+
+    copies = ctx.core_copies
+    pinned, newest = copies[0], newest_core(copies)
+    known = {}
+    for c in copies:
+        try:
+            st = os.stat(c.file)
+        except OSError:
+            continue
+        known[(st.st_dev, st.st_ino)] = c
+    note = None
+    for running in servers:
+        copy = known.get((running.st_dev, running.st_ino))
+        # A binary replaced under the running core is no installed file: ask the core.
+        version = copy.version if copy is not None else Core(ctx).running_version()
+        if version is None:
+            if copy is None:  # replaced, and it does not say what it is: as before
+                return ("core-restart-pending",
+                        "herdr-core was updated; the running core is the old version until "
+                        "the next reboot. Agents are not affected.")
+            continue
+        shown = ".".join(map(str, version))
+        if newest.version is not None and version < newest.version:
+            return ("core-restart-pending",
+                    f"herdr-core {newest.shown} is installed; the running core is the older "
+                    f"{shown} until the next reboot. Agents are not affected.")
+        if pinned.version is None or version <= pinned.version:
+            continue
+        if newest.version is not None and version > newest.version:
+            note = ("core-unpinned",
+                    f"herdr-core {shown} runs, but no installed copy is as new (a restart "
+                    f"would start {newest.shown}). ShipShape does not restart it.")
+        else:
+            note = ("core-unpinned",
+                    f"herdr-core {shown} runs from ~/.local/bin, where Herdr's own update put "
+                    f"it: newer than the pinned {pinned.shown}, so ShipShape keeps it, also "
+                    "after a reboot (herdr-core never moves back). Its checksum is not the "
+                    "pinned one. Nothing to do.")
+    return note
 
 
 # --- sign-ins ---------------------------------------------------------------
@@ -512,9 +565,10 @@ def deprecated_message(ship: str) -> str:
 
 
 def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = False,
-                  core_pending: bool = False, labels: dict[str, str] | None = None
+                  core: tuple[str, str] | None = None, labels: dict[str, str] | None = None
                   ) -> list[dict]:
-    """labels: how each sign-in is named (signins.Registry.labels)."""
+    """core: what core_attention says (code, message). labels: how each sign-in is
+    named (signins.Registry.labels)."""
     items: list[dict] = []
     labels = labels or {}
 
@@ -571,13 +625,8 @@ def attention_for(doc: dict, failed_units: list[str], herdr_pending: bool = Fals
             "herdr was updated; the running server is the old version until the next reboot.",
             "herdr",
         )
-    if core_pending:
-        add(
-            "core-restart-pending",
-            "herdr-core was updated; the running core is the old version until the next "
-            "reboot. Agents are not affected.",
-            "herdr-core",
-        )
+    if core:
+        add(core[0], core[1], "herdr-core")
     ov = doc.get("overlay")
     if ov and ov["joined"] and ov["state"] != "running":
         add("overlay-down", f"The overlay network is {ov['state']}; the Ship cannot be reached "
@@ -670,7 +719,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
         f_ssh = pool.submit(ssh_state, ctx)
         f_net = pool.submit(net_section, ctx)
         f_pending = pool.submit(runtime_herdr_restart_pending, ctx, ship)
-        f_core_pending = pool.submit(core_restart_pending, ctx)
+        f_core = pool.submit(core_attention, ctx)
         f_auth = pool.submit(signincheck.check, ctx, reg, reg.keys)
         host, e = f_host.result()
         errors += e
@@ -741,7 +790,7 @@ def build(ctx: Context, ship: ShipToml) -> dict:
             entry["mode"] = modes.get(id(agent))
     doc["state"] = derive_state(doc)
     doc["attention"] = attention_for(doc, failed_units, f_pending.result(),
-                                     f_core_pending.result(), reg.labels)
+                                     f_core.result(), reg.labels)
     doc["attention"] += [{"code": code, "message": message[:500], "subject": who[:100]}
                          for code, message, who in [*record.attention(doc["agent_record"]),
                                                     *record.shared_folders(ctx, ship, live,

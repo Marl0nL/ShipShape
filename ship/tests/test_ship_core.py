@@ -162,7 +162,7 @@ def test_terminals_that_are_not_agents_are_not_listed(core):
 
 def test_status_says_when_hc_is_missing(core):
     ship = core
-    os.unlink(Path(ship.env["PATH"].split(":")[0]) / "hc")
+    ship.p("/usr/local/bin/hc").unlink()  # ship-ctl runs the pinned hc by its path
     doc = ship.status()
     assert doc["herdr"]["server"] == "unknown" and doc["herdr"]["agents"] == []
     assert "herdr-core: not installed" in doc["errors"]
@@ -424,7 +424,7 @@ def test_the_launch_typed_into_a_shell_is_one_quoted_line(core):
 
 def test_the_core_unit_only_starts_the_core():
     text = (SHIP_FILES / "systemd/user/ship-core.service").read_text()
-    assert "ExecStart=/usr/local/bin/hc server start" in text
+    assert "ExecStart=/opt/shipshape/current/bin/ship-core-start" in text
     assert "Type=oneshot" in text and "ConditionUser=agent" in text
     assert "Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin" in text
     assert "EnvironmentFile=-%h/.config/shipshape/env" in text
@@ -659,9 +659,13 @@ def _fake_process(ship, pid: int, argv: list[str], exe: Path) -> None:
 
 
 def _install_core(ship) -> Path:
+    """A converge installed a newer pinned herdr-core; the core still runs an older one."""
     path = ship.p("/usr/local/bin/herdr-core")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("new herdr-core")
+    s = ship.scenario()
+    s["hc"]["running_version"] = "0.1.18"
+    ship.set(hc=s["hc"])
     return path
 
 

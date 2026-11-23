@@ -302,7 +302,7 @@ def test_user_units():
         "herdr.service", "ship-core.service"]
     core = unit(FILES / "systemd/user/ship-core.service")
     assert core["Unit"]["ConditionUser"] == "agent"
-    assert core["Service"]["ExecStart"] == "/usr/local/bin/hc server start"
+    assert core["Service"]["ExecStart"] == "/opt/shipshape/current/bin/ship-core-start"
     assert core["Install"]["WantedBy"] == "default.target"
 
 
@@ -692,7 +692,7 @@ def _install_core(tmp_path: Path, archive: Path, digest: str) -> subprocess.Comp
     """Run install_herdr_core from the sourced script against a --root sandbox."""
     root = tmp_path / "root"
     script = (f'. "{PROVISION}"; ROOT="{root}"; SANDBOX=1; '
-              f'install_herdr_core "{archive}" "{digest}"')
+              f'install_herdr_core "{archive}" "{digest}" 0.1.22')
     return subprocess.run(["bash", "-c", script], env={"PATH": "/usr/bin:/bin"},
                           capture_output=True, text=True, timeout=60)
 
@@ -720,6 +720,7 @@ def test_herdr_core_installs_the_binary_and_hc_link(tmp_path):
     assert os.readlink(bin_dir / "hc") == "herdr-core"
     assert not (bin_dir / "LICENSE").exists()
     assert (tmp_path / "root/var/lib/shipshape/herdr-core.sha256").read_text().strip() == digest
+    assert (tmp_path / "root/var/lib/shipshape/herdr-core.version").read_text() == "0.1.22\n"
 
 
 def test_herdr_core_refuses_a_mismatched_archive(tmp_path):
@@ -734,10 +735,12 @@ def test_herdr_core_refuses_a_mismatched_archive(tmp_path):
 def test_herdr_core_pin_is_in_versions():
     import tomllib
     pin = tomllib.loads((SHIP.parent / "versions.toml").read_text())["herdr_core"]
-    assert pin["version"] == "0.1.19"
+    assert pin["version"] == "0.1.22"
     assert pin["assets"]["x86_64"]["sha256"] == (
-        "4adcfb423d52f24c5cc4a1e2cd2fcad1f62d28bb77876ac472c29082a3eaa424")
-    assert all(a["url"].startswith("https://releases.herdr.dev/core/0.1.19/")
+        "3054ec3992ce80c5715d721caa9dcefa6056721d15dc113f4750afce763ba5df")
+    assert pin["assets"]["aarch64"]["sha256"] == (
+        "98757985245d45f8d73dd85e68b139b7f167c28488bb89edd9834c3f5a5cf4cf")
+    assert all(a["url"].startswith("https://releases.herdr.dev/core/0.1.22/")
                and a["url"].endswith(".tar.gz") for a in pin["assets"].values())
 
 
@@ -826,3 +829,34 @@ def test_the_tmpfiles_rule_is_what_systemd_ships():
     lines = [ln for ln in (FILES / "tmpfiles/tmp.conf").read_text().splitlines()
              if ln and not ln.startswith("#")]
     assert lines == ["q /tmp 1777 root root 10d", "q /var/tmp 1777 root root 30d"]
+
+
+def _sourced(root: Path, line: str) -> subprocess.CompletedProcess:
+    script = f'. "{PROVISION}"; ROOT="{root}"; SANDBOX=1; {line}'
+    return subprocess.run(["bash", "-c", script], env={"PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, timeout=60)
+
+
+@pytest.mark.parametrize(("a", "b", "newer"), [
+    ("0.1.22", "0.1.19", True), ("0.1.19", "0.1.22", False), ("0.1.22", "0.1.22", False),
+    ("0.2.0", "0.1.99", True), ("0.1.10", "0.1.9", True), ("", "0.1.22", False),
+    ("0.1.x", "0.1.22", False), ("1.0.0-rc1", "0.1.22", False),
+])
+def test_version_newer(tmp_path, a, b, newer):
+    assert (_sourced(tmp_path, f'version_newer "{a}" "{b}"').returncode == 0) is newer
+
+
+def test_herdr_core_is_never_installed_over_a_newer_one(tmp_path):
+    """herdr-core never moves back: a pin older than the version recorded for the
+    installed binary (a converge to an older bundle, say) is not installed."""
+    root = tmp_path / "root"
+    (root / "usr/local/bin").mkdir(parents=True)
+    (root / "var/lib/shipshape").mkdir(parents=True)
+    assert _sourced(root, "herdr_core_newer_than 0.1.19").returncode == 1  # nothing installed
+    (root / "usr/local/bin/herdr-core").write_text("core")
+    assert _sourced(root, "herdr_core_newer_than 0.1.19").returncode == 1  # no version recorded
+    (root / "var/lib/shipshape/herdr-core.version").write_text("0.1.22\n")
+    newer = _sourced(root, "herdr_core_newer_than 0.1.19")
+    assert newer.returncode == 0 and newer.stdout == "0.1.22\n"
+    assert _sourced(root, "herdr_core_newer_than 0.1.22").returncode == 1  # the same: installs
+    assert _sourced(root, "herdr_core_newer_than 0.1.23").returncode == 1  # newer: installs

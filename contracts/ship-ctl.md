@@ -76,7 +76,7 @@ How fields are worked out:
 
 Attention codes the Ship emits: `agent-waiting` (an agent is `blocked`),
 `signin-missing`, `signin-expiring`, `signin-expired`, `unit-failed`,
-`reboot-required`, `herdr-restart-pending`, `core-restart-pending`, `tmp-reboot-pending`, `provision-failed`, `tool-waiting`,
+`reboot-required`, `herdr-restart-pending`, `core-restart-pending`, `core-unpinned`, `tmp-reboot-pending`, `provision-failed`, `tool-waiting`,
 `tool-failed`, `signin-scopes-differ` (GitHub is signed in, and its token lacks an
 extra scope `github.scopes` chooses, or has a catalogue scope it no longer chooses;
 `settings.md`, "Extra GitHub scopes"; for a scope it has but does not choose, the message says to tick it to keep it before it says that signing in again drops it), `host-cert-expiring` (the host certificate ends within 14 days),
@@ -107,10 +107,23 @@ A herdr-core Ship never reports it: herdr is not its runtime, and a herdr server
 another tool runs there (a named session, or a default one) is not ShipShape's
 to restart. FleetLedger ignores it from a herdr-core Ship's older tooling.
 
-`core-restart-pending`: the running herdr-core (`herdr-core serve`) is not the
-installed `/usr/local/bin/herdr-core`. Its agents are not affected: the old core
-keeps serving them, and the new one takes over at the next reboot. `ship-fleet
-update` does not reboot for it (`--reboot always` does).
+`core-restart-pending`: the running herdr-core (`herdr-core serve`) is older than
+the newest copy installed (a converge replaced the pinned
+`/usr/local/bin/herdr-core`, say), which the next start runs. Its agents are not
+affected: the old core keeps serving them, and the new one takes over at the next
+reboot. `ship-fleet update` does not reboot for it (`--reboot always` does).
+
+`core-unpinned`: the running herdr-core is newer than ShipShape's pinned copy:
+Herdr's own machine update (`hc machine update`, or the Herdr app updating a machine
+it attaches to) put it in the agent's `~/.local/bin` and restarted the core from it,
+terminals kept; or, rarer, it runs from a file no longer installed and no installed
+copy is as new. herdr-core never moves back: ship-ctl runs, and `ship-core.service`
+starts at boot (`ship-core-start`), the newest installed copy, the pinned one on a
+tie, so the Ship keeps this core, also across a reboot. It is a notice: nothing to
+do, and never a reboot. A copy in `~/.local/bin` counts only as a plain file the
+agent alone can change; its version is what it says (`hc --version`, run as the
+agent); its checksum is not the pin's (`docs/security.md`). A Herdr copy that is
+the pinned version, or older, is never run and never mentioned.
 
 `tmp-reboot-pending` (subject `/tmp`): `/tmp` is still a tmpfs (in memory, with a
 fixed number of files), and ship-provision has already masked `tmp.mount`, so the
@@ -645,7 +658,8 @@ exits 1. `data`: `{ "from": release, "to": release }`.
 
 Converge never restarts herdr or reboots: agents keep running. When it replaced
 the herdr binary on a herdr Ship, the status document reports
-`herdr-restart-pending` until the next reboot (`core-restart-pending` for the herdr-core binary;
+`herdr-restart-pending` until the next reboot (`core-restart-pending` for the herdr-core binary,
+which it never replaces with an older one;
 `tmp-reboot-pending` when it has just moved `/tmp` to the disk). Its `apply` records every running agent in the agent record first, so
 the next reboot brings them back in their modes.
 
