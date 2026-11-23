@@ -78,7 +78,8 @@ Dashboard. Filter by tag or machine.
 While it is on show, and only then, it also reads every agent's board (one batch per machine
 every 15 s, never from a machine Herdr does not report ready): rows get each board's summary and
 next-steps tally, a manager's blocked tasks join Needs you, and findings join Recent. From the
-Fleet panel's last read (shared `fleet.summary`) it shows "Fleet: N need you ›" and, for a Ship
+Fleet panel's last read (shared `fleet.summary`) it shows "Fleet: N need you ›", marks a Ship
+whose sign-ins need you in Machines (as the sidebar does beside its machine header) and, for a Ship
 Herdr cannot reach, FleetLedger's last word on its agents. `../../DESK.md`, "The Dashboard",
 has the details.
 

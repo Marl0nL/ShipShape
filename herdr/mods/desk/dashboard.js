@@ -14,7 +14,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, spaces, panes, terminals, machines, shared, run, exec } from "herdr";
 import { agentName, fmHomeOf } from "./model.js";
-import { liveRows, sections, machineSummary, filterChoices, LastSeen, Transitions, BoardReader, blockedTasks, boardRecent, fleetView, span, machineKey } from "./dash.js";
+import { liveRows, sections, machineSummary, filterChoices, LastSeen, Transitions, BoardReader, blockedTasks, boardRecent, fleetView, signinMark, span, machineKey } from "./dash.js";
 import { openPlan } from "./fleet-model.js";
 import { label, pip, icon, button } from "./ui.js";
 
@@ -46,7 +46,7 @@ export function dashboardData(filter = {}) {
   const ms = machines();
   const rows = lastSeen.update(live, ms);
   const fleet = shared("fleet.summary") ?? null;
-  const summary = machineSummary(rows, ms, lastSeen).map((m) => (m.state === "unavailable" && m.name ? { ...m, fleet: fleetView(fleet, m.name, now) } : m));
+  const summary = machineSummary(rows, ms, lastSeen).map((m) => ({ ...m, signin: signinMark(fleet, m.name, now), ...(m.state === "unavailable" && m.name ? { fleet: fleetView(fleet, m.name, now) } : {}) }));
   const boardOf = (r) => boards.boardOf(r);
   const crewOf = (r) => (r.task ? boards.crewOf(r, homeOf(r)) : null);
   const names = new Map(rows.map((r) => [r.address, r.name]));
@@ -247,6 +247,33 @@ function recentOf(t, L, d) {
   );
 }
 
+// A Ship's sign-ins that need you, beside it in Machines (shared fleet.summary): amber, and it
+// opens the Fleet panel, where its Sign in is.
+function signinChip(t, L, id, mark) {
+  const warn = t.ansi3 ?? t.working;
+  return h_flex()
+    .id(id)
+    .flex_none()
+    .h(20)
+    .px(7)
+    .items_center()
+    .rounded(Math.min(L.f.radius, 8))
+    .border_1()
+    .border_color(`${warn}88`)
+    .bg(`${warn}1f`)
+    .text_size(11)
+    .text_color(warn)
+    .cursor_pointer()
+    .hover((s) => s.bg(t.hover))
+    .tooltip(mark.tip)
+    .on_click((_e, cx) => {
+      cx.stop_propagation();
+      openFleet();
+      cx.notify();
+    })
+    .child(`${mark.text} ›`);
+}
+
 function machinesOf(t, L, d) {
   return h_flex()
     .gap(14)
@@ -266,6 +293,7 @@ function machinesOf(t, L, d) {
           .child(div().size(7).flex_none().rounded(4).bg(color))
           .child(div().font_weight(600).text_color(t.foreground).child(m.label))
           .child(div().text_color(down ? t.blocked : t.muted).child(text))
+          .when(Boolean(m.signin), (e) => e.child(signinChip(t, L, `dash-m-${m.key}-signin`, m.signin)))
           .when(Boolean(m.fleet), (e) => e.child(div().max_w(420).truncate().text_color(t.dim).tooltip(m.fleet.line).child(`— ${m.fleet.line}`)))
           .when(down && Boolean(m.name), (e) => e.child(button(t, L, `dash-m-${m.key}-fleet`, "Open in Fleet ›", openFleet, { h: 20, tip: `The Fleet panel: ${m.name}'s reboot and update` })));
       }),

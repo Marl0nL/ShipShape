@@ -23,7 +23,7 @@ follow Herdr's updates.
 | `themes/desk-*.json` | palettes: Slate, Ember and Linen (the `work` tag wears Slate; `personal` wears Herdr's own Moss) |
 | `mods/desk/` | the desk itself, in parts (`props.part`): `head`, `assistant`, `manager`, `coder`, `crew`, `none`, plus the window's `bar` and `brand` corner, and the `dashboard` tab |
 | `mods/desk/bin/desk` | the agents' CLI (one Python 3 file, no dependencies), linked as `~/.local/bin/desk` |
-| `mods/desk-spaces/`, `mods/desk-agents/` | clones of Herdr's shipped `spaces` and `agents` sidebar mods, changed where marked `Desk:` (tag colours; the agents list's hierarchy view) |
+| `mods/desk-spaces/`, `mods/desk-agents/` | clones of Herdr's shipped `spaces` and `agents` sidebar mods, changed where marked `Desk:` (tag colours; the agents list's hierarchy view; a Ship's sign-in mark) |
 | `mods/desk/links.js` | task cards' branch, PR and Diff menu, and the checks on what a board names before the desk shows or opens it |
 | `mods/desk/dash.js`, `dashboard.js` | the Dashboard: its logic (no gpui or herdr imports, tested in `tests/desk/`) and its view |
 | `mods/desk/lookfolder.js` | your own looks, from a folder of data in Herdr's folder (`desk-looks/`, below) |
@@ -94,7 +94,7 @@ Herdr reaches, from Herdr's live state alone (`agents()`, `spaces()`, `panes()`,
   latest 15 shown with the boards' findings and crews' reports).
 - **Machines:** each machine's agents, or "unreachable since 10:05" when `machines()` says so.
   That machine's agents stay, greyed and dated (the last ones seen when Herdr drops them), and
-  their Go and Peek are off.
+  their Go and Peek are off. A Ship whose sign-ins need you (below) is marked there in amber.
 - Filter chips by tag and machine. **Go** focuses the agent (`pane.focus`); **Peek** shows its
   terminal over the Dashboard (`terminal.peek`), and warns before you peek at a crew.
 
@@ -113,7 +113,10 @@ What agents keep comes on top, and only while the Dashboard is on show:
 - **The fleet:** the Fleet panel publishes `fleet.summary` after each of its reads. The Dashboard
   shows "Fleet: 2 need you ›" (it opens the Fleet tab) and, for a Ship Herdr cannot reach,
   FleetLedger's last word on its agents, dated ("FleetLedger (8m ago): 2 working, 1 blocked"),
-  with **Open in Fleet ›**. It asks FleetLedger nothing itself.
+  with **Open in Fleet ›**. A Ship with a sign-in item (missing, expiring, expired, wrong account)
+  gets an amber "sign-in: claude expired ›" (or "2 sign-ins ›") beside it in Machines, which opens
+  the Fleet tab; the sidebar marks it "sign in" beside its machine header (on the rail, an amber
+  dot), each saying which in its tooltip. It asks FleetLedger nothing itself.
 
 It redraws every three seconds while on show and does nothing while hidden: no read, no redraw.
 
@@ -192,7 +195,7 @@ without tags of their own wear their boss's, and secondmates go by their space's
 | `desk.tagLooks`, `desk.tagLooksOff` | the Look popup | which tag wears which preset; paused or not |
 | `desk.lookFolder` | the desk (head and Look popup) | your looks folder as checked (`{looks, problem}`); each part checks it again |
 | `desk.sample` | `desk.sample-*` commands | a sample board in place of the focused agent |
-| `fleet.summary` | the Fleet panel, after each read | the Ships as FleetLedger last saw them, their listed agents, how many items need you: read by the Dashboard |
+| `fleet.summary` | the Fleet panel, after each read | the Ships as FleetLedger last saw them, their listed agents and sign-ins that need you, how many items need you: read by the Dashboard and the sidebar |
 | `sidebar.width`, `sidebar.collapsed` | the brand corner's toggle | the sidebar fold |
 
 ## Editor support

@@ -231,11 +231,14 @@ is quoted for its shell, a value with a line break is refused, and a Ship name o
 the contract) is left out with a line saying so. When a command fails the panel shows the first
 line of what it said on stderr.
 
-After each read it publishes shared `fleet.summary` for the Desk's Dashboard: when it read, how
-many items need you, and each Ship's state with the agents its last status document lists
-(`ship-status.schema.json`, `herdr.agents`: name, state, and while blocked what it waits for).
-The Dashboard only reads that, so it is as fresh as this panel's last read, and the Dashboard
-asks FleetLedger nothing.
+After each read it publishes shared `fleet.summary` for the Desk's Dashboard and sidebar: when
+it read, how many items need you, and each Ship's state with the agents its last status document
+lists (`ship-status.schema.json`, `herdr.agents`: name, state, and while blocked what it waits
+for) and its sign-ins that need you (from the items: missing, expiring, expired, wrong account).
+The Desk only reads that, so it is as fresh as this panel's last read, and asks FleetLedger
+nothing. When the count of items changes, the panel also puts it in the window's title
+("Herdr · Fleet: 2 need you") and on the Dock icon (macOS), on Herdr 0.1.16 and later; with
+none, Herdr's own title comes back and the badge goes.
 
 ## Code
 

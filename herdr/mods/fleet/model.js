@@ -777,16 +777,49 @@ export function header(state, now, paths) {
 // ---- what the Desk's Dashboard reads ---------------------------------------------------------
 
 /** Shared "fleet.summary", published after each read: the Ships as FleetLedger last saw them
- *  (with the agents their last status lists) and how many items need you. The Dashboard reads
- *  it and never asks FleetLedger itself, so it is as fresh as this panel's last read (`readAt`). */
+ *  (with the agents their last status lists and the sign-ins their items name) and how many
+ *  items need you. The Dashboard and the Desk's sidebar read it and never ask FleetLedger
+ *  themselves, so it is as fresh as this panel's last read (`readAt`). */
 export function fleetSummary(state) {
+  const attention = state.attention ?? [];
   return {
     readAt: state.shipsAt ?? null,
     from: state.shipsFrom ?? null,
-    needs: (state.attention ?? []).length,
-    high: (state.attention ?? []).filter((a) => a.severity === "high").length,
-    ships: (state.ships ?? []).map((s) => ({ name: s.name, state: s.state, problem: s.problem, statusAt: s.statusAt ?? null, agents: s.agents ?? null })),
+    needs: attention.length,
+    high: attention.filter((a) => a.severity === "high").length,
+    ships: (state.ships ?? []).map((s) => ({ name: s.name, state: s.state, problem: s.problem, statusAt: s.statusAt ?? null, agents: s.agents ?? null, signins: shipSignins(attention, s.name) })),
   };
+}
+
+/** The sign-in items' codes, and the word a mark says for each. */
+const SIGNIN_PROBLEM = { "signin-missing": "missing", "signin-expiring": "expiring", "signin-expired": "expired", "signin-wrong-account": "wrong account" };
+
+/** A Ship's sign-ins that need you, from the attention items already read: [{service, problem}],
+ *  in ship-fleet's order, once each (service: the item's subject, null when it names none). */
+export function shipSignins(attention, ship) {
+  const out = [];
+  for (const a of attention ?? []) {
+    const problem = SIGNIN_PROBLEM[a?.code];
+    if (!problem || a.ship !== ship) continue;
+    const service = typeof a.subject === "string" && a.subject ? a.subject : null;
+    if (!out.some((x) => x.service === service && x.problem === problem)) out.push({ service, problem });
+  }
+  return out;
+}
+
+/** The OS window's title and the Dock badge for a summary: how many items need you, or null
+ *  (Herdr's own title, no badge) when none do. */
+export function windowAttention(summary) {
+  const n = summary?.needs ?? 0;
+  if (!n) return { title: null, badge: null };
+  return { title: `Herdr · Fleet: ${n} need${n === 1 ? "s" : ""} you`, badge: String(n) };
+}
+
+/** What to set after a read, given what is set now (`shown`; Herdr starts with its own title and
+ *  no badge): the new title and badge, or null when they have not changed. */
+export function windowChange(shown, summary) {
+  const next = windowAttention(summary);
+  return next.title === shown.title && next.badge === shown.badge ? null : next;
 }
 
 // ---- the Needs you list ----------------------------------------------------------------------

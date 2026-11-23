@@ -566,6 +566,19 @@ export function fleetView(summary, machine, now) {
   return { line: `FleetLedger (${age}): ${parts.join(", ") || `${ship.agents.length} idle`}${first ? `: «${oneLine(first, 120)}»` : ""}`, agents: ship.agents, blocked, at };
 }
 
+/** A Ship's sign-ins that need you, as the Fleet panel last read them (shared fleet.summary):
+ *  null when none do (or the panel has not read), else {text, tip}: "sign-in: claude expired" and
+ *  every one, dated, for a mark beside the Ship. */
+export function signinMark(summary, machine, now) {
+  const ship = machine ? (Array.isArray(summary?.ships) ? summary.ships : []).find((s) => s?.name === machine) : null;
+  const list = Array.isArray(ship?.signins) ? ship.signins.filter((x) => x && typeof x.problem === "string") : [];
+  if (!list.length) return null;
+  const one = (x) => (x.service ? `${x.service} ${x.problem}` : x.problem);
+  const age = summary.readAt ? ` (FleetLedger, read ${span(now - summary.readAt)} ago)` : "";
+  const text = list.length === 1 ? `sign-in: ${one(list[0])}` : `${list.length} sign-ins`;
+  return { text, tip: `${machine}'s sign-ins need you: ${list.map(one).join(", ")}${age}. The Fleet panel signs it in.` };
+}
+
 // ---- the bar's "N need you": the blocked agents, and the next one to go to -------------------
 
 /** Every blocked agent Herdr can take you to, the longest blocked first: agents() with status

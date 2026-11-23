@@ -20,9 +20,10 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
-// checking() (Herdr 0.1.16+) through the namespace: a named import of it fails to load on 0.1.15.
+// checking(), setWindowTitle() and setBadge() (Herdr 0.1.16+) through the namespace: a named
+// import of one fails to load on 0.1.15, where they are undefined (so ?.()).
 import * as herdr from "herdr";
-import { Fleet, ago, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { Fleet, ago, fleetSummary, windowChange, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 import { asOpened, openedAs, settingsGate, settingsView, settingsJob, toggleScope } from "./settings.js";
 import { agentsView, autostartAddJob, autostartRemoveJob, remoteControlJob, resizeJob, restartJob, sizeGate } from "./agents.js";
 
@@ -31,15 +32,23 @@ const host = { exec, hc, run, notify, readTextFile, home, appHome };
 const fleet = new Fleet(host);
 const TICK_MS = 15000;
 
-// The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing):
-// every path that awaits fleet.refresh() publishes when it is done; unchanged, it sets nothing.
+// The Desk's Dashboard and sidebar read the fleet from this, after each read (they ask
+// FleetLedger nothing): every path that awaits fleet.refresh() publishes when it is done;
+// unchanged, it sets nothing. The window's title and Dock badge follow the count of items, set
+// only when it changes (Herdr: the last call wins, whichever mod made it).
 let published = null;
+let titled = { title: null, badge: null }; // as Herdr starts: its own title, no badge
 function publish() {
   const summary = fleetSummary(fleet.state);
   const json = JSON.stringify(summary);
   if (json === published) return;
   published = json;
   setShared("fleet.summary", summary);
+  const next = windowChange(titled, summary);
+  if (!next) return;
+  titled = next;
+  herdr.setWindowTitle?.(next.title);
+  herdr.setBadge?.(next.badge);
 }
 
 const stop = (_e, cx) => cx.stop_propagation();
