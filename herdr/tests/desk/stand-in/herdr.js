@@ -1,7 +1,8 @@
 // A stand-in for Herdr's `herdr` module. A test sets what Herdr would say in `herdr.state`
 // (reset() puts it back): its agents, spaces, panes, terminals, machines, shared values and
-// layout, and how exec answers. Every command run() is given is kept in state.runs, and every
-// exec in state.execs, so a test can see what the desk would have done.
+// layout, and how exec answers. Every command run() is given is kept in state.runs, every
+// exec in state.execs and every file written in state.writes, so a test can see what the desk
+// would have done. state.checking is what checking() says (Herdr 0.1.16+: `herdr-app check`).
 
 export const state = {};
 
@@ -18,6 +19,8 @@ export function reset(patch = {}) {
     focused: null,
     runs: [],
     execs: [],
+    writes: [],
+    checking: false,
     exec: async () => ({ code: 0, stdout: "", stderr: "" }),
     files: {},
     ...patch,
@@ -51,7 +54,11 @@ export const hc = async (args) => {
   return { code: 1, stdout: "", stderr: "no hc in tests" };
 };
 export const readTextFile = async (path) => state.files[path] ?? null;
-export const writeTextFile = async () => null;
+export const writeTextFile = async (path) => {
+  state.writes.push(path);
+  return null;
+};
+export const checking = () => state.checking;
 export const home = () => "/home/agent";
 export const appHome = () => "/home/agent/.config/herdr-app";
 export const props = () => state.props ?? {};

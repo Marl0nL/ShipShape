@@ -216,8 +216,14 @@ done
 - The crew triangle is the crew terminal block's pane-frame background image, seen through the
   terminal because the root's `terminal_opacity` is below 1. An image on the node itself does not
   show behind a terminal.
-- The sidebar clones are copies of Herdr's mods at the version they were cloned from; re-clone and
-  re-apply the `Desk:` lines to pick up Herdr's changes.
+- The sidebar clones are copies of Herdr's mods at the version they were cloned from (their
+  `mod.json`'s `cloned_from`); re-clone and re-apply the `Desk:` lines to pick up Herdr's changes.
+- Every mod here is written to load on Herdr 0.1.15 too: an export newer than that (such as
+  `checking`) is read through `import * as herdr from "herdr"` and called as `herdr.checking?.()`,
+  never imported by name (a missing named import fails the whole mod's load).
+- `herdr-app check` (Herdr 0.1.16 and later) runs a mod's `init()` for real. Under it the desk's
+  parts and the Fleet panel start nothing (no ssh to FleetLedger, no board reads, no theme files),
+  so checking them is safe; the spaces clone still reads git and machines, as Herdr's own list does.
 - The tag looks here are neutral presets with no band or logo. Your own, with a band and a logo,
   go in `~/.config/herdr-app/desk-looks/` (`mods/desk/README.md`, "Your own looks";
   `contracts/desk-looks.md`), outside the repository; keep them out of it (`docs/hygiene.md`).
