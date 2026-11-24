@@ -68,6 +68,14 @@ class Context:
     def agent_owner(self) -> tuple[int, int] | None:
         return self.runner.agent_ids()
 
+    @cached_property
+    def core_copies(self) -> list:
+        """The installed herdr-core copies and their versions (runtime.core_copies),
+        asked once per ship-ctl run."""
+        from .runtime import core_copies
+
+        return core_copies(self.paths, self.runner, as_agent=True, owner=self.agent_owner)
+
     @property
     def home(self) -> HomeFS:
         """The agent's home, safe against symlinks the agent planted (homefs.py)."""

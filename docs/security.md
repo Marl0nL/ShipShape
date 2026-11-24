@@ -349,6 +349,45 @@ Nothing committed may point at a person, their work, machines or network:
 `scripts/hygiene.py` checks every file and commit message, with a private
 deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 
+## herdr-core's pin and Herdr's own updates
+
+ship-provision installs the herdr-core pinned in `versions.toml`
+(`/usr/local/bin/herdr-core`, root-owned) only after checking its sha256. Herdr
+can also update a machine itself (`hc machine update`, or the Herdr app updating a
+machine it attaches to): it copies its own herdr-core to the agent's
+`~/.local/bin/herdr-core` and restarts the core from it, keeping every terminal.
+herdr-core's saved state only moves forward, and an update the person chose should
+stay chosen, so a Ship never moves herdr-core back: ship-ctl runs, and the boot unit
+starts (`ship-core-start`), the newest installed copy, the pinned one on a tie; a pin
+older than the installed binary is not installed; status says which core runs
+(`core-unpinned`, [contracts/ship-ctl.md](../contracts/ship-ctl.md)).
+
+How a copy's version is known, and what that trusts:
+
+- Only `~/.local/bin/herdr-core` is looked at (where Herdr's update puts it), and
+  only as a plain file (no link in the path) owned by the agent user that no one
+  else can write and that its owner can run.
+- Its version is what it says (`hc 0.1.22` from `--version`, a single line, within
+  10 seconds), asked **as the agent user**: ship-ctl (root) never runs it as root,
+  and the boot unit already runs as the agent. Anything else is not a copy, and the
+  pinned one runs.
+- Not every start goes through ShipShape: a client that starts the core while
+  none runs (a laptop's `hc` over SSH, an agent's own `hc`) finds the pinned copy
+  first. Status then says a newer copy is installed (`core-restart-pending`), and
+  the next reboot starts it.
+
+The trade-off, plainly: the sha256 pin no longer decides alone which herdr-core a
+Ship runs. A newer copy in `~/.local/bin` is never checked against a checksum
+(there is none for a version past the pin), so whatever can write as the agent user
+can make the Ship start its own "herdr-core" at boot by claiming a higher version.
+That grants nothing new: such a writer can already run anything as the agent, put
+programs ahead of `/usr/local/bin` on the agent's PATH (where ship-ctl already runs
+`claude`), and restart the core from its own file, as Herdr's update does. The
+core runs as the agent user either way; nothing here runs as root. What the pin
+still guarantees is what ShipShape itself downloads and installs. Where Herdr's copy
+comes from is Herdr's own trust: the connecting computer's herdr-core, or its
+release download.
+
 ## Threat model
 
 | Threat | What it could do | What limits it |
@@ -369,7 +408,7 @@ deny-list kept outside the repo ([hygiene.md](hygiene.md)).
 | A move of FleetLedger intercepted or redirected | every key and secret above | one stream inside SSH to a host key you checked first; never a file at rest; each member checked by SHA-256 before anything is written; your own key never moves |
 | A trusted machine is lost or compromised | attach to the Ships in its scope as agent | short certificate lifetimes; scope per tag or Ship; `ship-fleet untrust` revokes it everywhere; certificates never reach `fleet` and allow no forwarding |
 | An older checkout runs `update` (another computer's, or a branch you forgot) | rolls every Ship's tooling back to older code and pins | `update` compares each Ship's ShipShape commit with this checkout's in git and leaves a Ship on a newer commit, another branch or a commit it does not have, unless `--force` ([update-fleet.md](runbooks/update-fleet.md)) |
-| Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr and herdr-core pinned by checksum; recipes pin versions; verified Ubuntu images |
+| Supply chain | a tampered tool on every Ship | Claude installed after checking the signed release manifest; signed apt repos with pinned keys; herdr and herdr-core pinned by checksum (a newer herdr-core that Herdr's own machine update installs in the agent's home is kept and run instead: [herdr-core's pin and Herdr's own updates](#herdr-cores-pin-and-herdrs-own-updates)); recipes pin versions; verified Ubuntu images |
 | Someone on your LAN or overlay while pairing by code is on | file pairing requests through the well-known pairing key | its line runs only `ship-fleet machine-pair`; a request grants nothing and is seen by you alone; at most 4 waiting (2 per address, 20 an hour), each for 10 minutes; trusted only when you type the code the computer shows, which FleetLedger never shows; off by default (`ship-fleet pair off`) |
 | A crafted Desk looks folder (`ship-fleet looks publish`, from a folder or a tar stream) | make FleetLedger write outside its folder, follow a link, run something, or fill its disk | only a shell on FleetLedger can publish (the bundle and pairing keys are forced to their own commands); at most 1 MiB read from stdin and parsed in memory, never extracted; regular files with the format's names only (no links, devices, absolute or `..` paths); every value checked as the Desk checks it; refused whole, and stored as one checked file, atomically ([contracts/ship-fleet.md](../contracts/ship-fleet.md#ship-fleet-looks)) |
 | A crafted `looks` in a trusted machine's bundle (a FleetLedger taken over, or its kept folder) | make the refresher write outside Herdr's `desk-looks`, replace or delete looks of your own, run something, fill the disk, or break that computer's SSH setup | sent only to machines opted in (`ship-fleet trust NAME --looks on`); a machine not opted in gets the bundle as before, which an older refresher still takes; the refresher checks every field and file whole before writing anything (names from the format's patterns only, never a path; per-file and 512 KiB caps inside a 1 MiB bundle; exact base64 sizes; logos by first bytes; JSON free of control bytes and by its strict reader; the folder's digest) and refuses the bundle whole, and the Desk checks every value against the format again before wearing any; it writes a new folder beside `desk-looks` and swaps it in by rename, only where there is none or the one there is its own by digest (`looks-applied`); nothing received is run or becomes a command; `fleet.json` never holds the looks ([runbooks/share-desk-looks.md](runbooks/share-desk-looks.md)) |

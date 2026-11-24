@@ -49,6 +49,14 @@ The entry point is a few lines; the code is the `shipctl` package in `../lib/`
 - `herdr-restart-pending`: on a herdr Ship only (never herdr-core), status
   compares the inode of each running `herdr server` (agent's processes only,
   `/proc/<pid>/exe`) with `/usr/local/bin/herdr`.
+- herdr-core never moves back: `runtime.py` finds the installed copies (the pinned
+  `/usr/local/bin/herdr-core`, and a newer one Herdr's own machine update put in
+  `~/.local/bin`), asks each its version as the agent user, and every `hc` call
+  runs the newest. `ship-core-start`, beside `ship-ctl`, is what
+  `ship-core.service` runs at boot: `hc server start` from that same copy (the
+  pinned one if choosing fails). Status compares the running `herdr-core serve`
+  with those copies: `core-restart-pending` when a newer one is installed,
+  `core-unpinned` when it runs newer than the pin (contracts/ship-ctl.md).
 - Agents: `record.py` is the agent record (`/var/lib/shipshape/agents.json`,
   `contracts/agent-record.schema.json`) and the resume, the crash policy and the
   pick-up of agents started by hand (`upkeep`, run by every status refresh, by

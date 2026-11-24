@@ -219,12 +219,17 @@ test("New Ship: one line, new then the Claude sign-in, every value quoted", asyn
   assert.equal(plan.job.argv[1], "-t");
   assert.equal(plan.job.ship, "ship-07");
   assert.equal(plan.job.kind, "new");
+  assert.deepEqual(plan.job.tags, ["work"]); // for its sign-in link's browser (browsers.js)
 });
 
 test("New Ship: only a name, and the defaults are FleetLedger's", async () => {
   const { fleet } = await readFleet();
   const plan = newShipJob(fleet.state, { name: "ship-07", signins: null });
   assert.equal(plan.job.remote, "'ship-fleet' 'new' 'ship-07' '--autostart' 'main:~/work' && 'ship-fleet' 'login' 'ship-07' 'claude'");
+  assert.deepEqual(plan.job.tags, []); // FleetLedger's default tags not read
+  const s = await readFleet({ answers: { defaults: ok(example("fleetledger-defaults", "catalogue.json")) } });
+  await s.fleet.loadChoices();
+  assert.deepEqual(newShipJob(s.fleet.state, { name: "ship-07", signins: null }).job.tags, ["work"]); // ships.toml's default ones
 });
 
 test("New Ship: sign-ins chosen from FleetLedger's list; without Claude, no Claude sign-in", async () => {
@@ -647,7 +652,7 @@ test("the web UI opens with the local opener, no ssh, and only an https address"
 test("no source file of the mod holds a flag that skips a question", () => {
   const dir = join(ROOT, "herdr", "mods", "fleet");
   const files = readdirSync(dir).filter((f) => f.endsWith(".js"));
-  assert.deepEqual(files.sort(), ["agents.js", "main.js", "model.js", "settings.js"]);
+  assert.deepEqual(files.sort(), ["agents.js", "browsers.js", "link.js", "main.js", "model.js", "settings.js"]);
   for (const f of files) {
     const code = readFileSync(join(dir, f), "utf8");
     for (const flag of SKIPPING.filter((x) => x !== "-y")) assert.ok(!code.includes(flag), `${f}: ${flag}`);

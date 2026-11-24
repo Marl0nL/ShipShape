@@ -29,7 +29,7 @@ export const SCHEMA = {
 /** A Ship's name, as ships.toml allows it. */
 export const NAME = /^[a-z0-9][a-z0-9-]{0,30}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
-const SETTINGS_KEYS = new Set(["ssh", "identity_file"]);
+const SETTINGS_KEYS = new Set(["ssh", "identity_file", "browsers"]); // "browsers": browsers.js reads it
 
 /** Where the settings file is, under Herdr's own folder. */
 export const settingsPath = (host) => `${host.appHome()}/mods/fleet/settings.json`;
@@ -828,8 +828,9 @@ const RANK = { high: 0, medium: 1, low: 2 };
 const SEVERITY_TONE = { high: "bad", medium: "warn", low: "dim" };
 
 /** What a Ship's item asks for, by code: the Ship menu's actions that deal with it (`only`: the
- *  menu's item ids, `signin` for every Sign in), or `goto` its space. Codes not here open the whole
- *  menu. From the codes in ship-status.schema.json and FleetLedger's own (fleetledger/ops.py). */
+ *  menu's item ids, `signin` for every Sign in), or `goto` its space; null: a notice, no button.
+ *  Codes not here open the whole menu. From the codes in ship-status.schema.json and FleetLedger's
+ *  own (fleetledger/ops.py). */
 const SHIP_ACT = {
   "signin-missing": { label: "Sign in…", only: ["signin"] },
   "signin-expiring": { label: "Sign in…", only: ["signin"] },
@@ -840,6 +841,7 @@ const SHIP_ACT = {
   "reboot-required": { label: "Reboot…", only: ["reboot"] },
   "herdr-restart-pending": { label: "Reboot…", only: ["reboot"] },
   "core-restart-pending": { label: "Reboot…", only: ["reboot"] },
+  "core-unpinned": null, // a notice: the Ship keeps the newer herdr-core, also across a reboot
   "tmp-reboot-pending": { label: "Reboot…", only: ["reboot"] },
   "behind-tooling": { label: "Update…", only: ["update"] },
   "not-enrolled": { label: "Finish…", only: ["finish"] },
@@ -877,7 +879,10 @@ export function alerts(state) {
       const ship = item.ship;
       let act = null;
       if (ship === null) act = FLEET_ACT[item.code] ?? null;
-      else if (NAME.test(ship) && known.has(ship)) act = { ship, ...(SHIP_ACT[item.code] ?? { label: "Actions…" }) };
+      else if (NAME.test(ship) && known.has(ship)) {
+        const fix = Object.hasOwn(SHIP_ACT, item.code) ? SHIP_ACT[item.code] : { label: "Actions…" };
+        act = fix && { ship, ...fix }; // null: a notice, nothing to do
+      }
       return {
         key: keyOf(item),
         severity: item.severity,
@@ -1594,7 +1599,7 @@ export function newShipJob(st, form) {
   const commands = [args];
   if (claude) commands.push(["login", name, "claude"]);
   try {
-    return { job: job(st.where, `new ${name}`, commands, { ship: name, kind: "new" }), errors: [] };
+    return { job: job(st.where, `new ${name}`, commands, { ship: name, kind: "new", tags: tags.length ? tags : (choices.defaults?.tags ?? []) }), errors: [] };
   } catch (e) {
     return { errors: [firstLine(e?.message ?? e)] };
   }
@@ -1618,7 +1623,7 @@ const sameArgv = (a, b) => Array.isArray(a) && a.length === b.length && a.every(
 /** A terminal running this job: its argv, or a shell running it (the remote line inside). */
 export const runsJob = (t, job) => Array.isArray(t?.argv) && (sameArgv(t.argv, job.argv) || t.argv.some((a) => typeof a === "string" && a.includes(job.remote)));
 /** Still running: a terminal that reports no end. */
-const live = (t) => (t.state === undefined || t.state === "live") && (t.exit_code === undefined || t.exit_code === null);
+export const live = (t) => (t.state === undefined || t.state === "live") && (t.exit_code === undefined || t.exit_code === null);
 
 // ---- the Machines view: this computer's refresher, and the machines trusted to attach -------
 //

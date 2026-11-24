@@ -30,11 +30,15 @@ import json
 import os
 import re
 import shlex
+import stat
 import time
 import tomllib
+from dataclasses import dataclass
+from pathlib import Path
 
 from .context import Context
-from .runner import NOT_FOUND_RC, TIMEOUT_RC
+from .paths import Paths
+from .runner import NOT_FOUND_RC, TIMEOUT_RC, Runner
 
 AGENT_STATES = ("idle", "working", "blocked", "done", "unknown")
 START_TIMEOUT_MS = 120000
@@ -353,6 +357,99 @@ class Herdr(AgentRuntime):
 
 
 
+# --- which herdr-core: never backwards ------------------------------------------------
+# Two copies of herdr-core can be installed on a Ship. ShipShape's own, pinned in
+# versions.toml (ship-provision checks its sha256; root-owned, with `hc` beside it),
+# and a newer one Herdr's own machine update put in the agent's ~/.local/bin
+# (`hc machine update`, or the Herdr app updating a machine it attaches to: it copies
+# its own hc there and restarts the core from it, terminals kept). herdr-core's saved
+# state only moves forward, and an update the person chose must stay chosen, so
+# ShipShape never starts an older core than one installed: every hc call ship-ctl makes
+# (any of which starts the core when none runs) and the boot unit (ship-core-start)
+# use the newest copy, the pinned one on a tie.
+#
+# A copy's version is what it says it is (`hc 0.1.22`), asked as the agent user, so a
+# copy in the agent's home is trusted no further than the agent user itself: it could
+# run it, or restart the core from it, without ShipShape. Its checksum is not checked
+# (there is no pin for a version newer than the pin); see docs/security.md.
+PINNED_CORE = "/usr/local/bin/herdr-core"  # ship-provision's; `hc` links to it
+PINNED_HC = "/usr/local/bin/hc"
+HOME_CORE = ".local/bin/herdr-core"  # in the agent's home: where Herdr's update puts it
+# `hc --version`; a pre-release suffix (`-rc1`) is allowed and, as herdr-core's own
+# comparison does, left out of the comparison.
+CORE_VERSION_LINE = re.compile(r"hc (\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:[-+][0-9A-Za-z.-]{1,40})?")
+CORE_START = ["server", "start"]  # what ship-core-start runs the chosen copy with
+CORE_VERSION_TIMEOUT_S = 10
+
+
+@dataclass(frozen=True)
+class CoreCopy:
+    """One installed herdr-core: the pinned one, or Herdr's own in ~/.local/bin."""
+
+    pinned: bool
+    command: str  # what runs it
+    file: Path  # the binary itself, whose identity status compares with the running core's
+    version: tuple[int, int, int] | None  # None: it did not say (missing, broken, timed out)
+
+    @property
+    def shown(self) -> str:
+        return ".".join(map(str, self.version)) if self.version else "unknown"
+
+
+def core_version(text: str) -> tuple[int, int, int] | None:
+    """`hc 0.1.22` (one line, as `hc --version` prints it) as (0, 1, 22), else None."""
+    lines = text.strip().splitlines()
+    m = CORE_VERSION_LINE.fullmatch(lines[0].strip()) if len(lines) == 1 else None
+    return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
+
+def home_core(paths: Paths, owner: tuple[int, int] | None) -> Path | None:
+    """~/.local/bin/herdr-core when it looks like Herdr's own install there: a plain
+    file (no link anywhere on the way), the agent's own (owner, when known), that only
+    its owner can change and can run. Anything else is not a copy ShipShape starts."""
+    home = paths.agent_home
+    try:
+        for folder in (home / ".local", home / ".local/bin"):
+            if not stat.S_ISDIR(os.lstat(folder).st_mode):
+                return None
+        st = os.lstat(home / HOME_CORE)
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o022 or not st.st_mode & 0o100:
+        return None
+    if owner is not None and st.st_uid != owner[0]:
+        return None
+    return home / HOME_CORE
+
+
+def core_copies(paths: Paths, runner: Runner, *, as_agent: bool,
+                owner: tuple[int, int] | None) -> list[CoreCopy]:
+    """Every installed herdr-core, the pinned one first, each with its version.
+    as_agent: ask them through runner as the agent user (ship-ctl is root); False
+    when this already runs as the agent (ship-core-start)."""
+    def version(command: str) -> tuple[int, int, int] | None:
+        r = runner.run([command, "--version"], timeout=CORE_VERSION_TIMEOUT_S,
+                       agent=as_agent, limit=200)
+        return core_version(r.out) if r.ok else None
+
+    pinned = str(paths.p(PINNED_HC))
+    copies = [CoreCopy(True, pinned, paths.p(PINNED_CORE), version(pinned))]
+    home = home_core(paths, owner)
+    if home is not None:
+        copies.append(CoreCopy(False, str(home), home, version(str(home))))
+    return copies
+
+
+def newest_core(copies: list[CoreCopy]) -> CoreCopy:
+    """The copy to run: the newest that says its version; the pinned one on a tie, or
+    when none says (its error, "not installed", is then the one reported)."""
+    best = copies[0]
+    for c in copies[1:]:
+        if c.version is not None and (best.version is None or c.version > best.version):
+            best = c
+    return best
+
+
 # --- herdr-core ---------------------------------------------------------------------
 LAUNCHER = "/opt/shipshape/bin/agent-launch"  # ship/files/bin/agent-launch
 SESSION_LABEL = "shipshape.session"  # the Claude session a core terminal was started with
@@ -385,7 +482,7 @@ class Core(AgentRuntime):
     """
 
     kind = "core"
-    binary = "hc"  # in /usr/local/bin
+    binary = "hc"  # its name; the copy it runs is the newest installed (Core.copy)
     unit = "ship-core.service"  # starts the core at boot; stopping it stops nothing
     # Leaving herdr-core, the core keeps running (`hc server stop` would end every
     # terminal): what it still runs is checked for agents that would run twice.
@@ -402,6 +499,26 @@ class Core(AgentRuntime):
         self._claude_version: tuple[int, ...] | None = None
 
     # --- calls ------------------------------------------------------------------
+    @property
+    def copy(self) -> CoreCopy:
+        """The herdr-core every call here runs: the newest installed (never backwards)."""
+        return newest_core(self.ctx.core_copies)
+
+    def _run(self, argv: list[str], timeout: float):
+        return self.ctx.runner.run([self.copy.command, *argv], timeout=timeout, agent=True)
+
+    def version(self, timeout: float) -> str | None:
+        """The version of the copy ship-ctl runs (asked once per run: core_copies)."""
+        del timeout
+        copy = self.copy
+        return copy.shown if copy.version else None
+
+    def running_version(self) -> tuple[int, int, int] | None:
+        """What the running core says it is (`hc server status`), or None."""
+        doc, _ = self._call(["server", "status"], timeout=10)
+        m = re.match(r"(\d{1,9})\.(\d{1,9})\.(\d{1,9})$", str((doc or {}).get("version", "")))
+        return (int(m[1]), int(m[2]), int(m[3])) if m else None
+
     def _keys(self, place: str, *keys: str) -> None:
         self._call(["keys", place, *keys])
 

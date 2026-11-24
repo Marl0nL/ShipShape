@@ -302,8 +302,12 @@ On the laptop, two clients reach a herdr-core Ship:
 
 - **The herdr desktop app**: Settings > Machines > Add machine, and pick the Ship
   (the app reads `~/.ssh/config` and its `Include`, so the bundle's entry is
-  there). If it offers to install or update herdr-core on the Ship, decline: the
-  Ship has the pinned version. The app's telemetry is on by default; turn it off
+  there). If it offers to install or update herdr-core on the Ship, accepting is
+  fine: it copies its own herdr-core to the agent's `~/.local/bin` there and
+  restarts the core from it, terminals and agents kept. The Ship keeps that newer
+  copy, also across a reboot (herdr-core never moves back), and its status says so
+  (`core-unpinned`, a notice). That copy is Herdr's, not checked against the Ship's
+  pinned checksum ([security.md](../security.md)). The app's telemetry is on by default; turn it off
   in its settings (Privacy) if you want. It shows the Ship's agents in one space,
   `shipshape`, a tab each.
 

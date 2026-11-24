@@ -832,7 +832,7 @@ def test_update_does_not_reboot_when_only_herdr_core_changed(world):
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
     assert outcome.ok, outcome
     assert sim.reboots == [] and outcome.data["rebooted"] is False
-    assert any("herdr-core was updated" in d and "next reboot" in d for d in outcome.details)
+    assert any("newer herdr-core is installed" in d and "next reboot" in d for d in outcome.details)
     assert not any(d.startswith("herdr was updated") for d in outcome.details)
 
 
@@ -878,7 +878,7 @@ def test_update_up_to_date_ship_with_only_the_core_pending_does_not_reboot(world
     sim.bundle_commit, sim.tooling = NEW_COMMIT[:12], "0.2.0"
     [outcome] = ops.update(world.fleet, [world.ship("ship-01")], bundle=make_bundle())
     assert outcome.ok and outcome.summary.startswith("already on") and sim.reboots == []
-    assert any("herdr-core was updated" in d for d in outcome.details)
+    assert any("newer herdr-core is installed" in d for d in outcome.details)
 
 
 def test_update_says_a_reboot_puts_tmp_on_the_disk_and_does_not_reboot(world):

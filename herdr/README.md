@@ -34,7 +34,8 @@ read over ssh from the FleetLedger computer (`ship-fleet ls --json --offline`). 
 anything (a new Ship, a Ship's settings, a sign-in, update, reboot, snapshots, destroy, unlock; trusting, untrusting
 and pairing on its Machines page, which also shows this computer's own refresh) opens a terminal
 tab running the exact `ship-fleet` command, which asks its own questions there. It works in any
-layout. See [`mods/fleet/README.md`](mods/fleet/README.md); it installs on its own
+layout. On Herdr 0.1.17 and later, a Ctrl/Cmd-click on an https link in one of those tabs can open
+it in the browser profile you map to the Ship's tag (its **Browsers** view). See [`mods/fleet/README.md`](mods/fleet/README.md); it installs on its own
 with `herdr/install-fleet.sh`, and its model's tests are in `tests/fleet/`.
 
 ## Licences
