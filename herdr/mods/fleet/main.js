@@ -36,15 +36,18 @@ const TICK_MS = 15000;
 // The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing):
 // every path that awaits fleet.refresh() publishes when it is done; unchanged, it sets nothing.
 let published = null;
-// ... and link.js (browsers.js) the panel's running jobs for a Ship, with its tags.
+// ... and link.js (browsers.js) the panel's running jobs for a Ship, with its tags: from the
+// panel's first start too, so a record an earlier session left behind never outlives it.
 let publishedLinks = null;
-function publish() {
+function publishLinks() {
   const links = linkJobs(fleet.state);
-  const linksJson = JSON.stringify(links);
-  if (linksJson !== publishedLinks) {
-    publishedLinks = linksJson;
-    setShared(LINKS_KEY, links);
-  }
+  const json = JSON.stringify(links);
+  if (json === publishedLinks) return;
+  publishedLinks = json;
+  setShared(LINKS_KEY, links);
+}
+function publish() {
+  publishLinks();
   const summary = fleetSummary(fleet.state);
   const json = JSON.stringify(summary);
   if (json === published) return;
@@ -172,6 +175,7 @@ export default class FleetPanel extends View {
     };
     // Under `herdr-app check` init() runs for real: no ssh to FleetLedger from there.
     if (herdr.checking?.()) return;
+    publishLinks();
     cx.timer.every(TICK_MS, (cx) => this.tick(cx));
     this.tick(cx);
     cx.spawn(async (cx) => {

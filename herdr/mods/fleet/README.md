@@ -189,7 +189,7 @@ as it was). Up moves a mapping before the one above it. By hand:
 A Ship with several mapped tags opens links in the first mapping in this list whose tag it has.
 `profile` is a Chromium browser's profile folder (`Default`, `Profile 1`, …: the end of Profile Path
 on `chrome://version`; a name it does not have starts a new, empty profile) or a Firefox profile's
-name (`about:profiles`): letters, digits, spaces, `.`, `_` and `-`, from a letter or digit. An entry
+name (`about:profiles`; one it does not have opens Firefox's Profile Manager): letters, digits, spaces, `.`, `_` and `-`, from a letter or digit. An entry
 that is not one of these, has another key, or repeats a tag is left out, and Browsers says so.
 
 | `browser` | Linux (the first on `PATH`) | macOS |
@@ -217,11 +217,13 @@ opens it as it always does:
   run that job's exact command and not have been there before the job started (once the panel has
   found the job's tab, only that one);
 - the Ship is in FleetLedger's list (or is the new Ship that tab is creating, with the tags typed
-  for it), and one of its tags is mapped;
+  for it, else FleetLedger's default tags), and one of its tags is mapped;
 - the browser is installed: on macOS `open` says when it is not; on Linux `which` must find it.
 
 Saving `settings.json` reloads the panel, which then forgets the job tabs already open: their
 links open as usual.
+
+## Machines
 
 The **Machines** button swaps the Ships for two parts.
 

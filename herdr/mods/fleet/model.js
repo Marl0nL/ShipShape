@@ -1566,7 +1566,7 @@ export function newShipJob(st, form) {
   const commands = [args];
   if (claude) commands.push(["login", name, "claude"]);
   try {
-    return { job: job(st.where, `new ${name}`, commands, { ship: name, kind: "new", tags }), errors: [] };
+    return { job: job(st.where, `new ${name}`, commands, { ship: name, kind: "new", tags: tags.length ? tags : (choices.defaults?.tags ?? []) }), errors: [] };
   } catch (e) {
     return { errors: [firstLine(e?.message ?? e)] };
   }

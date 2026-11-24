@@ -228,6 +228,9 @@ test("jobFor: only the panel's own, live, local job terminal", () => {
   const found = published([{ ...j, address: "t5" }]);
   assert.equal(jobFor(found, src, [mine, term("t5", j.argv)]), null);
   assert.equal(jobFor(found, { terminal: "t5", machine: null }, [mine, term("t5", j.argv)]).ship, "ship-01");
+  // A record left from an earlier session: another terminal that took that address is not the job's.
+  assert.equal(jobFor(found, { terminal: "t5", machine: null }, [term("t5", ["bash"])]), null);
+  assert.equal(jobFor(published([{ ...j, address: "t2" }]), { terminal: "t2", machine: null }, [term("t2", j.argv)]), null); // there before it
   // A terminal the panel found for one job is not another job's.
   const other = { ...login("ship-01"), id: 2, before: [], address: null };
   assert.equal(jobFor(published([{ ...j, address: "t3" }, other]), src, [mine]).ship, "ship-01");

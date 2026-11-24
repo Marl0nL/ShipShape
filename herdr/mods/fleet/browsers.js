@@ -165,16 +165,17 @@ const isJob = (j) =>
   Array.isArray(j.before) && (j.address === null || typeof j.address === "string");
 
 /** The panel's job whose terminal was clicked, or null. The terminal must be on this computer,
- *  still running, and the job's own: the one the panel found for it, or (before the panel has
- *  looked) a terminal that was not there when the job started, runs the job's command, and no
- *  other job has. */
+ *  still running, not there when the job started, and running the job's command; and once the
+ *  panel has found the job's terminal, that one (before, one no other job has). The command is
+ *  checked either way, so a record left from an earlier session never makes another terminal
+ *  that took the same address a job's. */
 export function jobFor(record, source, terms) {
   if (!record || record.v !== 1 || !Array.isArray(record.jobs)) return null;
   if (!source || typeof source.terminal !== "string" || (source.machine !== null && source.machine !== undefined)) return null;
   const t = (terms ?? []).find((x) => x?.address === source.terminal);
   if (!t || !live(t) || (t.machine !== null && t.machine !== undefined)) return null;
   const jobs = record.jobs.filter(isJob);
-  const found = jobs.filter((j) => (j.address ? j.address === t.address : !j.before.includes(t.address) && runsJob(t, j) && !jobs.some((o) => o.address === t.address)));
+  const found = jobs.filter((j) => !j.before.includes(t.address) && runsJob(t, j) && (j.address ? j.address === t.address : !jobs.some((o) => o.address === t.address)));
   // Two jobs that would both take it (the same command run twice) are about the same Ship.
   return found.length && found.every((j) => j.ship === found[0].ship) ? found[0] : null;
 }
