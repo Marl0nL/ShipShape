@@ -24,7 +24,8 @@ Around it, the parts of `main` that said little are replaced:
   cannot reach). A **Dashboard** button opens the Dashboard tab (below), and a **Fleet** button the Fleet panel's
   tab when that mod is installed (`install-desk.sh` installs it).
   New, Files, Changes and the window buttons are as before.
-- **The sidebar's lists** are clones of Herdr's (`mods/desk-spaces`, `mods/desk-agents`). Both
+- **The sidebar's lists** are clones of Herdr 0.1.17's (`mods/desk-spaces`, `mods/desk-agents`;
+  written to load on Herdr 0.1.15 too). Both
   colour by tag: a tagged space's avatar takes its tag's colour, and each tagged agent gets a bar
   of it (a tag whose look has a band uses the band's colour). The agents list
   also has a **Who reports to whom** view, its default (the sort button switches to Priority or

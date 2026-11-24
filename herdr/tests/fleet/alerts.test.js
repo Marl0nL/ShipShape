@@ -87,6 +87,8 @@ test("each item's button: the menu, page or space that deals with it", async () 
       item("ship-01", "herdr-restart-pending", "medium", { subject: "herdr" }),
       item("ship-01", "behind-tooling", "low"),
       item("ship-01", "agent-waiting", "medium", { subject: "main" }),
+      item("ship-01", "core-restart-pending", "low", { subject: "herdr-core" }),
+      item("ship-01", "core-unpinned", "low", { subject: "herdr-core" }),
       item("ship-02", "unreachable", "high"),
       item("ship-09", "unit-failed", "high"), // a Ship the list does not have
       example("fleetledger-attention", "vault-locked.json"),
@@ -100,6 +102,9 @@ test("each item's button: the menu, page or space that deals with it", async () 
   assert.deepEqual(by["ship-01 behind-tooling"], { ship: "ship-01", label: "Update…", only: ["update"] });
   assert.deepEqual(by["ship-01 agent-waiting"], { ship: "ship-01", label: "Go to", goto: true });
   assert.deepEqual(by["ship-02 unreachable"], { ship: "ship-02", label: "Actions…" });
+  assert.deepEqual(by["ship-01 core-restart-pending"], { ship: "ship-01", label: "Reboot…", only: ["reboot"] });
+  // A newer herdr-core than the pin runs (Herdr's own update): a notice, never a Reboot.
+  assert.equal(by["ship-01 core-unpinned"], null);
   assert.equal(by["ship-09 unit-failed"], null);
   assert.deepEqual(by["fleet vault-locked"], { label: "Unlock…", menu: "fleetledger" });
   assert.deepEqual(by["fleet machine-cert-expiring"], { label: "Machines", page: "machines" });

@@ -46,13 +46,15 @@ instead: `git pull`, `fleetledger/install.sh` if `fleetledger/pyproject.toml` or
    ```sh
    ship-fleet pins                    # every pin against its newest release
    ship-fleet pins set herdr 0.9.6    # new URLs; each download must match GitHub's SHA-256
-   ship-fleet pins set herdr_core 0.1.20  # from the releases.herdr.dev manifest
+   ship-fleet pins set herdr_core 0.1.23  # from the releases.herdr.dev manifest
    ship-fleet pins set gh-axi 0.1.48  # the version must exist in the npm registry
    ```
 
    herdr-core's manifest is not signed: a download must match it, but the sha256
    written to `versions.toml` is what Ships check, so compare it with the release
-   page before committing.
+   page before committing. herdr-core never moves back on a Ship: a pin older than
+   the copy it has installed is not installed, and a newer copy Herdr's own machine
+   update put in the agent's `~/.local/bin` is kept and run (`core-unpinned`).
 
    It rewrites `versions.toml` in place (comments kept) and refuses anything it
    cannot verify. Read the herdr release notes before moving herdr: its CLI and
@@ -82,6 +84,8 @@ ship-01: updated to 0.2.0-0123456789ab; back after 48 s; 2/2 agents resumed in t
   reboot it: the running core keeps serving every agent, and the new one takes over
   at the next reboot (an OS update's, say). Until then the Ship shows
   `core-restart-pending`, a notice, and the result says "herdr-core was updated".
+  A Ship whose core Herdr's own update already moved past the new pin keeps it
+  (`core-unpinned`, a notice with no reboot): the reboot starts the newest copy.
   Reboot when it suits you (`ship-fleet reboot ship-01`), or update with
   `--reboot always`. Its core's own log is `ship-fleet logs ship-01 core`.
   A new herdr never reboots it either, and never shows `herdr-restart-pending`
@@ -159,7 +163,7 @@ ship-fleet attention
 `behind-tooling` and `herdr-restart-pending` (herdr Ships only) should be gone
 (`core-restart-pending` stays on herdr-core Ships until their next reboot,
 `tmp-reboot-pending` on every Ship whose `/tmp` was moved to the disk; both are
-expected). `runtime-deprecated` stays until the Ship is moved to herdr-core.
+expected; so is `core-unpinned` on a Ship that runs a newer herdr-core than the pin). `runtime-deprecated` stays until the Ship is moved to herdr-core.
 
 ## OS updates and reboots
 

@@ -54,8 +54,10 @@ def test_the_logic_imports_neither_gpui_nor_herdr():
         assert re.findall(r'^import .* from "([^"]+)";$', code, re.M) == ["./model.js"], name
         assert "gpui" not in re.sub(r"//.*", "", code), name
     main = (FLEET / "main.js").read_text("utf-8")
-    assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "./model.js",
-                                                   "./settings.js", "./browsers.js", "./agents.js"]
+    # herdr twice: its exports by name, and the namespace for checking() (absent before 0.1.16)
+    assert re.findall(r'from "([^"]+)"', main) == ["gpui-kit", "gpui-base", "herdr", "herdr",
+                                                   "./model.js", "./settings.js", "./browsers.js",
+                                                   "./agents.js"]
     link = (FLEET / "link.js").read_text("utf-8")
     assert re.findall(r'from "([^"]+)"', link) == ["herdr", "./browsers.js"]
 

@@ -41,8 +41,8 @@ with `herdr/install-fleet.sh`, and its model's tests are in `tests/fleet/`.
 ## Licences
 
 - `mods/desk-agents/` and `mods/desk-spaces/` are modified copies of Herdr's `agents` and `spaces`
-  mods, and `layouts/desk.json` of its `main` layout, from Herdr 0.1.15
-  (<https://github.com/herdrdev/herdr-app>, `defaults/`), under the Apache License 2.0
+  mods from Herdr 0.1.17, and `layouts/desk.json` of its `main` layout from Herdr 0.1.15 (the
+  same in 0.1.17) (<https://github.com/herdrdev/herdr-app>, `defaults/`), under the Apache License 2.0
   ([`LICENSE-herdr.txt`](LICENSE-herdr.txt)). The mods' changes are the lines marked `Desk:`;
   the layout's are the Desk's own parts, described in [`DESK.md`](DESK.md).
 - `mods/desk/icons/caution.svg` (and `mods/desk/brand/crew-caution.png`, drawn from it) is

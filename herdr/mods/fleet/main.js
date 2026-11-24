@@ -21,6 +21,8 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, writeTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
+// checking() (Herdr 0.1.16+) through the namespace: a named import of it fails to load on 0.1.15.
+import * as herdr from "herdr";
 import { Fleet, ago, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 import { asOpened, openedAs, settingsGate, settingsView, settingsJob, toggleScope } from "./settings.js";
 import { BROWSERS, LINKS_KEY, PROFILE_HINT, addMapping, describe, linkJobs, raiseMapping, readBrowsers, removeMapping, withBrowsers } from "./browsers.js";
@@ -168,6 +170,8 @@ export default class FleetPanel extends View {
       b_tag: input("or type a tag"),
       b_profile: input("profile"),
     };
+    // Under `herdr-app check` init() runs for real: no ssh to FleetLedger from there.
+    if (herdr.checking?.()) return;
     cx.timer.every(TICK_MS, (cx) => this.tick(cx));
     this.tick(cx);
     cx.spawn(async (cx) => {

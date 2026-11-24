@@ -2,8 +2,10 @@
 # (contracts/ship-runtime.md). Installed in /etc/systemd/user (root-owned) and
 # enabled by ship-provision instead of herdr.service on those Ships.
 #
-# It only starts the core, early and with the Ship's environment. The core runs
-# itself as a transient user unit and keeps running after this one has finished.
+# It only starts the core, early and with the Ship's environment, from the newest
+# installed herdr-core (ship-core-start: the pinned one, or a newer one Herdr's own
+# machine update put in ~/.local/bin; never an older one). The core runs itself as a
+# transient user unit and keeps running after this one has finished.
 # Agents do not depend on its environment (they start through
 # /opt/shipshape/bin/agent-launch), and the agent record brings them back: the
 # status refresh after a boot relaunches every recorded agent (ship-ctl.md, "The
@@ -20,7 +22,9 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=npm_config_prefix=%h/.local
 EnvironmentFile=-%h/.config/shipshape/env
 WorkingDirectory=%h
-ExecStart=/usr/local/bin/hc server start
+# A converge rolled back to a release without ship-core-start leaves this unit in
+# place: then the pinned core starts, as before.
+ExecStart=/bin/sh -c 'if [ -x /opt/shipshape/current/bin/ship-core-start ]; then exec /opt/shipshape/current/bin/ship-core-start; fi; exec /usr/local/bin/hc server start'
 
 [Install]
 WantedBy=default.target
