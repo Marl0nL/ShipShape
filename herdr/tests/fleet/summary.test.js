@@ -79,12 +79,13 @@ test("fleetSummary gives each Ship its sign-ins from the items already read", ()
   assert.equal(s.needs, 2);
 });
 
-test("windowAttention and windowChange: the count in the title and badge, set only when it changes", () => {
+test("windowAttention and windowChange: the count in the title and badge, set first and then only when it changes", () => {
   assert.deepEqual(windowAttention({ needs: 0 }), { title: null, badge: null });
   assert.deepEqual(windowAttention(null), { title: null, badge: null });
   assert.deepEqual(windowAttention({ needs: 1 }), { title: "Herdr · Fleet: 1 needs you", badge: "1" });
   assert.deepEqual(windowAttention({ needs: 3 }), { title: "Herdr · Fleet: 3 need you", badge: "3" });
-  // Herdr starts with its own title and no badge: nothing to set while nothing needs you.
+  // This copy's first read always sets both: after a reload the window may still show a count.
+  assert.deepEqual(windowChange(null, { needs: 0 }), { title: null, badge: null });
   const start = { title: null, badge: null };
   assert.equal(windowChange(start, { needs: 0 }), null);
   const two = windowChange(start, { needs: 2 });

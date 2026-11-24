@@ -37,9 +37,11 @@ const TICK_MS = 15000;
 // The Desk's Dashboard and sidebar read the fleet from this, after each read (they ask
 // FleetLedger nothing): every path that awaits fleet.refresh() publishes when it is done;
 // unchanged, it sets nothing. The window's title and Dock badge follow the count of items, set
-// only when it changes (Herdr: the last call wins, whichever mod made it).
+// on this copy's first read (after a reload the window may still show an earlier copy's) and
+// then only when it changes (Herdr: the last call wins, whichever mod made it).
 let published = null;
-let titled = { title: null, badge: null }; // as Herdr starts: its own title, no badge
+let last = null; // the summary published last
+let titled = null; // the title and badge this copy set last; none yet, so its first read sets both
 // ... and link.js (browsers.js) the panel's running jobs for a Ship, with its tags: from the
 // panel's first start too, so a record an earlier session left behind never outlives it.
 let publishedLinks = null;
@@ -52,10 +54,11 @@ function publishLinks() {
 }
 function publish() {
   publishLinks();
-  const summary = fleetSummary(fleet.state);
+  const summary = fleetSummary(fleet.state, last);
   const json = JSON.stringify(summary);
   if (json === published) return;
   published = json;
+  last = summary;
   setShared("fleet.summary", summary);
   const next = windowChange(titled, summary);
   if (!next) return;

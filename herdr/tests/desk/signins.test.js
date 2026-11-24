@@ -12,6 +12,7 @@ import { fleetSummary } from "../../mods/desk/fleet-model.js";
 import { signinMark } from "../../mods/desk/dash.js";
 import { resolve } from "../../mods/desk/looks.js";
 import { fleet, NOW, MIN } from "./fixtures.js";
+import { readAgo } from "../../mods/desk-spaces/main.js";
 
 globalThis.localStorage ??= { getItem: () => null, setItem() {}, removeItem() {} };
 
@@ -72,13 +73,13 @@ function sidebar(collapsed) {
   });
 }
 
-test("the sidebar marks a Ship whose sign-ins need you beside its machine header", async () => {
-  herdr.reset({ machines: [{ name: null, layout: "ready" }, { name: "ship-01", layout: "ready" }, { name: "ship-02", layout: "ready" }], shared: { "fleet.summary": summary() } });
+test("the sidebar marks a Ship whose sign-ins need you beside its machine header, dated", async () => {
+  herdr.reset({ machines: [{ name: null, layout: "ready" }, { name: "ship-01", layout: "ready" }, { name: "ship-02", layout: "ready" }], shared: { "fleet.summary": summary(Date.now() - 4 * MIN) } });
   const open = await sidebar(false);
   const mark = byId(open, "machine-signin-ship-01");
   assert.ok(mark, "ship-01 is marked");
   assert.deepEqual(texts(mark), ["sign in"]);
-  assert.equal(mark.tip, "ship-01's sign-ins need you: claude expired, github missing. The Fleet panel signs it in.");
+  assert.equal(mark.tip, "ship-01's sign-ins need you: claude expired, github missing (FleetLedger, read 4m ago). The Fleet panel signs it in.");
   assert.equal(byId(open, "machine-signin-ship-02"), null);
   assert.ok(texts(byId(open, "machine-ship-01")).includes("ship-01"));
 
@@ -86,7 +87,7 @@ test("the sidebar marks a Ship whose sign-ins need you beside its machine header
   const rail = await sidebar(true);
   assert.ok(byId(rail, "machine-signin-ship-01"));
   assert.equal(byId(rail, "machine-signin-ship-02"), null);
-  assert.equal(byId(rail, "machine-ship-01").tip, "ship-01 · connected ship-01's sign-ins need you: claude expired, github missing. The Fleet panel signs it in.");
+  assert.equal(byId(rail, "machine-ship-01").tip, "ship-01 · connected ship-01's sign-ins need you: claude expired, github missing (FleetLedger, read 4m ago). The Fleet panel signs it in.");
   assert.equal(byId(rail, "machine-ship-02").tip, "ship-02 · connected");
 });
 
@@ -99,4 +100,13 @@ test("the sidebar draws no mark before the Fleet panel has read, or from an olde
       assert.equal(walk(tree).filter((e) => String(e.elId ?? "").startsWith("machine-signin-")).length, 0);
     }
   }
+});
+
+test("readAgo: the sidebar dates the Fleet panel's read as the Dashboard does", () => {
+  assert.equal(readAgo({ readAt: NOW - 30_000 }, NOW), " (FleetLedger, read 30s ago)");
+  assert.equal(readAgo({ readAt: NOW - 4 * MIN }, NOW), " (FleetLedger, read 4m ago)");
+  assert.equal(readAgo({ readAt: NOW - 3 * 60 * MIN }, NOW), " (FleetLedger, read 3h ago)");
+  assert.equal(readAgo({ readAt: NOW - 72 * 60 * MIN }, NOW), " (FleetLedger, read 3d ago)");
+  assert.equal(readAgo({ readAt: null }, NOW), "");
+  assert.equal(readAgo(null, NOW), "");
 });

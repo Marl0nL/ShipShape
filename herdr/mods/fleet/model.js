@@ -355,6 +355,7 @@ export class Fleet {
       fleetItems: [],
       attention: [], // every item ship-fleet attention lists, the Ships' and the fleet's: the Needs you list
       attentionError: null,
+      attentionRead: null, // the last read got the attention list (false: it failed; null: no read yet)
       about: null,
       aboutError: null,
       machines: {},
@@ -430,6 +431,7 @@ export class Fleet {
         st.attentionError = a.error ?? null;
         st.fleetItems = a.error ? [] : a.fleet;
         st.attention = a.error ? [] : a.items;
+        st.attentionRead = !a.error;
         if (!a.error && a.refused.length) st.attentionError = `ship-fleet attention: left out ${a.refused.join("; ")}`;
         const b = about.ok ? readAbout(about.stdout) : { error: about.error, older: about.older };
         st.about = b.error ? null : b;
@@ -438,6 +440,7 @@ export class Fleet {
       } else {
         st.fleetItems = [];
         st.attention = [];
+        st.attentionRead = false;
         st.attentionError = null;
         st.about = null;
         st.aboutError = null;
@@ -449,6 +452,7 @@ export class Fleet {
       st.refused = [];
       st.fleetItems = [];
       st.attention = [];
+      st.attentionRead = true; // no FleetLedger to ask: nothing is waiting on an answer
       st.attentionError = null;
       st.about = null;
       st.aboutError = null;
@@ -779,15 +783,20 @@ export function header(state, now, paths) {
 /** Shared "fleet.summary", published after each read: the Ships as FleetLedger last saw them
  *  (with the agents their last status lists and the sign-ins their items name) and how many
  *  items need you. The Dashboard and the Desk's sidebar read it and never ask FleetLedger
- *  themselves, so it is as fresh as this panel's last read (`readAt`). */
-export function fleetSummary(state) {
+ *  themselves, so it is as fresh as this panel's last read (`readAt`). A read that could not get
+ *  the attention list (FleetLedger away, a failed `ship-fleet attention`) says nothing new about
+ *  it: the count and each Ship's sign-ins stay as `last` (the summary published before) had them,
+ *  rather than reading as "nothing needs you". */
+export function fleetSummary(state, last = null) {
   const attention = state.attention ?? [];
+  const keep = state.attentionRead === false && last !== null;
+  const kept = (name) => (Array.isArray(last?.ships) ? last.ships.find((x) => x?.name === name)?.signins : null) ?? [];
   return {
     readAt: state.shipsAt ?? null,
     from: state.shipsFrom ?? null,
-    needs: attention.length,
-    high: attention.filter((a) => a.severity === "high").length,
-    ships: (state.ships ?? []).map((s) => ({ name: s.name, state: s.state, problem: s.problem, statusAt: s.statusAt ?? null, agents: s.agents ?? null, signins: shipSignins(attention, s.name) })),
+    needs: keep ? (last.needs ?? 0) : attention.length,
+    high: keep ? (last.high ?? 0) : attention.filter((a) => a.severity === "high").length,
+    ships: (state.ships ?? []).map((s) => ({ name: s.name, state: s.state, problem: s.problem, statusAt: s.statusAt ?? null, agents: s.agents ?? null, signins: keep ? kept(s.name) : shipSignins(attention, s.name) })),
   };
 }
 
@@ -815,11 +824,12 @@ export function windowAttention(summary) {
   return { title: `Herdr · Fleet: ${n} need${n === 1 ? "s" : ""} you`, badge: String(n) };
 }
 
-/** What to set after a read, given what is set now (`shown`; Herdr starts with its own title and
- *  no badge): the new title and badge, or null when they have not changed. */
+/** What to set after a read, given what this copy of the mod set last (`shown`; null: nothing
+ *  yet, as after a reload, when the window may still show an earlier copy's count): the new
+ *  title and badge, or null when they have not changed. */
 export function windowChange(shown, summary) {
   const next = windowAttention(summary);
-  return next.title === shown.title && next.badge === shown.badge ? null : next;
+  return shown && next.title === shown.title && next.badge === shown.badge ? null : next;
 }
 
 // ---- the Needs you list ----------------------------------------------------------------------
