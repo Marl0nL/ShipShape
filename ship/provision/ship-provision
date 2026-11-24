@@ -348,12 +348,17 @@ step_herdr() {
   rm -rf "$tmp"
 }
 
-# herdr-core sits beside herdr until Ships move to it. Root-owned on purpose: it
-# does not update itself from a folder it cannot write, so the pin stays the
-# version, and its remote launcher finds /usr/local/bin/herdr-core first.
+# herdr-core, pinned. Root-owned on purpose: it does not update itself from a folder
+# it cannot write, so this copy stays the pin. Herdr's own machine update may put a
+# newer copy in the agent's ~/.local/bin; that one is left alone, and ShipShape starts
+# whichever is newer (shipctl.runtime, ship-core-start). herdr-core never moves back:
+# a pin older than the copy installed here is not installed (a converge to an older
+# bundle keeps the newer binary), and the version installed is recorded beside its
+# checksum for the next run to compare.
 step_herdr_core() {
-  local arch url sum tmp
+  local arch url sum tmp version installed
   arch=$(machine)
+  version=$(v herdr_core.version)
   url=$(v "herdr_core.assets.$arch.url")
   sum=$(v "herdr_core.assets.$arch.sha256")
   [ -n "$url" ] || die "versions.toml has no herdr-core build for $arch"
@@ -363,17 +368,44 @@ step_herdr_core() {
     [ "$(readlink /usr/local/bin/hc 2>/dev/null)" = herdr-core ]; then
     return 0
   fi
-  if [ "$DRY" = 1 ]; then changed "/usr/local/bin/herdr-core $(v herdr_core.version)"; return 0; fi
+  if installed=$(herdr_core_newer_than "$version"); then
+    log "kept /usr/local/bin/herdr-core $installed: newer than the pin $version (herdr-core never moves back)"
+    [ "$DRY" = 1 ] || put_link herdr-core /usr/local/bin/hc
+    return 0
+  fi
+  if [ "$DRY" = 1 ]; then changed "/usr/local/bin/herdr-core $version"; return 0; fi
   tmp=$(mktemp -d)
   fetch -o "$tmp/herdr-core.tar.gz" "$url"
-  install_herdr_core "$tmp/herdr-core.tar.gz" "$sum"
+  install_herdr_core "$tmp/herdr-core.tar.gz" "$sum" "$version"
   rm -rf "$tmp"
 }
 
-# install_herdr_core ARCHIVE SHA256: check the archive, then install its binary
-# as /usr/local/bin/herdr-core (0755, root) with /usr/local/bin/hc beside it.
+# herdr_core_newer_than VERSION: print the version of the herdr-core installed here
+# and succeed when it is newer than VERSION. The version is the one recorded when it
+# was installed, with that archive's checksum: a record whose checksum is not the
+# installed one (an older ship-provision installed another since) counts for nothing.
+herdr_core_newer_than() {
+  local record installed sum
+  [ -f "$ROOT/usr/local/bin/herdr-core" ] || return 1
+  record=$(head -c 200 "$ROOT/var/lib/shipshape/herdr-core.version" 2>/dev/null) || return 1
+  read -r installed sum <<<"$record" || true
+  [ -n "$sum" ] && [ "$sum" = "$(head -c 100 "$ROOT/var/lib/shipshape/herdr-core.sha256" 2>/dev/null)" ] ||
+    return 1
+  version_newer "$installed" "$1" || return 1
+  printf '%s\n' "$installed"
+}
+
+# version_newer A B: A and B are both X.Y.Z, and A is the newer.
+version_newer() {
+  local re='^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$'
+  [[ $1 =~ $re && $2 =~ $re ]] || return 1
+  [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]
+}
+
+# install_herdr_core ARCHIVE SHA256 VERSION: check the archive, then install its
+# binary as /usr/local/bin/herdr-core (0755, root) with /usr/local/bin/hc beside it.
 install_herdr_core() {
-  local archive=$1 sum=$2 dir
+  local archive=$1 sum=$2 version=$3 dir
   echo "$sum  $archive" | sha256sum -c --quiet - || die "herdr-core checksum mismatch"
   dir=$(mktemp -d)
   tar -xzf "$archive" -C "$dir" --no-same-owner herdr-core || die "herdr-core archive has no herdr-core binary"
@@ -382,8 +414,10 @@ install_herdr_core() {
   fi
   put_file "$dir/herdr-core" /usr/local/bin/herdr-core 0755
   put_link herdr-core /usr/local/bin/hc
-  # The archive's checksum, so a re-run knows the installed binary is the pinned one.
+  # The archive's checksum and version, so a re-run knows the installed binary is
+  # the pinned one, and never installs an older one over it.
   echo "$sum" | put_text /var/lib/shipshape/herdr-core.sha256 0644
+  echo "$version $sum" | put_text /var/lib/shipshape/herdr-core.version 0644
   rm -rf "$dir"
 }
 

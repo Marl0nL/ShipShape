@@ -1,0 +1,56 @@
+#!/usr/bin/python3 -I
+"""ship-core-start: start herdr-core at boot, never an older one than is installed.
+
+ship-core.service (a user unit, so this runs as the agent user) runs it on Ships
+with ship.toml runtime = "core". It starts the core from the newest installed copy
+(shipctl.runtime: ShipShape's pinned one, or a newer one Herdr's own machine update
+put in ~/.local/bin; the pinned one on a tie) and exits with `hc server start`'s
+code. When the choice itself fails, or the chosen copy does not run, it starts the
+pinned copy, as before: a core at all comes before the newest one, and status then
+says a newer one is installed (core-restart-pending). It never stops or restarts a
+core that is already running.
+"""
+
+import os
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "lib"))
+
+
+def main() -> int:
+    # The pinned copy, under SHIPSHAPE_ROOT as shipctl.paths has it (a sandbox in tests):
+    # what starts when the choice below fails, even when shipctl does not load at all.
+    root = os.environ.get("SHIPSHAPE_ROOT") or "/"
+    pinned = command = os.path.join(root, "usr/local/bin/hc")
+    start = ["server", "start"]
+    try:
+        from shipctl.paths import Paths
+        from shipctl.runner import Runner
+        from shipctl.runtime import CORE_START, PINNED_HC, core_copies, newest_core
+
+        start = CORE_START
+
+        paths = Paths.from_env()
+        command = str(paths.p(PINNED_HC))
+        copy = newest_core(core_copies(paths, Runner(paths), as_agent=False,
+                                       owner=(os.getuid(), os.getgid())))
+        command = copy.command
+        print(f"ship-core-start: herdr-core {copy.shown} "
+              f"({'pinned' if copy.pinned else 'Herdr update, ~/.local/bin'}): {command}",
+              file=sys.stderr, flush=True)
+    except Exception as exc:  # noqa: BLE001 - the core must still start
+        print(f"ship-core-start: choosing a herdr-core failed ({exc}); starting {command}",
+              file=sys.stderr, flush=True)
+    try:
+        os.execv(command, [command, *start])
+    except OSError as exc:
+        if command == pinned:
+            raise
+        print(f"ship-core-start: {command} did not start ({exc}); starting {pinned}",
+              file=sys.stderr, flush=True)
+    os.execv(pinned, [pinned, *start])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

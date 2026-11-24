@@ -112,7 +112,7 @@ const RUNTIME_RULES = {
     "Do not stop or restart the herdr server: every agent on this Ship runs inside it.",
   ],
   core: [
-    "Do not replace ~/.local/bin/claude, herdr or herdr-core (hc): Claude Code updates itself, and herdr-core is pinned by the Ship.",
+    "Do not replace ~/.local/bin/claude, herdr or herdr-core (hc) yourself: Claude Code updates itself, and herdr-core is the Ship's pinned copy or a newer one that Herdr's own machine update installed, which the Ship keeps.",
     "Never run `hc kill` or `hc server stop`, and do not kill the herdr-core processes: every agent on this Ship runs in a herdr-core terminal, `hc kill` ends one and `hc server stop` ends them all. Your own terminal is $HC_TERMINAL_ID.",
   ],
 };

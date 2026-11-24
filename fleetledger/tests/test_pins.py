@@ -524,7 +524,7 @@ def test_set_herdr_core_from_the_manifest(fake_repo):
     before = tomllib.loads(fake_repo.versions_path.read_text())
     change = pins.set_pin(fake_repo, "herdr_core", "0.1.20", FakeWeb(core_pages()))
     v = versions(fake_repo)
-    assert (change.old, change.new) == ("0.1.19", "0.1.20")
+    assert (change.old, change.new) == (before["herdr_core"]["version"], "0.1.20")
     assert v["herdr_core"]["version"] == "0.1.20"
     assert v["herdr_core"]["assets"]["aarch64"] == {
         "url": f"{CORE}/herdr-core-linux-aarch64.tar.gz",

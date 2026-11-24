@@ -207,6 +207,20 @@ class Ship:
         rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
         return [(r["argv"], r["home"]) for r in rows if r["argv"][0] == command]
 
+    def home_core(self, version: str) -> Path:
+        """A herdr-core in the agent's ~/.local/bin, as Herdr's own machine update puts
+        it there: a plain file (the fake herdr-core) that says it is `version`."""
+        path = self.p("/home/agent/.local/bin/herdr-core")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!{sys.executable} -IS\nimport sys\n"
+                        f"sys.path.insert(0, {str(FAKE.parent)!r})\n"
+                        "import fake\nsys.exit(fake.main())\n")
+        path.chmod(0o755)
+        s = self.scenario()
+        s["hc"]["home_version"] = version
+        self.set(hc=s["hc"])
+        return path
+
     def calls(self, command: str | None = None) -> list[list[str]]:
         path = self.fake_dir / "calls.jsonl"
         if not path.exists():
@@ -476,6 +490,9 @@ def build_ship(tmp_path: Path, toml: str = BASIC_TOML, runtime: str | None = "co
         d.mkdir(parents=True)
     for name in FAKE_COMMANDS:
         (bindir / name).symlink_to(FAKE)
+    # The pinned herdr-core's `hc`, which ship-ctl runs by its path (runtime.PINNED_HC).
+    (root / "usr/local/bin").mkdir(parents=True)
+    (root / "usr/local/bin/hc").symlink_to(FAKE)
     (fake_dir / "scenario.json").write_text(
         json.dumps(
             {
