@@ -70,6 +70,7 @@ export const openOverlay = (spec) => {
 export const closeOverlay = () => null;
 export const notify = () => "n1";
 export const nextCommand = () => new Promise(() => {});
+export const watchFolder = () => new Promise(() => {});
 export const window = () => ({ platform: "linux", titlebar: "none", buttons: false, maximized: false, fullscreen: false, active: true });
 
 const THEME = Object.fromEntries(

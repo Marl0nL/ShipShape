@@ -17,6 +17,7 @@ import {
   checkSchema,
   connection,
   firstLine,
+  fleetSummary,
   frameInset,
   header,
   isShown,
@@ -28,6 +29,7 @@ import {
   readMachines,
   readSettings,
   readShips,
+  windowChange,
   remoteCommand,
   rows,
   selectPlan,
@@ -403,6 +405,53 @@ test("a failed read keeps the last list, and says when it was read", async () =>
   const h = header(fleet.state, now, paths);
   assert.ok(h.facts.includes("read 5 min ago"));
   assert.match(fleet.state.error, /Connection timed out/);
+});
+
+test("a read that cannot get the attention list keeps the last count and sign-ins, not an all clear", async () => {
+  const name = ships()[0].name;
+  const expired = { schema: SCHEMA.attention, ship: name, code: "signin-expired", message: "Claude's sign-in has expired.", subject: "claude", severity: "high", fix: "" };
+  let lsUp = true;
+  let attUp = true;
+  const { fleet } = stand({
+    files: settings({ ssh: DEST }),
+    answers: { ls: () => (lsUp ? ok(ships()) : { code: 255, stderr: "Connection timed out" }), attention: () => (attUp ? ok([expired]) : { code: 1, stderr: "boom\n" }), about: ok(example("fleetledger-about", "desktop-checked.json")) },
+  });
+  await fleet.refresh();
+  assert.equal(fleet.state.attentionRead, true);
+  const first = fleetSummary(fleet.state, null);
+  const shown = windowChange(null, first);
+  assert.deepEqual(shown, { title: "Herdr · Fleet: 1 needs you", badge: "1" });
+  const marked = (s) => s.ships.find((x) => x.name === name).signins;
+  assert.deepEqual(marked(first), [{ service: "claude", problem: "expired" }]);
+
+  for (const [ls, att] of [[false, true], [true, false]]) {
+    lsUp = ls;
+    attUp = att;
+    await fleet.refresh();
+    assert.equal(fleet.state.attentionRead, false);
+    assert.deepEqual(fleet.state.attention, []); // the Needs you list itself is as before
+    const again = fleetSummary(fleet.state, first);
+    assert.equal(again.needs, 1);
+    assert.equal(again.high, 1);
+    assert.deepEqual(marked(again), [{ service: "claude", problem: "expired" }]);
+    assert.equal(windowChange(shown, again), null); // the title and badge stay
+  }
+
+  // A good read with nothing waiting clears them.
+  lsUp = attUp = true;
+  const { fleet: clear } = stand({ files: settings({ ssh: DEST }), answers: { ls: ok(ships()), attention: ok([]), about: ok(example("fleetledger-about", "desktop-checked.json")) } });
+  await clear.refresh();
+  const none = fleetSummary(clear.state, first);
+  assert.equal(none.needs, 0);
+  assert.deepEqual(marked(none), []);
+  assert.deepEqual(windowChange(shown, none), { title: null, badge: null });
+});
+
+test("with no FleetLedger to ask, nothing is kept from an earlier summary", async () => {
+  const { fleet } = stand({ files: settings({}) });
+  await fleet.refresh();
+  assert.equal(fleet.state.attentionRead, true);
+  assert.equal(fleetSummary(fleet.state, { needs: 3, high: 1, ships: [] }).needs, 0);
 });
 
 test("settings that are wrong: said plainly, nothing sent", async () => {

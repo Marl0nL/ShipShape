@@ -21,9 +21,10 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, writeTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
-// checking() (Herdr 0.1.16+) through the namespace: a named import of it fails to load on 0.1.15.
+// checking(), setWindowTitle() and setBadge() (Herdr 0.1.16+) through the namespace: a named
+// import of one fails to load on 0.1.15, where they are undefined (so ?.()).
 import * as herdr from "herdr";
-import { Fleet, ago, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
+import { Fleet, ago, fleetSummary, windowChange, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 import { asOpened, openedAs, settingsGate, settingsView, settingsJob, toggleScope } from "./settings.js";
 import { BROWSERS, LINKS_KEY, PROFILE_HINT, addMapping, describe, linkJobs, raiseMapping, readBrowsers, removeMapping, withBrowsers } from "./browsers.js";
 import { agentsView, autostartAddJob, autostartRemoveJob, remoteControlJob, resizeJob, restartJob, sizeGate } from "./agents.js";
@@ -33,9 +34,14 @@ const host = { exec, hc, run, notify, readTextFile, home, appHome };
 const fleet = new Fleet(host);
 const TICK_MS = 15000;
 
-// The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing):
-// every path that awaits fleet.refresh() publishes when it is done; unchanged, it sets nothing.
+// The Desk's Dashboard and sidebar read the fleet from this, after each read (they ask
+// FleetLedger nothing): every path that awaits fleet.refresh() publishes when it is done;
+// unchanged, it sets nothing. The window's title and Dock badge follow the count of items, set
+// on this copy's first read (after a reload the window may still show an earlier copy's) and
+// then only when it changes (Herdr: the last call wins, whichever mod made it).
 let published = null;
+let last = null; // the summary published last
+let titled = null; // the title and badge this copy set last; none yet, so its first read sets both
 // ... and link.js (browsers.js) the panel's running jobs for a Ship, with its tags: from the
 // panel's first start too, so a record an earlier session left behind never outlives it.
 let publishedLinks = null;
@@ -48,11 +54,17 @@ function publishLinks() {
 }
 function publish() {
   publishLinks();
-  const summary = fleetSummary(fleet.state);
+  const summary = fleetSummary(fleet.state, last);
   const json = JSON.stringify(summary);
   if (json === published) return;
   published = json;
+  last = summary;
   setShared("fleet.summary", summary);
+  const next = windowChange(titled, summary);
+  if (!next) return;
+  titled = next;
+  herdr.setWindowTitle?.(next.title);
+  herdr.setBadge?.(next.badge);
 }
 
 const stop = (_e, cx) => cx.stop_propagation();

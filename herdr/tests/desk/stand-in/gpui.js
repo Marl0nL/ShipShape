@@ -65,6 +65,7 @@ export const h_flex = () => make("h_flex");
 export const svg = (path) => make("svg", path);
 export const image = (path) => make("image", path);
 export class View {}
+export const ScrollHandle = { new: () => ({ scroll_to_item() {} }) };
 export const InputState = { new: () => ({ on() {}, value: () => "", set_value() {} }) };
 export const Input = { new: () => make("input") };
 

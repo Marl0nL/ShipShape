@@ -70,6 +70,24 @@ export function tone(t, status) {
   return t[status] ?? t.unknown;
 }
 
+// Desk: a Ship's sign-ins that need you, as the Fleet panel last read them (shared
+// "fleet.summary"; nothing is asked here): "claude expired, github missing", or null.
+export function signinsOf(summary, m) {
+  const ship = m ? (Array.isArray(summary?.ships) ? summary.ships : []).find((s) => s?.name === m) : null;
+  const list = Array.isArray(ship?.signins) ? ship.signins.filter((x) => x && typeof x.problem === "string") : [];
+  return list.length ? list.map((x) => (x.service ? `${x.service} ${x.problem}` : x.problem)).join(", ") : null;
+}
+
+// Desk: how old that is, as the Dashboard says it: " (FleetLedger, read 4m ago)", or "" undated.
+export function readAgo(summary, now) {
+  const at = summary?.readAt;
+  if (!Number.isFinite(at)) return "";
+  const s = Math.max(0, Math.round((now - at) / 1000));
+  const m = Math.round(s / 60);
+  const h = Math.round(m / 60);
+  return ` (FleetLedger, read ${s < 60 ? `${s}s` : m < 60 ? `${m}m` : h < 48 ? `${h}h` : `${Math.round(h / 24)}d`} ago)`;
+}
+
 export default class Spaces extends View {
   init(_props, cx) {
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
@@ -364,6 +382,7 @@ export default class Spaces extends View {
       return rows.map(draw);
     }
     const machineNames = [null, ...remote];
+    const fleet = shared("fleet.summary"); // Desk: for signinsOf
     return machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const repair = this.reconnecting[m];
@@ -374,8 +393,13 @@ export default class Spaces extends View {
       const folded = this.folded.has(m);
       const icon = svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none();
       const badge = div().absolute().right(-3).bottom(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
+      // Desk: a Ship whose sign-ins need you is marked beside it, amber (the rail: a dot and its tooltip).
+      const signin = signinsOf(fleet, m);
+      const warn = t.ansi3 ?? t.working;
+      const signinTip = signin ? `${m}'s sign-ins need you: ${signin}${readAgo(fleet, Date.now())}. The Fleet panel signs it in.` : null;
       const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
-        .when(collapsed, el => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip(login ? `${m} needs a login: run ${login}. Click for Copy.` : m ? `${m} · ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer"))
+        // Desk: the rail's tooltip ends with signinTip.
+        .when(collapsed, el => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip((login ? `${m} needs a login: run ${login}. Click for Copy.` : m ? `${m} · ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer") + (signinTip ? ` ${signinTip}` : "")))
         .cursor_pointer().hover(s => s.bg(t.hover))
         .on_click((_e, cx) => {
           if (collapsed && login) { run("app.settings", { section: "machines" }); return; }
@@ -387,8 +411,12 @@ export default class Spaces extends View {
           .flex_none().text_color(t.blocked).tooltip("Agents stop when you disconnect. Click for the fix.")
           .on_click((_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "machine-add", kind: "dialog", width: 560 }); }).child("⚠")))
         .when(!collapsed, el => el.child(icon))
-        .when(collapsed, el => el.child(div().relative().flex_none().child(icon).when(Boolean(m), el => el.child(badge))))
+        // Desk: the rail's icon also takes the sign-in dot.
+        .when(collapsed, el => el.child(div().relative().flex_none().child(icon).when(Boolean(m), el => el.child(badge))
+          .when(Boolean(signin), el => el.child(div().id(`machine-signin-${m}`).absolute().right(-3).top(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(warn)))))
         .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
+          // Desk: the sign-in mark, after the name.
+          .when(Boolean(signin), el => el.child(div().id(`machine-signin-${m}`).flex_none().text_color(warn).tooltip(signinTip).child("sign in")))
           .when(!connected && !rebuilt && !login, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
           .when(rebuilt, el => el.child(h_flex().flex_none().gap(3).items_center()
             .child(div().max_w(140).truncate().child(repair?.error || "rebuilt ·"))
