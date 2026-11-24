@@ -5,7 +5,8 @@
 // folder, host names, VM id and time zone), a Ship's settings in its Settings view (its session
 // prefix, LAN guard addresses, reboot time, time zone, wake delay and message, new tags), in its
 // Agents and size view an autostart agent's name and folder and a new size, a snapshot's name,
-// and on the Machines page a machine's name, public key and scope and a device's name. Nothing
+// and on the Machines page a machine's name, public key and scope and a device's name (and, in
+// Browsers, a tag and a browser profile's name for settings.json, which link.js reads). Nothing
 // secret. A computer asking to be paired by code is approved in a terminal tab, where its code is
 // typed: never here.
 // All its logic is in model.js (and a Ship's Settings in settings.js, its Agents and size in
@@ -19,11 +20,12 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
+import { exec, hc, run, theme, spaces, panes, machines, terminals, notify, readTextFile, writeTextFile, home, appHome, nextCommand, layout, setShared } from "herdr";
 // checking() (Herdr 0.1.16+) through the namespace: a named import of it fails to load on 0.1.15.
 import * as herdr from "herdr";
 import { Fleet, ago, fleetSummary, rows, header, alerts, alertMenu, frameInset, isShown, openPlan, selectPlan, settingsPath, shipMenu, fleetLedgerMenu, newShipJob, newShipChoices, imagesOn, knownTags, actionGate, words, MODES, GITHUB_SCOPES, machinesView, machineMenu, trustJob, pairJob, pairingSwitchJob, pairRequestJob, LOGIN_CHOICES } from "./model.js";
 import { asOpened, openedAs, settingsGate, settingsView, settingsJob, toggleScope } from "./settings.js";
+import { BROWSERS, LINKS_KEY, PROFILE_HINT, addMapping, describe, linkJobs, raiseMapping, readBrowsers, removeMapping, withBrowsers } from "./browsers.js";
 import { agentsView, autostartAddJob, autostartRemoveJob, remoteControlJob, resizeJob, restartJob, sizeGate } from "./agents.js";
 
 const host = { exec, hc, run, notify, readTextFile, home, appHome };
@@ -34,7 +36,18 @@ const TICK_MS = 15000;
 // The Desk's Dashboard reads the fleet from this, after each read (it asks FleetLedger nothing):
 // every path that awaits fleet.refresh() publishes when it is done; unchanged, it sets nothing.
 let published = null;
+// ... and link.js (browsers.js) the panel's running jobs for a Ship, with its tags: from the
+// panel's first start too, so a record an earlier session left behind never outlives it.
+let publishedLinks = null;
+function publishLinks() {
+  const links = linkJobs(fleet.state);
+  const json = JSON.stringify(links);
+  if (json === publishedLinks) return;
+  publishedLinks = json;
+  setShared(LINKS_KEY, links);
+}
 function publish() {
+  publishLinks();
   const summary = fleetSummary(fleet.state);
   const json = JSON.stringify(summary);
   if (json === published) return;
@@ -120,6 +133,9 @@ export default class FleetPanel extends View {
     // A Ship's Agents and size view while open: {ship, agent, mode ("": the one it starts in),
     // fresh, addMode, restart}
     this.agents = null;
+    // The Browsers view while open: {text: settings.json as read, saved and mappings (the
+    // "browsers" setting, as saved and as edited), errors, tag, browser, note}, or {loading}
+    this.browsers = null;
     const input = (placeholder) => {
       const s = InputState.new({ placeholder });
       s.on("change", (_e, cx) => cx.notify()); // the command shown follows what is typed
@@ -154,9 +170,12 @@ export default class FleetPanel extends View {
       r_cores: input("vCPUs"),
       r_memory_mb: input("memory MB"),
       r_disk_gb: input("disk GB"),
+      b_tag: input("or type a tag"),
+      b_profile: input("profile"),
     };
     // Under `herdr-app check` init() runs for real: no ssh to FleetLedger from there.
     if (herdr.checking?.()) return;
+    publishLinks();
     cx.timer.every(TICK_MS, (cx) => this.tick(cx));
     this.tick(cx);
     cx.spawn(async (cx) => {
@@ -203,6 +222,7 @@ export default class FleetPanel extends View {
 
   start(job) {
     const r = fleet.startJob(job, { panes: panes(), spaces: spaces(), terminals: terminals() });
+    if (r.ok) publish(); // for link.js
     this.note = r.error ?? `Opened a terminal tab: ${job.title}. What ship-fleet asks, it asks there.`;
     if (job.kind === "trust" && r.ok) this.note += " On FleetLedger's own VM it prints there the line to paste on the new machine.";
     if (r.ok) {
@@ -283,6 +303,99 @@ export default class FleetPanel extends View {
     this.pair = !this.pair;
     this.inputs.device.set_value("phone");
     this.trust = null;
+  }
+
+  // -- the Browsers view: settings.json's "browsers", which link.js reads at each click --
+
+  toggleBrowsers(cx) {
+    if (this.browsers) {
+      this.browsers = null;
+      return;
+    }
+    this.browsers = { loading: true };
+    this.inputs.b_tag.set_value("");
+    this.inputs.b_profile.set_value("");
+    cx.spawn(async (cx) => {
+      let text = null;
+      let error = null;
+      try {
+        text = await readTextFile(settingsPath(host));
+      } catch (e) {
+        error = `Couldn't read settings.json: ${e?.message ?? e}`;
+      }
+      const b = readBrowsers(text);
+      if (this.browsers?.loading) this.browsers = { text, saved: b.mappings, mappings: b.mappings, errors: error ? [error] : b.errors, tag: null, browser: null, note: null };
+      cx.notify();
+    });
+  }
+
+  saveBrowsers(cx) {
+    const b = this.browsers;
+    const text = withBrowsers(b.text, b.mappings);
+    if (b.text === null || text === null) return void (b.note = "settings.json is not there, or not a JSON object: say where FleetLedger is first.");
+    cx.spawn(async (cx) => {
+      try {
+        await writeTextFile(settingsPath(host), text, b.text);
+        b.note = "Saved. Herdr reloads the panel; job tabs open before this open links as usual.";
+        b.text = text;
+        b.saved = b.mappings;
+      } catch (e) {
+        b.note = `Not saved: ${e?.message ?? e} (settings.json changed since it was read? Close and open Browsers again).`;
+      }
+      cx.notify();
+    });
+  }
+
+  browsersView(t) {
+    const b = this.browsers;
+    const box = v_flex().id("browsers").w_full().p(10).gap(6).rounded(8).border_1().border_color(t.border).child(div().text_size(13).font_weight(600).child("Browsers for links"));
+    const dim = (text) => div().text_size(12).text_color(t.dim).child(text);
+    if (b.loading) return box.child(dim("reading settings.json…"));
+    const edit = (r) => {
+      if (r.error) b.note = r.error;
+      else {
+        b.mappings = r.mappings;
+        b.note = null;
+      }
+    };
+    const line = (id, ...kids) => h_flex().id(id).w_full().gap(6).items_center().flex_wrap().children(kids);
+    const tag = this.inputs.b_tag.value().trim() || b.tag;
+    const family = BROWSERS[b.browser]?.family;
+    const changed = JSON.stringify(b.mappings) !== JSON.stringify(b.saved);
+    return box
+      .child(dim("Herdr 0.1.17 or later: a Ctrl-click (Cmd-click on macOS) on an https link in a terminal tab this panel opened for a Ship opens it in the browser and profile of the first tag here that the Ship has. Other links, and Ships with none of these tags, open as usual."))
+      .children(b.errors.map((e, i) => div().id(`b-err-${i}`).text_size(12).text_color(t.blocked).child(e)))
+      .children(b.mappings.map((m, i) =>
+        line(`b-row-${i}`, div().flex_1().min_w(0).text_size(12.5).child(describe(m)))
+          .when(i > 0, (el) => el.child(button(t, `b-up-${i}`, "Up", () => edit(raiseMapping(b.mappings, i)))))
+          .child(button(t, `b-rm-${i}`, "Remove", () => edit(removeMapping(b.mappings, i)))),
+      ))
+      .when(!b.mappings.length, (el) => el.child(dim("No tag mapped: every link opens as usual.")))
+      .child(line("b-tag", ...knownTags(fleet.state).map((x) => button(t, `b-tag-${x}`, x, () => {
+        b.tag = b.tag === x ? null : x;
+        this.inputs.b_tag.set_value("");
+      }, tag === x)), this.inputBox(t, "b_tag", 120)))
+      .child(line("b-browser", ...Object.entries(BROWSERS).map(([id, x]) => button(t, `b-br-${id}`, x.name, () => {
+        b.browser = id;
+      }, b.browser === id))))
+      .child(line("b-profile", this.inputBox(t, "b_profile", 160), dim(family ? `Profile: ${PROFILE_HINT[family]}` : "Choose a browser.")))
+      .when(Boolean(b.note), (el) => el.child(div().text_size(12).text_color(t.muted).child(b.note ?? "")))
+      .child(
+        h_flex()
+          .gap(8)
+          .child(button(t, "b-add", "Add", () => {
+            edit(addMapping(b.mappings, { tag: this.inputs.b_tag.value().trim() || b.tag, browser: b.browser, profile: this.inputs.b_profile.value() }));
+            if (!b.note) {
+              b.tag = null;
+              this.inputs.b_tag.set_value("");
+              this.inputs.b_profile.set_value("");
+            }
+          }))
+          .when(changed, (el) => el.child(button(t, "b-save", "Save", (_e, cx) => this.saveBrowsers(cx))))
+          .child(button(t, "b-close", "Close", () => {
+            this.browsers = null;
+          })),
+      );
   }
 
   toggleForm(cx) {
@@ -1062,11 +1175,13 @@ export default class FleetPanel extends View {
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(h.facts.join(" · ")))
           .child(button(t, "page", this.page === "machines" ? "Ships" : "Machines", (_e, cx) => this.showPage(cx, this.page === "machines" ? "ships" : "machines"), this.page === "machines"))
           .when(this.page === "ships", (el) => el.child(button(t, "new", "New Ship", (_e, cx) => this.toggleForm(cx), Boolean(this.form))))
+          .child(button(t, "browsers-open", "Browsers", (_e, cx) => this.toggleBrowsers(cx), Boolean(this.browsers)))
           .child(button(t, "fleetledger-menu", "FleetLedger", (_e, cx) => this.toggleMenu(cx, FLEETLEDGER), this.menu === FLEETLEDGER))
           .child(button(t, "refresh", st.asking ? "Reading…" : "Refresh", (_e, cx) => this.refresh(cx))),
       )
       .when(this.menu === FLEETLEDGER, (el) => el.child(this.menuBox(t, FLEETLEDGER, fleetLedgerMenu(st))))
       .when(Boolean(this.form), (el) => el.child(this.formView(t)))
+      .when(Boolean(this.browsers), (el) => el.child(this.browsersView(t)))
       .when(h.locked, (el) => el.child(div().h(2).w_full().rounded(1).bg(t.blocked)))
       .children(h.notices.map(notice))
       .when(Boolean(this.note), (el) => el.child(div().text_size(12).text_color(t.muted).child(this.note ?? "")))

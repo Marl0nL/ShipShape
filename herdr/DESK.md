@@ -32,7 +32,7 @@ follow Herdr's updates.
 | `install-desk.sh` | copies all of it into Herdr's folder (with the Fleet panel, `install-fleet.sh`) and links the CLI |
 
 ```
-root (row; terminal_opacity 0.88)
+root (row; terminal_opacity 0.88; link_handlers: fleet, mods/fleet/README.md)
 ├─ sidebar (column, 268 px)
 │  ├─ brand ─────────── desk {part: brand}      the look's logo and name
 │  ├─ spaces ────────── desk-spaces             machines and spaces, tag-coloured
